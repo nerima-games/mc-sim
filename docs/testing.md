@@ -40,7 +40,7 @@ mc-sim の場合、プレビューは**障害物コース**で、歩く / 泳ぐ
 
 ## 3. 現在のテスト
 
-`vitest run`。8 ファイル / 92 テスト。
+`vitest run`。9 ファイル / 99 テスト。
 
 | ファイル | テスト数 | 対応 |
 | --- | ---: | --- |
@@ -51,7 +51,27 @@ mc-sim の場合、プレビューは**障害物コース**で、歩く / 泳ぐ
 | `test/camera-pose.test.ts` | 13 | DN-01 |
 | `test/inventory.test.ts` | 11 | DN-06 / DN-07 |
 | `test/autosave.test.ts` | 9 | DN-05 / DN-08 |
+| `test/kernel-mirror.test.ts` | 7 | `domain/kernel-vocabulary.ts` が mc-kernel と同形であること（§4.4） |
 | `test/check-dependency-whitelist.test.ts` | 26 | DN-12 + 依存ホワイトリスト本体 |
+
+### 3.1 `test/kernel-mirror.test.ts` が守っているもの
+
+`domain/kernel-vocabulary.ts` は mc-kernel のローカルミラーであり、そのヘッダは
+「これを削除して import を publish 済みパッケージに向け直せば型検査が通る」と約束している。
+**その約束は何にも強制されておらず、実際に破られていた。**
+
+本リポジトリの `ClockService` は 1 フィールド（`monotonicSecs`）で、
+kernel（`mc-kernel/domain/clock.ts:43-48`）は 2 フィールドだった。
+`FixedClockLayer` も、kernel がオブジェクトを取るところで裸の `MonotonicTimeSecs` を取っていた。
+
+`tsc` には見えず、実行時には致命的である。`ClockPort` は `Context.Tag` であり、
+Effect は Tag を**その文字列キー**で解決する。3 つのコピーすべてが
+`'@nerima-games/mc-kernel/ClockPort'` を使っているので、2 つが同居するバンドル
+（mc-playground-kit は mc-sim に依存する）では**狭いミラーの `Layer` が広いミラーの Tag を満たし**、
+`wallClockEpochMillis` は使用時に `undefined` になる。
+
+そこでこのファイルは、Tag キーを**文字列リテラルで**固定し、サービスの形を**両方向で**assert する
+（狭めても広げても落ちる）。同じ内容のテストが mc-render と mc-playground-kit にもある。
 
 ## 4. テストの書き方（本リポジトリの規約）
 
@@ -95,10 +115,25 @@ const controllableClock = Effect.gen(function* () {
   const nowRef = yield* Ref.make(0)
   const layer = Layer.succeed(ClockPort, {
     monotonicSecs: Ref.get(nowRef).pipe(Effect.map(MonotonicTimeSecs)),
+    // 凍結。しかも `nowRef` とは意図的に無関係にしてある。
+    // 壁時計は「2 本目の monotonic クロック」ではない。両者を一緒に動かすと、
+    // `wallClockEpochMillis` を経過時間の計算に使ってしまっているコードが隠れる。
+    wallClockEpochMillis: Effect.succeed(EpochMillis(1_700_000_000_000)),
   })
   return { layer, tick: (secs: number) => Ref.update(nowRef, (v) => v + secs) }
 })
 ```
+
+**`ClockService` は 2 フィールドである。両方を書くこと。** `monotonicSecs` だけの
+`Layer.succeed(ClockPort, { … })` は書けてしまうが、それは危険である —— `ClockPort` は
+`Context.Tag` であり、Effect は Tag を**その文字列キー**（`'@nerima-games/mc-kernel/ClockPort'`）で
+解決する。狭い Layer は広い Tag をそのまま満たし、`wallClockEpochMillis` は使用時に `undefined` になる。
+TypeScript には見えない（キーが同じ 2 つのクラスは、名前的には別型でありながら実行時には同じサービスである）。
+
+これは実際に起きていた欠陥である。本リポジトリの `ClockService` ミラーは 1 フィールドで、
+mc-kernel と mc-playground-kit は 2 フィールドだった。
+`test/kernel-mirror.test.ts` が現在、Tag キーの文字列とサービスの形を**両方向で**固定している
+（広すぎても狭すぎても落ちる）。
 
 これが fast-forward の仕組み。「次の夜明けまで待つ」が算術になり、20 分のテストが数マイクロ秒になる。
 `test/scenario.test.ts` を新しいシナリオの雛形として使うこと。

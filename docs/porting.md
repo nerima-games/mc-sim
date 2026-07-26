@@ -27,20 +27,57 @@ $ find <dir> -name '*.ts' -not -name '*.test.ts' -not -name '*.spec.ts' | xargs 
 ### 1.1 plan.md の合計との差
 
 plan.md §3.8 は移植元として entity 10.9k + inventory 4.5k + game 非physics 3.3k = **18.7k** を挙げる。
-しかし §3.11（mx-gameplay）が **`packages/entity` の `mob/` 4,918 LOC を mx-gameplay へ**持っていく。
+しかし §3.11（mx-gameplay）が **`packages/entity` の mob 関連 4,918 LOC を mx-gameplay へ**持っていく
+（実装コードだけなら 4,722。差の内訳は下記）。
 両方を額面どおり読むと mob/ が二重計上になる。実測で切り分けると:
 
 | 区分 | production LOC |
 | --- | ---: |
-| `packages/entity` 全体 | 10,865 |
-| うち `mob/`（`application/mob` + `domain/mob`、mx-gameplay 行き） | **4,918** |
+| `packages/entity` 全体（`test/` ヘルパ 481 行を含む） | 10,865 |
+| うち mob 関連（`application/mob` + `domain/mob` + `test/mob`、mx-gameplay 行き） | **4,918** |
 | **`packages/entity` の mc-sim 取り分** | **5,947** |
 
 したがって **mc-sim への実移植量は 5,947 + 4,474 + 3,341 = 13,762 LOC**。
 plan.md の 18.7k は mob/ を含んだ数字である。
 
+#### 4,918 と 4,722 —— mx-gameplay の数字との突き合わせ
+
+mx-gameplay の [porting.md](https://github.com/nerima-games/mx-gameplay/blob/main/docs/porting.md) §3-1 は
+同じ mob/ を **4,722**（91 ファイル）と実測している。**食い違いではない。**
+
+**差の 196 行は `packages/entity/test/mob/test-utils.ts` ちょうど 1 ファイルである。**
+
+```console
+$ find packages/entity/application/mob packages/entity/domain/mob \
+    -name '*.ts' -not -name '*.test.ts' -not -name '*.spec.ts' | xargs cat | wc -l
+4722
+$ wc -l packages/entity/test/mob/test-utils.ts
+196
+```
+
+| 数え方 | 走査対象 | LOC |
+| --- | --- | ---: |
+| 実装コードのみ（mx-gameplay の移植見積） | `application/mob/` + `domain/mob/` | **4,722** |
+| 本書の production 規則（`test/` ヘルパ込み） | 上記 + `test/mob/` | **4,918** |
+
+本書は冒頭で「`packages/*/test/` 配下のヘルパは `.test.ts` ではないため production 側に計上される」と
+宣言しており、`packages/entity` 全体の 10,865 も同じ規則で数えている（うち 481 行が `test/` ヘルパ）。
+**だから本書の引き算では 4,918 を使うのが正しい。** 10,865 から 4,722 を引くと、
+`test/mob/test-utils.ts` の 196 行が mc-sim 取り分に紛れ込む。
+
+実装コードだけで見たい場合の対応表:
+
+| | `test/` ヘルパ込み（本書の規則） | 実装コードのみ |
+| --- | ---: | ---: |
+| `packages/entity` 全体 | 10,865 | 10,384 |
+| うち mob 関連 | 4,918 | 4,722 |
+| **mc-sim 取り分** | **5,947** | **5,662** |
+
+**移植の作業量を見積もるときは実装コードのみの列を、`wc -l` の再現性を確認するときは
+本書の規則の列を使うこと。列をまたいで引き算しないこと。**
+
 ただし plan.md §7 は「Mob（状態管理は sim、AI/スポーン/ドロップのルールは gameplay）」とも書いており、
-`mob/` 4,918 LOC は**丸ごと mx-gameplay ではなく分割される**。分割比は移植時に判断する。
+mob/ の実装コード 4,722 LOC は**丸ごと mx-gameplay ではなく分割される**。分割比は移植時に判断する。
 `entity-manager-entity-map.ts` (20) / `entity-manager-cache.ts` (15) /
 `entity-manager-entity-mutation.ts` (174) のような台帳側は mc-sim、
 `entity-manager-ai-*.ts` / `entity-manager-creeper-detonation.ts` /
@@ -197,7 +234,10 @@ plan.md §6 Step 2: 「各Stepで参照実装の対応テスト・fixture・E2E�
 
 plan.md 冒頭は参照実装の資産を「9,177 ユニットテスト・E2E 64本」と書く。
 E2E の実測は **23 ファイル / `test(` 70 箇所**（`e2e/**/*.e2e.ts`）であり、64 とは一致しない。
-mc-compose 側で再計数すること。
+**この差分は mc-compose 側で決着済みである** ——
+[porting.md](https://github.com/nerima-games/mc-compose/blob/main/docs/porting.md) §0 が
+同じ 70 本 / 23 ファイル / 2,875 LOC を確定させ、「plan.md の 64 本と食い違う（+6）」と記録している。
+移植計画に使う数字は **70** である。
 
 ## 7. 移植しないもの
 

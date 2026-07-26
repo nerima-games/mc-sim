@@ -17,7 +17,7 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect, Layer, Ref } from 'effect'
 import { forwardVector, snapshotAgeSecs } from '../domain/camera-pose'
-import { DeltaTimeSecs, MonotonicTimeSecs, position } from '../domain/kernel-vocabulary'
+import { DeltaTimeSecs, EpochMillis, MonotonicTimeSecs, position } from '../domain/kernel-vocabulary'
 import { ClockPort, FixedClockLayer } from '../domain/kernel-vocabulary'
 import {
   InventoryService,
@@ -38,6 +38,11 @@ const controllableClock = Effect.gen(function* () {
   const nowRef = yield* Ref.make(0)
   const layer = Layer.succeed(ClockPort, {
     monotonicSecs: Ref.get(nowRef).pipe(Effect.map((value) => MonotonicTimeSecs(value))),
+    // Frozen, and deliberately unrelated to `nowRef`: the wall clock is not a
+    // second monotonic clock, and a test that let the two move together would
+    // hide a `wallClockEpochMillis` used for a duration. See
+    // domain/kernel-vocabulary.ts on why the mirror carries both fields.
+    wallClockEpochMillis: Effect.succeed(EpochMillis(1_700_000_000_000)),
   })
   return {
     layer,
@@ -134,7 +139,15 @@ describe('deterministic scenario: spawn -> look -> mine -> assert', () => {
           time: yield* time.snapshot,
           inventory: yield* inventory.snapshot,
         }
-      }).pipe(Effect.provide(SimulationLayer), Effect.provide(FixedClockLayer(MonotonicTimeSecs(42))))
+      }).pipe(
+        Effect.provide(SimulationLayer),
+        Effect.provide(
+          FixedClockLayer({
+            monotonicSecs: MonotonicTimeSecs(42),
+            wallClockEpochMillis: EpochMillis(1_700_000_000_000),
+          }),
+        ),
+      )
 
       const first = yield* run
       const second = yield* run

@@ -77,21 +77,22 @@ oxlint が該当ルールを実装したら oxlint.json 側へ移す。
 ### セットアップ
 
 ```console
-$ direnv allow          # devenv 経由で nodejs_22 + pnpm が入る
+$ direnv allow          # flake.nix の devShell で nodejs_22 + corepack が入る
 $ pnpm install
 ```
 
-devenv を使わない場合は Node.js 22 以上と pnpm 9.15.0（`corepack` 推奨）を用意する。
+Nix を使わない場合は Node.js 22 以上と pnpm 9.15.0（`corepack` 推奨）を用意する。
 
-> **注意**: `devenv.lock` はコミットされていない。生成には `devenv` の実行が必要なため、
-> 初回に devenv を動かした人がコミットすること。
+> **注意**: ツールチェーンは `devenv.nix` から `flake.nix` + `flake.lock` に移行済みである。
+> `flake.lock` はコミットされているので、`nix develop`（`.envrc` は `use flake`）は
+> 誰の手元でも同じ nixpkgs に解決される。`devenv.nix` / `devenv.lock` はもう存在しない。
 
 ### コマンド
 
 | コマンド | 内容 |
 | --- | --- |
 | `pnpm typecheck` | `tsconfig.build.json` と `tsconfig.test.json` の両方を型検査 |
-| `pnpm lint` | oxlint（このリポジトリ唯一の lint / format 設定。prettier も biome も .editorconfig も置かない） |
+| `pnpm lint` | oxlint（このリポジトリ唯一の lint / format 設定。prettier も biome も .editorconfig も置かない）。**`--deny-warnings` 付きで走る**ため、`warn` のルールもビルドを落とす（`oxlint.json` は 5 カテゴリすべてと個別 67 ルールが `warn`、`error` は 4 つだけ。このフラグが無かった頃は実質その 4 つしかゲートになっていなかった） |
 | `pnpm lint:fix` | oxlint の自動修正 |
 | `pnpm test` | vitest（`@effect/vitest` の `it.effect` が主 API、`environment: 'node'`） |
 | `pnpm test:watch` | vitest watch |
@@ -133,6 +134,11 @@ devenv を使わない場合は Node.js 22 以上と pnpm 9.15.0（`corepack` �
   計測とレポートは常に動かしており、99% ゲートは完了条件到達時に有効化する。
 - **`domain/kernel-vocabulary.ts` は暫定ミラー。** mc-kernel 公開時に削除する。
   `index.ts` から re-export していないのは、真実の出所を 2 つにしないため。
+  ミラーは意図的に最小だが、**Clock Port だけは丸ごと**写してある —— `ClockPort` は
+  文字列キーで解決される `Context.Tag` なので、狭いミラーは「語彙が少ない」ではなく
+  実行時ハザードである（狭い `Layer` が広い Tag を満たし、欠けたフィールドが `undefined` になる）。
+  `test/kernel-mirror.test.ts` が Tag キーと形を両方向で固定している
+  （[`docs/versioning.md`](./docs/versioning.md) §5-1、[`docs/testing.md`](./docs/testing.md) §3.1）。
 
 ## ドキュメント
 

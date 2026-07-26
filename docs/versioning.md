@@ -92,6 +92,29 @@ mc-kernel が publish されたら:
 **これで型検査が通らなければ、ミラーが drift しており、その drift 自体がバグである。**
 ミラーは意図的に最小（mc-sim が実際に使う分だけ）にしてあり、これは「正直に保つ対象を小さくする」ため。
 
+### 5-1. 「最小」の唯一の例外 — Clock Port は**丸ごと**ミラーする
+
+`ClockPort` は `Context.Tag` であり、Effect は Tag を**その文字列キー**
+（`'@nerima-games/mc-kernel/ClockPort'`）で解決する。
+同じキーから作られた 2 つのクラスは、TypeScript にとっては無関係な名前的別型でありながら、
+**実行時には同じサービス**である。
+
+したがって `ClockService` の**狭い**ミラーは「語彙が少ない」ではなく**サイレントな実行時ハザード**である。
+1 フィールドのミラーに対して組んだ `Layer` が 2 フィールドの Tag を満たしてしまい、
+足りないフィールドは、このファイルを見たことのないリポジトリで `undefined` として読まれる。
+
+**これは実際に起きていた。** mc-sim のミラーは `monotonicSecs` の 1 フィールドで、
+mc-kernel と mc-playground-kit は 2 フィールドだった。
+mc-playground-kit は mc-sim に依存するので、両者は同じバンドルに同居する。
+
+そのため、mc-sim が壁時計を 1 度も読まないにもかかわらず、
+`EpochMillis` / `fixedClock` / `wallClockEpochMillis` とオブジェクト引数の `FixedClockLayer` まで
+ミラーしてある。`test/kernel-mirror.test.ts` が Tag キーと形を**両方向で**固定しているので、
+次の drift はフレームではなく CI で落ちる（[testing.md](./testing.md) §3.1）。
+
+ミラーの drift が「削除して import に置き換えれば通る」という約束を破る唯一の経路であり、
+その約束はこの節の 3 手順そのものである。
+
 なお `index.ts` はこのミラーを **re-export していない**。consumer が mc-sim 経由で
 kernel の語彙を取ると真実の出所が 2 つになり、上記の削除が破壊的変更に化けるためである。
 
@@ -123,4 +146,4 @@ kernel の語彙を取ると真実の出所が 2 つになり、上記の削除�
 | `typescript` / `vitest` / `oxlint` | `^` 付き | ツールチェーンは揃えるが厳密ピンはしない |
 | `packageManager` | `pnpm@9.15.0` | 16 リポジトリで同一 |
 
-`engines.node` は `>=22.0.0`。devenv が `nodejs_22` を入れる。
+`engines.node` は `>=22.0.0`。`flake.nix` の devShell が `nodejs_22` を入れる。

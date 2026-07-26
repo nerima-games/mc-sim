@@ -26,6 +26,23 @@
  *
  * The mirror is deliberately MINIMAL — only what mc-sim uses. A larger mirror
  * would be a larger thing to keep honest.
+ *
+ * ---------------------------------------------------------------------------
+ * ONE EXCEPTION TO "MINIMAL": the Clock Port is mirrored WHOLE
+ * ---------------------------------------------------------------------------
+ *
+ * `ClockPort` is a `Context.Tag`, and Effect resolves Tags by their TEXTUAL
+ * KEY — here, `'@nerima-games/mc-kernel/ClockPort'`. Two classes built from the
+ * same key are the same service at runtime and two unrelated nominal types to
+ * TypeScript, so a NARROWER mirror of `ClockService` is not "less of the
+ * vocabulary", it is a silent runtime hazard: a `Layer` built against a
+ * one-field mirror satisfies a two-field tag, and the missing field reads
+ * `undefined` in a repository that never saw this file.
+ *
+ * `EpochMillis`, `fixedClock`, `wallClockEpochMillis` and the object-shaped
+ * `FixedClockLayer` are therefore mirrored even though nothing in mc-sim reads a
+ * wall clock. `test/kernel-mirror.test.ts` pins the shape against kernel's, so
+ * the next divergence fails CI rather than a frame.
  */
 import { Brand, Context, Effect, Layer } from 'effect'
 
@@ -53,6 +70,20 @@ export type MonotonicTimeSecs = number & Brand.Brand<'MonotonicTimeSecs'>
 export const MonotonicTimeSecs = Brand.refined<MonotonicTimeSecs>(
   (value) => Number.isFinite(value) && value >= 0,
   (value) => Brand.error(`MonotonicTimeSecs must be a finite, non-negative number of seconds, received ${value}`),
+)
+
+/**
+ * A wall-clock reading: milliseconds since the Unix epoch. Only for values a
+ * human reads or that must survive a save/load round trip — never for durations,
+ * because it can jump in either direction.
+ *
+ * Mirrored solely so that `ClockService` below has kernel's real shape.
+ */
+export type EpochMillis = number & Brand.Brand<'EpochMillis'>
+
+export const EpochMillis = Brand.refined<EpochMillis>(
+  (value) => Number.isSafeInteger(value),
+  (value) => Brand.error(`EpochMillis must be a safe integer number of milliseconds, received ${value}`),
 )
 
 /** Maximum items in one inventory stack. Kernel fixes the representable range only. */
@@ -86,9 +117,26 @@ export const position = (x: number, y: number, z: number): Position => ({ x, y, 
 export type ClockService = {
   /** Monotonic reading. Only differences between readings are meaningful. */
   readonly monotonicSecs: Effect.Effect<MonotonicTimeSecs>
+  /** Wall-clock reading. Never use for durations. */
+  readonly wallClockEpochMillis: Effect.Effect<EpochMillis>
 }
 
 export class ClockPort extends Context.Tag('@nerima-games/mc-kernel/ClockPort')<ClockPort, ClockService>() {}
+
+/** A clock frozen at one instant. Platform-independent, hence shippable by kernel. */
+export const fixedClock = (at: {
+  readonly monotonicSecs: MonotonicTimeSecs
+  readonly wallClockEpochMillis: EpochMillis
+}): ClockService => ({
+  monotonicSecs: Effect.succeed(at.monotonicSecs),
+  wallClockEpochMillis: Effect.succeed(at.wallClockEpochMillis),
+})
+
+/** `fixedClock` as a Layer, for deterministic tests and replays. */
+export const FixedClockLayer = (at: {
+  readonly monotonicSecs: MonotonicTimeSecs
+  readonly wallClockEpochMillis: EpochMillis
+}): Layer.Layer<ClockPort> => Layer.succeed(ClockPort, fixedClock(at))
 
 /** Read the monotonic clock. The only sanctioned answer to "what time is it?". */
 export const monotonicSecs: Effect.Effect<MonotonicTimeSecs, never, ClockPort> = Effect.flatMap(
@@ -96,9 +144,11 @@ export const monotonicSecs: Effect.Effect<MonotonicTimeSecs, never, ClockPort> =
   (clock) => clock.monotonicSecs,
 )
 
-/** A clock frozen at one instant. Platform-independent, hence shippable by kernel. */
-export const FixedClockLayer = (at: MonotonicTimeSecs): Layer.Layer<ClockPort> =>
-  Layer.succeed(ClockPort, { monotonicSecs: Effect.succeed(at) })
+/** Read the wall clock. Only for human-facing or persisted values. */
+export const wallClockEpochMillis: Effect.Effect<EpochMillis, never, ClockPort> = Effect.flatMap(
+  ClockPort,
+  (clock) => clock.wallClockEpochMillis,
+)
 
 // ---------------------------------------------------------------------------
 // Camera pose — mirrors mc-kernel/domain/camera.ts

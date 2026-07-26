@@ -1,8 +1,16 @@
 # mc-sim ドキュメント索引
 
-`@nerima-games/mc-sim` の実装情報一式。上位仕様は `/Users/take/Documents/plan.md`、
-参照実装は `/Users/take/ghq/github.com/takeokunn/ts-minecraft`（凍結・テストオラクル扱い）。
+`@nerima-games/mc-sim` の実装情報一式。上位仕様は plan.md（**非公開**）、
+参照実装は `<reference-impl>`（凍結・テストオラクル扱い）。
 本ディレクトリ内の参照実装パスはすべて ts-minecraft リポジトリルート相対で書く。
+
+## 表記
+
+| 表記 | 意味 |
+| --- | --- |
+| `<reference-impl>` | **参照実装のチェックアウトのルート**。凍結された `takeokunn/ts-minecraft` の作業コピーを指す。本ドキュメント群では `<reference-impl>/packages/…` の形か、単に `packages/…`（同じくルート相対）で引用する。手元のどこに clone してあっても読み替えられるようにするためのプレースホルダである |
+| plan.md | リポジトリ構成仕様書（16 リポジトリ、確定済み）。**非公開**であり、公開読者は開けない。だから本ドキュメント群は「plan.md を読まなくても追える」ことを要件にしている —— plan.md の主張を引くときは必ず原文を引用し、参照実装での裏づけを file:line で添える |
+| `nerima-games/<repo>` | 同 org の兄弟リポジトリ。リンクは GitHub の URL で張る |
 
 ## このリポジトリを一言でいうと
 
@@ -41,3 +49,6 @@ mc-render / mc-playground-kit / mx-gameplay / mx-redstone / mx-ui / mx-multiplay
 まだ無いもの: EntityManager、体力/空腹/XP、実績/統計、設定状態、内蔵障害物コースプレビュー、
 リポジトリ内 workspace 分割（entity / inventory / game）、APIロックファイル。
 `domain/kernel-vocabulary.ts` は mc-kernel 公開までの暫定ミラーであり、公開後に削除する。
+ミラーは最小だが Clock Port だけは丸ごと写してある（`ClockPort` は文字列キーで解決される `Context.Tag` であり、
+狭いミラーは実行時ハザードになる）。`test/kernel-mirror.test.ts` が形を固定している
+—— [versioning.md](./versioning.md) §5-1、[testing.md](./testing.md) §3.1。

@@ -103,7 +103,15 @@ const clampDayLengthSecs = (seconds: number): number =>
 
 const clampFraction = (fraction: number): number => Math.max(0, Math.min(MAX_TIME_FRACTION, fraction))
 
-/** Position within the current day, in [0, 1). 0 = dawn boundary, 0.5 = dusk boundary. */
+/**
+ * Position within the current day, in [0, 1).
+ *
+ * 0 = midnight, 0.25 = dawn, 0.5 = noon, 0.75 = dusk — the same convention the
+ * reference uses, recorded at INITIAL_TIME_STATE above. An earlier version of
+ * this line said "0 = dawn boundary, 0.5 = dusk boundary", which contradicted
+ * both that note and `isNight` directly below: night is `< 0.25 || > 0.75`,
+ * which is the half centred on 0, and that is only night if 0 is midnight.
+ */
 export const timeOfDay = (state: TimeState): number => (state.ticks % state.dayLengthTicks) / state.dayLengthTicks
 
 /** Day length in seconds — the inverse of what `setDayLength` takes. */

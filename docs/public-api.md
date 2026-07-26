@@ -88,7 +88,7 @@ type PlayerServiceApi = {
 ```typescript
 type TimeServiceApi = {
   readonly advance: (dt: DeltaTimeSecs) => Effect.Effect<void>
-  readonly timeOfDay: Effect.Effect<number>          // [0, 1)
+  readonly timeOfDay: Effect.Effect<number>          // [0, 1)。0 = 真夜中。§2-0
   readonly dayLengthSecs: Effect.Effect<number>
   readonly moonPhase: Effect.Effect<number>          // 0..7
   readonly isNight: Effect.Effect<boolean>
@@ -99,6 +99,41 @@ type TimeServiceApi = {
   readonly restore: (state: TimeState) => Effect.Effect<void>
 }
 ```
+
+### 2-0. `timeOfDay` の規約 — **0 は真夜中である**
+
+`timeOfDay` は 1 日の中の位置を `[0, 1)` の分数で返す。**その原点は真夜中である。**
+
+| 値 | 意味 |
+| --- | --- |
+| `0.0` | **真夜中**（`1.0` と同じ瞬間。だから `MAX_TIME_FRACTION = 0.9999` でクランプする） |
+| `0.25` | 夜明け（`DAWN`） |
+| `0.5` | 正午（`NOON`） |
+| `0.75` | 日没（`DUSK`） |
+
+したがって**夜は 0/1 境界を中心とする半日**であり、`isNight` はそのまま
+`fraction < 0.25 || fraction > 0.75` である（`domain/time-of-day.ts:117-120`）。
+
+これは参照実装の規約であり、**新規ワールドが `ticks: 7200 / dayLengthTicks: 24000` = 0.30 から始まる理由でもある。**
+真夜中（0）から始めると夜の Mob 一式が新規プレイヤーの上にスポーンし、
+日光に耐性のある敵対 Mob がリスポーン地点に居座って、ワールド生成直後に回復不能なデスループになる
+（`domain/time-of-day.ts:77-92` が参照実装のコメントごと記録している）。0.30 は「朝方」である。
+
+この規約に合わせているのは mc-sim だけではない。`mx-gameplay/domain/day-night.ts` の
+`isNight` は本リポジトリの述語を**文字単位で同一に**再掲している。
+敵対 Mob のスポーン規則と、それが適用される状態とが別リポジトリにあるため、
+夜の境界は 2 か所に書き下し、**両方でテストが固定している**:
+
+- 本リポジトリ `test/time-of-day.test.ts` — `is the half of the day centred on the 0/1 boundary`、
+  `a fresh world starts in daylight, not at midnight with hostile mobs`
+- mx-gameplay `test/day-night.test.ts` — `is the half of the day centred on the 0/1 boundary, exactly as mc-sim computes it`
+
+> **既知の不整合（コード側の修正待ち）**: `domain/time-of-day.ts:106` の `timeOfDay` の doc コメントは
+> 「`0 = dawn boundary, 0.5 = dusk boundary`」と書いており、**間違っている**。
+> 同じファイルの `INITIAL_TIME_STATE` のコメント（:85「in this cycle 0 is MIDNIGHT」）とも、
+> 直下の `isNight` の実装とも矛盾する。
+> **挙動は一貫しており、正しいのは本節の表のほうである** — mx-gameplay もその挙動に合わせてある。
+> 直すべきは 1 行のコメントだけである。
 
 参照実装 `packages/game/application/time-service.ts:16-62` は 7 メソッド
 （`advanceTick` / `getTimeOfDay` / `getMoonPhase` / `isNight` / `getDayLength` /
