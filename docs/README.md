@@ -62,4 +62,6 @@ APIロックファイルは**ある** —— `api-lock.md` と `pnpm api:check`�
 後者は閉じたリテラル union なのでメンバの集合そのものが型である）。
 `test/kernel-mirror.test.ts` が形とロスタを固定している
 —— [versioning.md](./versioning.md) §5-1 / §5-2、[testing.md](./testing.md) §3.1。
-語彙の付け替えでレシピ表が 7 件から 5 件になった経緯は [public-api.md](./public-api.md) §4.1-7。
+語彙の付け替えでレシピ表が 7 件から 5 件になり、kernel がロスタを 16 → 23 に広げて
+**7 件に戻った**経緯は [public-api.md](./public-api.md) §4.1-7、
+公開面への影響は [versioning.md](./versioning.md) §5-4。

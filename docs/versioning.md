@@ -122,7 +122,7 @@ mc-playground-kit は mc-sim に依存するので、両者は同じバンドル
 ミラーの drift が「削除して import に置き換えれば通る」という約束を破る唯一の経路であり、
 その約束はこの節の 3 手順そのものである。
 
-### 5-2. 2 つ目の例外 — `ITEM_TYPES` は**16 件すべて**ミラーする
+### 5-2. 2 つ目の例外 — `ITEM_TYPES` は**23 件すべて**ミラーする
 
 閉じたリテラル union では、**メンバの集合そのものが型**である。
 mc-sim のレシピ表が使う 6 個だけを写したミラーは「語彙が少ない」ではなく*狭い別の型*で、
@@ -133,7 +133,15 @@ kernel の `ItemType` が拒否するレシピ表を出荷し、**壊れるの�
 
 したがってロスタを増減させるのは mc-kernel の決定であって本リポジトリの決定ではない。
 kernel 側では additive・MINOR、mc-sim 側では**ミラーとテストを同じコミットで更新する**だけの作業になる。
-実際に足りなかった 7 個の要求は [public-api.md](./public-api.md) §4.1-7 に値段つきで書いてある。
+
+**この手順は 1 度回った。** 足りなかった 8 個の要求を値段つきで出し
+（[public-api.md](./public-api.md) §4.1-7）、kernel が 7 個を —— それぞれ kernel 側の理由
+（鉱石 / 砂利のドロップ、mob ドロップ、flammable 能力の着火アイテム）を伴って —— 承認し、
+ロスタは **16 → 23** になった。8 個目の `crafting_table` は却下され、ミラーにも入っていない。
+mc-sim 側の作業は宣言通りで、`domain/kernel-vocabulary.ts` の転記、
+`test/kernel-mirror.test.ts` の `KERNEL_ITEM_TYPES` の再転記、
+そしてレシピ 2 行の復帰が**同じコミット**に入る。順序が逆になった瞬間
+（ミラーが先に進む）に壊れる約束が §5 の 3 手順である。
 
 ### 5-3. この付け替えは mc-sim の公開面を**壊した**（ウィンドウがリセットされた）
 
@@ -155,6 +163,33 @@ mc-kernel が `0.2.0` に上がり `api-lock.md` が変わって §3 の 4 週�
 
 なお `index.ts` はこのミラーを **re-export していない**。consumer が mc-sim 経由で
 kernel の語彙を取ると真実の出所が 2 つになり、上記の削除が破壊的変更に化けるためである。
+
+### 5-4. ロスタが 16 → 23 になり、**ウィンドウがもう一度リセットされた**
+
+§5-2 の要求が通り、kernel の `ITEM_TYPES` が 7 個増えた。ミラーを同じコミットで追随させた結果、
+`api-lock.md` が変わっている。
+
+| 差分 | 種別 |
+| --- | --- |
+| `ITEM_TYPES` のタプル型に 7 リテラル追加（`coal` / `iron_ingot` / `flint` / `gunpowder` / `blaze_powder` / `flint_and_steel` / `fire_charge`） | **追加**。ただし `ItemType = (typeof ITEM_TYPES)[number]` は**広がる** |
+| `STARTER_RECIPES` の内容が 5 件 → 7 件 | 型は不変・**値**の変更（lock には出ない。[public-api.md](./public-api.md) §4.1-7） |
+
+`exported declarations` は 111、`supporting declarations` は 24 のまま —— **宣言は増減していない**。
+それでも §3 の条件 2 の起点は**このコミットに移動する**。理由は `ItemType` が
+union として広がった側だからである:
+
+- **入力位置**（`add` / `remove` / `countOf` / `itemStack` / `exactly` / `shapelessRecipe` …）では
+  追加であり、既存の呼び出しは 1 つも壊れない。
+- **出力位置**（`ItemStack.item` / `Ingredient.item` / `MissingIngredient.item`）では
+  consumer 側が受け取る union が広がる。`ItemType` を**網羅的に**switch している consumer
+  （mx-ui のアイテムアイコン表が該当しうる）は、7 ケース足りなくなる。
+  「網羅性が壊れる」は型検査で落ちる変更であり、lock の宣言数が動かないことは
+  その根拠にならない。
+
+これは kernel 側の分類（additive・MINOR）と矛盾しない。MINOR は「既存の呼び出しが壊れない」で
+あって「誰も何も直さなくてよい」ではなく、閉じた union を公開する型の宿命として、
+**広がりは下流に伝播する**。4 週間ウィンドウはそれが落ち着くまでの期間なので、
+起点はここになる。
 
 ## 6. ビルド / publish パイプライン（完了時に追加）
 

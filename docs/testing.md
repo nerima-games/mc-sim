@@ -185,10 +185,10 @@ Effect は Tag を**その文字列キー**で解決する。3 つのコピー�
 | 平行移動 | `a 2x2 shape is the SAME recipe at all four positions in a 3x3 grid`、`a 1x2 shape is the SAME recipe at all six positions in a 3x3 grid`（位置を全列挙する） |
 | 形が崩れたら一致しない | `a broken shape is not a translation of the whole shape`、`a hole in the pattern is a requirement, so a stray item breaks the match` |
 | 2x2 グリッドで 3x3 レシピが作れてしまう | `a 3x3 recipe cannot be reached from the player 2x2 grid` |
-| 鏡像 | `an asymmetric shape matches its left-right mirror, as vanilla does`、`the mirror travels with the translation, at every position`（**ローカル表 `MIRROR_TABLE`**。出荷される表に非対称な shaped はもう無い —— [public-api.md](./public-api.md) §4.1-7） |
+| 鏡像 | `an asymmetric shape matches its left-right mirror, as vanilla does`、`the mirror travels with the translation, at every position`（**出荷される表**の `mc-sim:flint-and-steel`。ローカル表 `MIRROR_TABLE` は削除した —— [public-api.md](./public-api.md) §4.1-7） |
 | 上下反転を鏡像と誤認する | `a vertical flip is NOT a mirror — a shape upside down is a different shape` |
-| 鏡像規則が「未使用」に見えて消される | `REGRESSION: no shipped recipe distinguishes the mirror, so only the above does`（`STARTER_RECIPES` の shaped が全部左右対称であることを assert して、上の 3 件が唯一の防衛線だと明示する） |
-| 順列 | `every permutation of the ingredients is the same recipe`（6 通り全列挙、**ローカル表 `PERMUTATION_TABLE`**）、`position is irrelevant, not merely reorderable within a row`、`the shipped table still permutes, with the one ingredient pair it has` |
+| 鏡像規則が「未使用」に見えて消される | `REGRESSION: a shipped recipe distinguishes the mirror, so deleting it breaks the game`（`STARTER_RECIPES` の shaped に**左右非対称なものが在る**ことを assert し、その全件について鏡像レイアウトが同じレシピに一致することも見る。表を対称な行だけに戻すと落ちる） |
+| 順列 | `every permutation of the ingredients is the same recipe`（6 通り全列挙、**出荷される表**の `mc-sim:fire-charge`）、`position is irrelevant, not merely reorderable within a row`、`an identical ingredient pair permutes too, which is the degenerate case` |
 | 曖昧性が表順に依存する | `REGRESSION: the winner does not depend on where the recipe sits in the table`（全回転 + 逆順）、`equally specific matches are decided by id, in either table order` |
 | 表に同順位の衝突が紛れ込む | `STARTER_RECIPES leans on specificity, never on the id tie-break` |
 | 全域性 | `a ragged grid reads as empty where it is short, and does not throw`（mx-ui が画面状態から組むので、フレームの中で defect にしてはならない） |

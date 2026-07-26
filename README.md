@@ -173,6 +173,11 @@ Nix を使わない場合は Node.js 22 以上と pnpm 9.15.0（`corepack` 推�
   写したミラーは *狭い別の型* になる。逆向き（mc-sim の都合で 1 個足す）はもっと悪く、
   ローカルでは通り、ミラー削除の日に初めて壊れる。ロスタを増やすのは mc-kernel の
   決定であってここの決定ではない（[`domain/recipe.ts`](./domain/recipe.ts) の表ヘッダ）。
+  **この手順は 1 度回った**: 足りない 8 個を値段つきで要求し、kernel が 7 個を
+  それぞれの kernel 側の理由（ドロップ規則・mob ドロップ・着火アイテム）とともに承認、
+  1 個（`crafting_table`）は却下。ロスタは 16 → 23 になり、削っていたレシピ 2 行が戻った
+  （[`docs/public-api.md`](./docs/public-api.md) §4.1-7、
+  [`docs/versioning.md`](./docs/versioning.md) §5-4）。
 
 ## ドキュメント
 

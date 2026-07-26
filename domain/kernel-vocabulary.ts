@@ -45,7 +45,7 @@
  * the next divergence fails CI rather than a frame.
  *
  * ---------------------------------------------------------------------------
- * THE SECOND EXCEPTION: `ITEM_TYPES` is mirrored WHOLE, all sixteen literals
+ * THE SECOND EXCEPTION: `ITEM_TYPES` is mirrored WHOLE, all twenty-three literals
  * ---------------------------------------------------------------------------
  *
  * For every other declaration here, "minimal" means "the names mc-sim uses".
@@ -66,8 +66,20 @@
  * `test/kernel-mirror.test.ts` pins it literally. ADDING AN ITEM HERE IS NOT A
  * DECISION THIS REPOSITORY CAN TAKE: kernel owns the roster (its
  * `docs/versioning.md` §6 classifies growing it MINOR), and mc-sim's part is to
- * ask for what it needs and to live inside the answer meanwhile. See
- * `domain/recipe.ts` for what living inside the answer cost the recipe table.
+ * ask for what it needs and to live inside the answer meanwhile.
+ *
+ * That is what happened, in both directions, and the last seven entries are the
+ * record of it: mc-sim asked for eight literals with the cost written down
+ * (`domain/recipe.ts`, `docs/public-api.md` §4.1-7), kernel granted SEVEN of them
+ * on kernel-side reasons of its own — ore and gravel drops, mob drops, and the
+ * two ignition items for the flammable capability — and declined the eighth.
+ * The seven are transcribed here in the SAME COMMIT that restores the two recipe
+ * rows, which is the only order that keeps this mirror behind its source.
+ *
+ * `crafting_table` is the declined one and is deliberately still absent: its row
+ * was replaced by a vanilla recipe of identical shape, so nothing needs the
+ * literal, and a mirror carrying an item kernel does not have is the widening
+ * hazard above with a friendly name on it.
  *
  * What is NOT mirrored, deliberately: `mc-kernel/domain/block-item.ts`
  * (`PlaceableItemType`, `itemOfBlock`, `blockOfPlaceableItem`) and the drop
@@ -164,6 +176,20 @@ export const ITEM_TYPES = [
   'stick',
   'glowstone_dust',
   'wooden_pickaxe',
+
+  // Granted to mc-sim's costed request, each with a kernel-side reason recorded
+  // beside it in `mc-kernel/domain/item-type.ts`: `coal` / `iron_ingot` /
+  // `flint` are what ore blocks and gravel drop (`BlockDropRule.item` is
+  // `ItemType | 'self'`), `gunpowder` / `blaze_powder` are mob drops, and
+  // `flint_and_steel` / `fire_charge` are the two ignition items the flammable
+  // capability names. NOT `crafting_table` — see the header.
+  'coal',
+  'iron_ingot',
+  'flint',
+  'gunpowder',
+  'blaze_powder',
+  'flint_and_steel',
+  'fire_charge',
 ] as const
 
 /**

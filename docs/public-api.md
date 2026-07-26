@@ -386,7 +386,7 @@ const craftGrid:        (width, height, items: ReadonlyArray<ItemType | undefine
 const cellAt:           (grid: CraftGrid, x: number, y: number) => Slot
 const matchRecipe:      (table: RecipeTable, grid: CraftGrid) => RecipeMatch   // 全域・表順非依存
 const conflictsIn:      (table: RecipeTable) => ReadonlyArray<RecipeConflict>
-const STARTER_RECIPES:  RecipeTable                                            // 5 件（§4.1-7）
+const STARTER_RECIPES:  RecipeTable                                            // 7 件（§4.1-7）
 
 // domain/crafting.ts
 type CraftResult =
@@ -439,9 +439,9 @@ shapeless は個数一致）ため、「材料が多いほうが具体的」と�
   同じ判定が「3x3 レシピはプレイヤーの 2x2 グリッドでは作れない」も兼ねる（別ルール不要）。
 - **鏡像**: 左右のみ。本家と同じで、火打石と打ち金は対角なので鏡像も一致する。
   **上下反転は鏡像ではない**（松明は「炭の下に棒」ではない）。受け入れると誰も書いていないレシピが増える。
-  ただし **`STARTER_RECIPES` にはもう非対称な shaped レシピが 1 件も無い**（§4.1-7）ので、
-  出荷される表はこの規則を動かさない。動かしているのは `test/recipe.test.ts` の
-  ローカル表 `MIRROR_TABLE` だけである。
+  この規則を動かしているのは **出荷される表そのもの**（`mc-sim:flint-and-steel`）である。
+  一時期は非対称な shaped が表から消えており、規則を動かしていたのは
+  `test/recipe.test.ts` のローカル表だけだった（§4.1-7）。
 
 ### 4.1-4 材料はインベントリから引く（グリッドは値であって状態ではない）
 
@@ -485,50 +485,72 @@ mx-ui は「移動」ではなく「予約」を描くことになる。
 | shapeless の重なり合う述語 | `matchesShapeless` は既にバックトラッキング割当（ソートして比較ではない）。`Tag` が入った日に貪欲法が誤答する経路を最初から塞いである |
 | 複数個まとめてクラフト | `craft` は 1 回分 |
 
-### 4.1-7 kernel 語彙への付け替えで表が **7 件から 5 件**になった
+### 4.1-7 表は 7 件 → 5 件 → **7 件**（要求は値段つきで出され、7 個が通った）
 
-`ItemId = string` を kernel の `ItemType`（閉じた 16 リテラル）に付け替えた結果、
-表の 7 件のうち 3 件が**存在しないアイテム**を名指していた:
+`ItemId = string` を kernel の `ItemType`（当時は閉じた 16 リテラル）に付け替えた結果、
+表の 7 件のうち 3 件が**存在しないアイテム**を名指していた。名指していたのは
 `IRON_INGOT` / `FLINT` / `FLINT_AND_STEEL` / `GUNPOWDER` / `BLAZE_POWDER` / `COAL` /
 `FIRE_CHARGE` / `CRAFTING_TABLE` の 8 個である。
 
-**mc-kernel に足させるのではなく、削った。** 理由は 3 つある。
+**その場では mc-kernel に足させるのではなく、削った。** 理由は 3 つあった。
 
-1. **足せない。** `ITEM_TYPES` はここにミラーしてあり、mc-dev-meta の `pnpm check:mirrors` が
-   ミラーと kernel の実体を突き合わせる。ソースより先に進んだミラーは、ミラーが防いでいる
-   ハザードそのものである。
-2. **足すべきでもない。** ロスタを 8 個ふくらませるのは、tier-2 のレシピ表を根拠に
+1. **同じコミットでは足せない。** `ITEM_TYPES` はここにミラーしてあり、mc-dev-meta の
+   `pnpm check:mirrors` がミラーと kernel の実体を突き合わせる。ソースより先に進んだミラーは、
+   ミラーが防いでいるハザードそのものである。
+2. **mc-sim の都合で足すべきでもない。** ロスタを 8 個ふくらませるのは、tier-2 のレシピ表を根拠に
    tier-1 の語彙を決めることになる。それは本プロジェクトが 2 回退けてきた
-   「推測されたロスタ」と同じ形をしている。`coal` / `iron_ingot` / `flint` には
-   kernel 側の理由（鉱石ブロックのドロップ、`BlockDropRule.item`）が来る。
-   その時に**ドロップ規則を伴って**入るのが正しい。
+   「推測されたロスタ」と同じ形をしている。**要求は出す。ただし発議は kernel 側の理由で行われる。**
 3. **削る代償が均一ではなかった。** 3 件の値段は違う。
 
-| 削った / 替えた | それが動かしていた規則 | 代償 |
-| --- | --- | --- |
-| `mc-sim:crafting-table` → `mc-sim:glowstone` に**差し替え** | shaped 2x2 対称（平行移動） | **なし。** グロウストーン（ダスト 4 個）は同じ形の本家レシピで、しかも 16 個の中に収まる。出力しか違わない行は、そもそもコンテンツだった |
-| `mc-sim:fire-charge` を**削除** | shapeless・**相異なる 3 材料**（順列） | 代替が無い。16 個の中に「相異なる 3 材料の本家 shapeless」は存在しない |
-| `mc-sim:flint-and-steel` を**削除** | shaped・**非対称**（左右鏡像） | 代替が無い。16 個の中に「非対称な本家 shaped」は存在しない |
+| 削った / 替えた | それが動かしていた規則 | 代償 | いま |
+| --- | --- | --- | --- |
+| `mc-sim:crafting-table` → `mc-sim:glowstone` に**差し替え** | shaped 2x2 対称（平行移動） | **なし。** グロウストーン（ダスト 4 個）は同じ形の本家レシピで、しかも 16 個の中に収まる。出力しか違わない行は、そもそもコンテンツだった | **差し替えたまま。** `crafting_table` は要求から外し、kernel も入れていない |
+| `mc-sim:fire-charge` を**削除** | shapeless・**相異なる 3 材料**（順列） | 代替が無い。16 個の中に「相異なる 3 材料の本家 shapeless」は存在しない | **復帰**（火薬 / ブレイズパウダー / 石炭 → 火の玉 3 個） |
+| `mc-sim:flint-and-steel` を**削除** | shaped・**非対称**（左右鏡像） | 代替が無い。16 個の中に「非対称な本家 shaped」は存在しない | **復帰**（鉄インゴット / 火打石の対角） |
 
-**表がいま示すもの:** shapeless（材料 1 個 / 同一材料 2 個）、shaped の平行移動（1x2 が 6 通り、
-2x2 が 4 通り）、穴のあるパターン（3x3 の穴は「空であること」の要求）、
-「3x3 はプレイヤーの 2x2 グリッドから作れない」、そして**曖昧性規則**
-（shaped が shapeless に勝つ・表順非依存・`conflictsIn` が空）。
+#### 要求は通った —— ただし kernel 側の理由で
 
-**表がもう示さないもの:** 左右鏡像と、相異なる 3 材料の順列。
-この 2 つは `test/recipe.test.ts` の**ローカル表**（`MIRROR_TABLE` / `PERMUTATION_TABLE`）に移した。
-規則の被覆は落ちていないが、置き場所は変わった —— そしてそれが正しい置き場所である:
+kernel は要求した 8 個のうち **7 個**を `ITEM_TYPES` に入れた（ロスタは 16 → 23）。
+入った理由は「mc-sim のレシピ表が要る」ではなく、**それぞれの kernel 側の理由**である:
+
+| 追加 | kernel 側の理由 |
+| --- | --- |
+| `coal` / `iron_ingot` / `flint` | 鉱石ブロックと砂利の**ドロップ**。`BlockDropRule.item` は `ItemType \| 'self'` なので、どのレシピが名指すより先にここに要る |
+| `gunpowder` / `blaze_powder` | mob ドロップ（規則は plan.md §3.11 で mx-gameplay、語彙は kernel） |
+| `flint_and_steel` / `fire_charge` | §3.11 が flammable 能力に対して名指す**着火アイテム 2 つ** |
+
+**`crafting_table` は要求したが入らなかった。** 上表の通りその行は同形の本家レシピに
+差し替え済みで、リテラルを必要とするものが何も無い。理由の無い語彙を足さないという判断であり、
+**この却下は正しい**。ミラー側（`domain/kernel-vocabulary.ts`）にも入れていない。
+
+#### 表がいま示すもの
+
+shapeless（材料 1 個 / 同一材料 2 個 / **相異なる 3 材料**）、shaped の平行移動（1x2 が 6 通り、
+2x2 が 4 通り）、**shaped の左右鏡像**（非対称な対角）、穴のあるパターン
+（3x3 の穴は「空であること」の要求）、「3x3 はプレイヤーの 2x2 グリッドから作れない」、
+そして**曖昧性規則**（shaped が shapeless に勝つ・表順非依存・`conflictsIn` が空）。
+
+`test/recipe.test.ts` のローカル表（`MIRROR_TABLE` / `PERMUTATION_TABLE`）は**削除した**。
+出荷される表が両方の規則を動かすようになった以上、両者が試せることは同じであり、
+残せば「マッチャの被覆」と「ゲームが作れるもの」の 2 つの表を読み分ける負担だけが残る。
+鏡像の回帰テストは**向きが反転した**: 「出荷される shaped は全部左右対称なので、
+唯一の防衛線は上の 3 件である」から「出荷される shaped に非対称なものが**在る**ので、
+鏡像分岐を消すと本物のレシピが壊れる」へ。
+
+#### 復帰させたときに守った基準
+
 `STARTER_RECIPES` は `InventoryService.recipes` で mx-ui に渡る**公開データ**なので、
-その 1 行は「このゲームで何が作れるか」の主張である。マッチャの性質を見せるために
-手近なアイテムで非対称レシピを捏造するのは、関数を試すためにコンテンツを捏造することになる。
+その 1 行は「このゲームで何が作れるか」の主張である。
+削った当時、マッチャの性質を見せるために手近なアイテムで非対称レシピを捏造する選択肢は
+あって、退けられた。**戻す側でも基準は同じ**で、戻した 2 行はどちらも本家レシピである
+—— だからこそ kernel に要求する価値があった。
+
 残っている非本家の 1 行（`mc-sim:stick-from-loose-planks`）が例外なのは、
 それが示す性質が**この表自身の性質**（出荷される表が id タイブレークに頼らず曖昧性を解ける）
-だからである。
-
-**kernel への要求（値段つき）:** 2 行を戻すには `ITEM_TYPES` に 7 個
-（`iron_ingot` / `flint` / `flint_and_steel` / `coal` / `gunpowder` / `blaze_powder` /
-`fire_charge`）。`crafting_table` は**要らない**。追加は additive・MINOR で、
-mc-sim 側は関数呼び出し 2 つ。ただし発議は kernel 側の理由で行われるべきである。
+だからである。なお 2 行の追加で新たな曖昧性は生じていない: `mc-sim:flint-and-steel` は
+`mc-sim:glowstone` と 2x2 の箱を共有するがセルが（鏡像込みで）異なり、
+`mc-sim:fire-charge` の材料多重集合は既存 2 件のどちらとも重ならない。
+`conflictsIn(STARTER_RECIPES)` は空のままで、それは**確認した結果**であって前提ではない。
 
 ## 5. まだ設計していない公開API
 

@@ -179,6 +179,12 @@ describe('the mirrored brands are kernel’s brands', () => {
  * WHEN KERNEL GROWS THE ROSTER (additive, MINOR): this list is updated in the
  * SAME commit as `domain/kernel-vocabulary.ts`, from kernel's `ITEM_TYPES`, and
  * never from what mc-sim would like to write a recipe for.
+ *
+ * That has now happened once, and it is worth reading as the procedure working
+ * rather than as a one-off: sixteen became twenty-three because kernel decided
+ * it did, with drop rules and mob drops behind each literal, and this list was
+ * re-transcribed from kernel's module in the same commit as the mirror and the
+ * two recipe rows that needed it.
  */
 describe('the mirrored item roster is kernel’s item roster', () => {
   /**
@@ -202,6 +208,13 @@ describe('the mirrored item roster is kernel’s item roster', () => {
     'stick',
     'glowstone_dust',
     'wooden_pickaxe',
+    'coal',
+    'iron_ingot',
+    'flint',
+    'gunpowder',
+    'blaze_powder',
+    'flint_and_steel',
+    'fire_charge',
   ] as const
 
   it.effect('REGRESSION: the roster is kernel’s, member for member and in order', () =>
@@ -238,23 +251,14 @@ describe('the mirrored item roster is kernel’s item roster', () => {
       for (const item of KERNEL_ITEM_TYPES) {
         expect({ item, accepted: isItemType(item) }).toStrictEqual({ item, accepted: true })
       }
-      // The trimmed recipes' items, which is the specific way this mirror would
-      // be wrong if anyone repaired `domain/recipe.ts` by widening the roster
-      // instead of by trimming the table.
-      for (const absent of [
-        'iron_ingot',
-        'flint',
-        'flint_and_steel',
-        'coal',
-        'gunpowder',
-        'blaze_powder',
-        'fire_charge',
-        'crafting_table',
-        'air',
-        'water',
-        'bedrock',
-        '',
-      ]) {
+      // `crafting_table` is the item mc-sim asked for and kernel DECLINED: its
+      // recipe row was replaced by a vanilla one of identical shape, so nothing
+      // needs the literal. It is listed first because it is the one an author
+      // restoring recipe rows is most likely to reach for, and reaching for it
+      // here — rather than in kernel — is the widening drift this file exists to
+      // catch. The seven that WERE granted moved into the roster above in the
+      // same commit that restored the two recipe rows.
+      for (const absent of ['crafting_table', 'air', 'water', 'bedrock', '']) {
         expect({ absent, accepted: isItemType(absent) }).toStrictEqual({ absent, accepted: false })
       }
     }),

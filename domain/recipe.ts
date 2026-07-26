@@ -337,15 +337,14 @@ const shapedFitsAt = (
  * a torch is coal above a stick and never a stick above coal — and accepting one
  * would silently create recipes nobody wrote.
  *
- * NOTE that `STARTER_RECIPES` no longer contains an asymmetric shaped recipe, so
- * nothing in the shipped table can tell the two halves of this function apart:
- * every pattern in it is its own mirror. The rule is exercised by a local table
- * in `test/recipe.test.ts` instead, and the table header explains why the recipe
- * that used to do it (vanilla's diagonal flint and steel) could not be kept.
- * A rule with no case in the shipped data is a rule that silently stops working,
- * so this note is load-bearing: if the mirror is ever deleted as unused, that
- * test is the only thing standing between here and a recipe nobody can craft
- * left-handed.
+ * The SHIPPED table tells the two halves of this function apart:
+ * `mc-sim:flint-and-steel` is a diagonal, so its mirror is a different layout
+ * and deleting either `shapedFitsAt` call fails on real data rather than only on
+ * a fixture. That was not true for a while — kernel's roster had no asymmetric
+ * vanilla recipe in it and the row had been trimmed — and the note is kept in
+ * this shape because the hazard is worth naming: a rule with no case in the
+ * shipped data is a rule that silently stops working, and the game where that
+ * happens is one where a left-handed player cannot craft.
  */
 const matchesShaped = (recipe: ShapedRecipe, grid: CraftGrid): boolean => {
   const bounds = occupiedBounds(grid)
@@ -592,73 +591,59 @@ export const conflictsIn = (table: RecipeTable): ReadonlyArray<RecipeConflict> =
 // ---------------------------------------------------------------------------
 
 /**
- * A deliberately small table, and SMALLER THAN IT WAS.
+ * A deliberately small table.
  *
  * It is here to exercise the MODEL and not to be a content database. A large
  * invented table would be content, and content belongs next to the block table
  * discussion in mc-kernel (docs/design-notes.md DN-11), not in the module that
  * decides how matching works.
  *
- * Item ids are now members of kernel's `ITEM_TYPES` (mirrored in
+ * Item ids are members of kernel's `ITEM_TYPES` (mirrored in
  * `./kernel-vocabulary`), so a misspelled row does not compile. They are still
  * DATA, not behaviour: nothing in this file branches on a literal item id, which
  * is the trap DN-11 records.
  *
  * ---------------------------------------------------------------------------
- * What the repoint cost, and why the answer was to trim rather than to ask
+ * The two rows the repoint took, and what asking got back
  * ---------------------------------------------------------------------------
  *
- * Seven of these rows named items kernel's roster does not have: `IRON_INGOT`,
- * `FLINT`, `FLINT_AND_STEEL`, `GUNPOWDER`, `BLAZE_POWDER`, `COAL`,
- * `FIRE_CHARGE` and `CRAFTING_TABLE`. Kernel declined to add them and said why:
- * guessing eight items into the tier-1 vocabulary to spare a consumer a decision
- * is the guessed-roster failure the organisation has argued against twice.
- *
- * Asking anyway was not available in the same commit either — `ITEM_TYPES` is
- * mirrored here, mc-dev-meta's `pnpm check:mirrors` compares the mirror against
- * kernel's real module, and a mirror that runs ahead of its source is the exact
- * hazard the mirror exists to prevent. So the table lives inside the sixteen
- * items that exist, and the request to kernel is a request, recorded below.
- *
- * The trim was not uniform, because the three rows were not worth the same:
+ * Repointing this table onto kernel's `ItemType` cost it three rows, because
+ * they named items the roster did not have. One was replaced and two were
+ * trimmed, and the two were not the same kind of loss:
  *
  *   - `mc-sim:crafting-table` (2x2 symmetric, the translation case) cost
- *     NOTHING. Vanilla's glowstone block is the same shape over items kernel
- *     already has, so the demonstration survives with a different output and one
- *     fewer item to ask for. A row whose only distinction was its output was a
- *     row that was content.
- *   - `mc-sim:fire-charge` (shapeless, three DISTINCT ingredients) and
- *     `mc-sim:flint-and-steel` (shaped, ASYMMETRIC, so its mirror is a different
- *     layout) cost something real: nothing in kernel's sixteen items is a
- *     vanilla recipe of either shape, and both are rules `matchRecipe`
- *     implements. They now live in `test/recipe.test.ts` as local tables.
+ *     NOTHING and stays replaced. Vanilla's glowstone block is the same shape
+ *     over items kernel already had, so the demonstration survived with a
+ *     different output. A row whose only distinction was its output was a row
+ *     that was content, and `crafting_table` is therefore NOT in the roster: it
+ *     was requested, declined, and the decline was right.
+ *   - `mc-sim:flint-and-steel` (shaped, ASYMMETRIC) and `mc-sim:fire-charge`
+ *     (shapeless, three DISTINCT ingredients) cost something real. They are the
+ *     only vanilla recipes of either shape, nothing in the sixteen items then
+ *     available was asymmetric or three-distinct, and both are rules
+ *     `matchRecipe` implements. They lived in `test/recipe.test.ts` as local
+ *     tables for as long as the literals did not exist.
  *
- * That relocation is the honest place for them rather than a consolation prize.
- * `STARTER_RECIPES` is PUBLISHED — `InventoryService.recipes` hands it to mx-ui's
- * recipe book — so a row in it is a claim about what this game can make, and
- * inventing an asymmetric recipe out of `torch` and `gravel` to keep a matcher
- * property on display would be inventing content to test a function. Permutation
- * and mirroring are properties of the MATCHER and can be demonstrated on any
- * table; the one non-vanilla row that remains is here because its property —
- * that the SHIPPED table resolves an ambiguity without leaning on the id
+ * Both are BACK, and on the right evidence. mc-sim asked kernel for the seven
+ * literals with the cost written down; kernel granted all seven on kernel-side
+ * reasons of its own — `coal` / `iron_ingot` / `flint` are what ore blocks and
+ * gravel drop and belong in `BlockDropRule.item` before any recipe names them,
+ * `gunpowder` / `blaze_powder` are mob drops, `flint_and_steel` / `fire_charge`
+ * are the two ignition items the flammable capability names. That ordering is
+ * the point and not a formality: a recipe table in a tier-2 repository is not
+ * evidence about kernel's vocabulary, and a block that has to drop something is.
+ *
+ * The bar the trim set is the bar the restoration keeps. `STARTER_RECIPES` is
+ * PUBLISHED — `InventoryService.recipes` hands it to mx-ui's recipe book — so a
+ * row in it is a claim about what this game can make. Both rows below are
+ * vanilla, which is exactly why they were worth asking for; inventing an
+ * asymmetric recipe out of `torch` and `gravel` to keep a matcher property on
+ * display would have been inventing content to test a function, and that option
+ * was available the whole time and was correctly refused.
+ *
+ * The one non-vanilla row remains for the reason it always had: the property it
+ * shows — that the SHIPPED table resolves an ambiguity without leaning on the id
  * tie-break — is a property of this table and of nothing else.
- *
- * ---------------------------------------------------------------------------
- * The request to kernel, costed
- * ---------------------------------------------------------------------------
- *
- * Restoring the two rows needs seven literals in `ITEM_TYPES`: `iron_ingot`,
- * `flint`, `flint_and_steel`, `coal`, `gunpowder`, `blaze_powder`,
- * `fire_charge`. NOT `crafting_table`, which is replaced above and should stay
- * out. It is additive and MINOR (kernel's docs/versioning.md §6), and mc-sim's
- * side of it is two `shapelessRecipe`/`shapedRecipe` calls.
- *
- * But it should not land on mc-sim's say-so. `coal`, `iron_ingot` and `flint`
- * have kernel-side reasons coming — they are what `coal_ore`, `iron_ore` and
- * `gravel` drop, and `BlockDropRule.item` is `ItemType | 'self'` — and arriving
- * with a drop rule behind them is the difference between a roster and a guess.
- * A recipe table in a tier-2 repository is not evidence about kernel's
- * vocabulary; a block that has to drop something is.
  */
 export const STARTER_RECIPES: RecipeTable = [
   // Shapeless, one ingredient: the log that becomes four planks.
@@ -684,6 +669,31 @@ export const STARTER_RECIPES: RecipeTable = [
   // Shaped 2x2, symmetric: the translation case. Four dust anywhere in a 3x3.
   // Vanilla, and the replacement for the crafting table discussed above.
   shapedRecipe('mc-sim:glowstone', ['DD', 'DD'], { D: 'glowstone_dust' }, itemStack('glowstone', 1)),
+
+  /*
+   * Shaped 2x2, ASYMMETRIC: the mirror case, and the only row that can tell the
+   * two halves of `matchesShaped` apart. Vanilla, verbatim — an iron ingot above
+   * and left of a flint, which is why a right-handed player and a left-handed
+   * one both get a flint and steel.
+   *
+   * Its pattern shares the 2x2 box with `mc-sim:glowstone` and is not a conflict:
+   * the two differ in their cells, so no grid matches both, and `conflictsIn`
+   * says so rather than being told.
+   */
+  shapedRecipe(
+    'mc-sim:flint-and-steel',
+    ['I ', ' F'],
+    { I: 'iron_ingot', F: 'flint' },
+    itemStack('flint_and_steel', 1),
+  ),
+
+  // Shapeless with three DISTINCT ingredients: permutation with something to
+  // permute (six arrangements, not one). Vanilla's fire charge.
+  shapelessRecipe(
+    'mc-sim:fire-charge',
+    ['gunpowder', 'blaze_powder', 'coal'],
+    itemStack('fire_charge', 3),
+  ),
 
   // Shaped 3x3 with holes: the pattern that fills the grid, so it translates
   // nowhere, and whose empty cells must stay empty.
