@@ -263,16 +263,16 @@ const inventoryProbe = Effect.gen(function* () {
   const shrunk = yield* makeInventoryService()
   const restoreLeftover = yield* shrunk.restore({ slots: [undefined, undefined] })
   const restoredSlotCount = (yield* shrunk.snapshot).slots.length
-  const leftover = yield* shrunk.add('STONE', 1000)
-  const held = yield* shrunk.countOf('STONE')
+  const leftover = yield* shrunk.add('stone', 1000)
+  const held = yield* shrunk.countOf('stone')
 
   const overfull: Inventory = {
     slots: [
-      { item: 'STONE', count: (200 as unknown) as StackCount },
+      { item: 'stone', count: (200 as unknown) as StackCount },
       ...emptyInventory().slots.slice(1),
     ],
   }
-  const removal = attempt(() => removeItem(overfull, 'STONE', 1))
+  const removal = attempt(() => removeItem(overfull, 'stone', 1))
   const addition = attempt(() => {
     const service = emptyInventory()
     return service
@@ -282,13 +282,13 @@ const inventoryProbe = Effect.gen(function* () {
   const normalised = normaliseInventory(overfull)
   const usable = yield* makeInventoryService()
   yield* usable.restore(overfull)
-  const removedFromRepaired = yield* usable.remove('STONE', 70)
+  const removedFromRepaired = yield* usable.remove('stone', 70)
 
   return [
     ...section('INV-SLOTS', 'InventoryService.restore re-establishes the slot count.'),
     `   INVENTORY_SLOT_COUNT   ${String(INVENTORY_SLOT_COUNT)}`,
     `   restore({ slots: [undefined, undefined] })  ->  ${String(restoredSlotCount)} slots, leftover ${String(restoreLeftover)}   (was a 2-slot player)`,
-    `   add('STONE', 1000)     accepted ${String(held)}, leftover ${String(leftover)}   (was accepted 128, leftover 872)`,
+    `   add('stone', 1000)     accepted ${String(held)}, leftover ${String(leftover)}   (was accepted 128, leftover 872)`,
     '',
     '   SIM-2 FIXED. A save written by a build with a different slot count silently RESIZED the',
     '   player, and a snapshot crosses a version boundary — exactly when a slot count changes. 872',
@@ -306,12 +306,12 @@ const inventoryProbe = Effect.gen(function* () {
       'removeItem writes a derived count, and StackCount is a Brand.refined constructor.',
     ),
     `   MAX_STACK_COUNT        ${String(MAX_STACK_COUNT)}`,
-    `   a restored slot holding 200 STONE`,
-    `   removeItem(inventory, 'STONE', 1)   ->   ${removal.ok ? 'returned normally' : 'THREW (Brand refinement rejected 199)'}   (was: THREW)`,
+    `   a restored slot holding 200 stone`,
+    `   removeItem(inventory, 'stone', 1)   ->   ${removal.ok ? 'returned normally' : 'THREW (Brand refinement rejected 199)'}   (was: THREW)`,
     `   emptyInventory() length             ->   ${String(addition.ok ? addition.value.slots.length : 'threw')}`,
     '',
-    `   normaliseInventory(that inventory)  ->   ${String(normalised.inventory.slots.length)} slots, all 200 STONE kept, leftover ${String(normalised.leftover)}`,
-    `   restore(it) then remove('STONE', 70) ->  removed ${String(removedFromRepaired)}   (the service path, end to end)`,
+    `   normaliseInventory(that inventory)  ->   ${String(normalised.inventory.slots.length)} slots, all 200 stone kept, leftover ${String(normalised.leftover)}`,
+    `   restore(it) then remove('stone', 70) ->  removed ${String(removedFromRepaired)}   (the service path, end to end)`,
     '',
     '   SIM-3 FIXED. domain/inventory.ts is documented as pure and total — every transition',
     '   "returns the resulting inventory plus whatever the caller has to know about it". removeItem',
@@ -324,7 +324,7 @@ const inventoryProbe = Effect.gen(function* () {
     '   clamp, so the module is total on an inventory it did not build — including one holding NaN,',
     '   which used to poison `removed` with arithmetic rather than a throw. The clamp DOES lose the',
     '   surplus, which is why it is the total path and not the sanctioned one: normaliseInventory',
-    '   spills 200 STONE across four slots and reports what will not fit, and restore() runs it',
+    '   spills 200 stone across four slots and reports what will not fit, and restore() runs it',
     '   before a slot like this can exist. Pinned by test/inventory.test.ts',
     '   `removeItem does not throw on a slot holding more than MAX_STACK_COUNT` and',
     '   `an over-full slot keeps a full stack and the surplus spills into free slots`.',

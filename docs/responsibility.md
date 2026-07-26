@@ -24,9 +24,46 @@ plan.md §2.3-1 の分類でいう **名詞**。
 | 時間 | `TimeService`。tick カウンタ、昼夜、月齢 | 実装済 `application/time-service.ts` |
 | ゲームループ | フレーム駆動、開始/停止、再入可能な初期化 | 実装済 `application/game-loop.ts` |
 | 自動保存 | いつ保存するか（何を書くかは mc-save のフォーマット定義） | 実装済 `application/autosave.ts` |
+| **stage 登録** | `sim:physics` 1 本。`after` 制約は **0 本**（§2.1） | 実装済 `stages/registration.ts` |
 | 設定状態 | グラフィックス / 音量 / 操作の**値の保持**（画面は mx-ui、適用は各所） | 未実装 |
 | ~~チャンクダーティ通知~~ | **mc-worldgen に移った**（`ChunkStore.subscribeDirty`）。mc-sim は中継しない — §3.3 | — |
 | レシピ / クラフト状態 | レシピ表とクラフト結果の状態（画面は mx-ui） | 実装済 `domain/recipe.ts` / `domain/crafting.ts` / `application/inventory-service.ts`。§3.1 |
+
+### 2.1 `sim:physics` —— なぜ 1 本で、なぜ `after` が 0 本なのか
+
+**`sim:physics` はロスターの中で唯一、複数リポジトリから名指しされている stage である。**
+mx-gameplay・mx-redstone・mx-ui・mc-render の 4 者が `after: [StageId('sim:physics')]` を宣言しており、
+これは**ロスター全体のリポジトリ間順序エッジの全部**にあたる（他の 8 本はすべて自リポジトリ内）。
+`stages/` が無かったあいだ、この 4 本は 4 本とも dangling として捨てられていた。
+捨てられていることは、各リポジトリからは自分の 1 本しか見えないので誰にも見えなかった。
+
+**フレームは動かない。** mc-compose の resolver に現ロスター + `sim:physics` を通した実測では、
+`sim:physics` は 1 番（`render:input` の直後、plan.md §4.2 の空だった `simulation:physics` 枠）に入り、
+**他の 13 本の順序は 1 つも変わらず**、dangling が 4 本から 0 本になる。
+変わったのは順序ではなく、「宣言された制約が満たされている」ことのほうである。
+
+**stage は 1 本だけ。** フレーム毎に起きうるものは 3 つあるが、stage はそのうち 1 つである。
+
+| もの | 判定 | 理由 |
+| --- | --- | --- |
+| `application/game-loop.ts` | stage では**ない** | stage を**呼ぶ**側。順序表から組み立てた `FrameHandler` を駆動する |
+| `application/autosave.ts` | stage では**ない** | `Schedule.spaced` の daemon。フレームではなく**時間**で動く。毎フレーム保存は別物であって小さい版ではない |
+| ワールドを 1 フレーム進める | **stage** | 「フレーム毎にちょうど 1 回」であり、それは stage の定義そのもの |
+
+**時刻の前進（`TimeService.advance(dt)`）はこの stage の中にある。**
+mx-gameplay が `stages/registration.ts:276-284` で「時計を進めるのは mc-sim だ」と明記しているため、
+どこかの mc-sim の stage に置く必要がある。2 本目を作る案は 2 通りとも実測で悪い:
+`sim:time-weather` は `gameplay:time-weather` と**同じフェーズ**に入り、
+フェーズ内順序は辞書順なので gameplay が先に走って 1 フレーム古い時刻を読む
+（`before` が無いので mc-sim 側では直せない）。`sim:time` 等はどのフェーズにも一致せず
+**フレーム末尾**へ落ちる。`sim:physics` は骨格上シミュレーションの先頭なので、
+時刻を読む後続すべてが「そのフレームの時刻」を読む。詳細は `stages/registration.ts` の冒頭。
+
+**`after` は 0 本。** 唯一の候補 `render:input` は宣言しない。(1) 全順序の主張は
+plan.md §2.3-3 により mc-compose のもの、(2) mc-render は mc-sim に依存しているので逆向きエッジは
+循環であり、文字列である `after` は `pnpm check:deps` をすり抜けてそれをやってしまう、
+(3) 入力 stage を 1 本も登録しないビルド（シナリオテスト、ヘッドレスサーバ）でも
+シミュレーションは正しい ——つまり本リポジトリの制約ではない。
 
 ## 3. 非スコープ（明示的に持たない）
 
@@ -68,10 +105,13 @@ plan.md §7「sim(状態) + gameplay(ルール)」。
 **クラフト。** レシピ表とクラフト結果の状態は mc-sim、画面は mx-ui（plan.md §7）。**実装済。**
 以下は「最初の実装時に決めて本文書に追記すること」への回答である。
 
-- **レシピ表は名詞なのでここ。** `STARTER_RECIPES` は 7 件だけで、モデル（shaped / shapeless /
-  平行移動 / 鏡像 / 順列 / 曖昧性）を動かすためにあり、コンテンツのデータベースではない。
+- **レシピ表は名詞なのでここ。** `STARTER_RECIPES` は **5 件**だけで、モデル（shaped / shapeless /
+  平行移動 / 穴 / 曖昧性）を動かすためにあり、コンテンツのデータベースではない。
   大きな捏造表は構造ではなくコンテンツであり、コンテンツは mc-kernel のブロック表の議論の隣にある
   （[design-notes.md](./design-notes.md) DN-11）。
+  **鏡像と「相異なる 3 材料の順列」はもうこの表では動かない。** kernel の 16 アイテムの中に
+  該当する本家レシピが無く、見せるためだけに捏造すれば公開データにコンテンツを混ぜることになるので、
+  `test/recipe.test.ts` のローカル表に移した（[public-api.md](./public-api.md) §4.1-7）。
 - **一致判定（`matchRecipe`）は全域かつ表順非依存。** 曖昧性は「shaped > shapeless、
   同順位は id 辞書順」で解決し、`conflictsIn` が同順位の衝突を報告する。
   根拠は [public-api.md](./public-api.md) §4.1-2。
@@ -79,9 +119,12 @@ plan.md §7「sim(状態) + gameplay(ルール)」。
   保持すると 36 スロットと二重管理になる。§4.1-4 に代償ごと書いてある。
 - **`craft` は `InventoryService` に置いた。** 原子性は 1 つの Ref でしか成立せず、
   Ref を持っているのはインベントリだからである（§4.1-5、DN-07）。サービスは増えていない。
-- **アイテム語彙は増やしていない。** レシピ表の `'OAK_PLANKS'` 等は `domain/inventory.ts` の
-  暫定 `ItemId`（= `string`）そのもので、mc-kernel の `ItemType` が公開されたら
-  リテラル union のメンバになり、表は型検査に落ちる。それが望ましい失敗である。
+- **アイテム語彙は増やしていない。いまは増やせない。** レシピ表の `'oak_planks'` 等は
+  mc-kernel の `ItemType`（閉じたリテラル union）のメンバで、`domain/kernel-vocabulary.ts` に
+  ミラーしてある。望ましい失敗は実際に起きた —— 表の 3 件が存在しないアイテムを名指していて
+  型検査に落ち、**kernel に 8 個足させるのではなく削った**（[public-api.md](./public-api.md) §4.1-7）。
+  ロスタを決めるのは kernel であり、tier-2 のレシピ表を根拠に tier-1 の語彙を広げるのは
+  本プロジェクトが 2 回退けた「推測されたロスタ」と同じ形である。
   判定コードは**アイテム ID を名指しで分岐しない**（DN-11）—— 名指しがあるのはデータ側だけ。
 
 **かまど / 醸造 / 金床 / エンチャントは入っていない。** グリッド形ではないので `Recipe` の

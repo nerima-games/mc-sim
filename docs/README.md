@@ -57,6 +57,9 @@ mc-render / mc-playground-kit / mx-gameplay / mx-redstone / mx-ui / mx-multiplay
 かまど/醸造/金床/エンチャント、リポジトリ内 workspace 分割（entity / inventory / game）。
 APIロックファイルは**ある** —— `api-lock.md` と `pnpm api:check`（[public-api.md](./public-api.md) §6）。
 `domain/kernel-vocabulary.ts` は mc-kernel 公開までの暫定ミラーであり、公開後に削除する。
-ミラーは最小だが Clock Port だけは丸ごと写してある（`ClockPort` は文字列キーで解決される `Context.Tag` であり、
-狭いミラーは実行時ハザードになる）。`test/kernel-mirror.test.ts` が形を固定している
-—— [versioning.md](./versioning.md) §5-1、[testing.md](./testing.md) §3.1。
+ミラーは最小だが Clock Port とアイテム語彙（`ITEM_TYPES` / `ItemType` / `isItemType`）だけは丸ごと写してある
+（前者は文字列キーで解決される `Context.Tag` なので狭いミラーが実行時ハザードになり、
+後者は閉じたリテラル union なのでメンバの集合そのものが型である）。
+`test/kernel-mirror.test.ts` が形とロスタを固定している
+—— [versioning.md](./versioning.md) §5-1 / §5-2、[testing.md](./testing.md) §3.1。
+語彙の付け替えでレシピ表が 7 件から 5 件になった経緯は [public-api.md](./public-api.md) §4.1-7。

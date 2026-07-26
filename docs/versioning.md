@@ -122,6 +122,37 @@ mc-playground-kit は mc-sim に依存するので、両者は同じバンドル
 ミラーの drift が「削除して import に置き換えれば通る」という約束を破る唯一の経路であり、
 その約束はこの節の 3 手順そのものである。
 
+### 5-2. 2 つ目の例外 — `ITEM_TYPES` は**16 件すべて**ミラーする
+
+閉じたリテラル union では、**メンバの集合そのものが型**である。
+mc-sim のレシピ表が使う 6 個だけを写したミラーは「語彙が少ない」ではなく*狭い別の型*で、
+`isItemType('sand')` がここでは `false`、kernel では `true` になる。
+逆向き（mc-sim の都合でロスタに 1 個足す）はもっと悪い: ローカルでは通り、
+kernel の `ItemType` が拒否するレシピ表を出荷し、**壊れるのはミラーを削除する日**である
+—— この節が「何も起きない日」だと約束している、まさにその日である。
+
+したがってロスタを増減させるのは mc-kernel の決定であって本リポジトリの決定ではない。
+kernel 側では additive・MINOR、mc-sim 側では**ミラーとテストを同じコミットで更新する**だけの作業になる。
+実際に足りなかった 7 個の要求は [public-api.md](./public-api.md) §4.1-7 に値段つきで書いてある。
+
+### 5-3. この付け替えは mc-sim の公開面を**壊した**（ウィンドウがリセットされた）
+
+mc-kernel が `0.2.0` に上がり `api-lock.md` が変わって §3 の 4 週間ウィンドウがリセットされたのと
+同じことが、ここでも起きている。`domain/kernel-vocabulary.ts` はミラーであって公開面ではないが、
+**ミラーの型が mc-sim の署名に現れている**ためである。
+
+| 差分 | 種別 |
+| --- | --- |
+| `ItemId`（公開型、`= string`）を**削除** | 破壊的 |
+| `add` / `remove` / `countOf` / `addItem` / `removeItem` / `countOf` / `itemStack` / `exactly` / `ingredientMatches` / `shapedRecipe` / `shapelessRecipe` / `craftGrid` / `ingredientCost` の `ItemId` → `ItemType`（`string` → 閉じた union） | 破壊的（入力が狭くなる） |
+| `ItemStack.item` / `Ingredient.item` / `MissingIngredient.item` の型 | 破壊的 |
+| `NormaliseOutcome.discarded` を追加 | 追加（ただし返り値型の変更なので lock に出る） |
+| `STARTER_RECIPES` の内容が 7 件 → 5 件 | 型は不変・**値**の変更（lock には出ない。[public-api.md](./public-api.md) §4.1-7） |
+
+`exported declarations` は 112 → 111、`supporting declarations` は 22 → 24
+（`ITEM_TYPES` と `ItemType` が署名から参照されるため）。
+**§3 の条件 2 の起点は、このコミットに移動する。**
+
 なお `index.ts` はこのミラーを **re-export していない**。consumer が mc-sim 経由で
 kernel の語彙を取ると真実の出所が 2 つになり、上記の削除が破壊的変更に化けるためである。
 

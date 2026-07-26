@@ -11,6 +11,7 @@
 import { Context, Effect, Layer, Ref } from 'effect'
 import * as Craft from '../domain/crafting'
 import * as Inv from '../domain/inventory'
+import type { ItemType } from '../domain/kernel-vocabulary'
 import * as Recipe from '../domain/recipe'
 
 export type InventoryServiceApi = {
@@ -19,11 +20,36 @@ export type InventoryServiceApi = {
    *
    * A non-zero leftover is not an error — see `domain/inventory.ts`. The caller
    * in mx-gameplay turns it into a dropped-item entity.
+   *
+   * ---------------------------------------------------------------------------
+   * THIS IS THE MINING SEAM, and it did not need a new method
+   * ---------------------------------------------------------------------------
+   *
+   * "Mining a block puts an item in your inventory" is the join mc-compose could
+   * not write, and the reason was never a missing method here: it was that
+   * kernel's `dropOfBlockId(id, context?)` answers with a `BlockDrop` whose
+   * `item` is an `ItemType`, and this signature took a `string`, so the two ends
+   * met at a type that could not be wrong and therefore could not be right
+   * either. Now they are the same type, and the host's half is
+   *
+   *   const drop = dropOfBlockId(brokenBlockId, { heldTier })
+   *   if (drop !== undefined) yield* inventory.add(drop.item, drop.count)
+   *
+   * which typechecks end to end with no adapter and no cast.
+   *
+   * NOTHING WAS ADDED HERE FOR IT, deliberately. An `addDrop(drop: BlockDrop)`
+   * would put the verb in the noun tier (plan.md §2.3-1 gives mining to
+   * mx-gameplay), would make mc-sim mirror `BlockDrop`, `HarvestContext` and the
+   * tool gate it has no other use for, and would grow the surface plan.md §8
+   * names as this repository's top risk — all to save a host one `if`. The
+   * fortune roll, the tool gate and the "did it drop at all" decision are
+   * gameplay's, and `BlockDrop.affectedByFortune` exists so gameplay can make
+   * them. mc-sim's part is to be told a number.
    */
-  readonly add: (item: Inv.ItemId, count: number) => Effect.Effect<number>
+  readonly add: (item: ItemType, count: number) => Effect.Effect<number>
   /** Take items. Resolves to the number actually taken. */
-  readonly remove: (item: Inv.ItemId, count: number) => Effect.Effect<number>
-  readonly countOf: (item: Inv.ItemId) => Effect.Effect<number>
+  readonly remove: (item: ItemType, count: number) => Effect.Effect<number>
+  readonly countOf: (item: ItemType) => Effect.Effect<number>
   readonly snapshot: Effect.Effect<Inv.Inventory>
   /**
    * Install a saved inventory. THE WORLD-LOAD PATH. Resolves to the number of
@@ -41,6 +67,16 @@ export type InventoryServiceApi = {
    * Resolving to the leftover rather than `void` is the same decision `add`
    * makes: a shrinking slot count is an ordinary game state whose consequence
    * is items on the ground, and swallowing the number here would delete them.
+   *
+   * WHAT THIS NUMBER IS NOT. `Inv.normaliseInventory` now also DISCARDS slots
+   * whose item is not in kernel's `ITEM_TYPES` — a save from a build with a
+   * different roster — and reports them as `NormaliseOutcome.discarded`. That
+   * count is not folded in here and not returned, because the two numbers ask
+   * the caller for different things: a leftover becomes an entity on the
+   * ground, and a discard cannot, since there is no such item to spawn. A host
+   * that wants to tell the player is not blocked — `normaliseInventory` is
+   * public, pure, and returns both numbers, so calling it before `restore`
+   * gives the full accounting and costs one repair that is idempotent.
    */
   readonly restore: (inventory: Inv.Inventory) => Effect.Effect<number>
   /**

@@ -38,14 +38,16 @@
  * scenarios drive.
  */
 
+import type { ItemType } from '../../domain/kernel-vocabulary'
+
 /** One scripted action, applied at the top of a frame, before the frame is submitted. */
 export type ScriptedAction =
   /** Rotate the view. Pitch is clamped by the library; yaw is not wrapped. */
   | { readonly kind: 'look'; readonly deltaYaw: number; readonly deltaPitch: number }
   /** Teleport. `moveTo` is all mc-sim has — see the module header. */
   | { readonly kind: 'moveTo'; readonly x: number; readonly y: number; readonly z: number }
-  | { readonly kind: 'mine'; readonly item: string; readonly count: number }
-  | { readonly kind: 'spend'; readonly item: string; readonly count: number }
+  | { readonly kind: 'mine'; readonly item: ItemType; readonly count: number }
+  | { readonly kind: 'spend'; readonly item: ItemType; readonly count: number }
   | { readonly kind: 'setDayLength'; readonly seconds: number }
   | { readonly kind: 'setTimeOfDay'; readonly fraction: number }
   | { readonly kind: 'configureDay'; readonly seconds: number; readonly fraction: number }
@@ -55,7 +57,7 @@ export type ScriptedAction =
   | {
       readonly kind: 'restoreInventory'
       readonly slots: number
-      readonly stack: { readonly item: string; readonly count: number } | undefined
+      readonly stack: { readonly item: ItemType; readonly count: number } | undefined
     }
   /**
    * The injected monotonic clock jumps forward without frames being submitted:
@@ -126,21 +128,21 @@ const MINE_AND_NIGHTFALL: Scenario = {
       deltaYaw: Math.PI / 2,
       deltaPitch: -0.4,
     }),
-    step(60, 'first block', { kind: 'mine', item: 'STONE', count: 1 }),
+    step(60, 'first block', { kind: 'mine', item: 'stone', count: 1 }),
     step(75, 'second block: tops up the SAME slot, it does not open a new one', {
       kind: 'mine',
-      item: 'STONE',
+      item: 'stone',
       count: 1,
     }),
-    step(90, 'a different item takes the next free slot', { kind: 'mine', item: 'DIRT', count: 3 }),
+    step(90, 'a different item takes the next free slot', { kind: 'mine', item: 'dirt', count: 3 }),
     step(
       120,
       'a creative-sized drop: 130 spreads over three slots as 64 + 64 + 2',
-      { kind: 'mine', item: 'COBBLESTONE', count: 130 },
+      { kind: 'mine', item: 'cobblestone', count: 130 },
     ),
     step(200, 'spend more than is held: removed is 2, not 5, and it is not an error', {
       kind: 'spend',
-      item: 'STONE',
+      item: 'stone',
       count: 5,
     }),
     step(240, 'look up hard: pitch clamps at PI/2 - 0.01, yaw does not wrap', {
@@ -320,12 +322,12 @@ const SECOND_WORLD: Scenario = {
     step(0, 'first world', { kind: 'configureDay', seconds: 600, fraction: 0.25 }),
     step(20, 'something to inherit, if anything were going to be inherited', {
       kind: 'mine',
-      item: 'DIAMOND',
+      item: 'wooden_pickaxe',
       count: 5,
     }),
     step(60, 'and a pose to inherit', { kind: 'moveTo', x: 128, y: 12, z: -64 }),
     step(120, 'save & quit → load', { kind: 'secondWorld' }),
-    step(150, 'second world mines its own', { kind: 'mine', item: 'STONE', count: 2 }),
+    step(150, 'second world mines its own', { kind: 'mine', item: 'stone', count: 2 }),
     step(240, 'stop and stay stopped: submitFrame is a silent no-op after this', {
       kind: 'stopLoop',
     }),
@@ -369,7 +371,7 @@ const CORRUPT_SAVE: Scenario = {
       seconds: 600,
       fraction: 0.3,
     }),
-    step(30, 'ordinary mining', { kind: 'mine', item: 'STONE', count: 20 }),
+    step(30, 'ordinary mining', { kind: 'mine', item: 'stone', count: 20 }),
     step(60, 'a truncated save: dayLengthTicks 0', {
       kind: 'restoreTime',
       ticks: 0,
@@ -387,17 +389,17 @@ const CORRUPT_SAVE: Scenario = {
     }),
     step(210, 'the player still has 36 slots, so all 1000 fit', {
       kind: 'mine',
-      item: 'STONE',
+      item: 'stone',
       count: 1000,
     }),
     step(240, 'a slot holding 200 of a 64-max item', {
       kind: 'restoreInventory',
       slots: 36,
-      stack: { item: 'STONE', count: 200 },
+      stack: { item: 'stone', count: 200 },
     }),
     step(270, 'remove one. 199 is no longer an unrepresentable remainder', {
       kind: 'spend',
-      item: 'STONE',
+      item: 'stone',
       count: 1,
     }),
   ],

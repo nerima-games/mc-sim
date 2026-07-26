@@ -29,14 +29,8 @@
  * it arrives as inventory state with its own drop-on-close rule — not as a
  * change to this function.
  */
-import {
-  addItem,
-  countOf,
-  Inventory,
-  ItemId,
-  ItemStack,
-  removeItem,
-} from './inventory'
+import { addItem, countOf, Inventory, ItemStack, removeItem } from './inventory'
+import { ItemType } from './kernel-vocabulary'
 import { CraftGrid, cellAt, matchRecipe, RecipeId, RecipeTable } from './recipe'
 
 /**
@@ -46,8 +40,8 @@ import { CraftGrid, cellAt, matchRecipe, RecipeId, RecipeTable } from './recipe'
  * order ingredients are debited and the order `MissingIngredients` reports them —
  * is deterministic.
  */
-export const ingredientCost = (grid: CraftGrid): ReadonlyMap<ItemId, number> => {
-  const cost = new Map<ItemId, number>()
+export const ingredientCost = (grid: CraftGrid): ReadonlyMap<ItemType, number> => {
+  const cost = new Map<ItemType, number>()
   for (let y = 0; y < grid.height; y += 1) {
     for (let x = 0; x < grid.width; x += 1) {
       const slot = cellAt(grid, x, y)
@@ -60,7 +54,7 @@ export const ingredientCost = (grid: CraftGrid): ReadonlyMap<ItemId, number> => 
 }
 
 export type MissingIngredient = {
-  readonly item: ItemId
+  readonly item: ItemType
   /** How many more are needed than the inventory holds. Always positive. */
   readonly short: number
 }

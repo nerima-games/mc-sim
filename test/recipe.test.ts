@@ -7,7 +7,8 @@
  */
 import { describe, expect, it } from '@effect/vitest'
 import { Effect } from 'effect'
-import { ItemId, itemStack } from '../domain/inventory'
+import { itemStack } from '../domain/inventory'
+import { ItemType } from '../domain/kernel-vocabulary'
 import {
   cellAt,
   conflictsIn,
@@ -24,16 +25,27 @@ import {
 // Fixtures
 // ---------------------------------------------------------------------------
 
-const LEGEND: Readonly<Record<string, ItemId>> = {
-  P: 'OAK_PLANKS',
-  S: 'STICK',
-  I: 'IRON_INGOT',
-  F: 'FLINT',
-  L: 'OAK_LOG',
-  G: 'GUNPOWDER',
-  B: 'BLAZE_POWDER',
-  C: 'COAL',
-  D: 'DIRT',
+/**
+ * Every letter is a member of kernel's `ITEM_TYPES`, because `ItemType` is a
+ * closed union now and a legend of invented names would not compile. That is
+ * the point of the repoint and it is worth noticing here: this legend used to
+ * be free to say `'FLINT'`.
+ *
+ * `A`, `B` and `C` are not the items of any recipe this game ships. They belong
+ * to the local tables below, which exercise matcher rules that `STARTER_RECIPES`
+ * can no longer demonstrate — see `domain/recipe.ts`'s table header for why the
+ * recipes that used to demonstrate them were trimmed rather than reinvented out
+ * of whatever items were to hand.
+ */
+const LEGEND: Readonly<Record<string, ItemType>> = {
+  P: 'oak_planks',
+  S: 'stick',
+  L: 'oak_log',
+  G: 'glowstone_dust',
+  D: 'dirt',
+  A: 'stone',
+  B: 'sand',
+  C: 'gravel',
 }
 
 /** A grid drawn as rows of legend characters; a space is an empty cell. */
@@ -49,9 +61,9 @@ const gridOf = (...rows: ReadonlyArray<string>): CraftGrid => {
 const placeAt = (
   width: number,
   height: number,
-  cells: ReadonlyArray<readonly [number, number, ItemId]>,
+  cells: ReadonlyArray<readonly [number, number, ItemType]>,
 ): CraftGrid => {
-  const items: Array<ItemId | undefined> = Array.from({ length: width * height }, () => undefined)
+  const items: Array<ItemType | undefined> = Array.from({ length: width * height }, () => undefined)
   for (const [x, y, item] of cells) {
     items[y * width + x] = item
   }
@@ -78,6 +90,42 @@ const rotations = <A>(values: ReadonlyArray<A>): ReadonlyArray<ReadonlyArray<A>>
   values.map((_unused, index) => [...values.slice(index), ...values.slice(0, index)])
 
 // ---------------------------------------------------------------------------
+// Local tables for the two rules the shipped table cannot show any more
+// ---------------------------------------------------------------------------
+
+/**
+ * An ASYMMETRIC shaped recipe: a diagonal, so its horizontal mirror is a
+ * different layout and both must match.
+ *
+ * `STARTER_RECIPES` used to carry vanilla's flint and steel for this, and it was
+ * trimmed because `flint`, `iron_ingot` and `flint_and_steel` are not in
+ * kernel's roster and mc-sim does not get to add them (`domain/recipe.ts`).
+ * NOTHING VANILLA IS ASYMMETRIC OVER THE SIXTEEN ITEMS THAT DO EXIST, so the
+ * choice was between inventing a recipe for the shipped table and putting the
+ * fixture where fixtures go. This is the fixture.
+ *
+ * It is a local table rather than a `STARTER_RECIPES` entry on purpose: nothing
+ * here claims the game can make a torch out of stone and sand, and a reader of
+ * `InventoryService.recipes` will never see it.
+ */
+const MIRROR_TABLE: RecipeTable = [
+  shapedRecipe('test:diagonal', ['A ', ' B'], { A: 'stone', B: 'sand' }, itemStack('torch', 1)),
+]
+
+/**
+ * A shapeless recipe with three DISTINCT ingredients — permutation with
+ * something to permute.
+ *
+ * The trimmed original was vanilla's fire charge (gunpowder, blaze powder,
+ * coal). Two identical planks, which is what the shipped table still has, put
+ * the backtracking assignment through only one arrangement; three distinct
+ * items put it through six.
+ */
+const PERMUTATION_TABLE: RecipeTable = [
+  shapelessRecipe('test:three-distinct', ['stone', 'sand', 'gravel'], itemStack('glass', 3)),
+]
+
+// ---------------------------------------------------------------------------
 
 describe('shaped matching translates', () => {
   it.effect('a 2x2 shape is the SAME recipe at all four positions in a 3x3 grid', () =>
@@ -87,15 +135,15 @@ describe('shaped matching translates', () => {
 
       for (const [ox, oy] of positions) {
         const grid = placeAt(3, 3, [
-          [ox, oy, 'OAK_PLANKS'],
-          [ox + 1, oy, 'OAK_PLANKS'],
-          [ox, oy + 1, 'OAK_PLANKS'],
-          [ox + 1, oy + 1, 'OAK_PLANKS'],
+          [ox, oy, 'glowstone_dust'],
+          [ox + 1, oy, 'glowstone_dust'],
+          [ox, oy + 1, 'glowstone_dust'],
+          [ox + 1, oy + 1, 'glowstone_dust'],
         ])
         expect({ ox, oy, id: matchedId(grid) }).toStrictEqual({
           ox,
           oy,
-          id: 'mc-sim:crafting-table',
+          id: 'mc-sim:glowstone',
         })
       }
     }),
@@ -108,8 +156,8 @@ describe('shaped matching translates', () => {
 
       for (const [ox, oy] of positions) {
         const grid = placeAt(3, 3, [
-          [ox, oy, 'OAK_PLANKS'],
-          [ox, oy + 1, 'OAK_PLANKS'],
+          [ox, oy, 'oak_planks'],
+          [ox, oy + 1, 'oak_planks'],
         ])
         expect({ ox, oy, id: matchedId(grid) }).toStrictEqual({ ox, oy, id: 'mc-sim:stick' })
       }
@@ -141,36 +189,49 @@ describe('shaped matching translates', () => {
     Effect.sync(() => {
       // No rule says so: the occupied box of a 2x2 grid can never be 3x3.
       expect(matchedId(gridOf('PP', 'S '))).toBe('NoMatch')
-      expect(matchedId(gridOf('PP', 'PP'))).toBe('mc-sim:crafting-table')
+      // The positive control, so that the line above is failing for the reason
+      // claimed and not because a 2x2 grid matches nothing at all.
+      expect(matchedId(gridOf('GG', 'GG'))).toBe('mc-sim:glowstone')
     }),
   )
 
   it.effect('a pattern written with a spare border is the same pattern, not a second recipe', () =>
     Effect.sync(() => {
       const padded = shapedRecipe(
-        'test:crafting-table-padded',
-        ['   ', ' PP', ' PP'],
-        { P: 'OAK_PLANKS' },
-        itemStack('CRAFTING_TABLE', 1),
+        'test:glowstone-padded',
+        ['   ', ' GG', ' GG'],
+        { G: 'glowstone_dust' },
+        itemStack('glowstone', 1),
       )
       expect(padded.pattern.width).toBe(2)
       expect(padded.pattern.height).toBe(2)
-      expect(matchedId(gridOf('PP ', 'PP ', '   '), [padded])).toBe('test:crafting-table-padded')
+      expect(matchedId(gridOf('GG ', 'GG ', '   '), [padded])).toBe('test:glowstone-padded')
 
       // ...and the table checker sees the two as the duplicate they are.
-      const both = STARTER_RECIPES.filter((recipe) => recipe.id === 'mc-sim:crafting-table')
+      const both = STARTER_RECIPES.filter((recipe) => recipe.id === 'mc-sim:glowstone')
       expect(conflictsIn([...both, padded])).toStrictEqual([
-        { reason: 'same-shape', recipeIds: ['mc-sim:crafting-table', 'test:crafting-table-padded'] },
+        { reason: 'same-shape', recipeIds: ['mc-sim:glowstone', 'test:glowstone-padded'] },
       ])
     }),
   )
 })
 
+/*
+ * Both blocks below run against LOCAL tables, and every assertion passes
+ * `MIRROR_TABLE` / `PERMUTATION_TABLE` explicitly rather than defaulting to
+ * `STARTER_RECIPES`.
+ *
+ * That is the whole visible consequence of the trim, and it is deliberate that
+ * it is visible: the rules are matcher rules and are covered exactly as tightly
+ * as before, but the SHIPPED table no longer contains a case for either, so a
+ * reader who wants to know what the game can make and a reader who wants to know
+ * what the matcher does are now reading two different lists.
+ */
 describe('shaped matching mirrors horizontally, and only horizontally', () => {
   it.effect('an asymmetric shape matches its left-right mirror, as vanilla does', () =>
     Effect.sync(() => {
-      expect(matchedId(gridOf('I ', ' F'))).toBe('mc-sim:flint-and-steel')
-      expect(matchedId(gridOf(' I', 'F '))).toBe('mc-sim:flint-and-steel')
+      expect(matchedId(gridOf('A ', ' B'), MIRROR_TABLE)).toBe('test:diagonal')
+      expect(matchedId(gridOf(' A', 'B '), MIRROR_TABLE)).toBe('test:diagonal')
     }),
   )
 
@@ -178,13 +239,13 @@ describe('shaped matching mirrors horizontally, and only horizontally', () => {
     Effect.sync(() => {
       for (const [ox, oy] of [0, 1].flatMap((y) => [0, 1].map((x) => [x, y] as const))) {
         const mirrored = placeAt(3, 3, [
-          [ox + 1, oy, 'IRON_INGOT'],
-          [ox, oy + 1, 'FLINT'],
+          [ox + 1, oy, 'stone'],
+          [ox, oy + 1, 'sand'],
         ])
-        expect({ ox, oy, id: matchedId(mirrored) }).toStrictEqual({
+        expect({ ox, oy, id: matchedId(mirrored, MIRROR_TABLE) }).toStrictEqual({
           ox,
           oy,
-          id: 'mc-sim:flint-and-steel',
+          id: 'test:diagonal',
         })
       }
     }),
@@ -192,10 +253,32 @@ describe('shaped matching mirrors horizontally, and only horizontally', () => {
 
   it.effect('a vertical flip is NOT a mirror — a shape upside down is a different shape', () =>
     Effect.sync(() => {
-      // Vertically flipping `I./.F` gives `.F/I.`, which is neither the pattern
+      // Vertically flipping `A./.B` gives `.B/A.`, which is neither the pattern
       // nor its horizontal mirror. Accepting it would invent recipes.
-      expect(matchedId(gridOf(' F', 'I '))).toBe('NoMatch')
-      expect(matchedId(gridOf('F ', ' I'))).toBe('NoMatch')
+      expect(matchedId(gridOf(' B', 'A '), MIRROR_TABLE)).toBe('NoMatch')
+      expect(matchedId(gridOf('B ', ' A'), MIRROR_TABLE)).toBe('NoMatch')
+    }),
+  )
+
+  it.effect('REGRESSION: no shipped recipe distinguishes the mirror, so only the above does', () =>
+    Effect.sync(() => {
+      // Every pattern in `STARTER_RECIPES` is its own horizontal mirror, which
+      // is a fact about the trimmed table and not a coincidence — see
+      // `domain/recipe.ts`. Deleting the mirroring branch of `matchesShaped`
+      // would therefore leave the shipped table entirely green, and this line
+      // exists so that the next reader does not conclude the rule is unused.
+      const shaped = STARTER_RECIPES.filter((recipe) => recipe._tag === 'Shaped')
+      expect(shaped.length).toBeGreaterThan(0)
+
+      for (const recipe of shaped) {
+        const { width, height, cells } = recipe.pattern
+        const flipped = Array.from({ length: width * height }, (_unused, index) => {
+          const x = index % width
+          const y = Math.floor(index / width)
+          return cells[y * width + (width - 1 - x)]
+        })
+        expect({ id: recipe.id, cells: flipped }).toStrictEqual({ id: recipe.id, cells: [...cells] })
+      }
     }),
   )
 })
@@ -203,13 +286,13 @@ describe('shaped matching mirrors horizontally, and only horizontally', () => {
 describe('shapeless matching permutes', () => {
   it.effect('every permutation of the ingredients is the same recipe', () =>
     Effect.sync(() => {
-      const orders = permutations(['G', 'B', 'C'])
+      const orders = permutations(['A', 'B', 'C'])
       expect(orders).toHaveLength(6)
 
       for (const order of orders) {
-        expect({ order, id: matchedId(gridOf(order.join(''))) }).toStrictEqual({
+        expect({ order, id: matchedId(gridOf(order.join('')), PERMUTATION_TABLE) }).toStrictEqual({
           order,
-          id: 'mc-sim:fire-charge',
+          id: 'test:three-distinct',
         })
       }
     }),
@@ -217,23 +300,33 @@ describe('shapeless matching permutes', () => {
 
   it.effect('position is irrelevant, not merely reorderable within a row', () =>
     Effect.sync(() => {
-      expect(matchedId(gridOf('G B', '   ', '  C'))).toBe('mc-sim:fire-charge')
-      expect(matchedId(gridOf('  C', ' B ', 'G  '))).toBe('mc-sim:fire-charge')
+      expect(matchedId(gridOf('A B', '   ', '  C'), PERMUTATION_TABLE)).toBe('test:three-distinct')
+      expect(matchedId(gridOf('  C', ' B ', 'A  '), PERMUTATION_TABLE)).toBe('test:three-distinct')
     }),
   )
 
   it.effect('an extra item defeats the match instead of being ignored', () =>
     Effect.sync(() => {
-      expect(matchedId(gridOf('GBC'))).toBe('mc-sim:fire-charge')
-      expect(matchedId(gridOf('GBC', 'D  '))).toBe('NoMatch')
+      expect(matchedId(gridOf('ABC'), PERMUTATION_TABLE)).toBe('test:three-distinct')
+      expect(matchedId(gridOf('ABC', 'D  '), PERMUTATION_TABLE)).toBe('NoMatch')
       // A duplicate of a required item is an extra item too.
-      expect(matchedId(gridOf('GBC', 'C  '))).toBe('NoMatch')
+      expect(matchedId(gridOf('ABC', 'C  '), PERMUTATION_TABLE)).toBe('NoMatch')
     }),
   )
 
   it.effect('a missing item defeats the match', () =>
     Effect.sync(() => {
-      expect(matchedId(gridOf('GB '))).toBe('NoMatch')
+      expect(matchedId(gridOf('AB '), PERMUTATION_TABLE)).toBe('NoMatch')
+    }),
+  )
+
+  it.effect('the shipped table still permutes, with the one ingredient pair it has', () =>
+    Effect.sync(() => {
+      // Weaker than the three-distinct case above and kept anyway: it is the
+      // only permutation assertion that runs against what mx-ui will be handed.
+      expect(matchedId(gridOf('PP'))).toBe('mc-sim:stick-from-loose-planks')
+      expect(matchedId(gridOf('P', 'P', ' '))).toBe('mc-sim:stick')
+      expect(matchedId(gridOf('P  ', '  P'))).toBe('mc-sim:stick-from-loose-planks')
     }),
   )
 })
@@ -250,7 +343,7 @@ describe('the ambiguity rule', () => {
       expect(match._tag).toBe('Match')
       expect(matchedId(column)).toBe('mc-sim:stick')
       expect(match._tag === 'Match' ? match.output : undefined).toStrictEqual({
-        item: 'STICK',
+        item: 'stick',
         count: 4,
       })
     }),
@@ -275,7 +368,7 @@ describe('the ambiguity rule', () => {
       expect(matchedId(gridOf('PP'))).toBe('mc-sim:stick-from-loose-planks')
       const match = matchRecipe(STARTER_RECIPES, gridOf('PP'))
       expect(match._tag === 'Match' ? match.output : undefined).toStrictEqual({
-        item: 'STICK',
+        item: 'stick',
         count: 2,
       })
     }),
@@ -283,8 +376,8 @@ describe('the ambiguity rule', () => {
 
   it.effect('equally specific matches are decided by id, in either table order', () =>
     Effect.sync(() => {
-      const alpha = shapelessRecipe('test:alpha', ['DIRT', 'DIRT'], itemStack('MUD', 1))
-      const beta = shapelessRecipe('test:beta', ['DIRT', 'DIRT'], itemStack('CLAY', 1))
+      const alpha = shapelessRecipe('test:alpha', ['dirt', 'dirt'], itemStack('gravel', 1))
+      const beta = shapelessRecipe('test:beta', ['dirt', 'dirt'], itemStack('sand', 1))
       const grid = gridOf('DD')
 
       expect(matchedId(grid, [alpha, beta])).toBe('test:alpha')
@@ -294,8 +387,8 @@ describe('the ambiguity rule', () => {
 
   it.effect('conflictsIn names the pairs the id tie-break has to decide', () =>
     Effect.sync(() => {
-      const alpha = shapelessRecipe('test:alpha', ['DIRT', 'DIRT'], itemStack('MUD', 1))
-      const beta = shapelessRecipe('test:beta', ['DIRT', 'DIRT'], itemStack('CLAY', 1))
+      const alpha = shapelessRecipe('test:alpha', ['dirt', 'dirt'], itemStack('gravel', 1))
+      const beta = shapelessRecipe('test:beta', ['dirt', 'dirt'], itemStack('sand', 1))
 
       expect(conflictsIn([beta, alpha])).toStrictEqual([
         { reason: 'same-ingredients', recipeIds: ['test:alpha', 'test:beta'] },
@@ -305,8 +398,8 @@ describe('the ambiguity rule', () => {
 
   it.effect('conflictsIn reports a duplicate id, which no rule can resolve', () =>
     Effect.sync(() => {
-      const one = shapelessRecipe('test:same', ['DIRT'], itemStack('MUD', 1))
-      const two = shapedRecipe('test:same', ['D'], { D: 'DIRT' }, itemStack('CLAY', 1))
+      const one = shapelessRecipe('test:same', ['dirt'], itemStack('gravel', 1))
+      const two = shapedRecipe('test:same', ['D'], { D: 'dirt' }, itemStack('sand', 1))
 
       expect(conflictsIn([one, two])).toStrictEqual([
         { reason: 'duplicate-id', recipeIds: ['test:same', 'test:same'] },
@@ -316,20 +409,17 @@ describe('the ambiguity rule', () => {
 
   it.effect('a mirrored duplicate is a duplicate — conflictsIn is not fooled by the flip', () =>
     Effect.sync(() => {
-      const original = shapedRecipe(
-        'test:diagonal',
-        ['I ', ' F'],
-        { I: 'IRON_INGOT', F: 'FLINT' },
-        itemStack('FLINT_AND_STEEL', 1),
-      )
       const flipped = shapedRecipe(
         'test:diagonal-mirror',
-        [' I', 'F '],
-        { I: 'IRON_INGOT', F: 'FLINT' },
-        itemStack('FLINT_AND_STEEL', 1),
+        [' A', 'B '],
+        { A: 'stone', B: 'sand' },
+        itemStack('torch', 1),
       )
 
-      expect(conflictsIn([original, flipped])).toStrictEqual([
+      // `MIRROR_TABLE`'s own recipe is the left-hand side, so the two halves of
+      // the mirror rule — matching and conflict detection — are asserted against
+      // one pattern rather than two hand-copied ones.
+      expect(conflictsIn([...MIRROR_TABLE, flipped])).toStrictEqual([
         { reason: 'same-shape', recipeIds: ['test:diagonal', 'test:diagonal-mirror'] },
       ])
     }),
@@ -350,11 +440,9 @@ describe('matching is total', () => {
     Effect.sync(() => {
       const canonical: ReadonlyArray<readonly [string, CraftGrid]> = [
         ['mc-sim:oak-planks', gridOf('L')],
-        ['mc-sim:fire-charge', gridOf('GBC')],
         ['mc-sim:stick', gridOf('P', 'P')],
         ['mc-sim:stick-from-loose-planks', gridOf('PP')],
-        ['mc-sim:crafting-table', gridOf('PP', 'PP')],
-        ['mc-sim:flint-and-steel', gridOf('I ', ' F')],
+        ['mc-sim:glowstone', gridOf('GG', 'GG')],
         ['mc-sim:wooden-pickaxe', gridOf('PPP', ' S ', ' S ')],
       ]
 
@@ -392,7 +480,7 @@ describe('matching is total', () => {
 
   it.effect('an empty table makes nothing, and says so rather than failing', () =>
     Effect.sync(() => {
-      expect(matchRecipe([], gridOf('PP', 'PP'))).toStrictEqual({ _tag: 'NoMatch' })
+      expect(matchRecipe([], gridOf('GG', 'GG'))).toStrictEqual({ _tag: 'NoMatch' })
     }),
   )
 })

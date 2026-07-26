@@ -269,9 +269,9 @@ type GameLoopApi = {
 
 ```typescript
 type InventoryServiceApi = {
-  readonly add: (item: ItemId, count: number) => Effect.Effect<number>     // 戻り値 = 入らなかった数
-  readonly remove: (item: ItemId, count: number) => Effect.Effect<number>  // 戻り値 = 実際に取れた数
-  readonly countOf: (item: ItemId) => Effect.Effect<number>
+  readonly add: (item: ItemType, count: number) => Effect.Effect<number>     // 戻り値 = 入らなかった数
+  readonly remove: (item: ItemType, count: number) => Effect.Effect<number>  // 戻り値 = 実際に取れた数
+  readonly countOf: (item: ItemType) => Effect.Effect<number>
   readonly snapshot: Effect.Effect<Inventory>
   readonly restore: (inventory: Inventory) => Effect.Effect<number>  // 戻り値 = 入らなかった数。§4-1
   readonly reset: Effect.Effect<void>
@@ -299,7 +299,15 @@ type InventoryServiceApi = {
   新実装は満杯を**エラーにせず leftover として返す**。満杯は正常なゲーム状態であり、
   呼び出し側（mx-gameplay）はそれを地面のドロップアイテムに変換する。エラーにすると
   すべての呼び出し側が握り潰すことになり、握り潰した瞬間にアイテムが消える。
-- `ItemId` は暫定 `string`。本来は mc-kernel の `ItemType`（リテラル union、網羅性チェックつき）。
+- **`ItemId` はもう無い。** mc-kernel が `ItemType`（閉じたリテラル union）を公開したので、
+  暫定エイリアスは*付け替え*ではなく**削除**した（`domain/inventory.ts` のヘッダに理由）。
+  署名はすべて `ItemType` を取る。破壊的変更であり、`api-lock.md` に差分として出ている
+  （[versioning.md](./versioning.md)）。
+- **`add` は採掘の継ぎ目でもある。** kernel の `dropOfBlockId(id, context?)` が返す
+  `BlockDrop.item` は `ItemType` なので、`inventory.add(drop.item, drop.count)` が
+  アダプタもキャストも無しで通る。**`addDrop(drop)` は足していない** —— 採掘は動詞であり
+  mx-gameplay の責務（plan.md §2.3-1）で、ここに置くと mc-sim が `BlockDrop` /
+  `HarvestContext` / 道具ゲートを写す羽目になる。
 
 ### 4-1. `restore` はスロット数を再確立し、入らなかった数を返す
 
@@ -311,17 +319,31 @@ type InventoryServiceApi = {
 `domain/inventory.ts` の `normaliseInventory` が修復を 1 か所に持つ。
 
 ```typescript
-type NormaliseOutcome = { readonly inventory: Inventory; readonly leftover: number }
+type NormaliseOutcome = { readonly inventory: Inventory
+                          readonly leftover: number
+                          readonly discarded: number }   // ← 語彙付け替えで増えた。下記
 const normaliseInventory: (inventory: Inventory) => NormaliseOutcome
 ```
 
 - 長さは常に `INVENTORY_SLOT_COUNT`。短いセーブは詰め物をし、**長いセーブは末尾を切り捨てず再挿入**する。
 - `MAX_STACK_COUNT` 超のスロットは 1 スタックを残して余りを再挿入する。
 - 0 / 小数 / `NaN` のスタックは空スロットになる（小数は整数部が残る）。
+- **`ItemType` でない名前のスロットは捨て、`discarded` に数える**（新）。
 - 再挿入は `addItem` を通るので top-up 規則が効き、**どうしても入らない分は `leftover` として返る**。
+
+**`discarded` は `ItemId = string` を閉じた union に付け替えたことが作った穴を塞ぐためにある。**
+以前は `'DIAMOND'` と書いてあるセーブも「妙だが合法」だった。いまは
+**値が自分の型と食い違うスロット**になる —— `countOf` は数えるがどのレシピにも一致せず、
+`Slot.item` が `ItemType` である以上、下流の誰にも見えない。セーブはバージョン境界を跨いで届き、
+`ITEM_TYPES` を増やすのは kernel の MINOR リリースなので、これは仮定の話ではない。
+`leftover` に混ぜないのは意味が違うからである: leftover は mx-gameplay が地面に湧かせる数だが、
+存在しないアイテムは湧かせようがない。
 
 `restore` の戻り値が `void` ではなく `number` なのは `add` と同じ判断である。満杯は正常なゲーム状態で、
 その帰結は地面のドロップアイテムであり、ここで数を握り潰せばアイテムが消える。
+**`restore` は `leftover` だけを返し、`discarded` は返さない。**
+知りたいホストは `normaliseInventory`（公開・純粋・冪等）を先に自分で呼べばよく、
+1 つの `number` に意味の違う 2 つを多重化しないほうがサービスの署名として正しい。
 `makeInventoryService(initial)` も同じ修復を通す（`Layer` 経由で 2 スロットの世界が始まらないように）。
 
 **`domain/inventory.ts` は「純粋かつ全域」と書いてある。書いてあるだけだった（SIM-3）。**
@@ -340,8 +362,8 @@ plan.md §7 は「クラフト = mc-sim（レシピと状態）+ mx-ui（画面�
 
 ```typescript
 // domain/recipe.ts
-type RecipeId = string                      // 'mc-sim:stick'。ItemId と同じ理由で暫定 string
-type Ingredient = { readonly _tag: 'Exact'; readonly item: ItemId }
+type RecipeId = string                      // 'mc-sim:stick'。閉じた union には**しない**（§4.1-7）
+type Ingredient = { readonly _tag: 'Exact'; readonly item: ItemType }
 type PatternCell = Ingredient | undefined
 type RecipePattern = { readonly width: number; readonly height: number
                        readonly cells: ReadonlyArray<PatternCell> }   // 空の外周は trim 済
@@ -356,15 +378,15 @@ type RecipeMatch =
   | { readonly _tag: 'Match'; readonly recipe: Recipe; readonly output: ItemStack }
   | { readonly _tag: 'NoMatch' }
 
-const exactly:          (item: ItemId) => Ingredient
-const ingredientMatches:(ingredient: Ingredient, item: ItemId) => boolean
-const shapedRecipe:     (id, rows: ReadonlyArray<string>, key: Record<string, ItemId>, output) => ShapedRecipe
-const shapelessRecipe:  (id, items: ReadonlyArray<ItemId>, output) => ShapelessRecipe
-const craftGrid:        (width, height, items: ReadonlyArray<ItemId | undefined>) => CraftGrid
+const exactly:          (item: ItemType) => Ingredient
+const ingredientMatches:(ingredient: Ingredient, item: ItemType) => boolean
+const shapedRecipe:     (id, rows: ReadonlyArray<string>, key: Record<string, ItemType>, output) => ShapedRecipe
+const shapelessRecipe:  (id, items: ReadonlyArray<ItemType>, output) => ShapelessRecipe
+const craftGrid:        (width, height, items: ReadonlyArray<ItemType | undefined>) => CraftGrid
 const cellAt:           (grid: CraftGrid, x: number, y: number) => Slot
 const matchRecipe:      (table: RecipeTable, grid: CraftGrid) => RecipeMatch   // 全域・表順非依存
 const conflictsIn:      (table: RecipeTable) => ReadonlyArray<RecipeConflict>
-const STARTER_RECIPES:  RecipeTable                                            // 7 件
+const STARTER_RECIPES:  RecipeTable                                            // 5 件（§4.1-7）
 
 // domain/crafting.ts
 type CraftResult =
@@ -372,7 +394,7 @@ type CraftResult =
   | { _tag: 'NoMatch' }
   | { _tag: 'MissingIngredients'; missing: ReadonlyArray<MissingIngredient> }
   | { _tag: 'NoRoom' }
-const ingredientCost: (grid: CraftGrid) => ReadonlyMap<ItemId, number>
+const ingredientCost: (grid: CraftGrid) => ReadonlyMap<ItemType, number>
 const craftFromGrid:  (inventory: Inventory, table: RecipeTable, grid: CraftGrid) => CraftOutcome
 ```
 
@@ -417,6 +439,9 @@ shapeless は個数一致）ため、「材料が多いほうが具体的」と�
   同じ判定が「3x3 レシピはプレイヤーの 2x2 グリッドでは作れない」も兼ねる（別ルール不要）。
 - **鏡像**: 左右のみ。本家と同じで、火打石と打ち金は対角なので鏡像も一致する。
   **上下反転は鏡像ではない**（松明は「炭の下に棒」ではない）。受け入れると誰も書いていないレシピが増える。
+  ただし **`STARTER_RECIPES` にはもう非対称な shaped レシピが 1 件も無い**（§4.1-7）ので、
+  出荷される表はこの規則を動かさない。動かしているのは `test/recipe.test.ts` の
+  ローカル表 `MIRROR_TABLE` だけである。
 
 ### 4.1-4 材料はインベントリから引く（グリッドは値であって状態ではない）
 
@@ -454,11 +479,56 @@ mx-ui は「移動」ではなく「予約」を描くことになる。
 
 | 繰り延べ | 型でどう見えるか |
 | --- | --- |
-| 材料タグ（「任意の板材」） | `Ingredient` が**メンバ 1 つの tagged union**。消費側は既に `_tag` で分岐しているので、`Tag` の追加は破壊的変更にならない。裸の `ItemId` にしていたら破壊的変更になっていた |
+| 材料タグ（「任意の板材」） | `Ingredient` が**メンバ 1 つの tagged union**。消費側は既に `_tag` で分岐しているので、`Tag` の追加は破壊的変更にならない。裸の `ItemType` にしていたら破壊的変更になっていた |
 | 1 セル複数個・残留アイテム（ケーキのバケツ） | 表現できない。黙って間違うのではなく**無い** |
 | かまど / 醸造 / 金床 / エンチャント | plan.md §7 の残り。グリッド形ではないので、ここには 1 つも無い |
 | shapeless の重なり合う述語 | `matchesShapeless` は既にバックトラッキング割当（ソートして比較ではない）。`Tag` が入った日に貪欲法が誤答する経路を最初から塞いである |
 | 複数個まとめてクラフト | `craft` は 1 回分 |
+
+### 4.1-7 kernel 語彙への付け替えで表が **7 件から 5 件**になった
+
+`ItemId = string` を kernel の `ItemType`（閉じた 16 リテラル）に付け替えた結果、
+表の 7 件のうち 3 件が**存在しないアイテム**を名指していた:
+`IRON_INGOT` / `FLINT` / `FLINT_AND_STEEL` / `GUNPOWDER` / `BLAZE_POWDER` / `COAL` /
+`FIRE_CHARGE` / `CRAFTING_TABLE` の 8 個である。
+
+**mc-kernel に足させるのではなく、削った。** 理由は 3 つある。
+
+1. **足せない。** `ITEM_TYPES` はここにミラーしてあり、mc-dev-meta の `pnpm check:mirrors` が
+   ミラーと kernel の実体を突き合わせる。ソースより先に進んだミラーは、ミラーが防いでいる
+   ハザードそのものである。
+2. **足すべきでもない。** ロスタを 8 個ふくらませるのは、tier-2 のレシピ表を根拠に
+   tier-1 の語彙を決めることになる。それは本プロジェクトが 2 回退けてきた
+   「推測されたロスタ」と同じ形をしている。`coal` / `iron_ingot` / `flint` には
+   kernel 側の理由（鉱石ブロックのドロップ、`BlockDropRule.item`）が来る。
+   その時に**ドロップ規則を伴って**入るのが正しい。
+3. **削る代償が均一ではなかった。** 3 件の値段は違う。
+
+| 削った / 替えた | それが動かしていた規則 | 代償 |
+| --- | --- | --- |
+| `mc-sim:crafting-table` → `mc-sim:glowstone` に**差し替え** | shaped 2x2 対称（平行移動） | **なし。** グロウストーン（ダスト 4 個）は同じ形の本家レシピで、しかも 16 個の中に収まる。出力しか違わない行は、そもそもコンテンツだった |
+| `mc-sim:fire-charge` を**削除** | shapeless・**相異なる 3 材料**（順列） | 代替が無い。16 個の中に「相異なる 3 材料の本家 shapeless」は存在しない |
+| `mc-sim:flint-and-steel` を**削除** | shaped・**非対称**（左右鏡像） | 代替が無い。16 個の中に「非対称な本家 shaped」は存在しない |
+
+**表がいま示すもの:** shapeless（材料 1 個 / 同一材料 2 個）、shaped の平行移動（1x2 が 6 通り、
+2x2 が 4 通り）、穴のあるパターン（3x3 の穴は「空であること」の要求）、
+「3x3 はプレイヤーの 2x2 グリッドから作れない」、そして**曖昧性規則**
+（shaped が shapeless に勝つ・表順非依存・`conflictsIn` が空）。
+
+**表がもう示さないもの:** 左右鏡像と、相異なる 3 材料の順列。
+この 2 つは `test/recipe.test.ts` の**ローカル表**（`MIRROR_TABLE` / `PERMUTATION_TABLE`）に移した。
+規則の被覆は落ちていないが、置き場所は変わった —— そしてそれが正しい置き場所である:
+`STARTER_RECIPES` は `InventoryService.recipes` で mx-ui に渡る**公開データ**なので、
+その 1 行は「このゲームで何が作れるか」の主張である。マッチャの性質を見せるために
+手近なアイテムで非対称レシピを捏造するのは、関数を試すためにコンテンツを捏造することになる。
+残っている非本家の 1 行（`mc-sim:stick-from-loose-planks`）が例外なのは、
+それが示す性質が**この表自身の性質**（出荷される表が id タイブレークに頼らず曖昧性を解ける）
+だからである。
+
+**kernel への要求（値段つき）:** 2 行を戻すには `ITEM_TYPES` に 7 個
+（`iron_ingot` / `flint` / `flint_and_steel` / `coal` / `gunpowder` / `blaze_powder` /
+`fire_charge`）。`crafting_table` は**要らない**。追加は additive・MINOR で、
+mc-sim 側は関数呼び出し 2 つ。ただし発議は kernel 側の理由で行われるべきである。
 
 ## 5. まだ設計していない公開API
 

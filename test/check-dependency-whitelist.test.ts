@@ -7,6 +7,7 @@
  * documentation wearing a gate's clothes. These tests assert that the gate
  * still says no.
  */
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from '@effect/vitest'
 import { Effect } from 'effect'
 import {
@@ -21,6 +22,7 @@ import {
   isToolingOrTestPath,
   parseImports,
   REPOSITORY_POLICY,
+  SCAN_ROOTS,
   TIME_SOURCE_ESCAPE_HATCH,
   type DeclaredDependencies,
 } from '../scripts/check-dependency-whitelist'
@@ -218,11 +220,17 @@ describe('import classification for mc-sim', () => {
 })
 
 describe('shipped vs tooling classification', () => {
-  it.effect('index.ts, domain/ and application/ are shipped; everything else is not', () =>
+  it.effect('index.ts, domain/, application/ and stages/ are shipped; everything else is not', () =>
     Effect.sync(() => {
       expect(isToolingOrTestPath('index.ts')).toBe(false)
       expect(isToolingOrTestPath('domain/time-of-day.ts')).toBe(false)
       expect(isToolingOrTestPath('application/game-loop.ts')).toBe(false)
+      // `stages/` is shipped, and classifying it as tooling would have been a
+      // silent hole rather than a cosmetic one: a tooling path may import a
+      // devDependency, so mc-playground-kit would have been importable from the
+      // stage registrations — which is the exact rule-6 failure that left the
+      // shipped build with no input stage (mc-render/stages/stage-ids.ts).
+      expect(isToolingOrTestPath('stages/registration.ts')).toBe(false)
       expect(isToolingOrTestPath('test/scenario.test.ts')).toBe(true)
       expect(isToolingOrTestPath('scripts/check-dependency-whitelist.ts')).toBe(true)
     }),
@@ -331,6 +339,39 @@ describe('banned time sources', () => {
 
       expect(violations).toHaveLength(1)
       expect(violations[0]?.line).toBe(2)
+    }),
+  )
+})
+
+// ---------------------------------------------------------------------------
+// What the gate calls "shipped" and what npm actually ships must be one set.
+//
+// These are two hand-maintained lists describing the same thing that could not
+// see each other, and both halves have now gone wrong in this organisation, in
+// opposite directions:
+//
+//   - mx-multiplayer had `stages` in SCAN_ROOTS but NOT in isToolingOrTestPath,
+//     so its first stage registration would have been classified as tooling --
+//     and tooling may import a devDependency. That is rule 6, the same hole
+//     that left the shipped build with no input stage at all.
+//   - mc-render had the mirror image: `stages/` was correctly shipped source to
+//     the gate, and `files` omitted it, so `npm publish` would have produced a
+//     package with none of its five stage registrations in it.
+//
+// Neither is visible from inside its own half, and this repository is correct
+// today -- which is exactly when to pin it, because the hole opens on the day
+// someone adds the next root.
+// ---------------------------------------------------------------------------
+describe('the published package and the dependency gate agree on what ships', () => {
+  it.effect('every shipped source root the gate scans is in package.json `files`', () =>
+    Effect.sync(() => {
+      const shipped = SCAN_ROOTS.filter((root) => !isToolingOrTestPath(`${root}/probe.ts`))
+      const files: ReadonlyArray<string> = JSON.parse(
+        readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+      ).files
+
+      const missing = shipped.filter((root) => !files.includes(root))
+      expect(missing, `these roots ship code but npm would not include them: ${missing.join(', ')}`).toStrictEqual([])
     }),
   )
 })

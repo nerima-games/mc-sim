@@ -35,6 +35,14 @@ export * from './application/inventory-service'
 export * from './application/player-service'
 export * from './application/time-service'
 
+// --- Stages: this repository's contribution to the frame ---------------------
+// `sim:physics` is named in an `after` edge by mx-gameplay, mx-redstone, mx-ui
+// and mc-render — every cross-repository ordering edge in the roster — so the
+// registration is part of the published surface by definition: `simModule` is
+// what a host merges, and `SIM_STAGE_IDS` is what a consumer names.
+export * from './stages/registration'
+export * from './stages/stage-ids'
+
 // --- Provisional -------------------------------------------------------------
 // `domain/kernel-vocabulary.ts` is a temporary local mirror of
 // @nerima-games/mc-kernel and is NOT re-exported: consumers must take that

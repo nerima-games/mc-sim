@@ -33,11 +33,15 @@ import {
   EpochMillis,
   FixedClockLayer,
   fixedClock,
+  isItemType,
+  ITEM_TYPES,
   MonotonicTimeSecs,
   monotonicSecs,
   wallClockEpochMillis,
   type ClockService,
+  type ItemType,
 } from '../domain/kernel-vocabulary'
+import { STARTER_RECIPES } from '../domain/recipe'
 
 /**
  * Kernel's `ClockService`, restated from `mc-kernel/domain/clock.ts:43-48`.
@@ -146,6 +150,130 @@ describe('the mirrored brands are kernel’s brands', () => {
       expect(EpochMillis(1_700_000_000_000)).toBe(1_700_000_000_000)
       expect(() => EpochMillis(1.5)).toThrow()
       expect(() => EpochMillis(Number.MAX_SAFE_INTEGER + 2)).toThrow()
+    }),
+  )
+})
+
+/**
+ * The item roster, pinned literally.
+ *
+ * ---------------------------------------------------------------------------
+ * Why a literal list is the right assertion here, and only here
+ * ---------------------------------------------------------------------------
+ *
+ * docs/testing.md §4.6 refuses tests that read a constant on both sides,
+ * because such a test asserts that a value equals itself. This block is the
+ * inversion of that rule, not an exception to it: the constant IS the contract.
+ * `ITEM_TYPES` is a transcription of another repository's array, and the failure
+ * being defended against is a transcription that drifted — an item quietly
+ * added because mc-sim found it convenient, or a `lower_snake` spelling
+ * mistyped. Reading `ITEM_TYPES` on both sides would pass through every one of
+ * those.
+ *
+ * mc-dev-meta's `pnpm check:mirrors` is the sibling check that can see BOTH
+ * repositories, and it compares the mirror against kernel's real module. This
+ * one runs where mc-kernel is not installed and cannot, so it pins the
+ * transcription: the two together are "the mirror matches the source" and "the
+ * mirror is what its author thought it was".
+ *
+ * WHEN KERNEL GROWS THE ROSTER (additive, MINOR): this list is updated in the
+ * SAME commit as `domain/kernel-vocabulary.ts`, from kernel's `ITEM_TYPES`, and
+ * never from what mc-sim would like to write a recipe for.
+ */
+describe('the mirrored item roster is kernel’s item roster', () => {
+  /**
+   * Transcribed from `mc-kernel/domain/item-type.ts`, in kernel's order, which
+   * is also the order kernel's `api-lock.md` records at `### ITEM_TYPES`.
+   */
+  const KERNEL_ITEM_TYPES = [
+    'stone',
+    'cobblestone',
+    'dirt',
+    'grass_block',
+    'sand',
+    'gravel',
+    'oak_log',
+    'oak_planks',
+    'oak_leaves',
+    'glass',
+    'torch',
+    'glowstone',
+    'piston',
+    'stick',
+    'glowstone_dust',
+    'wooden_pickaxe',
+  ] as const
+
+  it.effect('REGRESSION: the roster is kernel’s, member for member and in order', () =>
+    Effect.sync(() => {
+      // Order matters as well as membership: `PLACEABLE_ITEM_TYPES` in kernel is
+      // `ITEM_TYPES.filter(...)`, so a reordering here would be a reordering of
+      // a list kernel publishes, and mx-ui's hotbar reads that list.
+      expect([...ITEM_TYPES]).toStrictEqual([...KERNEL_ITEM_TYPES])
+
+      // Compile-time half, both directions: neither union may be wider than the
+      // other. An item added to the mirror alone fails the first line; an item
+      // dropped from it fails the second.
+      const asKernel: (typeof KERNEL_ITEM_TYPES)[number] = 'stick' as ItemType
+      const asMirror: ItemType = 'stick' as (typeof KERNEL_ITEM_TYPES)[number]
+      expect([asKernel, asMirror]).toStrictEqual(['stick', 'stick'])
+    }),
+  )
+
+  it.effect('the spelling is lower_snake, which is what made the repoint a re-casing', () =>
+    Effect.sync(() => {
+      // mc-sim's provisional strings were UPPER_SNAKE. A save or a network frame
+      // written by that build says `OAK_PLANKS`, and this is the line that says
+      // the two are not the same name.
+      for (const item of ITEM_TYPES) {
+        expect({ item, ok: /^[a-z][a-z_]*$/u.test(item) }).toStrictEqual({ item, ok: true })
+      }
+      expect(isItemType('OAK_PLANKS')).toBe(false)
+      expect(isItemType('oak_planks')).toBe(true)
+    }),
+  )
+
+  it.effect('isItemType accepts exactly the roster and nothing else', () =>
+    Effect.sync(() => {
+      for (const item of KERNEL_ITEM_TYPES) {
+        expect({ item, accepted: isItemType(item) }).toStrictEqual({ item, accepted: true })
+      }
+      // The trimmed recipes' items, which is the specific way this mirror would
+      // be wrong if anyone repaired `domain/recipe.ts` by widening the roster
+      // instead of by trimming the table.
+      for (const absent of [
+        'iron_ingot',
+        'flint',
+        'flint_and_steel',
+        'coal',
+        'gunpowder',
+        'blaze_powder',
+        'fire_charge',
+        'crafting_table',
+        'air',
+        'water',
+        'bedrock',
+        '',
+      ]) {
+        expect({ absent, accepted: isItemType(absent) }).toStrictEqual({ absent, accepted: false })
+      }
+    }),
+  )
+
+  it.effect('REGRESSION: every item the shipped recipe table names is in kernel’s roster', () =>
+    Effect.sync(() => {
+      // `tsc` already proves this, and the proof evaporates the moment anyone
+      // reaches for a cast to get a recipe to compile. The table is small and
+      // this is cheap, so it is asserted rather than assumed.
+      const named = STARTER_RECIPES.flatMap((recipe) => [
+        recipe.output.item,
+        ...(recipe._tag === 'Shaped'
+          ? recipe.pattern.cells.flatMap((cell) => (cell === undefined ? [] : [cell.item]))
+          : recipe.ingredients.map((ingredient) => ingredient.item)),
+      ])
+
+      expect(named.length).toBeGreaterThan(0)
+      expect([...new Set(named)].filter((item) => !isItemType(item))).toStrictEqual([])
     }),
   )
 })

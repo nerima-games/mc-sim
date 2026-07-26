@@ -108,11 +108,11 @@ org パッケージも新規 npm 依存も無い。
 | `test/frame-timing.test.ts` | 17 | DN-03。clamp 損失の定量化（SIM-5） |
 | `test/game-loop.test.ts` | 12 | DN-02 / DN-08。SIM-7 / SIM-10 / SIM-5 |
 | `test/camera-pose.test.ts` | 13 | DN-01 |
-| `test/inventory.test.ts` | 26 | DN-06 / DN-07。SIM-2 / SIM-3 |
-| `test/recipe.test.ts` | 25 | レシピモデル（[public-api.md](./public-api.md) §4.1）。§3.2 |
+| `test/inventory.test.ts` | 29 | DN-06 / DN-07。SIM-2 / SIM-3。語彙外アイテムの破棄（§3.3） |
+| `test/recipe.test.ts` | 27 | レシピモデル（[public-api.md](./public-api.md) §4.1）。§3.2 |
 | `test/crafting.test.ts` | 13 | クラフトの原子性。DN-07 |
 | `test/autosave.test.ts` | 12 | DN-05 / DN-08。SIM-9 / SIM-6 |
-| `test/kernel-mirror.test.ts` | 7 | `domain/kernel-vocabulary.ts` が mc-kernel と同形であること（§4.4） |
+| `test/kernel-mirror.test.ts` | 11 | `domain/kernel-vocabulary.ts` が mc-kernel と同形であること（§4.4）。アイテムロスタを含む（§3.1） |
 | `test/check-dependency-whitelist.test.ts` | 26 | DN-12 + 依存ホワイトリスト本体 |
 | `test/api-lock.test.ts` | 26 | 生成器 `scripts/api-lock.ts` の機構そのもの（§7 末尾） |
 
@@ -165,6 +165,17 @@ Effect は Tag を**その文字列キー**で解決する。3 つのコピー�
 そこでこのファイルは、Tag キーを**文字列リテラルで**固定し、サービスの形を**両方向で**assert する
 （狭めても広げても落ちる）。同じ内容のテストが mc-render と mc-playground-kit にもある。
 
+**アイテムロスタも同じ理由で、リテラルのリストとして固定してある。**
+§4.6 は「両辺で同じ定数を読むテスト」を禁じているが、ここはその規則の**反転**であって例外ではない:
+`ITEM_TYPES` は他リポジトリの配列の**転記**であり、守るべき失敗は「転記がずれた」である。
+`ITEM_TYPES` を両辺で読めば、mc-sim の都合で 1 個足した転記も、`lower_snake` の打ち間違いも、
+すべて素通りする。閉じたリテラル union では**メンバの集合そのものが型**なので、
+狭いミラーは「語彙が少ない」ではなく*別の型*であり、広いミラーはローカルでだけ通って
+ミラー削除の日に壊れる。
+なお、両方のリポジトリを同時に見られるのは mc-dev-meta の `pnpm check:mirrors` だけである。
+こちらは mc-kernel が install されていない場所でも走り、**転記が作者の思っていたものであること**を
+固定する。2 つ合わせて「ミラーが源と一致する」と「ミラーが書いたつもりのものである」になる。
+
 ### 3.2 レシピ / クラフトのテストが守っているもの
 
 一致判定は**網羅的に**書ける種類の関数なので、そう書いてある。
@@ -174,9 +185,10 @@ Effect は Tag を**その文字列キー**で解決する。3 つのコピー�
 | 平行移動 | `a 2x2 shape is the SAME recipe at all four positions in a 3x3 grid`、`a 1x2 shape is the SAME recipe at all six positions in a 3x3 grid`（位置を全列挙する） |
 | 形が崩れたら一致しない | `a broken shape is not a translation of the whole shape`、`a hole in the pattern is a requirement, so a stray item breaks the match` |
 | 2x2 グリッドで 3x3 レシピが作れてしまう | `a 3x3 recipe cannot be reached from the player 2x2 grid` |
-| 鏡像 | `an asymmetric shape matches its left-right mirror, as vanilla does`、`the mirror travels with the translation, at every position` |
+| 鏡像 | `an asymmetric shape matches its left-right mirror, as vanilla does`、`the mirror travels with the translation, at every position`（**ローカル表 `MIRROR_TABLE`**。出荷される表に非対称な shaped はもう無い —— [public-api.md](./public-api.md) §4.1-7） |
 | 上下反転を鏡像と誤認する | `a vertical flip is NOT a mirror — a shape upside down is a different shape` |
-| 順列 | `every permutation of the ingredients is the same recipe`（6 通り全列挙）、`position is irrelevant, not merely reorderable within a row` |
+| 鏡像規則が「未使用」に見えて消される | `REGRESSION: no shipped recipe distinguishes the mirror, so only the above does`（`STARTER_RECIPES` の shaped が全部左右対称であることを assert して、上の 3 件が唯一の防衛線だと明示する） |
+| 順列 | `every permutation of the ingredients is the same recipe`（6 通り全列挙、**ローカル表 `PERMUTATION_TABLE`**）、`position is irrelevant, not merely reorderable within a row`、`the shipped table still permutes, with the one ingredient pair it has` |
 | 曖昧性が表順に依存する | `REGRESSION: the winner does not depend on where the recipe sits in the table`（全回転 + 逆順）、`equally specific matches are decided by id, in either table order` |
 | 表に同順位の衝突が紛れ込む | `STARTER_RECIPES leans on specificity, never on the id tie-break` |
 | 全域性 | `a ragged grid reads as empty where it is short, and does not throw`（mx-ui が画面状態から組むので、フレームの中で defect にしてはならない） |
@@ -184,6 +196,24 @@ Effect は Tag を**その文字列キー**で解決する。3 つのコピー�
 | クラフトが中途半端に適用される | `REGRESSION: a craft short of an ingredient leaves the inventory untouched`、`REGRESSION: a craft with nowhere to put the result leaves the inventory untouched`（どちらも `toBe` で**参照同一性**を見る） |
 | 先に空きを確認して最後の 1 回を断る | `removes the ingredients BEFORE offering the result, so the last craft still fits` |
 | 並行クラフトで材料を超過して引く | `REGRESSION: concurrent crafts cannot overdraw — Ref.modify, not get-then-set`（DN-07） |
+
+### 3.3 語彙の付け替えが作った穴と、それを守るテスト
+
+`ItemId = string` を kernel の閉じた `ItemType` に付け替えると、**セーブの読み込み経路に穴が開く**。
+`Slot.item` は `ItemType` と型が付くのに、実際に流れてくるのは mc-save が JSON から起こした
+生の文字列であり、誰も検査しない。`'DIAMOND'`（1 コミット前の mc-sim 自身の綴り）を持つセーブは、
+付け替え前は「妙だが合法」だったが、付け替え後は**値が自分の型と食い違うスロット**になる。
+
+`normaliseInventory` がこれを捨てて `discarded` に数える。テストは 3 件:
+
+| 何が壊れたら落ちるか | テスト |
+| --- | --- |
+| 語彙外アイテムがそのまま居座る | `an item this build has no vocabulary for is DISCARDED, and counted` |
+| 破棄が `leftover` に混ざる（＝存在しないアイテムを地面に湧かせろと言う） | `a discard takes only its own slot, and the accounting stays separate` |
+| サービス経由で数が消える | `a discarded item is not in restore’s number, and the number is still obtainable` |
+
+型の上では `isItemType(slot.item)` の否定側は `never` に絞られる。**そこがテストする理由である** ——
+この関数が存在する目的の値は、このリポジトリから来ない。
 
 ## 4. テストの書き方（本リポジトリの規約）
 

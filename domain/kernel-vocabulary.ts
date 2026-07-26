@@ -15,7 +15,7 @@
  * Rather than invent a different vocabulary that would have to be reconciled
  * later, this file mirrors the handful of kernel declarations mc-sim actually
  * uses, verbatim in shape and semantics, from
- * `mc-kernel/domain/{quantities,coordinates,clock,camera,identifiers}.ts`.
+ * `mc-kernel/domain/{quantities,coordinates,clock,camera,identifiers,frame,item-type}.ts`.
  *
  * WHEN mc-kernel IS PUBLISHED:
  *   1. add `@nerima-games/mc-kernel` to `package.json#dependencies`;
@@ -43,6 +43,38 @@
  * `FixedClockLayer` are therefore mirrored even though nothing in mc-sim reads a
  * wall clock. `test/kernel-mirror.test.ts` pins the shape against kernel's, so
  * the next divergence fails CI rather than a frame.
+ *
+ * ---------------------------------------------------------------------------
+ * THE SECOND EXCEPTION: `ITEM_TYPES` is mirrored WHOLE, all sixteen literals
+ * ---------------------------------------------------------------------------
+ *
+ * For every other declaration here, "minimal" means "the names mc-sim uses".
+ * For a closed literal union it cannot mean that, because THE MEMBERSHIP IS THE
+ * TYPE. A mirror carrying only the six items mc-sim's recipe table names would
+ * be a NARROWER type under the same name: `isItemType('sand')` would answer
+ * `false` here and `true` in kernel, and an `Inventory` holding `'sand'` — which
+ * kernel says is a perfectly ordinary item — would be rejected by a signature
+ * that claims to speak kernel's vocabulary.
+ *
+ * That is the ClockPort hazard again with a different payload. It is also the
+ * more dangerous direction: a mirror that is WIDER than kernel's roster (an item
+ * mc-sim finds convenient, added here) typechecks locally, ships a recipe table
+ * kernel's `ItemType` rejects, and the failure surfaces on the day the mirror is
+ * deleted — which is the one day this file promised would be uneventful.
+ *
+ * So the roster is transcribed exactly, in kernel's order, and
+ * `test/kernel-mirror.test.ts` pins it literally. ADDING AN ITEM HERE IS NOT A
+ * DECISION THIS REPOSITORY CAN TAKE: kernel owns the roster (its
+ * `docs/versioning.md` §6 classifies growing it MINOR), and mc-sim's part is to
+ * ask for what it needs and to live inside the answer meanwhile. See
+ * `domain/recipe.ts` for what living inside the answer cost the recipe table.
+ *
+ * What is NOT mirrored, deliberately: `mc-kernel/domain/block-item.ts`
+ * (`PlaceableItemType`, `itemOfBlock`, `blockOfPlaceableItem`) and the drop
+ * resolution in `block-registry.ts` (`resolveDropItem`, `dropOfBlockId`). Those
+ * answer "what does breaking this block give you" and "can this item be put
+ * back into the world", which are mx-gameplay's verbs (plan.md §2.3-1). mc-sim
+ * needs to know that an item HAS a name, not where the name came from.
  */
 import { Brand, Context, Effect, Layer } from 'effect'
 
@@ -96,6 +128,68 @@ export const StackCount = Brand.refined<StackCount>(
   (value) => Number.isInteger(value) && value >= 0 && value <= MAX_STACK_COUNT,
   (value) => Brand.error(`StackCount must be an integer in [0, ${MAX_STACK_COUNT}], received ${value}`),
 )
+
+// ---------------------------------------------------------------------------
+// Item vocabulary — mirrors mc-kernel/domain/item-type.ts
+// ---------------------------------------------------------------------------
+
+/**
+ * Every item that exists. Transcribed from `mc-kernel/domain/item-type.ts`,
+ * in kernel's order, and NOT extensible from here — see the header.
+ *
+ * `lower_snake_case`, matching kernel's `BLOCK_TYPES`. mc-sim's provisional
+ * strings were `UPPER_SNAKE` (`'OAK_PLANKS'`), so repointing was a re-casing as
+ * well as a re-typing.
+ *
+ * The rosters OVERLAP rather than nest: an item that is also a block is spelled
+ * identically to the block (`dirt`), which is what makes kernel's
+ * `PlaceableItemType = ItemType & BlockType` a derivation instead of a third
+ * hand-written list. `stick`, `glowstone_dust` and `wooden_pickaxe` are the
+ * entries that are not blocks and never will be.
+ */
+export const ITEM_TYPES = [
+  'stone',
+  'cobblestone',
+  'dirt',
+  'grass_block',
+  'sand',
+  'gravel',
+  'oak_log',
+  'oak_planks',
+  'oak_leaves',
+  'glass',
+  'torch',
+  'glowstone',
+  'piston',
+  'stick',
+  'glowstone_dust',
+  'wooden_pickaxe',
+] as const
+
+/**
+ * Item identity. A CLOSED literal union, so a misspelled item is a compile
+ * error rather than a slot nobody can ever match a recipe against.
+ *
+ * This replaced `domain/inventory.ts`'s `export type ItemId = string`, which
+ * kernel's `item-type.ts` header names as one of the three provisional aliases
+ * the published type exists to retire. mc-sim does not re-alias it: there is one
+ * name for it now, and it is kernel's.
+ */
+export type ItemType = (typeof ITEM_TYPES)[number]
+
+const ITEM_TYPE_LOOKUP: ReadonlySet<string> = new Set<string>(ITEM_TYPES)
+
+/**
+ * Narrowing guard for item names arriving from outside the type system.
+ *
+ * mc-sim has exactly one such boundary and it is the important one: a saved
+ * inventory is item names in a file, written by a build whose roster may differ
+ * from this one's. `normaliseInventory` (`./inventory`) runs this on the
+ * world-load path, because a `Slot` typed `ItemType` holding `'diamond'` is a
+ * value that disagrees with its own type and nothing downstream would ever
+ * notice.
+ */
+export const isItemType = (value: string): value is ItemType => ITEM_TYPE_LOOKUP.has(value)
 
 // ---------------------------------------------------------------------------
 // Coordinates — mirrors mc-kernel/domain/coordinates.ts (the continuous part)
@@ -167,4 +261,98 @@ export type CameraPoseSnapshot = {
   readonly yawRadians: number
   readonly pitchRadians: number
   readonly capturedAtSecs: MonotonicTimeSecs
+}
+
+// ---------------------------------------------------------------------------
+// Identifiers — mirrors mc-kernel/domain/identifiers.ts
+// ---------------------------------------------------------------------------
+
+/**
+ * Identifies a frame stage. Stage ids are the vertices of the per-frame
+ * ordering graph and are STRINGS ON PURPOSE: `after: [StageId('sim:physics')]`
+ * expresses "run me after mc-sim's physics" without importing anything from
+ * mc-sim's stage module (plan.md §2.3-1, §2.3-3).
+ *
+ * Convention: `<owning-repo-suffix>:<stage>`. Everything this repository owns is
+ * prefixed `sim:`.
+ *
+ * Note the consequence for this repository in particular: `sim:physics` is
+ * named in an `after` edge by mx-gameplay, mx-redstone, mx-ui AND mc-render, and
+ * not one of those four names creates an import. So nothing in the type system
+ * or in `pnpm check:deps` was ever going to notice that mc-sim registered no
+ * such stage — which is precisely how all four edges came to dangle at once.
+ */
+export type StageId = string & Brand.Brand<'StageId'>
+
+export const StageId = Brand.refined<StageId>(
+  (value) => value.trim().length > 0,
+  (value) => Brand.error(`StageId must be a non-blank string, received ${JSON.stringify(value)}`),
+)
+
+// ---------------------------------------------------------------------------
+// Frame contract — mirrors mc-kernel/domain/frame.ts
+// ---------------------------------------------------------------------------
+
+/**
+ * The context every frame stage may assume is present. Kernel's answer, settled
+ * by the vertical-slice spike: `ClockPort`, and nothing else.
+ *
+ * The `mx-*` repositories mirror this as `never`, because they are stage AUTHORS
+ * and an `Effect<void, never, never>` is assignable wherever an
+ * `Effect<void, never, ClockPort>` is wanted. That shortcut is NOT available
+ * here, and the reason is that this repository is the measurement kernel settled
+ * the alias on: `mc-kernel/domain/frame.ts` names
+ * `mc-sim`'s `PlayerServiceApi.cameraPose` — `Effect<CameraPoseSnapshot, never,
+ * ClockPort>` — as the decisive case, because its clock requirement sits on the
+ * METHOD rather than on acquiring the service, so a stage that captured
+ * `PlayerService` at registration time still needs `ClockPort` a frame later.
+ * Mirroring `never` in the repository that produced that measurement would make
+ * this file disagree with the argument it is the evidence for.
+ */
+export type FrameServices = ClockPort
+
+/**
+ * One unit of per-frame work, contributed by a repository.
+ *
+ * `after` declares ORDERING EDGES ONLY. It is not a dependency on the named
+ * stage existing, and it is not a request for a position in the sequence: the
+ * total order over all stages from all modules is resolved solely by mc-compose
+ * (plan.md §2.3-3, §4.2).
+ *
+ * NOTE WHAT IS NOT HERE: a `before`. The contract is one-directional, so a stage
+ * that must PRECEDE another can say nothing at all — its position is the
+ * skeleton's to give. That asymmetry is why this repository declares no `after`
+ * edges (see `stages/stage-ids.ts`) and it is worth knowing before reading them.
+ *
+ * Reproduced verbatim from plan.md §4.1, `interface` and all.
+ */
+export interface StageRegistration {
+  readonly id: StageId
+  readonly after?: ReadonlyArray<StageId>
+  readonly run: (dt: DeltaTimeSecs) => Effect.Effect<void, never, FrameServices>
+}
+
+/**
+ * A repository's contribution to a running game.
+ *
+ * `ROut`      — services this module provides.
+ * `E`         — errors that can occur while *building* those services.
+ * `RIn`       — services this module needs to be given in order to build.
+ * `RRegister` — services this module needs in order to REGISTER its stages.
+ *
+ * `frameStages` is an EFFECT, not an array, and mc-sim is one of the reasons:
+ * `sim:physics` is meaningless without a `TimeService` and a `PlayerService`, so
+ * building it requires ACQUIRING them, and a value offers no context in which to
+ * do that. With an array the only channel left was `run`, which would have
+ * forced both services into `FrameServices` and therefore forced kernel — tier 1
+ * — to name mc-sim's services. See `mc-kernel/domain/frame.ts`.
+ *
+ * `RRegister` is separate from `RIn` for the same reason it is in mc-render:
+ * both services above are ones this module PROVIDES (they are in `ROut`), not
+ * ones it needs to be given. Folding them into `RIn` would say mc-sim cannot be
+ * built until something else supplies what mc-sim itself ships.
+ */
+export interface GameModule<ROut, E, RIn, RRegister = never> {
+  readonly layers: Layer.Layer<ROut, E, RIn>
+  readonly frameStages: Effect.Effect<ReadonlyArray<StageRegistration>, never, RRegister>
 }

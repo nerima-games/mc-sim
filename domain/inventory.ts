@@ -31,23 +31,31 @@
  * What is here is the part the mining scenario test needs, plus the stacking
  * rule, which is the part that is easy to get subtly wrong.
  */
-import { MAX_STACK_COUNT, StackCount } from './kernel-vocabulary'
+import { isItemType, ItemType, MAX_STACK_COUNT, StackCount } from './kernel-vocabulary'
 
-/**
- * Item identity.
+/*
+ * THERE IS NO `ItemId` HERE ANY MORE.
  *
- * A bare `string` on purpose, and PROVISIONAL. `ItemType` is mc-kernel's
- * vocabulary (plan.md §3.1) and will be a literal union with exhaustiveness
- * checking. Mirroring an invented union here would be worse than mirroring
- * nothing: it would look authoritative.
+ * It was `export type ItemId = string`, provisional, with a comment promising to
+ * repoint when mc-kernel published its half of plan.md §3.1's two vocabularies.
+ * Kernel published it (`mc-kernel/domain/item-type.ts`) and the promise is kept:
+ * every signature below takes `ItemType`, the mirrored closed union.
+ *
+ * The alias is GONE rather than retargeted to `= ItemType`, and that is the
+ * point of the exercise. Kernel's header names the defect precisely — mc-sim,
+ * mc-playground-kit and mx-ui each invented `type ItemId = string`, three names
+ * for one missing type — and an alias that survives the publication leaves
+ * mc-sim's signatures saying `ItemId` where six consumers read `ItemType` from
+ * kernel, which is the same confusion one indirection deeper. Deleting a
+ * published name is a breaking change and is recorded as one (`api-lock.md`,
+ * docs/versioning.md); it is the smaller of the two costs.
  */
-export type ItemId = string
 
 /** Number of slots in the player's main inventory, hotbar included. */
 export const INVENTORY_SLOT_COUNT = 36
 
 export type ItemStack = {
-  readonly item: ItemId
+  readonly item: ItemType
   readonly count: StackCount
 }
 
@@ -59,7 +67,7 @@ export type ItemStack = {
  * flowing into a slot as a bare number. Contrast `addItem(count: number)`, which
  * deliberately does NOT brand: see DN-06 in docs/design-notes.md.
  */
-export const itemStack = (item: ItemId, count: number): ItemStack => ({
+export const itemStack = (item: ItemType, count: number): ItemStack => ({
   item,
   count: StackCount(count),
 })
@@ -112,7 +120,7 @@ export const emptyInventory = (): Inventory => ({
 export const slotAt = (inventory: Inventory, index: number): Slot => inventory.slots[index]
 
 /** Total count of an item across every slot. */
-export const countOf = (inventory: Inventory, item: ItemId): number =>
+export const countOf = (inventory: Inventory, item: ItemType): number =>
   inventory.slots.reduce((total, slot) => (slot?.item === item ? total + heldCount(slot) : total), 0)
 
 /** True when no slot holds anything. */
@@ -144,7 +152,7 @@ export type AddOutcome = {
  * branding the input would reject the very case this function exists to spread
  * across slots.
  */
-export const addItem = (inventory: Inventory, item: ItemId, count: number): AddOutcome => {
+export const addItem = (inventory: Inventory, item: ItemType, count: number): AddOutcome => {
   if (!Number.isInteger(count) || count <= 0) {
     // A rejected quantity is reported as leftover, because the caller turns
     // leftover into dropped-item entities and 2.5 items asked for is 2.5 items
@@ -200,7 +208,7 @@ export type RemoveOutcome = {
  * `derivedStackCount` and `heldCount` for what an out-of-range slot does here
  * and why it cannot be allowed to throw.
  */
-export const removeItem = (inventory: Inventory, item: ItemId, count: number): RemoveOutcome => {
+export const removeItem = (inventory: Inventory, item: ItemType, count: number): RemoveOutcome => {
   if (!Number.isInteger(count) || count <= 0) {
     return { inventory, removed: 0 }
   }
@@ -235,6 +243,21 @@ export type NormaliseOutcome = {
    * of items that evaporate on load.
    */
   readonly leftover: number
+  /**
+   * How many items were dropped because their name is not an `ItemType`.
+   *
+   * A SEPARATE NUMBER FROM `leftover`, because the caller does something
+   * different with it. A leftover is a real item with nowhere to go, and
+   * mx-gameplay spawns it on the ground; a discard is a name this build has no
+   * item for, and there is nothing to spawn. Folding the two together would ask
+   * a host to drop `'diamond'` into a world whose item vocabulary has never
+   * heard of it.
+   *
+   * Non-zero means the save came from a build with a different `ITEM_TYPES`
+   * roster — which is exactly what a MINOR kernel release produces in the other
+   * direction, and what `docs/versioning.md` says a save may cross.
+   */
+  readonly discarded: number
 }
 
 /**
@@ -249,7 +272,7 @@ export type NormaliseOutcome = {
  * exactly the moment a slot count changes, so the load path is where the length
  * has to be re-established.
  *
- * Three repairs, and none of them destroys an item it does not report:
+ * Four repairs, and none of them destroys an item it does not report:
  *
  *   1. LENGTH. The result is always exactly `INVENTORY_SLOT_COUNT` slots. A
  *      short save is padded; a long one has its tail re-inserted rather than
@@ -260,16 +283,39 @@ export type NormaliseOutcome = {
  *   3. EMPTY AND NON-NUMERIC STACKS. A slot holding 0, a fraction or `NaN`
  *      becomes an empty slot; a fraction is floored first, so the whole part of
  *      it survives.
+ *   4. ITEMS THAT ARE NOT ITEMS. A slot whose name is not in kernel's
+ *      `ITEM_TYPES` is removed and counted in `discarded`. See below.
  *
  * Everything re-inserted goes back through `addItem`, so the top-up-first rule
  * and `MAX_STACK_COUNT` apply to a repaired inventory exactly as they do to a
  * mined one, and whatever still does not fit is returned as `leftover`.
+ *
+ * ---------------------------------------------------------------------------
+ * Why repair 4 exists, and why it looks like dead code
+ * ---------------------------------------------------------------------------
+ *
+ * `Slot.item` is typed `ItemType`, so `isItemType` cannot fail on a value this
+ * repository produced, and TypeScript narrows the rejecting branch to `never`.
+ * That is precisely the argument for testing it: THE VALUES THIS FUNCTION
+ * EXISTS FOR DO NOT COME FROM THIS REPOSITORY. A saved inventory is item names
+ * in a file, parsed by mc-save and handed back through `restore`, and JSON is
+ * not checked by anything. Kernel's own header makes the point — `isItemType`
+ * is for "values arriving from outside the type system (save files, network
+ * frames, developer consoles)", and a save file is the one such boundary mc-sim
+ * has.
+ *
+ * Before the repoint this could not go wrong: `ItemId` was `string`, so a save
+ * naming `'DIAMOND'` produced a slot that was odd but legal. Closing the union
+ * is what turns it into a value that disagrees with its own type — held by
+ * `countOf`, invisible to every recipe, undroppable, and permanent. The repoint
+ * created this hole and closes it in the same commit.
  */
 export const normaliseInventory = (inventory: Inventory): NormaliseOutcome => {
   const slots: Array<Slot> = Array.from({ length: INVENTORY_SLOT_COUNT }, () => undefined)
   // A plain count, NOT a `StackCount`: a spilled quantity may legitimately
   // exceed one stack, which is precisely the input `addItem` takes unbranded.
-  const spilled: Array<{ readonly item: ItemId; readonly count: number }> = []
+  const spilled: Array<{ readonly item: ItemType; readonly count: number }> = []
+  let discarded = 0
 
   inventory.slots.forEach((slot, index) => {
     if (slot === undefined) {
@@ -277,6 +323,10 @@ export const normaliseInventory = (inventory: Inventory): NormaliseOutcome => {
     }
     const held = heldCount(slot)
     if (held === 0) {
+      return
+    }
+    if (!isItemType(slot.item)) {
+      discarded += held
       return
     }
     if (index >= INVENTORY_SLOT_COUNT) {
@@ -292,8 +342,12 @@ export const normaliseInventory = (inventory: Inventory): NormaliseOutcome => {
   return spilled.reduce<NormaliseOutcome>(
     (carried, stack) => {
       const outcome = addItem(carried.inventory, stack.item, stack.count)
-      return { inventory: outcome.inventory, leftover: carried.leftover + outcome.leftover }
+      return {
+        inventory: outcome.inventory,
+        leftover: carried.leftover + outcome.leftover,
+        discarded: carried.discarded,
+      }
     },
-    { inventory: { slots }, leftover: 0 },
+    { inventory: { slots }, leftover: 0, discarded },
   )
 }

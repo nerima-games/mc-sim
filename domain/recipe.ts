@@ -26,7 +26,7 @@
  *   "any plank" / "any log" tags, and that arrives as a second member. The
  *   single-member union is not ceremony: every consumer already discriminates on
  *   `_tag`, so adding `Tag` is additive rather than a breaking change to a type
- *   that six repositories read (plan.md §8 risk 2). A bare `ItemId` here would
+ *   that six repositories read (plan.md §8 risk 2). A bare `ItemType` here would
  *   have made the growth a breaking change and would have looked final.
  * - An ingredient occupies exactly one grid cell and costs exactly one item.
  *   Multi-item cells and remainder items (the bucket that survives a cake) are
@@ -34,16 +34,28 @@
  * - Furnaces, brewing, anvils and enchanting are the rest of plan.md §7 and are
  *   not crafting-grid shaped. None of them is modelled here.
  */
-import { ItemId, ItemStack, itemStack, Slot } from './inventory'
+import { ItemStack, itemStack, Slot } from './inventory'
+import { ItemType } from './kernel-vocabulary'
 
 /**
  * A recipe's identity, namespaced.
  *
- * A bare `string` for the same reason `ItemId` is (see `domain/inventory.ts`):
- * inventing a literal union here would look authoritative while a real registry
- * has to accept ids a mod supplies at runtime. The `mc-sim:` prefix mirrors
- * vanilla's `minecraft:` namespacing and keeps a mod's `stick` distinguishable
- * from this table's.
+ * A bare `string`, and it STAYS one now that `ItemType` has stopped being one.
+ * The two are not the same question. An item is a thing the game has to know
+ * how to render, stack and drop, so the roster is kernel's and is closed; a
+ * recipe is a row in a table that a world may or may not have, and
+ * `makeInventoryService` already takes the table per world (DN-09) precisely so
+ * that a mod can supply ids at runtime. A literal union here would make the
+ * modded world unrepresentable rather than merely unshipped.
+ *
+ * The asymmetry has a consequence worth stating plainly, because it is easy to
+ * meet by accident: a mod can add a RECIPE, but it cannot add an ITEM. Its
+ * recipe's output must already be in `ITEM_TYPES`, and putting a new item there
+ * is a kernel release. `test/crafting.test.ts`'s world-scoped-table case is
+ * written on exactly that boundary.
+ *
+ * The `mc-sim:` prefix mirrors vanilla's `minecraft:` namespacing and keeps a
+ * mod's recipe for a stick distinguishable from this table's.
  *
  * The id is LOAD-BEARING, not decoration: it is the tie-break in the ambiguity
  * rule below, which is what makes matching independent of table order.
@@ -55,12 +67,12 @@ export type RecipeId = string
 // ---------------------------------------------------------------------------
 
 /** What a single grid cell must contain. See the header on why this is a union. */
-export type Ingredient = { readonly _tag: 'Exact'; readonly item: ItemId }
+export type Ingredient = { readonly _tag: 'Exact'; readonly item: ItemType }
 
-export const exactly = (item: ItemId): Ingredient => ({ _tag: 'Exact', item })
+export const exactly = (item: ItemType): Ingredient => ({ _tag: 'Exact', item })
 
 /** Total: an ingredient either accepts the item in the cell or it does not. */
-export const ingredientMatches = (ingredient: Ingredient, item: ItemId): boolean =>
+export const ingredientMatches = (ingredient: Ingredient, item: ItemType): boolean =>
   ingredient._tag === 'Exact' && ingredient.item === item
 
 // ---------------------------------------------------------------------------
@@ -122,7 +134,7 @@ export type RecipeTable = ReadonlyArray<Recipe>
  * table's 3x3 are ONE type with a different number in it. mx-ui's
  * `CraftingSnapshot` already carries `gridWidth` for the same reason.
  *
- * Cells are `Slot` (a stack), not `ItemId`, because that is what a grid actually
+ * Cells are `Slot` (a stack), not `ItemType`, because that is what a grid actually
  * holds — the player drops a stack of 12 planks into a cell and one is spent.
  * Matching reads only `slot.item`; the count is the caller's, and
  * `domain/crafting.ts` charges one per occupied cell.
@@ -147,7 +159,7 @@ export type CraftGrid = {
 export const craftGrid = (
   width: number,
   height: number,
-  items: ReadonlyArray<ItemId | undefined>,
+  items: ReadonlyArray<ItemType | undefined>,
 ): CraftGrid => ({
   width,
   height,
@@ -181,7 +193,7 @@ const patternCellAt = (pattern: RecipePattern, x: number, y: number): PatternCel
  *
  * ```ts
  * shapedRecipe('mc-sim:wooden-pickaxe', ['PPP', ' S ', ' S '],
- *   { P: 'OAK_PLANKS', S: 'STICK' }, itemStack('WOODEN_PICKAXE', 1))
+ *   { P: 'oak_planks', S: 'stick' }, itemStack('wooden_pickaxe', 1))
  * ```
  *
  * A space is empty. A character absent from `key` is ALSO empty — the
@@ -196,11 +208,11 @@ const patternCellAt = (pattern: RecipePattern, x: number, y: number): PatternCel
 export const shapedRecipe = (
   id: RecipeId,
   rows: ReadonlyArray<string>,
-  key: Readonly<Record<string, ItemId>>,
+  key: Readonly<Record<string, ItemType>>,
   output: ItemStack,
 ): ShapedRecipe => ({ _tag: 'Shaped', id, pattern: trimPattern(rows, key), output })
 
-const trimPattern = (rows: ReadonlyArray<string>, key: Readonly<Record<string, ItemId>>): RecipePattern => {
+const trimPattern = (rows: ReadonlyArray<string>, key: Readonly<Record<string, ItemType>>): RecipePattern => {
   const rawHeight = rows.length
   const rawWidth = rows.reduce((widest, row) => Math.max(widest, row.length), 0)
 
@@ -245,7 +257,7 @@ const trimPattern = (rows: ReadonlyArray<string>, key: Readonly<Record<string, I
 
 export const shapelessRecipe = (
   id: RecipeId,
-  items: ReadonlyArray<ItemId>,
+  items: ReadonlyArray<ItemType>,
   output: ItemStack,
 ): ShapelessRecipe => ({ _tag: 'Shapeless', id, ingredients: items.map(exactly), output })
 
@@ -324,6 +336,16 @@ const shapedFitsAt = (
  * The mirror is horizontal ONLY. A vertical flip is not a mirror of anything —
  * a torch is coal above a stick and never a stick above coal — and accepting one
  * would silently create recipes nobody wrote.
+ *
+ * NOTE that `STARTER_RECIPES` no longer contains an asymmetric shaped recipe, so
+ * nothing in the shipped table can tell the two halves of this function apart:
+ * every pattern in it is its own mirror. The rule is exercised by a local table
+ * in `test/recipe.test.ts` instead, and the table header explains why the recipe
+ * that used to do it (vanilla's diagonal flint and steel) could not be kept.
+ * A rule with no case in the shipped data is a rule that silently stops working,
+ * so this note is load-bearing: if the mirror is ever deleted as unused, that
+ * test is the only thing standing between here and a recipe nobody can craft
+ * left-handed.
  */
 const matchesShaped = (recipe: ShapedRecipe, grid: CraftGrid): boolean => {
   const bounds = occupiedBounds(grid)
@@ -338,8 +360,8 @@ const matchesShaped = (recipe: ShapedRecipe, grid: CraftGrid): boolean => {
   )
 }
 
-const occupiedItems = (grid: CraftGrid): ReadonlyArray<ItemId> => {
-  const items: Array<ItemId> = []
+const occupiedItems = (grid: CraftGrid): ReadonlyArray<ItemType> => {
+  const items: Array<ItemType> = []
   for (let y = 0; y < grid.height; y += 1) {
     for (let x = 0; x < grid.width; x += 1) {
       const slot = cellAt(grid, x, y)
@@ -570,36 +592,81 @@ export const conflictsIn = (table: RecipeTable): ReadonlyArray<RecipeConflict> =
 // ---------------------------------------------------------------------------
 
 /**
- * A deliberately small table.
+ * A deliberately small table, and SMALLER THAN IT WAS.
  *
- * It is here to exercise the MODEL — shaped, shapeless, translation, mirroring,
- * permutation and the ambiguity rule — and not to be a content database. Every
- * entry but one is a vanilla recipe with vanilla proportions. A large invented
- * table would be content, and content belongs next to the block table discussion
- * in mc-kernel (docs/design-notes.md DN-11), not in the module that decides how
- * matching works.
+ * It is here to exercise the MODEL and not to be a content database. A large
+ * invented table would be content, and content belongs next to the block table
+ * discussion in mc-kernel (docs/design-notes.md DN-11), not in the module that
+ * decides how matching works.
  *
- * Item ids are the provisional bare strings of `domain/inventory.ts`. They are
+ * Item ids are now members of kernel's `ITEM_TYPES` (mirrored in
+ * `./kernel-vocabulary`), so a misspelled row does not compile. They are still
  * DATA, not behaviour: nothing in this file branches on a literal item id, which
- * is the trap DN-11 records. When mc-kernel publishes `ItemType` these become
- * union members and this table stops typechecking until it is corrected — which
- * is the desired failure.
+ * is the trap DN-11 records.
+ *
+ * ---------------------------------------------------------------------------
+ * What the repoint cost, and why the answer was to trim rather than to ask
+ * ---------------------------------------------------------------------------
+ *
+ * Seven of these rows named items kernel's roster does not have: `IRON_INGOT`,
+ * `FLINT`, `FLINT_AND_STEEL`, `GUNPOWDER`, `BLAZE_POWDER`, `COAL`,
+ * `FIRE_CHARGE` and `CRAFTING_TABLE`. Kernel declined to add them and said why:
+ * guessing eight items into the tier-1 vocabulary to spare a consumer a decision
+ * is the guessed-roster failure the organisation has argued against twice.
+ *
+ * Asking anyway was not available in the same commit either — `ITEM_TYPES` is
+ * mirrored here, mc-dev-meta's `pnpm check:mirrors` compares the mirror against
+ * kernel's real module, and a mirror that runs ahead of its source is the exact
+ * hazard the mirror exists to prevent. So the table lives inside the sixteen
+ * items that exist, and the request to kernel is a request, recorded below.
+ *
+ * The trim was not uniform, because the three rows were not worth the same:
+ *
+ *   - `mc-sim:crafting-table` (2x2 symmetric, the translation case) cost
+ *     NOTHING. Vanilla's glowstone block is the same shape over items kernel
+ *     already has, so the demonstration survives with a different output and one
+ *     fewer item to ask for. A row whose only distinction was its output was a
+ *     row that was content.
+ *   - `mc-sim:fire-charge` (shapeless, three DISTINCT ingredients) and
+ *     `mc-sim:flint-and-steel` (shaped, ASYMMETRIC, so its mirror is a different
+ *     layout) cost something real: nothing in kernel's sixteen items is a
+ *     vanilla recipe of either shape, and both are rules `matchRecipe`
+ *     implements. They now live in `test/recipe.test.ts` as local tables.
+ *
+ * That relocation is the honest place for them rather than a consolation prize.
+ * `STARTER_RECIPES` is PUBLISHED — `InventoryService.recipes` hands it to mx-ui's
+ * recipe book — so a row in it is a claim about what this game can make, and
+ * inventing an asymmetric recipe out of `torch` and `gravel` to keep a matcher
+ * property on display would be inventing content to test a function. Permutation
+ * and mirroring are properties of the MATCHER and can be demonstrated on any
+ * table; the one non-vanilla row that remains is here because its property —
+ * that the SHIPPED table resolves an ambiguity without leaning on the id
+ * tie-break — is a property of this table and of nothing else.
+ *
+ * ---------------------------------------------------------------------------
+ * The request to kernel, costed
+ * ---------------------------------------------------------------------------
+ *
+ * Restoring the two rows needs seven literals in `ITEM_TYPES`: `iron_ingot`,
+ * `flint`, `flint_and_steel`, `coal`, `gunpowder`, `blaze_powder`,
+ * `fire_charge`. NOT `crafting_table`, which is replaced above and should stay
+ * out. It is additive and MINOR (kernel's docs/versioning.md §6), and mc-sim's
+ * side of it is two `shapelessRecipe`/`shapedRecipe` calls.
+ *
+ * But it should not land on mc-sim's say-so. `coal`, `iron_ingot` and `flint`
+ * have kernel-side reasons coming — they are what `coal_ore`, `iron_ore` and
+ * `gravel` drop, and `BlockDropRule.item` is `ItemType | 'self'` — and arriving
+ * with a drop rule behind them is the difference between a roster and a guess.
+ * A recipe table in a tier-2 repository is not evidence about kernel's
+ * vocabulary; a block that has to drop something is.
  */
 export const STARTER_RECIPES: RecipeTable = [
   // Shapeless, one ingredient: the log that becomes four planks.
-  shapelessRecipe('mc-sim:oak-planks', ['OAK_LOG'], itemStack('OAK_PLANKS', 4)),
-
-  // Shapeless, three DISTINCT ingredients — the permutation case with something
-  // to permute. Vanilla's fire charge.
-  shapelessRecipe(
-    'mc-sim:fire-charge',
-    ['GUNPOWDER', 'BLAZE_POWDER', 'COAL'],
-    itemStack('FIRE_CHARGE', 3),
-  ),
+  shapelessRecipe('mc-sim:oak-planks', ['oak_log'], itemStack('oak_planks', 4)),
 
   // Shaped 1x2: the smallest shape there is, and the one that translates to the
   // most places in a 3x3 grid (six).
-  shapedRecipe('mc-sim:stick', ['P', 'P'], { P: 'OAK_PLANKS' }, itemStack('STICK', 4)),
+  shapedRecipe('mc-sim:stick', ['P', 'P'], { P: 'oak_planks' }, itemStack('stick', 4)),
 
   /*
    * THE AMBIGUITY. This entry is not vanilla and is not content: it exists so
@@ -612,31 +679,18 @@ export const STARTER_RECIPES: RecipeTable = [
    * shaped `mc-sim:stick` wins for two planks in a column, and this recipe wins
    * for two planks side by side, which the shaped one does not accept.
    */
-  shapelessRecipe('mc-sim:stick-from-loose-planks', ['OAK_PLANKS', 'OAK_PLANKS'], itemStack('STICK', 2)),
+  shapelessRecipe('mc-sim:stick-from-loose-planks', ['oak_planks', 'oak_planks'], itemStack('stick', 2)),
 
-  // Shaped 2x2, symmetric: the translation case. Four planks anywhere in a 3x3.
-  shapedRecipe(
-    'mc-sim:crafting-table',
-    ['PP', 'PP'],
-    { P: 'OAK_PLANKS' },
-    itemStack('CRAFTING_TABLE', 1),
-  ),
-
-  // Shaped 2x2, ASYMMETRIC: the mirroring case. Vanilla's flint and steel is a
-  // diagonal, so its mirror is a different layout and must also match.
-  shapedRecipe(
-    'mc-sim:flint-and-steel',
-    ['I ', ' F'],
-    { I: 'IRON_INGOT', F: 'FLINT' },
-    itemStack('FLINT_AND_STEEL', 1),
-  ),
+  // Shaped 2x2, symmetric: the translation case. Four dust anywhere in a 3x3.
+  // Vanilla, and the replacement for the crafting table discussed above.
+  shapedRecipe('mc-sim:glowstone', ['DD', 'DD'], { D: 'glowstone_dust' }, itemStack('glowstone', 1)),
 
   // Shaped 3x3 with holes: the pattern that fills the grid, so it translates
   // nowhere, and whose empty cells must stay empty.
   shapedRecipe(
     'mc-sim:wooden-pickaxe',
     ['PPP', ' S ', ' S '],
-    { P: 'OAK_PLANKS', S: 'STICK' },
-    itemStack('WOODEN_PICKAXE', 1),
+    { P: 'oak_planks', S: 'stick' },
+    itemStack('wooden_pickaxe', 1),
   ),
 ]

@@ -242,10 +242,11 @@ export const BANNED_TIME_SOURCES: ReadonlyArray<{ readonly pattern: RegExp; read
 ]
 
 /** Directories and files scanned for imports and banned time sources. */
-export const SCAN_ROOTS: ReadonlyArray<string> = ['apps', 
+export const SCAN_ROOTS: ReadonlyArray<string> = ['apps',
   'index.ts',
   'domain',
   'application',
+  'stages',
   'scripts',
   'test',
 ]
@@ -873,11 +874,12 @@ const relativeFromRoot = (absolutePath: string): string => toPosix(path.relative
 const isTypeScriptSource = (filePath: string): boolean =>
   filePath.endsWith('.ts') && !filePath.endsWith('.d.ts')
 
-/** Shipped source is `index.ts` and everything under `domain/` and `application/`. */
+/** Shipped source is `index.ts` and everything under `domain/`, `application/` and `stages/`. */
 export const isToolingOrTestPath = (relativePath: string): boolean =>
   !(relativePath === 'index.ts' ||
     relativePath.startsWith('domain/') ||
-    relativePath.startsWith('application/'))
+    relativePath.startsWith('application/') ||
+    relativePath.startsWith('stages/'))
 
 const collectFrom = async (absolutePath: string): Promise<ReadonlyArray<string>> => {
   const entries = await readdir(absolutePath, { withFileTypes: true }).catch(() => undefined)

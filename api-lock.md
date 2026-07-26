@@ -13,8 +13,8 @@
 <!-- ------------------------------------------------------------------------- -->
 
 format: 1
-exported declarations: 102
-supporting declarations: 17
+exported declarations: 111
+supporting declarations: 24
 
 ## Exported
 
@@ -85,6 +85,12 @@ type CraftResult = {
 
 ```ts
 const DEFAULT_DAY_LENGTH_SECS = 400;
+```
+
+### EXPERIENCE_MODULE_STAGE_PREFIXES  `const`
+
+```ts
+const EXPERIENCE_MODULE_STAGE_PREFIXES: readonly ["gameplay:", "redstone:", "ui:", "multiplayer:"];
 ```
 
 ### EYE_LEVEL_OFFSET  `const`
@@ -161,7 +167,7 @@ const INVENTORY_SLOT_COUNT = 36;
 ```ts
 type Ingredient = {
     readonly _tag: 'Exact';
-    readonly item: ItemId;
+    readonly item: ItemType;
 };
 ```
 
@@ -184,9 +190,9 @@ class InventoryService extends InventoryService_base {
 
 ```ts
 type InventoryServiceApi = {
-    readonly add: (item: Inv.ItemId, count: number) => Effect.Effect<number>;
-    readonly remove: (item: Inv.ItemId, count: number) => Effect.Effect<number>;
-    readonly countOf: (item: Inv.ItemId) => Effect.Effect<number>;
+    readonly add: (item: ItemType, count: number) => Effect.Effect<number>;
+    readonly remove: (item: ItemType, count: number) => Effect.Effect<number>;
+    readonly countOf: (item: ItemType) => Effect.Effect<number>;
     readonly snapshot: Effect.Effect<Inv.Inventory>;
     readonly restore: (inventory: Inv.Inventory) => Effect.Effect<number>;
     readonly reset: Effect.Effect<void>;
@@ -202,17 +208,11 @@ type InventoryServiceApi = {
 const InventoryServiceLayer: (initial?: Inv.Inventory, recipeTable?: Recipe.RecipeTable) => Layer.Layer<InventoryService>;
 ```
 
-### ItemId  `type`
-
-```ts
-type ItemId = string;
-```
-
 ### ItemStack  `type`
 
 ```ts
 type ItemStack = {
-    readonly item: ItemId;
+    readonly item: ItemType;
     readonly count: StackCount;
 };
 ```
@@ -257,7 +257,7 @@ const MOON_PHASE_COUNT = 8;
 
 ```ts
 type MissingIngredient = {
-    readonly item: ItemId;
+    readonly item: ItemType;
     readonly short: number;
 };
 ```
@@ -268,7 +268,14 @@ type MissingIngredient = {
 type NormaliseOutcome = {
     readonly inventory: Inventory;
     readonly leftover: number;
+    readonly discarded: number;
 };
+```
+
+### OWN_STAGE_PREFIX  `const`
+
+```ts
+const OWN_STAGE_PREFIX = "sim:";
 ```
 
 ### PITCH_EPSILON  `const`
@@ -389,6 +396,14 @@ type RemoveOutcome = {
 };
 ```
 
+### SIM_STAGE_IDS  `const`
+
+```ts
+const SIM_STAGE_IDS: {
+    readonly physics: StageId;
+};
+```
+
 ### STARTER_RECIPES  `const`
 
 ```ts
@@ -414,6 +429,14 @@ type ShapelessRecipe = {
     readonly id: RecipeId;
     readonly ingredients: ReadonlyArray<Ingredient>;
     readonly output: ItemStack;
+};
+```
+
+### SimFrameState  `type`
+
+```ts
+type SimFrameState = {
+    readonly resolvedFeetPosition: Ref.Ref<Option.Option<Position>>;
 };
 ```
 
@@ -468,10 +491,16 @@ type TimeState = {
 };
 ```
 
+### UPSTREAM_STAGE_IDS  `const`
+
+```ts
+const UPSTREAM_STAGE_IDS: {};
+```
+
 ### addItem  `const`
 
 ```ts
-const addItem: (inventory: Inventory, item: ItemId, count: number) => AddOutcome;
+const addItem: (inventory: Inventory, item: ItemType, count: number) => AddOutcome;
 ```
 
 ### advance  `const`
@@ -525,7 +554,7 @@ const conflictsIn: (table: RecipeTable) => ReadonlyArray<RecipeConflict>;
 ### countOf  `const`
 
 ```ts
-const countOf: (inventory: Inventory, item: ItemId) => number;
+const countOf: (inventory: Inventory, item: ItemType) => number;
 ```
 
 ### craftFromGrid  `const`
@@ -537,7 +566,7 @@ const craftFromGrid: (inventory: Inventory, table: RecipeTable, grid: CraftGrid)
 ### craftGrid  `const`
 
 ```ts
-const craftGrid: (width: number, height: number, items: ReadonlyArray<ItemId | undefined>) => CraftGrid;
+const craftGrid: (width: number, height: number, items: ReadonlyArray<ItemType | undefined>) => CraftGrid;
 ```
 
 ### dayLengthSecs  `const`
@@ -555,7 +584,7 @@ const emptyInventory: () => Inventory;
 ### exactly  `const`
 
 ```ts
-const exactly: (item: ItemId) => Ingredient;
+const exactly: (item: ItemType) => Ingredient;
 ```
 
 ### forwardVector  `const`
@@ -585,13 +614,13 @@ const frameDeltaLossSecs: (rawDeltaSecs: number) => number;
 ### ingredientCost  `const`
 
 ```ts
-const ingredientCost: (grid: CraftGrid) => ReadonlyMap<ItemId, number>;
+const ingredientCost: (grid: CraftGrid) => ReadonlyMap<ItemType, number>;
 ```
 
 ### ingredientMatches  `const`
 
 ```ts
-const ingredientMatches: (ingredient: Ingredient, item: ItemId) => boolean;
+const ingredientMatches: (ingredient: Ingredient, item: ItemType) => boolean;
 ```
 
 ### isEmpty  `const`
@@ -615,7 +644,7 @@ const isValidTimeState: (state: TimeState) => boolean;
 ### itemStack  `const`
 
 ```ts
-const itemStack: (item: ItemId, count: number) => ItemStack;
+const itemStack: (item: ItemType, count: number) => ItemStack;
 ```
 
 ### makeGameLoop  `const`
@@ -634,6 +663,27 @@ const makeInventoryService: (initial?: Inv.Inventory, recipeTable?: Recipe.Recip
 
 ```ts
 const makePlayerService: (initial?: Camera.PlayerPose) => Effect.Effect<PlayerServiceApi>;
+```
+
+### makeSimFrameState  `const`
+
+```ts
+const makeSimFrameState: Effect.Effect<SimFrameState>;
+```
+
+### makeSimStages  `const`
+
+```ts
+const makeSimStages: Effect.Effect<ReadonlyArray<StageRegistration>, never, TimeService | PlayerService>;
+```
+
+### makeSimStagesForPreview  `const`
+
+```ts
+const makeSimStagesForPreview: Effect.Effect<{
+    readonly state: SimFrameState;
+    readonly stages: ReadonlyArray<StageRegistration>;
+}, never, TimeService | PlayerService>;
 ```
 
 ### makeTimeService  `const`
@@ -675,7 +725,7 @@ const performAutoSaveTick: <E>(persist: Effect.Effect<void, E>, reporter?: AutoS
 ### removeItem  `const`
 
 ```ts
-const removeItem: (inventory: Inventory, item: ItemId, count: number) => RemoveOutcome;
+const removeItem: (inventory: Inventory, item: ItemType, count: number) => RemoveOutcome;
 ```
 
 ### setDayLength  `const`
@@ -699,13 +749,25 @@ const setTimeOfDay: (state: TimeState, fraction: number) => TimeState;
 ### shapedRecipe  `const`
 
 ```ts
-const shapedRecipe: (id: RecipeId, rows: ReadonlyArray<string>, key: Readonly<Record<string, ItemId>>, output: ItemStack) => ShapedRecipe;
+const shapedRecipe: (id: RecipeId, rows: ReadonlyArray<string>, key: Readonly<Record<string, ItemType>>, output: ItemStack) => ShapedRecipe;
 ```
 
 ### shapelessRecipe  `const`
 
 ```ts
-const shapelessRecipe: (id: RecipeId, items: ReadonlyArray<ItemId>, output: ItemStack) => ShapelessRecipe;
+const shapelessRecipe: (id: RecipeId, items: ReadonlyArray<ItemType>, output: ItemStack) => ShapelessRecipe;
+```
+
+### simModule  `const`
+
+```ts
+const simModule: GameModule<InventoryService | PlayerService | TimeService, never, never, PlayerService | TimeService>;
+```
+
+### simStages  `const`
+
+```ts
+const simStages: (state: SimFrameState, time: TimeServiceApi, player: PlayerServiceApi) => ReadonlyArray<StageRegistration>;
 ```
 
 ### slotAt  `const`
@@ -801,16 +863,43 @@ const EpochMillis: Brand.Brand.Constructor<EpochMillis>;
 type EpochMillis = number & Brand.Brand<'EpochMillis'>;
 ```
 
+### FrameServices  `type`
+
+```ts
+type FrameServices = ClockPort;
+```
+
 ### GameLoop_base  `const`
 
 ```ts
 const GameLoop_base: Context.TagClass<GameLoop, "@nerima-games/mc-sim/GameLoop", GameLoopApi>;
 ```
 
+### GameModule  `interface`
+
+```ts
+interface GameModule<ROut, E, RIn, RRegister = never> {
+    readonly layers: Layer.Layer<ROut, E, RIn>;
+    readonly frameStages: Effect.Effect<ReadonlyArray<StageRegistration>, never, RRegister>;
+}
+```
+
+### ITEM_TYPES  `const`
+
+```ts
+const ITEM_TYPES: readonly ["stone", "cobblestone", "dirt", "grass_block", "sand", "gravel", "oak_log", "oak_planks", "oak_leaves", "glass", "torch", "glowstone", "piston", "stick", "glowstone_dust", "wooden_pickaxe"];
+```
+
 ### InventoryService_base  `const`
 
 ```ts
 const InventoryService_base: Context.TagClass<InventoryService, "@nerima-games/mc-sim/InventoryService", InventoryServiceApi>;
+```
+
+### ItemType  `type`
+
+```ts
+type ItemType = (typeof ITEM_TYPES)[number];
 ```
 
 ### MonotonicTimeSecs  `const`
@@ -851,6 +940,28 @@ const StackCount: Brand.Brand.Constructor<StackCount>;
 
 ```ts
 type StackCount = number & Brand.Brand<'StackCount'>;
+```
+
+### StageId  `const`
+
+```ts
+const StageId: Brand.Brand.Constructor<StageId>;
+```
+
+### StageId  `type`
+
+```ts
+type StageId = string & Brand.Brand<'StageId'>;
+```
+
+### StageRegistration  `interface`
+
+```ts
+interface StageRegistration {
+    readonly id: StageId;
+    readonly after?: ReadonlyArray<StageId>;
+    readonly run: (dt: DeltaTimeSecs) => Effect.Effect<void, never, FrameServices>;
+}
 ```
 
 ### TimeService_base  `const`

@@ -122,6 +122,13 @@ Nix を使わない場合は Node.js 22 以上と pnpm 9.15.0（`corepack` 推�
 | 自動保存の `Schedule.spaced` | `application/autosave.ts` | DN-05 |
 | `Ref.modify` による TOCTOU 回避 | `application/inventory-service.ts` | DN-07 |
 | レシピ表とクラフトの原子性 | `domain/recipe.ts` / `domain/crafting.ts` | DN-07 / DN-11 |
+| **`sim:physics` の登録** | `stages/registration.ts` / `stages/stage-ids.ts` | [責務 §2.1](./docs/responsibility.md) |
+
+`sim:physics` は**ロスターのリポジトリ間順序エッジ 4 本すべての宛先**であり、
+`stages/` が無かったあいだ 4 本とも dangling として捨てられていた。
+登録してもフレームの順序は動かない（実測。他 13 本は不変で dangling が 0 になる）
+—— 変わるのは「宣言された制約が満たされている」ことのほうである。詳細は
+[docs/responsibility.md §2.1](./docs/responsibility.md)。
 
 各 DN の参照実装証跡（file:line）と、書くべき回帰テストの一覧は
 [`docs/design-notes.md`](./docs/design-notes.md)。
@@ -150,7 +157,6 @@ Nix を使わない場合は Node.js 22 以上と pnpm 9.15.0（`corepack` 推�
   進めて見せる決定論シナリオステッパで、kit も publish も THREE.js も要らない
   （[`docs/testing.md`](./docs/testing.md) §2.1）。
 - **リポジトリ内 workspace 分割**（entity / inventory / game）。plan.md §3.8 内部構成。
-- **`ItemId` が暫定 `string`。** 本来は mc-kernel の `ItemType`（リテラル union、網羅性チェックつき）。
 - **ビルド／publish はまだない。** `exports` は TypeScript ソースを直接指している。
   それまで `version` は `0.x` に留める（[`docs/versioning.md`](./docs/versioning.md)）。
 - **カバレッジ閾値は未設定。** 参照実装は 99% を強制しているが、スケルトンに閾値を課しても意味がない。
@@ -162,6 +168,11 @@ Nix を使わない場合は Node.js 22 以上と pnpm 9.15.0（`corepack` 推�
   実行時ハザードである（狭い `Layer` が広い Tag を満たし、欠けたフィールドが `undefined` になる）。
   `test/kernel-mirror.test.ts` が Tag キーと形を両方向で固定している
   （[`docs/versioning.md`](./docs/versioning.md) §5-1、[`docs/testing.md`](./docs/testing.md) §3.1）。
+  **アイテム語彙（`ITEM_TYPES` / `ItemType` / `isItemType`）も丸ごと写してある** ——
+  閉じたリテラル union は「メンバの集合そのものが型」なので、mc-sim が使う 6 個だけを
+  写したミラーは *狭い別の型* になる。逆向き（mc-sim の都合で 1 個足す）はもっと悪く、
+  ローカルでは通り、ミラー削除の日に初めて壊れる。ロスタを増やすのは mc-kernel の
+  決定であってここの決定ではない（[`domain/recipe.ts`](./domain/recipe.ts) の表ヘッダ）。
 
 ## ドキュメント
 

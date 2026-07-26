@@ -73,7 +73,7 @@ describe('deterministic scenario: spawn -> look -> mine -> assert', () => {
 
         expect(yield* time.timeOfDay).toBeCloseTo(0.25, 12)
         expect(yield* time.isNight).toBe(false)
-        expect(yield* inventory.countOf('STONE')).toBe(0)
+        expect(yield* inventory.countOf('stone')).toBe(0)
 
         // --- look --------------------------------------------------------
         yield* player.look(Math.PI / 2, -0.4)
@@ -92,11 +92,11 @@ describe('deterministic scenario: spawn -> look -> mine -> assert', () => {
         expect(flat.z).toBeCloseTo(0, 12)
 
         // --- mine, twice, and once more into a partially-filled stack -----
-        expect(yield* inventory.add('STONE', 1)).toBe(0)
-        expect(yield* inventory.add('STONE', 1)).toBe(0)
-        expect(yield* inventory.add('DIRT', 3)).toBe(0)
-        expect(yield* inventory.countOf('STONE')).toBe(2)
-        expect(yield* inventory.countOf('DIRT')).toBe(3)
+        expect(yield* inventory.add('stone', 1)).toBe(0)
+        expect(yield* inventory.add('stone', 1)).toBe(0)
+        expect(yield* inventory.add('dirt', 3)).toBe(0)
+        expect(yield* inventory.countOf('stone')).toBe(2)
+        expect(yield* inventory.countOf('dirt')).toBe(3)
 
         // --- fast-forward six in-game minutes ----------------------------
         yield* clock.tick(360)
@@ -117,30 +117,30 @@ describe('deterministic scenario: spawn -> look -> mine -> assert', () => {
         // Ref.modify, so the whole thing runs headless with no screen in the
         // process. That is the division of labour: mx-ui PROJECTS this answer,
         // it does not compute it.
-        expect(yield* inventory.add('OAK_LOG', 1)).toBe(0)
-        expect(yield* inventory.craft(craftGrid(1, 1, ['OAK_LOG']))).toStrictEqual({
+        expect(yield* inventory.add('oak_log', 1)).toBe(0)
+        expect(yield* inventory.craft(craftGrid(1, 1, ['oak_log']))).toStrictEqual({
           _tag: 'Crafted',
           recipeId: 'mc-sim:oak-planks',
-          output: { item: 'OAK_PLANKS', count: 4 },
+          output: { item: 'oak_planks', count: 4 },
         })
-        expect(yield* inventory.countOf('OAK_LOG')).toBe(0)
-        expect(yield* inventory.countOf('OAK_PLANKS')).toBe(4)
+        expect(yield* inventory.countOf('oak_log')).toBe(0)
+        expect(yield* inventory.countOf('oak_planks')).toBe(4)
 
         // Two planks in a COLUMN. A loose shapeless recipe over the same two
         // planks also matches; the shaped one wins because it is more specific,
         // and the difference is visible here as 4 sticks rather than 2.
-        expect(yield* inventory.craft(craftGrid(1, 2, ['OAK_PLANKS', 'OAK_PLANKS']))).toStrictEqual({
+        expect(yield* inventory.craft(craftGrid(1, 2, ['oak_planks', 'oak_planks']))).toStrictEqual({
           _tag: 'Crafted',
           recipeId: 'mc-sim:stick',
-          output: { item: 'STICK', count: 4 },
+          output: { item: 'stick', count: 4 },
         })
-        expect(yield* inventory.countOf('OAK_PLANKS')).toBe(2)
-        expect(yield* inventory.countOf('STICK')).toBe(4)
+        expect(yield* inventory.countOf('oak_planks')).toBe(2)
+        expect(yield* inventory.countOf('stick')).toBe(4)
 
         // --- and spend the stone -----------------------------------------
-        expect(yield* inventory.remove('STONE', 5)).toBe(2)
-        expect(yield* inventory.countOf('STONE')).toBe(0)
-        expect(yield* inventory.countOf('DIRT')).toBe(3)
+        expect(yield* inventory.remove('stone', 5)).toBe(2)
+        expect(yield* inventory.countOf('stone')).toBe(0)
+        expect(yield* inventory.countOf('dirt')).toBe(3)
       })
 
       yield* scenario.pipe(Effect.provide(SimulationLayer), Effect.provide(clock.layer))
@@ -157,7 +157,7 @@ describe('deterministic scenario: spawn -> look -> mine -> assert', () => {
         yield* time.configureDay(600, 0.1)
         yield* player.moveTo(position(1, 70, 2))
         yield* player.look(0.7, 0.2)
-        yield* inventory.add('COBBLESTONE', 130)
+        yield* inventory.add('cobblestone', 130)
         yield* Effect.forEach([1, 2, 3, 4, 5], (step) => time.advance(DeltaTimeSecs(step * 10)))
 
         return {
@@ -193,15 +193,15 @@ describe('deterministic scenario: spawn -> look -> mine -> assert', () => {
       const worldA = yield* makeInventoryService()
       const worldB = yield* makeInventoryService()
 
-      yield* worldA.add('STONE', 7)
+      yield* worldA.add('stone', 7)
 
-      expect(yield* worldA.countOf('STONE')).toBe(7)
-      expect(yield* worldB.countOf('STONE')).toBe(0)
+      expect(yield* worldA.countOf('stone')).toBe(7)
+      expect(yield* worldB.countOf('stone')).toBe(0)
 
       // ...and a reset makes a world reusable, so a second `start` on the same
       // instance is a clean slate rather than an inherited one.
       yield* worldA.reset
-      expect(yield* worldA.countOf('STONE')).toBe(0)
+      expect(yield* worldA.countOf('stone')).toBe(0)
     }),
   )
 })
