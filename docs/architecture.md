@@ -72,6 +72,7 @@ graph BT
   compose --> redstone
   compose --> ui
   compose --> multiplayer
+  compose --> render
 
   style sim fill:#ffd,stroke:#a80,stroke-width:3px
 ```
