@@ -18,6 +18,7 @@ import { describe, expect, it } from '@effect/vitest'
 import { Effect, Layer, Ref } from 'effect'
 import { forwardVector, snapshotAgeSecs } from '../domain/camera-pose'
 import { DeltaTimeSecs, EpochMillis, MonotonicTimeSecs, position } from '../domain/kernel-vocabulary'
+import { craftGrid } from '../domain/recipe'
 import { ClockPort, FixedClockLayer } from '../domain/kernel-vocabulary'
 import {
   InventoryService,
@@ -111,7 +112,32 @@ describe('deterministic scenario: spawn -> look -> mine -> assert', () => {
         expect(later.capturedAtSecs).toBe(360)
         expect(snapshotAgeSecs(pose, later.capturedAtSecs)).toBe(360)
 
-        // --- craft: spend the stone --------------------------------------
+        // --- craft: a log becomes planks, planks become sticks -----------
+        // The recipe table is mc-sim's (plan.md §7) and one craft is a single
+        // Ref.modify, so the whole thing runs headless with no screen in the
+        // process. That is the division of labour: mx-ui PROJECTS this answer,
+        // it does not compute it.
+        expect(yield* inventory.add('OAK_LOG', 1)).toBe(0)
+        expect(yield* inventory.craft(craftGrid(1, 1, ['OAK_LOG']))).toStrictEqual({
+          _tag: 'Crafted',
+          recipeId: 'mc-sim:oak-planks',
+          output: { item: 'OAK_PLANKS', count: 4 },
+        })
+        expect(yield* inventory.countOf('OAK_LOG')).toBe(0)
+        expect(yield* inventory.countOf('OAK_PLANKS')).toBe(4)
+
+        // Two planks in a COLUMN. A loose shapeless recipe over the same two
+        // planks also matches; the shaped one wins because it is more specific,
+        // and the difference is visible here as 4 sticks rather than 2.
+        expect(yield* inventory.craft(craftGrid(1, 2, ['OAK_PLANKS', 'OAK_PLANKS']))).toStrictEqual({
+          _tag: 'Crafted',
+          recipeId: 'mc-sim:stick',
+          output: { item: 'STICK', count: 4 },
+        })
+        expect(yield* inventory.countOf('OAK_PLANKS')).toBe(2)
+        expect(yield* inventory.countOf('STICK')).toBe(4)
+
+        // --- and spend the stone -----------------------------------------
         expect(yield* inventory.remove('STONE', 5)).toBe(2)
         expect(yield* inventory.countOf('STONE')).toBe(0)
         expect(yield* inventory.countOf('DIRT')).toBe(3)

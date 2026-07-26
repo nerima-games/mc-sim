@@ -1,0 +1,154 @@
+# apps/preview-sim
+
+mc-sim の**内蔵プレビュー**。plan.md §6 Step 2 の「内蔵プレビューが操作可能」に対する回答。
+
+plan.md §2.3-4「プレビューは検証対象と同居する」に従い、
+**このリポジトリの中の dev アプリケーション**である。
+パッケージではない。`index.ts` からは公開されない。利用側から import できない。
+
+```console
+$ pnpm preview                                        # 対話モード
+$ pnpm preview --help                                 # キー割り当てとオプション
+$ pnpm preview --list                                 # シナリオ一覧
+$ pnpm preview --stats                                # 絵ではなく数値レポート（発見はここ）
+$ pnpm preview --once --ascii --at 130                # 1 フレームを文字で標準出力へ
+$ pnpm preview --scenario corrupt-save --at 280 --once --ascii
+```
+
+`pnpm verify` はこれを実行しない。ただし `pnpm typecheck`（`tsconfig.preview.json`）と
+`pnpm lint` と `pnpm check:deps` の対象には**入っている**。
+
+## なぜ「障害物コース」ではなく「シナリオステッパ」なのか
+
+[docs/testing.md](../../docs/testing.md) §1 は plan.md §3.8 を引いて、
+このリポジトリのプレビューを**障害物コース（歩く / 泳ぐ / 跳ぶ / スニークを操作確認）**と定めている。
+そして §2.1 は「mc-render と mc-playground-kit ができるまで作れない」と書いている。
+
+**依存関係の話は正しい。結論は正しくない。足りないのはハーネスではないからである。**
+
+### mc-sim は移動を所有していない
+
+`application/player-service.ts:20-39` の `PlayerServiceApi` は、これで全部である:
+
+```
+pose · look · moveTo · cameraPose · restore · reset
+```
+
+速度が無い。加速度が無い。接地フラグが無い。しゃがみ状態が無い。浮力が無い。
+コライダーが無い。ステップハイトが無い。`moveTo` は足元座標を書き込むだけで、
+**何もそれに反対しない**。
+
+だから今日の mc-sim の上に一人称の障害物コースを作ると、プレイヤーは
+**すべての障害物をすり抜ける**。示せるのは「レンダラがミラーするポーズは
+スクリプトが書いたポーズである」という一点だけで、それは
+`test/scenario.test.ts` にカメラを付けたものにすぎない。
+
+歩く / 泳ぐ / 跳ぶ / スニークは mc-physics と mx-gameplay の**動詞**である
+（plan.md §2.3-1「基盤層は名詞、体験層は動詞」）。
+障害物コースはキャラクタコントローラを最初に所有したリポジトリのものである。
+**mc-playground-kit ができてもこれは変わらない。**
+
+`--scenario obstacle-course` はコースをテレポートスクリプトとして実際に走らせる。
+何があって何が無いかを読者が自分の目で見るためである。
+
+### mc-sim が所有しているものは、一人称では見えない
+
+game-loop / time-service / inventory-service / player-service / autosave /
+camera-pose / frame-timing / time-of-day —— 8 つとも、注入されたクロックで駆動される
+状態機械である。そして `setDayLength → setTimeOfDay` の順序ハザードは、
+**野原に立っていても絶対に見えない**。
+
+ステッパは、スクリプト化された入力列を与え、フレームを 1 つずつ進め、
+ポーズ・カメラスナップショット・**2 つのクロック**・日中時刻・インベントリ・
+オートセーブを**同時に**表示する。これは plan.md §3.8 が実際に要求していること
+（「Node決定論シナリオテスト … クロックPortでfast-forward」）に 3D の散歩より近く、
+しかも散歩には見えないものが見える。
+
+## 2 つのクロック
+
+このアプリはクロックを 2 つ注入する。**それ自体が発見である。**
+
+| | 何か | mc-sim での見え方 |
+| --- | --- | --- |
+| `ClockPort` | mc-kernel の Port（`domain/kernel-vocabulary.ts` にミラー） | `cameraPose: Effect<…, never, ClockPort>` —— **型に出る** |
+| Effect `Clock` | `Schedule.spaced` が sleep する先 | `startAutoSaveDaemon: Effect<Fiber.RuntimeFiber<…>>` —— **型に出ない** |
+
+`application/player-service.ts:29-33` は「クロック依存を型に見せることが、
+これを `Date.now()` に『単純化』されるのを防ぐ」と書いている。
+**「いつ」を決めることだけが仕事のサービスが、それをしていない。**
+詳細は `--stats` の `AUTOSAVE-CLOCK`。
+
+このアプリは前者を `Ref<number>` で、後者を `TestContext.TestContext` で backing する。
+だから 5 秒のオートセーブ間隔は実時間 0 秒で、全部再現可能である。
+`Date.now()` / `new Date()` / `performance.now()` はこのアプリのどこにも無い。
+`scripts/check-dependency-whitelist.ts` の `mc-kernel-allow-time-source`
+エスケープハッチは**使っていない**。
+
+## シナリオ
+
+| 名前 | 何を見せるか |
+| --- | --- |
+| `mine-and-nightfall` | plan.md §3.8 のシナリオそのもの。スポーン → 採掘 → 日没まで早送り |
+| `obstacle-course` | docs/testing.md が要求するコースを、今の mc-sim で走らせるとどうなるか |
+| `tab-refocus` | deltaTime クランプの両端。背景タブ 30 秒が何を失うか |
+| `day-length-hazard` | 順序ハザードと、その双子（`configureDay` が月齢を捨てる） |
+| `second-world` | 同じサービスインスタンスでのワールド再ロード（DN-02 / DN-09） |
+| `corrupt-save` | `restore()` は何でも受け取る。うち 2 つは回復不能 |
+| `clock-divergence` | 2 つのクロックを引き離すと、オートセーブはどちらに従うか |
+
+## 見つけたもの
+
+`--stats` が全部を数値で出す。各項目に再現コマンドが付いている。
+
+| # | 内容 | 場所 |
+| --- | --- | --- |
+| SIM-11 | **順序ハザードの正典的な説明が算術的に間違っている。** `0.60` ではなく `0.20` | `domain/time-of-day.ts:17-18` |
+| SIM-1 | `TimeService.restore({dayLengthTicks: 0})` → 全読み取りが NaN、**`isNight` は `false`**（恒久的な昼） | `application/time-service.ts:89` |
+| SIM-3 | `removeItem` は `MAX_STACK_COUNT` 超のスロットで**throw する**。純粋・全域と書いてあるのに | `domain/inventory.ts:158` (`removeItem`) |
+| SIM-2 | `InventoryService.restore` はスロット数を検査しない。36 スロットが 2 になる | `application/inventory-service.ts:95` (`restore`) |
+| SIM-6 | オートセーブのクロックだけが Port ではない | `application/autosave.ts:102-108` |
+| SIM-8 | `configureDay` は「ワールドロードが呼ぶもの」と書いてあるが、月齢を 0 に戻す | `application/time-service.ts:47-48` |
+| SIM-9 | `Effect.repeat` の性質で、オートセーブは fork した瞬間に 1 回走る | `application/autosave.ts:108` |
+| SIM-7 | `Queue.offer` の drop シグナルが捨てられている。落ちたフレーム数を誰も知れない | `application/game-loop.ts:193-195` |
+| SIM-10 | `framesProcessed` は停止後 0 を返す。teardown レポートが最も欲しい瞬間に読めない | `application/game-loop.ts:198` |
+| SIM-5 | クランプで失われた時間は誰も数えていない | `domain/frame-timing.ts:63-66` |
+
+`findings` パネル（`p` でトグル）はこのうち 8 つを**現在のワールドに対する述語**として評価する。
+普通の run では全部 `·` で、対応するシナリオが走ると `HIT` になる。
+
+## このアプリがモデル化できていないこと、1 つ
+
+`--scenario tab-refocus` の 30 秒ギャップでは、ログにオートセーブが 6 連発する。
+**それは `Schedule.spaced` の正しい挙動である** —— 5 秒間隔で 30 秒経てば 6 回であり、
+実クロックで 30 秒走っても同じことが起きる。
+
+モデル化できていないのは**その先**である。`application/autosave.ts:8-24` が
+`Schedule.fixed` を避ける理由として挙げているのは「タブを 2 分放置して戻ると
+24 個のオートセーブが一斉に殺到する」で、それが起きないのは
+**ブラウザがバックグラウンドタブのタイマーを絞る**からである。
+`TestClock.adjust(30s)` は「30 秒ぶんの時間が経ち、その間ランタイムは自由に走れた」
+という状況しか作れない。タイマー絞りに相当するものが `TestClock` には無い。
+
+つまりこのシナリオが見せているのは**「プロセスが 30 秒遅かった」場合**であって、
+**「タブが 30 秒止まっていた」場合**ではない。前者は `spaced` と `fixed` で差が出ず、
+差が出るのは後者である。その差を出しているのは `--stats` の `AUTOSAVE-SCHEDULE` のほうで、
+そこでは tick 自身が 40 ms sleep するので `spaced` が 7 回、`fixed` が 10 回になる。
+
+## 依存
+
+**このリポジトリ自身のモジュールと `effect` だけ。**
+`effect` は既に `dependencies` にある。org パッケージも新規 npm 依存も無い。
+`apps` は `SCAN_ROOTS` に入っているので、import は `domain/` と同じゲートを通る。
+
+## ファイル
+
+```
+main.ts        エントリ、状態、キー処理、--once / --stats / --list
+options.ts     CLI パーサ（純粋）
+script.ts      シナリオ定義（データのみ。何も実行しない）
+world.ts       mc-sim のサービスを ManagedRuntime + TestContext の上に立てる
+panels.ts      パネル（純粋。WorldView と Style だけの関数）
+probes.ts      --stats の数値レポート
+style.ts       色と整形（純粋）
+terminal.ts    このアプリで唯一の非純粋モジュール（Node の stdio）
+```

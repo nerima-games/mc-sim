@@ -38,6 +38,19 @@ export type ItemStack = {
   readonly count: StackCount
 }
 
+/**
+ * Build a stack, branding the count.
+ *
+ * The brand is applied HERE rather than at every literal, so an out-of-range
+ * count fails at the place that names it (a recipe output of 65, say) instead of
+ * flowing into a slot as a bare number. Contrast `addItem(count: number)`, which
+ * deliberately does NOT brand: see DN-06 in docs/design-notes.md.
+ */
+export const itemStack = (item: ItemId, count: number): ItemStack => ({
+  item,
+  count: StackCount(count),
+})
+
 /** A slot is either empty (`undefined`) or holds a stack. */
 export type Slot = ItemStack | undefined
 

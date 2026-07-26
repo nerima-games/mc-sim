@@ -45,9 +45,10 @@ mc-render / mc-playground-kit / mx-gameplay / mx-redstone / mx-ui / mx-multiplay
 | `setDayLength → setTimeOfDay` 順序 | `domain/time-of-day.ts` / `application/time-service.ts` | DN-04 |
 | 自動保存の `Schedule.spaced` | `application/autosave.ts` | DN-05 |
 | `Ref.modify` による TOCTOU 回避 | `application/inventory-service.ts` | DN-07 |
+| レシピ表とクラフトの原子性 | `domain/recipe.ts` / `domain/crafting.ts` | DN-07 / DN-11（[public-api.md](./public-api.md) §4.1） |
 
 まだ無いもの: EntityManager、体力/空腹/XP、実績/統計、設定状態、内蔵障害物コースプレビュー、
-リポジトリ内 workspace 分割（entity / inventory / game）。
+かまど/醸造/金床/エンチャント、リポジトリ内 workspace 分割（entity / inventory / game）。
 APIロックファイルは**ある** —— `api-lock.md` と `pnpm api:check`（[public-api.md](./public-api.md) §6）。
 `domain/kernel-vocabulary.ts` は mc-kernel 公開までの暫定ミラーであり、公開後に削除する。
 ミラーは最小だが Clock Port だけは丸ごと写してある（`ClockPort` は文字列キーで解決される `Context.Tag` であり、

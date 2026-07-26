@@ -395,12 +395,23 @@ packages/entity/application/health-service.ts:68-86
 `Ref.get` → 判断 → `Ref.set` に割ると、その間に別 fiber（自動保存 daemon、ネットワーク
 メッセージハンドラ、並行 stage）が入り、片方の書き込みが黙って消える。
 
+### クラフトがこの規約を決めた場所
+
+`craft` が独立した `CraftingService` ではなく `InventoryService` にあるのは、この項目のためである。
+原子性は「1 つの Ref」でしか成立しない。独自の Ref を持つサービスは、このインベントリを
+読み → 判断し → 書き戻すしかなく、その窓がまさに TOCTOU になる。
+しかも積荷が悪い: 材料の減算と成果の加算は**2 つの書き込み**で、どちらを落としても
+アイテムが増えるか消えるかする。判断ごと `Ref.modify` の中に入れてあり、
+失敗パスは受け取ったインベントリを**参照ごと**返すので、中途半端な適用は表現できない
+（[public-api.md](./public-api.md) §4.1-5、`domain/crafting.ts`）。
+
 ### 書くべき回帰テスト
 
 | テスト名 | 場所 | 内容 |
 | --- | --- | --- |
 | `REGRESSION: concurrent adds all land — Ref.modify, not get-then-set` | `test/inventory.test.ts` | 50 fiber で 1 個ずつ add → 合計 50 |
 | `concurrent removes never take more than exists` | `test/inventory.test.ts` | 在庫 10 に対し 20 fiber が 1 個ずつ remove → 合計 10 |
+| `REGRESSION: concurrent crafts cannot overdraw — Ref.modify, not get-then-set` | `test/crafting.test.ts` | 板材 20（＝棒 10 回分）に 50 fiber → 成功はちょうど 10 |
 | **（要追加）** `a death signal fires exactly once under concurrent damage` | 体力実装時 | 参照実装 health-service.ts:68-86 相当 |
 
 ---
@@ -480,6 +491,17 @@ membership テーブル約 30 定義 / 28 ファイル、和集合 78 ファイ�
 
 mc-sim にブロック挙動の判断は**無い**（すべて能力フラグ参照か、mx-gameplay の責務）が、
 インベントリのスタック上限やアイテム分類で同じ罠に入りうる。
+
+### レシピ表はこの規則の**例外ではなく**、規則が区別している側である
+
+`domain/recipe.ts` の `STARTER_RECIPES` には `'OAK_PLANKS'` のようなアイテム ID リテラルが並ぶ。
+これは**データ**であって挙動の分岐ではない。同ファイルの一致判定は `Ingredient` と
+グリッドのセルを比較するだけで、`=== 'STONE'` 型の名指し分岐を 1 つも持たない。
+DN-11 が禁じているのは後者である。
+
+mc-kernel が `ItemType` を公開したら、この表のリテラルはリテラル union のメンバになり、
+綴りを間違えた行は**型検査で落ちる**。いま `ItemId = string` なので落ちないという事実は、
+表を書かない理由ではなく `ItemType` を早く出す理由である。
 
 ### 書くべき回帰テスト（要）
 

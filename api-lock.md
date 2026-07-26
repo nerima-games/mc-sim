@@ -13,7 +13,7 @@
 <!-- ------------------------------------------------------------------------- -->
 
 format: 1
-exported declarations: 70
+exported declarations: 96
 supporting declarations: 17
 
 ## Exported
@@ -43,6 +43,42 @@ type AutoSaveStatus = 'saving' | 'saved' | 'error';
 
 ```ts
 type AutoSaveStatusReporter = (status: AutoSaveStatus) => Effect.Effect<void>;
+```
+
+### CraftGrid  `type`
+
+```ts
+type CraftGrid = {
+    readonly width: number;
+    readonly height: number;
+    readonly cells: ReadonlyArray<Slot>;
+};
+```
+
+### CraftOutcome  `type`
+
+```ts
+type CraftOutcome = {
+    readonly inventory: Inventory;
+    readonly result: CraftResult;
+};
+```
+
+### CraftResult  `type`
+
+```ts
+type CraftResult = {
+    readonly _tag: 'Crafted';
+    readonly recipeId: RecipeId;
+    readonly output: ItemStack;
+} | {
+    readonly _tag: 'NoMatch';
+} | {
+    readonly _tag: 'MissingIngredients';
+    readonly missing: ReadonlyArray<MissingIngredient>;
+} | {
+    readonly _tag: 'NoRoom';
+};
 ```
 
 ### DEFAULT_DAY_LENGTH_SECS  `const`
@@ -118,6 +154,15 @@ const INITIAL_TIME_STATE: TimeState;
 const INVENTORY_SLOT_COUNT = 36;
 ```
 
+### Ingredient  `type`
+
+```ts
+type Ingredient = {
+    readonly _tag: 'Exact';
+    readonly item: ItemId;
+};
+```
+
 ### Inventory  `type`
 
 ```ts
@@ -143,13 +188,16 @@ type InventoryServiceApi = {
     readonly snapshot: Effect.Effect<Inv.Inventory>;
     readonly restore: (inventory: Inv.Inventory) => Effect.Effect<void>;
     readonly reset: Effect.Effect<void>;
+    readonly recipes: Effect.Effect<Recipe.RecipeTable>;
+    readonly previewCraft: (grid: Recipe.CraftGrid) => Effect.Effect<Recipe.RecipeMatch>;
+    readonly craft: (grid: Recipe.CraftGrid) => Effect.Effect<Craft.CraftResult>;
 };
 ```
 
 ### InventoryServiceLayer  `const`
 
 ```ts
-const InventoryServiceLayer: (initial?: Inv.Inventory) => Layer.Layer<InventoryService>;
+const InventoryServiceLayer: (initial?: Inv.Inventory, recipeTable?: Recipe.RecipeTable) => Layer.Layer<InventoryService>;
 ```
 
 ### ItemId  `type`
@@ -203,6 +251,15 @@ const MIN_FRAME_DELTA_SECS = 0.001;
 const MOON_PHASE_COUNT = 8;
 ```
 
+### MissingIngredient  `type`
+
+```ts
+type MissingIngredient = {
+    readonly item: ItemId;
+    readonly short: number;
+};
+```
+
 ### PITCH_EPSILON  `const`
 
 ```ts
@@ -219,6 +276,12 @@ const PITCH_MAX_RADIANS: number;
 
 ```ts
 const PITCH_MIN_RADIANS: number;
+```
+
+### PatternCell  `type`
+
+```ts
+type PatternCell = Ingredient | undefined;
 ```
 
 ### PlayerPose  `type`
@@ -257,12 +320,89 @@ type PlayerServiceApi = {
 const PlayerServiceLayer: (initial?: Camera.PlayerPose) => Layer.Layer<PlayerService>;
 ```
 
+### Recipe  `type`
+
+```ts
+type Recipe = ShapedRecipe | ShapelessRecipe;
+```
+
+### RecipeConflict  `type`
+
+```ts
+type RecipeConflict = {
+    readonly reason: 'duplicate-id' | 'same-shape' | 'same-ingredients';
+    readonly recipeIds: readonly [RecipeId, RecipeId];
+};
+```
+
+### RecipeId  `type`
+
+```ts
+type RecipeId = string;
+```
+
+### RecipeMatch  `type`
+
+```ts
+type RecipeMatch = {
+    readonly _tag: 'Match';
+    readonly recipe: Recipe;
+    readonly output: ItemStack;
+} | {
+    readonly _tag: 'NoMatch';
+};
+```
+
+### RecipePattern  `type`
+
+```ts
+type RecipePattern = {
+    readonly width: number;
+    readonly height: number;
+    readonly cells: ReadonlyArray<PatternCell>;
+};
+```
+
+### RecipeTable  `type`
+
+```ts
+type RecipeTable = ReadonlyArray<Recipe>;
+```
+
 ### RemoveOutcome  `type`
 
 ```ts
 type RemoveOutcome = {
     readonly inventory: Inventory;
     readonly removed: number;
+};
+```
+
+### STARTER_RECIPES  `const`
+
+```ts
+const STARTER_RECIPES: RecipeTable;
+```
+
+### ShapedRecipe  `type`
+
+```ts
+type ShapedRecipe = {
+    readonly _tag: 'Shaped';
+    readonly id: RecipeId;
+    readonly pattern: RecipePattern;
+    readonly output: ItemStack;
+};
+```
+
+### ShapelessRecipe  `type`
+
+```ts
+type ShapelessRecipe = {
+    readonly _tag: 'Shapeless';
+    readonly id: RecipeId;
+    readonly ingredients: ReadonlyArray<Ingredient>;
+    readonly output: ItemStack;
 };
 ```
 
@@ -347,6 +487,12 @@ const autoSaveSchedule: (interval?: Duration.Duration) => Schedule.Schedule<numb
 const cameraPoseOf: (pose: PlayerPose, capturedAtSecs: MonotonicTimeSecs) => CameraPoseSnapshot;
 ```
 
+### cellAt  `const`
+
+```ts
+const cellAt: (grid: CraftGrid, x: number, y: number) => Slot;
+```
+
 ### clampFrameDelta  `const`
 
 ```ts
@@ -359,10 +505,28 @@ const clampFrameDelta: (rawDeltaSecs: number) => DeltaTimeSecs;
 const clampPitch: (pitchRadians: number) => number;
 ```
 
+### conflictsIn  `const`
+
+```ts
+const conflictsIn: (table: RecipeTable) => ReadonlyArray<RecipeConflict>;
+```
+
 ### countOf  `const`
 
 ```ts
 const countOf: (inventory: Inventory, item: ItemId) => number;
+```
+
+### craftFromGrid  `const`
+
+```ts
+const craftFromGrid: (inventory: Inventory, table: RecipeTable, grid: CraftGrid) => CraftOutcome;
+```
+
+### craftGrid  `const`
+
+```ts
+const craftGrid: (width: number, height: number, items: ReadonlyArray<ItemId | undefined>) => CraftGrid;
 ```
 
 ### dayLengthSecs  `const`
@@ -377,6 +541,12 @@ const dayLengthSecs: (state: TimeState) => number;
 const emptyInventory: () => Inventory;
 ```
 
+### exactly  `const`
+
+```ts
+const exactly: (item: ItemId) => Ingredient;
+```
+
 ### forwardVector  `const`
 
 ```ts
@@ -387,6 +557,18 @@ const forwardVector: (snapshot: CameraPoseSnapshot) => Position;
 
 ```ts
 const frameDeltaBetween: (previousSecs: number | undefined, nowSecs: number) => DeltaTimeSecs;
+```
+
+### ingredientCost  `const`
+
+```ts
+const ingredientCost: (grid: CraftGrid) => ReadonlyMap<ItemId, number>;
+```
+
+### ingredientMatches  `const`
+
+```ts
+const ingredientMatches: (ingredient: Ingredient, item: ItemId) => boolean;
 ```
 
 ### isEmpty  `const`
@@ -401,6 +583,12 @@ const isEmpty: (inventory: Inventory) => boolean;
 const isNight: (state: TimeState) => boolean;
 ```
 
+### itemStack  `const`
+
+```ts
+const itemStack: (item: ItemId, count: number) => ItemStack;
+```
+
 ### makeGameLoop  `const`
 
 ```ts
@@ -410,7 +598,7 @@ const makeGameLoop: () => Effect.Effect<GameLoopApi>;
 ### makeInventoryService  `const`
 
 ```ts
-const makeInventoryService: (initial?: Inv.Inventory) => Effect.Effect<InventoryServiceApi>;
+const makeInventoryService: (initial?: Inv.Inventory, recipeTable?: Recipe.RecipeTable) => Effect.Effect<InventoryServiceApi>;
 ```
 
 ### makePlayerService  `const`
@@ -423,6 +611,12 @@ const makePlayerService: (initial?: Camera.PlayerPose) => Effect.Effect<PlayerSe
 
 ```ts
 const makeTimeService: (initial?: Time.TimeState) => Effect.Effect<TimeServiceApi>;
+```
+
+### matchRecipe  `const`
+
+```ts
+const matchRecipe: (table: RecipeTable, grid: CraftGrid) => RecipeMatch;
 ```
 
 ### moonPhase  `const`
@@ -459,6 +653,18 @@ const setDayLengthThenTimeOfDay: (state: TimeState, seconds: number, fraction: n
 
 ```ts
 const setTimeOfDay: (state: TimeState, fraction: number) => TimeState;
+```
+
+### shapedRecipe  `const`
+
+```ts
+const shapedRecipe: (id: RecipeId, rows: ReadonlyArray<string>, key: Readonly<Record<string, ItemId>>, output: ItemStack) => ShapedRecipe;
+```
+
+### shapelessRecipe  `const`
+
+```ts
+const shapelessRecipe: (id: RecipeId, items: ReadonlyArray<ItemId>, output: ItemStack) => ShapelessRecipe;
 ```
 
 ### slotAt  `const`

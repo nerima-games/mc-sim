@@ -189,6 +189,11 @@ type InventoryServiceApi = {
   readonly snapshot: Effect.Effect<Inventory>
   readonly restore: (inventory: Inventory) => Effect.Effect<void>
   readonly reset: Effect.Effect<void>
+
+  // --- クラフト（§4.1） ---
+  readonly recipes: Effect.Effect<RecipeTable>
+  readonly previewCraft: (grid: CraftGrid) => Effect.Effect<RecipeMatch>
+  readonly craft: (grid: CraftGrid) => Effect.Effect<CraftResult>
 }
 ```
 
@@ -210,6 +215,133 @@ type InventoryServiceApi = {
   すべての呼び出し側が握り潰すことになり、握り潰した瞬間にアイテムが消える。
 - `ItemId` は暫定 `string`。本来は mc-kernel の `ItemType`（リテラル union、網羅性チェックつき）。
 
+## 4.1 レシピとクラフト
+
+plan.md §7 は「クラフト = mc-sim（レシピと状態）+ mx-ui（画面）」、§2.3-1 は状態を基盤層に置く。
+レシピ表は**名詞**（何が存在するかの台帳）なので本リポジトリにある。
+
+```typescript
+// domain/recipe.ts
+type RecipeId = string                      // 'mc-sim:stick'。ItemId と同じ理由で暫定 string
+type Ingredient = { readonly _tag: 'Exact'; readonly item: ItemId }
+type PatternCell = Ingredient | undefined
+type RecipePattern = { readonly width: number; readonly height: number
+                       readonly cells: ReadonlyArray<PatternCell> }   // 空の外周は trim 済
+type ShapedRecipe    = { _tag: 'Shaped';    id; pattern: RecipePattern; output: ItemStack }
+type ShapelessRecipe = { _tag: 'Shapeless'; id; ingredients: ReadonlyArray<Ingredient>; output }
+type Recipe = ShapedRecipe | ShapelessRecipe
+type RecipeTable = ReadonlyArray<Recipe>
+
+type CraftGrid = { readonly width: number; readonly height: number
+                   readonly cells: ReadonlyArray<Slot> }
+type RecipeMatch =
+  | { readonly _tag: 'Match'; readonly recipe: Recipe; readonly output: ItemStack }
+  | { readonly _tag: 'NoMatch' }
+
+const exactly:          (item: ItemId) => Ingredient
+const ingredientMatches:(ingredient: Ingredient, item: ItemId) => boolean
+const shapedRecipe:     (id, rows: ReadonlyArray<string>, key: Record<string, ItemId>, output) => ShapedRecipe
+const shapelessRecipe:  (id, items: ReadonlyArray<ItemId>, output) => ShapelessRecipe
+const craftGrid:        (width, height, items: ReadonlyArray<ItemId | undefined>) => CraftGrid
+const cellAt:           (grid: CraftGrid, x: number, y: number) => Slot
+const matchRecipe:      (table: RecipeTable, grid: CraftGrid) => RecipeMatch   // 全域・表順非依存
+const conflictsIn:      (table: RecipeTable) => ReadonlyArray<RecipeConflict>
+const STARTER_RECIPES:  RecipeTable                                            // 7 件
+
+// domain/crafting.ts
+type CraftResult =
+  | { _tag: 'Crafted'; recipeId: RecipeId; output: ItemStack }
+  | { _tag: 'NoMatch' }
+  | { _tag: 'MissingIngredients'; missing: ReadonlyArray<MissingIngredient> }
+  | { _tag: 'NoRoom' }
+const ingredientCost: (grid: CraftGrid) => ReadonlyMap<ItemId, number>
+const craftFromGrid:  (inventory: Inventory, table: RecipeTable, grid: CraftGrid) => CraftOutcome
+```
+
+### 4.1-1 mx-ui がこれで何を投影できるようになったか
+
+`mx-ui/domain/inventory-view-model.ts` の `CraftingSnapshot.result` は 3 値
+（`Match` / `NoMatch` / **`undefined` = mc-sim が答えていない**）で、
+「mc-sim に `Recipe` が無い（`api-lock.md` に存在しない）」ため実際に常時 `undefined` だった。
+クラフト画面の出力枠は毎回 `unknown` を描いていた。mx-ui がレシピを発明しなかったのは
+§2.3-1 の通り**正しい**ので、埋めるべき穴はこちら側にあった。
+
+`InventoryService.previewCraft(grid)` が返す `RecipeMatch` は、
+mx-ui の `CraftingResultSnapshot` と**同じ 2 ケース・同じタグ名**である。
+mx-ui 側は導出ではなく改名でつながる（`Match` の `output` を `MirroredItemStack` に写すだけ）。
+`undefined` が残るのは「まだ問い合わせていないフレーム」だけになり、
+「無い」と「作れない」の区別は mx-ui が意図した通りに機能する。
+
+### 4.1-2 曖昧性の解決規則
+
+2 つのレシピが同じグリッドに一致することは異常ではなく実在する
+（緩い shapeless レシピが、具体的な shaped レシピの隣に追加される）。
+本家は登録順で解決するため、答えがロード順に依存する。**本リポジトリはそれを採らない。**
+
+1. **より具体的なほうが勝つ** — shaped > shapeless。shaped の一致集合は、同じ材料の
+   shapeless の一致集合の**真部分集合**である（位置を固定するぶんだけ狭い）。
+   狭いほうを選ぶのが「より具体的」の通常の意味であり、これは形式の性質であって好みではない。
+2. 同順位なら **`RecipeId` の辞書順で小さいほう**。
+
+規則 2 が発動する時点で表自体が誤りである。規則の価値は「誤りが再現可能であること」だけで、
+再現可能を**報告可能**にするのが `conflictsIn` である
+（`test/recipe.test.ts` が `STARTER_RECIPES` に対して空を固定している）。
+
+一致した全レシピは**グリッドの占有セルをちょうど消費する**（shaped は占有ボックス＝パターン、
+shapeless は個数一致）ため、「材料が多いほうが具体的」という第 3 の規則は空振りする。
+だから書いていない。
+
+### 4.1-3 shaped の平行移動と鏡像
+
+- **平行移動**: パターンは構築時に空の外周を trim（`RecipePattern` の不変条件）、
+  グリッド側は占有セルの**タイトな外接ボックス**を取る。2 つの同サイズ矩形の比較に還元されるので、
+  3x3 の中の 2x2 は 4 通りを試すのではなく 1 回で決まる。
+  同じ判定が「3x3 レシピはプレイヤーの 2x2 グリッドでは作れない」も兼ねる（別ルール不要）。
+- **鏡像**: 左右のみ。本家と同じで、火打石と打ち金は対角なので鏡像も一致する。
+  **上下反転は鏡像ではない**（松明は「炭の下に棒」ではない）。受け入れると誰も書いていないレシピが増える。
+
+### 4.1-4 材料はインベントリから引く（グリッドは値であって状態ではない）
+
+`CraftGrid` は呼び出し側が渡す**値**で、mc-sim が保持する状態ではない。
+グリッドは画面が開いている間しか存在せず、画面は mx-ui（plan.md §3.13）であり、
+36 スロットと同期し閉じたら地面に落とす必要のある**第 2 のアイテム置き場**を mc-sim が持つと、
+「プレイヤーの持ち物はどこにあるか」の正が 2 つになる。
+
+したがってグリッドは**仕様**として読む（どのレシピか、セルごとに何を消費するか）。
+課金先はインベントリで、`Ref.modify` **1 回**である。
+代償は正直に書いておく: 画面が開いている間、グリッドに見えているアイテムはまだインベントリにある。
+mx-ui は「移動」ではなく「予約」を描くことになる。
+グリッドが自分でアイテムを**所有する**設計は繰り延べであり、その時はインベントリ状態として
+（閉じたら落とすルールごと）入る。`craftFromGrid` の変更にはならない。
+
+### 4.1-5 なぜ `craft` が CraftingService ではなく InventoryService にあるのか
+
+原子性のため。DN-07 の `Ref.modify` は「1 つの Ref」でしか成立しない。
+独自の Ref を持つ CraftingService は、このインベントリを読み → 判断し → 書き戻すしかなく、
+読みと書きの間が TOCTOU になる。しかも積荷が悪い: 材料の減算と成果の加算は**2 つの書き込み**で、
+どちらを落としてもアイテムが増えるか消えるかする。
+サービスを増やさないので公開面も 1 つも増えない（plan.md §8 第 2 リスク）。
+
+失敗は 3 種類とも**結果**であって error channel ではない。満杯を `leftover` で返すのと同じ理由
+（§4）。`MissingIngredients` と `NoRoom` を分けてあるのは、材料不足で灰色の枠と
+置き場所不足で灰色の枠は、プレイヤーへの指示が違うからである。
+
+**全失敗パスは受け取ったインベントリを参照ごとそのまま返す。** 中途半端に適用されたクラフトは
+「起きにくい」のではなく**表現できない**（`craftFromGrid` で変更後を返す行は最終行の 1 か所だけ）。
+材料の除去は成果の提示より**先**に行う。除去が成果の置き場を空けることがあり、
+先に空きを見ると「満杯だから作れない」と断ることになるが、それはまさにプレイヤーが
+場所を空けるためにクラフトする場面である。
+
+### 4.1-6 いま入れていないもの（型が繰り延べを見せる）
+
+| 繰り延べ | 型でどう見えるか |
+| --- | --- |
+| 材料タグ（「任意の板材」） | `Ingredient` が**メンバ 1 つの tagged union**。消費側は既に `_tag` で分岐しているので、`Tag` の追加は破壊的変更にならない。裸の `ItemId` にしていたら破壊的変更になっていた |
+| 1 セル複数個・残留アイテム（ケーキのバケツ） | 表現できない。黙って間違うのではなく**無い** |
+| かまど / 醸造 / 金床 / エンチャント | plan.md §7 の残り。グリッド形ではないので、ここには 1 つも無い |
+| shapeless の重なり合う述語 | `matchesShapeless` は既にバックトラッキング割当（ソートして比較ではない）。`Tag` が入った日に貪欲法が誤答する経路を最初から塞いである |
+| 複数個まとめてクラフト | `craft` は 1 回分 |
+
 ## 5. まだ設計していない公開API
 
 plan.md §3.8 の責務のうち、界面をまだ書いていないもの。**着手前に本書へ追記すること。**
@@ -222,7 +354,8 @@ plan.md §3.8 の責務のうち、界面をまだ書いていないもの。**�
 | 設定状態 | `packages/game/application/settings-service.ts` (107) + `.config.ts` (70) + `.schema.ts` (79) | mx-ui / mc-render |
 | ~~チャンクダーティ通知~~ | — | **mc-worldgen に移った。下記** |
 | ドロップ / 経験値オーブ | `dropped-item-service.ts` / `dropped-xp-orb-service.ts` | mx-gameplay / mc-render |
-| かまど / チェスト / 装備 / レシピ | `packages/inventory/application/` の各 service | mx-ui / mx-gameplay |
+| ~~レシピ~~ | — | **§4.1 で設計済** |
+| かまど / チェスト / 装備 | `packages/inventory/application/` の各 service | mx-ui / mx-gameplay |
 | `GameModule` の実体 | — | mc-compose |
 
 ### チャンクダーティ通知は mc-worldgen のものになった

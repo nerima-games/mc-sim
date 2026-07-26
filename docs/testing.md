@@ -10,33 +10,84 @@
 | 検証 | 何を保証するか | 状態 |
 | --- | --- | --- |
 | Node 決定論シナリオテスト | ロジックが正しいこと。CI で高速に回る | 実装済（`test/scenario.test.ts`） |
-| 内蔵障害物コースプレビュー | **人間が操作して確かめられること**。テストが見ない部分 | 未実装 |
+| 内蔵プレビュー | **人間が操作して確かめられること**。テストが見ない部分 | 実装済（[`apps/preview-sim/`](../apps/preview-sim/README.md)） |
+| ── うち一人称の障害物コース | 歩く / 泳ぐ / 跳ぶ / スニークの操作確認 | **作れない。§2.1 を見ること** |
 
 ## 2. 完了条件（plan.md §6 Step 2）
 
 > 各リポジトリの完了条件: ユニット/シナリオテスト green + **内蔵プレビューが操作可能**
 
 **両方**が条件である。テストが緑でもプレビューが動かなければ完了ではない。
-mc-sim の場合、プレビューは**障害物コース**で、歩く / 泳ぐ / 跳ぶ / スニークを操作確認できること。
 
-プレビューは `apps/preview-*/` に置く。モジュール契約（`GameModule`）には含めない（plan.md §4.1 末尾）。
+プレビューは `apps/preview-<name>/` に置く。モジュール契約（`GameModule`）には含めない
+（plan.md §4.1 末尾）。本リポジトリのそれは [`apps/preview-sim/`](../apps/preview-sim/README.md)
+であり、`pnpm preview` で起動する。`pnpm verify` には入らないが、`pnpm typecheck`
+（`tsconfig.preview.json`）と `pnpm lint` と `pnpm check:deps` の対象には入っている。
 
-### 2.1 プレビューの依存
+### 2.1 障害物コースが作れない理由 —— 待っているのは kit ではない
 
-障害物コースは描画と入力を要するため、mc-render と mc-playground-kit に依存する。
-両方とも mc-sim の**下流**なので、**mc-sim の `dependencies` に入れてはならない**。
+本書の初版は「障害物コースは描画と入力を要するので mc-render / mc-playground-kit の
+完成後にしか作れない」と書いていた。**依存の話は正しく、結論は間違っていた。**
 
-- `apps/preview-obstacle-course/` は `devDependencies` として kit を参照する
-  （mx-gameplay / mx-redstone と同じ扱い）。
-- `pnpm check:deps` の `dev-only-package-in-dependencies` / `dev-only-package-in-shipped-source`
-  がこれを機械的に守る。
-- 現在のスキャン対象（`SCAN_ROOTS`）に `apps` は含まれていない。プレビュー追加時に
-  `scripts/check-dependency-whitelist.ts` の `SCAN_ROOTS` へ `'apps'` を足し、
-  `isToolingOrTestPath` が `apps/` を tooling 扱いすることを確認すること。
+**mc-sim は移動を所有していない。** `application/player-service.ts:20-39` の
+`PlayerServiceApi` はこれで全部である:
 
-**依存順の都合**: mc-render / kit は mc-sim の後に作られる（plan.md §6 Step 2 の構築順
-`worldgen → sim → render → kit`）。つまり mc-sim は「テスト green」を先に満たし、
-プレビューは kit 完成後に追加して完了条件を満たす、という 2 段階になる。この順序は避けられない。
+```
+pose · look · moveTo · cameraPose · restore · reset
+```
+
+速度が無い。加速度が無い。接地フラグが無い。しゃがみ状態が無い。浮力が無い。
+コライダーが無い。ステップハイトが無い。`moveTo` は足元座標を書き込むだけで、
+**何もそれに反対しない**。
+
+したがって今日 mc-sim の上に一人称コースを載せると、プレイヤーは障害物を
+**すり抜ける**。示せるのは「レンダラがミラーするポーズはスクリプトが書いたポーズ」
+という一点だけで、それは `test/scenario.test.ts` にカメラを付けたものである。
+歩く / 泳ぐ / 跳ぶ / スニークは**動詞**であり、plan.md §2.3-1 により体験層
+（mc-physics / mx-gameplay）のものである。**kit ができても変わらない。**
+
+`pnpm preview --scenario obstacle-course` はコースをテレポートスクリプトとして
+実際に走らせる。何があって何が無いかを目で見るためである。
+
+### 2.2 代わりに何を見せているか
+
+mc-sim が所有しているのは、注入クロックで駆動される 8 つの状態機械である
+（game-loop / time-service / inventory-service / player-service / autosave /
+camera-pose / frame-timing / time-of-day）。そして
+`setDayLength → setTimeOfDay` の順序ハザードは**野原に立っていても見えない**。
+
+`apps/preview-sim/` は決定論シナリオステッパである。スクリプト化された入力列を与え、
+フレームを 1 つずつ進め、ポーズ・カメラスナップショット・**2 つのクロック**・
+日中時刻・インベントリ・オートセーブを同時に表示する。
+plan.md §3.8 が実際に要求していること（「クロックPortでfast-forward」）に
+3D の散歩より近い。
+
+`--stats` は数値レポートで、**11 件の発見**に file:line と再現コマンドを付けて出す。
+主なもの:
+
+| # | 内容 | 場所 |
+| --- | --- | --- |
+| SIM-11 | 順序ハザードの正典的な worked example が算術的に誤り（`0.60` ではなく `0.20`） | `domain/time-of-day.ts:17-18` |
+| SIM-1 | `restore({dayLengthTicks: 0})` で全読み取りが NaN、**`isNight` は `false`** | `application/time-service.ts:89` |
+| SIM-3 | `removeItem` が `MAX_STACK_COUNT` 超のスロットで throw する | `domain/inventory.ts:158` (`removeItem`) |
+| SIM-6 | オートセーブのクロックだけが `ClockPort` ではない | `application/autosave.ts:102-108` |
+
+全件は [`apps/preview-sim/README.md`](../apps/preview-sim/README.md)。
+
+### 2.3 プレビューの依存
+
+`apps/preview-sim/` は**このリポジトリ自身のモジュールと `effect` しか import しない**。
+org パッケージも新規 npm 依存も無い。
+
+- `scripts/check-dependency-whitelist.ts` の `SCAN_ROOTS` に `'apps'` が入っており、
+  `isToolingOrTestPath` が `apps/` を tooling 扱いする（`index.ts` / `domain/` /
+  `application/` 以外はすべて tooling）。したがって将来 kit を `devDependencies` で
+  参照するプレビューを足しても、`dev-only-package-in-dependencies` /
+  `dev-only-package-in-shipped-source` が機械的に守る。
+- `Date.now()` / `new Date()` / `performance.now()` 禁止は `apps/` にも効く。
+  このアプリはクロックを 2 つとも注入しているので抵触しない
+  （`ClockPort` は `Ref<number>`、Effect の `Clock` は `TestContext`）。
+  `mc-kernel-allow-time-source` エスケープハッチは使っていない。
 
 ## 3. 現在のテスト
 
@@ -50,9 +101,12 @@ mc-sim の場合、プレビューは**障害物コース**で、歩く / 泳ぐ
 | `test/game-loop.test.ts` | 7 | DN-02 / DN-08 |
 | `test/camera-pose.test.ts` | 13 | DN-01 |
 | `test/inventory.test.ts` | 11 | DN-06 / DN-07 |
+| `test/recipe.test.ts` | 25 | レシピモデル（[public-api.md](./public-api.md) §4.1）。§3.2 |
+| `test/crafting.test.ts` | 13 | クラフトの原子性。DN-07 |
 | `test/autosave.test.ts` | 9 | DN-05 / DN-08 |
 | `test/kernel-mirror.test.ts` | 7 | `domain/kernel-vocabulary.ts` が mc-kernel と同形であること（§4.4） |
 | `test/check-dependency-whitelist.test.ts` | 26 | DN-12 + 依存ホワイトリスト本体 |
+| `test/api-lock.test.ts` | 26 | 生成器 `scripts/api-lock.ts` の機構そのもの（§7 末尾） |
 
 ### 3.1 `test/kernel-mirror.test.ts` が守っているもの
 
@@ -72,6 +126,26 @@ Effect は Tag を**その文字列キー**で解決する。3 つのコピー�
 
 そこでこのファイルは、Tag キーを**文字列リテラルで**固定し、サービスの形を**両方向で**assert する
 （狭めても広げても落ちる）。同じ内容のテストが mc-render と mc-playground-kit にもある。
+
+### 3.2 レシピ / クラフトのテストが守っているもの
+
+一致判定は**網羅的に**書ける種類の関数なので、そう書いてある。
+
+| 何が壊れたら落ちるか | テスト |
+| --- | --- |
+| 平行移動 | `a 2x2 shape is the SAME recipe at all four positions in a 3x3 grid`、`a 1x2 shape is the SAME recipe at all six positions in a 3x3 grid`（位置を全列挙する） |
+| 形が崩れたら一致しない | `a broken shape is not a translation of the whole shape`、`a hole in the pattern is a requirement, so a stray item breaks the match` |
+| 2x2 グリッドで 3x3 レシピが作れてしまう | `a 3x3 recipe cannot be reached from the player 2x2 grid` |
+| 鏡像 | `an asymmetric shape matches its left-right mirror, as vanilla does`、`the mirror travels with the translation, at every position` |
+| 上下反転を鏡像と誤認する | `a vertical flip is NOT a mirror — a shape upside down is a different shape` |
+| 順列 | `every permutation of the ingredients is the same recipe`（6 通り全列挙）、`position is irrelevant, not merely reorderable within a row` |
+| 曖昧性が表順に依存する | `REGRESSION: the winner does not depend on where the recipe sits in the table`（全回転 + 逆順）、`equally specific matches are decided by id, in either table order` |
+| 表に同順位の衝突が紛れ込む | `STARTER_RECIPES leans on specificity, never on the id tie-break` |
+| 全域性 | `a ragged grid reads as empty where it is short, and does not throw`（mx-ui が画面状態から組むので、フレームの中で defect にしてはならない） |
+| レシピの legend の打ち間違い | `every starter recipe matches its own canonical layout`（表の全件を、期待する id とともに固定する） |
+| クラフトが中途半端に適用される | `REGRESSION: a craft short of an ingredient leaves the inventory untouched`、`REGRESSION: a craft with nowhere to put the result leaves the inventory untouched`（どちらも `toBe` で**参照同一性**を見る） |
+| 先に空きを確認して最後の 1 回を断る | `removes the ingredients BEFORE offering the result, so the last craft still fits` |
+| 並行クラフトで材料を超過して引く | `REGRESSION: concurrent crafts cannot overdraw — Ref.modify, not get-then-set`（DN-07） |
 
 ## 4. テストの書き方（本リポジトリの規約）
 

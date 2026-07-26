@@ -22,8 +22,10 @@
 
 // --- Domain: pure values and transitions -----------------------------------
 export * from './domain/camera-pose'
+export * from './domain/crafting'
 export * from './domain/frame-timing'
 export * from './domain/inventory'
+export * from './domain/recipe'
 export * from './domain/time-of-day'
 
 // --- Application: Effect services -------------------------------------------

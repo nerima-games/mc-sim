@@ -95,9 +95,10 @@ Nix を使わない場合は Node.js 22 以上と pnpm 9.15.0（`corepack` 推�
 
 | コマンド | 内容 |
 | --- | --- |
-| `pnpm typecheck` | `tsconfig.build.json` と `tsconfig.test.json` の両方を型検査 |
+| `pnpm typecheck` | `tsconfig.build.json` / `tsconfig.test.json` / `tsconfig.preview.json` の 3 プロジェクトを型検査 |
 | `pnpm lint` | oxlint（このリポジトリ唯一の lint / format 設定。prettier も biome も .editorconfig も置かない）。**`--deny-warnings` 付きで走る**ため、`warn` のルールもビルドを落とす（`oxlint.json` は 5 カテゴリすべてと個別 67 ルールが `warn`、`error` は 4 つだけ。このフラグが無かった頃は実質その 4 つしかゲートになっていなかった） |
 | `pnpm lint:fix` | oxlint の自動修正 |
+| `pnpm preview` | 内蔵プレビュー（決定論シナリオステッパ）。**`pnpm verify` には入らない**。[`apps/preview-sim/README.md`](./apps/preview-sim/README.md) |
 | `pnpm test` | vitest（`@effect/vitest` の `it.effect` が主 API、`environment: 'node'`） |
 | `pnpm test:watch` | vitest watch |
 | `pnpm test:coverage` | カバレッジ計測（閾値は未設定。後述） |
@@ -120,6 +121,7 @@ Nix を使わない場合は Node.js 22 以上と pnpm 9.15.0（`corepack` 推�
 | `setDayLength → setTimeOfDay` 順序 | `domain/time-of-day.ts` / `application/time-service.ts` | DN-04 |
 | 自動保存の `Schedule.spaced` | `application/autosave.ts` | DN-05 |
 | `Ref.modify` による TOCTOU 回避 | `application/inventory-service.ts` | DN-07 |
+| レシピ表とクラフトの原子性 | `domain/recipe.ts` / `domain/crafting.ts` | DN-07 / DN-11 |
 
 各 DN の参照実装証跡（file:line）と、書くべき回帰テストの一覧は
 [`docs/design-notes.md`](./docs/design-notes.md)。
@@ -127,12 +129,26 @@ Nix を使わない場合は Node.js 22 以上と pnpm 9.15.0（`corepack` 推�
 ### まだ無いもの
 
 - **EntityManager / 体力・空腹・XP / 実績・統計 / 設定状態。**
+- **かまど / 醸造 / 金床 / エンチャント**（plan.md §7 のうちクラフト以外）。
+  グリッド形ではないので `domain/recipe.ts` には 1 行も無い。レシピモデルは
+  shaped / shapeless までで、材料タグ（「任意の板材」）は `Ingredient` を
+  **メンバ 1 つの tagged union**にすることで、破壊的変更にならない形で繰り延べてある
+  （[`docs/public-api.md`](./docs/public-api.md) §4.1-6）。
 - ~~チャンクダーティ通知~~ → **mc-worldgen の `ChunkStore` に決着した。ここには来ない。**
   plan.md §3.8 の公開 API 文は挙げているが、§3.7 が mc-worldgen に与える
   「ダーティフラグ」と両立しない。根拠は [docs/responsibility.md](./docs/responsibility.md) §3.3
   （[`docs/public-api.md`](./docs/public-api.md) §5）。
-- **内蔵障害物コースプレビュー。** plan.md §6 Step 2 の完了条件の半分。
-  mc-render / mc-playground-kit の完成後にしか作れない（[`docs/testing.md`](./docs/testing.md) §2.1）。
+- **一人称の障害物コース（歩く / 泳ぐ / 跳ぶ / スニーク）。** docs/testing.md §1 が
+  プレビューの形として挙げているもの。**待っているのはハーネスではない。**
+  `PlayerServiceApi` は `pose / look / moveTo / cameraPose / restore / reset` で全部であり、
+  速度も接地フラグもしゃがみ状態も浮力もコライダーも**このリポジトリには無い**。
+  `moveTo` はテレポートで、何もそれに反対しない。だから今日コースを作ると
+  プレイヤーは障害物をすり抜ける。移動はキャラクタコントローラを所有する側
+  （mc-physics / mx-gameplay）の動詞である（plan.md §2.3-1）。
+  **内蔵プレビューそのものは [`apps/preview-sim/`](./apps/preview-sim/) にある** ——
+  mc-sim が実際に所有している 8 つの状態機械を、注入したクロックで 1 フレームずつ
+  進めて見せる決定論シナリオステッパで、kit も publish も THREE.js も要らない
+  （[`docs/testing.md`](./docs/testing.md) §2.1）。
 - **リポジトリ内 workspace 分割**（entity / inventory / game）。plan.md §3.8 内部構成。
 - **`ItemId` が暫定 `string`。** 本来は mc-kernel の `ItemType`（リテラル union、網羅性チェックつき）。
 - **ビルド／publish はまだない。** `exports` は TypeScript ソースを直接指している。
