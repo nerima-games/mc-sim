@@ -337,19 +337,31 @@ const SECOND_WORLD: Scenario = {
  *
  * `snapshot` / `restore` are documented as the persistence pair. Persistence is
  * where malformed values come from — a truncated IndexedDB write, an older
- * schema, a hand-edited file. Neither `TimeService.restore` nor
- * `InventoryService.restore` validates anything.
+ * schema, a hand-edited file. Neither restore validated anything, and all three
+ * of the results below were unrecoverable: a world in permanent daylight, a
+ * player silently resized to two slots, and a domain function that threw inside
+ * the frame loop where the throw was logged and swallowed.
+ *
+ * THE SCRIPT IS UNCHANGED. It still feeds exactly the same malformed values,
+ * because a scenario rewritten to feed legal ones would no longer reach the
+ * boundary it exists to reach. What changed is what the panels show afterwards:
+ * every value is now repaired at the point it goes in, and the `findings` panel
+ * says which repair ran.
  */
 const CORRUPT_SAVE: Scenario = {
   name: 'corrupt-save',
-  headline: 'restore() accepts anything, and two of the results are unrecoverable',
+  headline: 'restore() accepts anything a save can contain, and repairs what it cannot answer for',
   detail: [
-    'Frame 60 restores a TimeState with dayLengthTicks 0. Every reader returns',
-    'NaN from then on — and isNight returns FALSE for NaN, so the world reports',
-    'permanent daylight. setTimeOfDay cannot fix it (0 x 0 = 0).',
-    'Frame 180 restores a 2-slot inventory into a 36-slot player.',
-    'Frame 240 removes from a slot holding more than MAX_STACK_COUNT, which',
-    'throws out of a pure domain function. Watch the INVENTORY panel stop.',
+    'Frame 60 restores a TimeState with dayLengthTicks 0. Every reader used to',
+    'return NaN from then on — and isNight returns FALSE for NaN, so the world',
+    'reported permanent daylight. normaliseTimeState now clamps it to the legal',
+    'minimum, and the setters at 120 and 150 work rather than being the only',
+    'escape. Frame 180 restores a 2-slot inventory into a 36-slot player: the',
+    'length is re-established, so the 1000 blocks mined at 210 all fit instead',
+    'of 872 of them hitting the floor. Frame 240 installs a slot holding 200 of',
+    'a 64-max item, which is spilled across four slots; the remove at 270 then',
+    'returns normally where it used to throw out of a pure domain function and',
+    'stop the INVENTORY panel dead.',
   ],
   steps: [
     step(0, 'a healthy world first, so the change is visible', {
@@ -363,17 +375,17 @@ const CORRUPT_SAVE: Scenario = {
       ticks: 0,
       dayLengthTicks: 0,
     }),
-    step(120, 'try to recover with the documented setter. It cannot', {
+    step(120, 'the documented setter, which a repaired world now obeys', {
       kind: 'setTimeOfDay',
       fraction: 0.5,
     }),
-    step(150, 'setDayLength is the only way back', { kind: 'setDayLength', seconds: 600 }),
+    step(150, 'setDayLength was once the ONLY way back', { kind: 'setDayLength', seconds: 600 }),
     step(180, 'a save from a build with a smaller inventory', {
       kind: 'restoreInventory',
       slots: 2,
       stack: undefined,
     }),
-    step(210, 'the player now has 2 slots and does not know it', {
+    step(210, 'the player still has 36 slots, so all 1000 fit', {
       kind: 'mine',
       item: 'STONE',
       count: 1000,
@@ -383,7 +395,7 @@ const CORRUPT_SAVE: Scenario = {
       slots: 36,
       stack: { item: 'STONE', count: 200 },
     }),
-    step(270, 'remove one. StackCount rejects 199 and throws', {
+    step(270, 'remove one. 199 is no longer an unrepresentable remainder', {
       kind: 'spend',
       item: 'STONE',
       count: 1,
@@ -399,19 +411,28 @@ const CORRUPT_SAVE: Scenario = {
  * point — it is what stops someone simplifying the call into a wall-clock read.
  *
  * `startAutoSaveDaemon` is `Effect<Fiber.RuntimeFiber<number, never>>`. No
- * `ClockPort`. Its schedule sleeps on Effect's ambient `Clock`, which in a
- * browser is the wall clock. So the one service in this repository whose job is
- * "decide WHEN" is the one service whose when is not injected.
+ * `ClockPort`. Its schedule sleeps on Effect's ambient `Clock`, and NOTHING
+ * connects the two — which is what this scenario shows by pulling them apart.
+ *
+ * That is a deliberate split rather than a defect, and application/autosave.ts
+ * now carries the argument: a Port reads an INSTANT, a schedule sleeps for a
+ * DURATION, `ClockPort` has no `sleep` and may not grow one (it is mirrored
+ * from mc-kernel), and Effect's `Clock` is itself injectable — `TestClock` is
+ * what this app replaces it with. Both clocks here are deterministic. The thing
+ * a caller must know is that a replay has to set BOTH, and that is exactly what
+ * the divergence below looks like when it forgets one.
  */
 const CLOCK_DIVERGENCE: Scenario = {
   name: 'clock-divergence',
-  headline: 'ClockPort and Effect Clock are two clocks; autosave uses the wrong one',
+  headline: 'ClockPort and Effect Clock are two clocks; a replay must set both',
   detail: [
     'The CLOCK panel prints both. From frame 60 the injected ClockPort runs',
     'ahead: camera snapshots are stamped later and later, exactly as a replay or',
     'a fast-forward would stamp them. Autosave does not notice, because its',
     'schedule sleeps on Effect Clock and nothing connects the two. Reverse the',
-    'skew and autosave fires during a simulation that has not moved.',
+    'skew and autosave fires during a simulation that has not moved. Neither',
+    'clock is a wall clock here — the point is that they are two, not that one',
+    'of them is uninjected.',
   ],
   steps: [
     step(0, 'ordinary world', { kind: 'configureDay', seconds: 600, fraction: 0.25 }),

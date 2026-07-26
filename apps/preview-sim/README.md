@@ -73,10 +73,20 @@ camera-pose / frame-timing / time-of-day —— 8 つとも、注入されたク
 | `ClockPort` | mc-kernel の Port（`domain/kernel-vocabulary.ts` にミラー） | `cameraPose: Effect<…, never, ClockPort>` —— **型に出る** |
 | Effect `Clock` | `Schedule.spaced` が sleep する先 | `startAutoSaveDaemon: Effect<Fiber.RuntimeFiber<…>>` —— **型に出ない** |
 
-`application/player-service.ts:29-33` は「クロック依存を型に見せることが、
+`application/player-service.ts` は「クロック依存を型に見せることが、
 これを `Date.now()` に『単純化』されるのを防ぐ」と書いている。
-**「いつ」を決めることだけが仕事のサービスが、それをしていない。**
-詳細は `--stats` の `AUTOSAVE-CLOCK`。
+「いつ」を決めることだけが仕事のサービスが、それをしていない —— という指摘（SIM-6）は妥当だった。
+
+**結論は「移さない」で、理由は `application/autosave.ts` にある。** Port は**瞬間を読む**もので、
+スケジュールは**期間だけ眠る**もの。`ClockPort` に `sleep` は無く、mc-kernel のミラーなので
+足すこともできない（Tag は文字列キーで解決されるため、広いミラーは `test/kernel-mirror.test.ts` が
+潰している当のハザードそのものになる）。Port で駆動すると polling になり、
+`TestClock.adjust` では進まなくなって、オートセーブのテスト一式が手回しハーネスに変わる。
+
+Effect の `Clock` もサービスであり、`TestClock` が差し替えるのはそれである。
+つまり**どちらのクロックも注入されている**。呼び出し側が知るべきなのは
+「Port を渡せ」ではなく「決定論的なリプレイは Effect Clock も設定しろ」で、
+それは `test/autosave.test.ts` が固定している。詳細は `--stats` の `AUTOSAVE-CLOCK`。
 
 このアプリは前者を `Ref<number>` で、後者を `TestContext.TestContext` で backing する。
 だから 5 秒のオートセーブ間隔は実時間 0 秒で、全部再現可能である。
@@ -93,28 +103,38 @@ camera-pose / frame-timing / time-of-day —— 8 つとも、注入されたク
 | `tab-refocus` | deltaTime クランプの両端。背景タブ 30 秒が何を失うか |
 | `day-length-hazard` | 順序ハザードと、その双子（`configureDay` が月齢を捨てる） |
 | `second-world` | 同じサービスインスタンスでのワールド再ロード（DN-02 / DN-09） |
-| `corrupt-save` | `restore()` は何でも受け取る。うち 2 つは回復不能 |
+| `corrupt-save` | `restore()` は何でも受け取る。以前はうち 3 つが回復不能だった |
 | `clock-divergence` | 2 つのクロックを引き離すと、オートセーブはどちらに従うか |
 
 ## 見つけたもの
 
 `--stats` が全部を数値で出す。各項目に再現コマンドが付いている。
+**11 件とも決着済み**（10 件修正 + SIM-6 は「移さない」判断）。
 
-| # | 内容 | 場所 |
+| # | 内容 | 決着 |
 | --- | --- | --- |
-| SIM-11 | **順序ハザードの正典的な説明が算術的に間違っている。** `0.60` ではなく `0.20` | `domain/time-of-day.ts:17-18` |
-| SIM-1 | `TimeService.restore({dayLengthTicks: 0})` → 全読み取りが NaN、**`isNight` は `false`**（恒久的な昼） | `application/time-service.ts:89` |
-| SIM-3 | `removeItem` は `MAX_STACK_COUNT` 超のスロットで**throw する**。純粋・全域と書いてあるのに | `domain/inventory.ts:158` (`removeItem`) |
-| SIM-2 | `InventoryService.restore` はスロット数を検査しない。36 スロットが 2 になる | `application/inventory-service.ts:95` (`restore`) |
-| SIM-6 | オートセーブのクロックだけが Port ではない | `application/autosave.ts:102-108` |
-| SIM-8 | `configureDay` は「ワールドロードが呼ぶもの」と書いてあるが、月齢を 0 に戻す | `application/time-service.ts:47-48` |
-| SIM-9 | `Effect.repeat` の性質で、オートセーブは fork した瞬間に 1 回走る | `application/autosave.ts:108` |
-| SIM-7 | `Queue.offer` の drop シグナルが捨てられている。落ちたフレーム数を誰も知れない | `application/game-loop.ts:193-195` |
-| SIM-10 | `framesProcessed` は停止後 0 を返す。teardown レポートが最も欲しい瞬間に読めない | `application/game-loop.ts:198` |
-| SIM-5 | クランプで失われた時間は誰も数えていない | `domain/frame-timing.ts:63-66` |
+| SIM-11 | **順序ハザードの正典的な説明が算術的に間違っている。** `0.60` ではなく `0.20` | ヘッダを両方向とも書き下し、**コメントが印字する数値**を assert するテストを追加 |
+| SIM-1 | `TimeService.restore({dayLengthTicks: 0})` → 全読み取りが NaN、**`isNight` は `false`**（恒久的な昼） | `normaliseTimeState` を `restore` に適用。`isNight` は**不変**（mx-gameplay のミラー） |
+| SIM-3 | `removeItem` は `MAX_STACK_COUNT` 超のスロットで**throw する**。純粋・全域と書いてあるのに | スロットの読みをガードし派生する書き込みを clamp。全域になった |
+| SIM-2 | `InventoryService.restore` はスロット数を検査しない。36 スロットが 2 になる | `normaliseInventory` を適用。`restore` は入らなかった数を返す |
+| SIM-6 | オートセーブのクロックだけが Port ではない | **移さない。** Port は瞬間を読むだけで `sleep` を持てない。理由を `application/autosave.ts` に記載 |
+| SIM-8 | `configureDay` は「ワールドロードが呼ぶもの」と書いてあるが、月齢を 0 に戻す | doc を「ブートストラップ専用」に。ロード経路のテストを新設 |
+| SIM-9 | `Effect.repeat` の性質で、オートセーブは fork した瞬間に 1 回走る | `Effect.schedule` に変更。最初の保存は t = interval |
+| SIM-7 | `Queue.offer` の drop シグナルが捨てられている。落ちたフレーム数を誰も知れない | `GameLoopApi.framesDropped` を追加。offer の位置で数える |
+| SIM-10 | `framesProcessed` は停止後 0 を返す。teardown レポートが最も欲しい瞬間に読めない | `stop` が最終値を 1 回読んで保持。次の `start` が 0 に戻す |
+| SIM-5 | クランプで失われた時間は誰も数えていない | `frameDeltaLossSecs` + `GameLoopApi.secondsLostToClamp` |
+
+**`--stats` は発見を消していない。** 各節は「何が間違っていたか」を、いま読める値と
+固定しているテスト名の隣に出し続ける。検査した境界と、誰も見ていない境界とを、
+数値レポートの中で見分けられなくしないためである。
 
 `findings` パネル（`p` でトグル）はこのうち 8 つを**現在のワールドに対する述語**として評価する。
-普通の run では全部 `·` で、対応するシナリオが走ると `HIT` になる。
+述語も書き換えてあり、いまは 2 種類ある。
+
+- **修復が走ったこと**を示すもの（SIM-1 / SIM-2 / SIM-3）。壊れた入力は今も同じように届くので、
+  `corrupt-save` で `HIT` が出なくなったら、シナリオが境界に届かなくなったということである。
+- **数えられるようになった量**（SIM-5 / SIM-7 / SIM-10）。`HIT` は「報告すべき値がある」であって
+  「壊れている」ではない。
 
 ## このアプリがモデル化できていないこと、1 つ
 

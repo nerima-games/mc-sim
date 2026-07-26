@@ -12,6 +12,19 @@
  * did not fit), and nothing here reads a clock, a random source, or a Ref.
  * `application/inventory-service.ts` is the thin Ref wrapper.
  *
+ * IT IS ALSO TOTAL, INCLUDING ON AN `Inventory` IT DID NOT BUILD. That claim
+ * used to be false and expensively so: `removeItem` wrote `StackCount(left)`,
+ * `StackCount` is `Brand.refined`, and a slot restored from another build's
+ * save made it THROW. A throw from a pure domain function is a `Cause.Die` in
+ * the frame loop, which `application/game-loop.ts` logs and swallows, so mining
+ * and crafting simply stopped working while nothing failed.
+ *
+ * Two private helpers hold the line — `heldCount` guards every READ of a slot
+ * count and `derivedStackCount` clamps every WRITE derived from one. Repair is
+ * a separate concern from totality: `normaliseInventory` is the one function
+ * that repairs a whole inventory and it ACCOUNTS for what it cannot place,
+ * which is what `InventoryService.restore` runs on the world-load path.
+ *
  * PRE-AUDIT FIRST CUT. The real model needs durability, enchantments, NBT-ish
  * per-item state and armour slots; the reference's InventoryService has 14
  * methods (ts-minecraft/packages/inventory/application/inventory-service.ts:22-101).
@@ -51,6 +64,40 @@ export const itemStack = (item: ItemId, count: number): ItemStack => ({
   count: StackCount(count),
 })
 
+/**
+ * How many items a slot holds, as a plain number, for a slot that may itself be
+ * out of range.
+ *
+ * Every read of `slot.count` inside this module goes through here. A slot that
+ * arrived from `restore` can hold 200, or a fraction, or `NaN`, and arithmetic
+ * on those quietly poisons the outcome: `Math.min(NaN, remaining)` is `NaN`,
+ * `remaining -= NaN` ends the loop, and `removed` comes back `NaN`.
+ */
+const heldCount = (stack: ItemStack): number =>
+  Number.isFinite(stack.count) && stack.count > 0 ? Math.floor(stack.count) : 0
+
+/**
+ * Brand a count DERIVED from a slot that may itself be out of range.
+ *
+ * `StackCount` is `Brand.refined` and THROWS outside [0, 64]. That is right for
+ * `itemStack`, where the number is a literal a human wrote (DN-06: a recipe
+ * output of 65 should fail at the place that names it). It is wrong here: the
+ * number is whatever was left after taking from a slot that may already have
+ * been corrupt, and a throw from a pure domain function becomes a `Cause.Die`
+ * in the frame loop, which `application/game-loop.ts` logs and SWALLOWS. The
+ * observable result was that mining and crafting stopped working, with a line
+ * in a log nobody reads, and this module's header claims to be pure and total.
+ *
+ * Repairing to the representable range keeps that claim true. It also loses the
+ * surplus of an over-full slot, which is why it is not the sanctioned way to
+ * handle a corrupt inventory: `normaliseInventory` is, and it accounts for
+ * every item instead of dropping it. Nothing mc-sim itself produces can reach
+ * this clamp — `emptyInventory`, `addItem` and `normaliseInventory` are the
+ * only constructors, and all three respect `MAX_STACK_COUNT`.
+ */
+const derivedStackCount = (count: number): StackCount =>
+  StackCount(Number.isFinite(count) ? Math.min(MAX_STACK_COUNT, Math.max(0, Math.floor(count))) : 0)
+
 /** A slot is either empty (`undefined`) or holds a stack. */
 export type Slot = ItemStack | undefined
 
@@ -66,7 +113,7 @@ export const slotAt = (inventory: Inventory, index: number): Slot => inventory.s
 
 /** Total count of an item across every slot. */
 export const countOf = (inventory: Inventory, item: ItemId): number =>
-  inventory.slots.reduce((total, slot) => (slot?.item === item ? total + slot.count : total), 0)
+  inventory.slots.reduce((total, slot) => (slot?.item === item ? total + heldCount(slot) : total), 0)
 
 /** True when no slot holds anything. */
 export const isEmpty = (inventory: Inventory): boolean => inventory.slots.every((slot) => slot === undefined)
@@ -99,7 +146,12 @@ export type AddOutcome = {
  */
 export const addItem = (inventory: Inventory, item: ItemId, count: number): AddOutcome => {
   if (!Number.isInteger(count) || count <= 0) {
-    return { inventory, leftover: Math.max(0, count) }
+    // A rejected quantity is reported as leftover, because the caller turns
+    // leftover into dropped-item entities and 2.5 items asked for is 2.5 items
+    // not placed. `Math.max(0, NaN)` is NaN, though, and a NaN leftover is a
+    // number every caller downstream would believe — so a quantity that is not
+    // a quantity leaves nothing behind.
+    return { inventory, leftover: Number.isFinite(count) ? Math.max(0, count) : 0 }
   }
 
   const slots = [...inventory.slots]
@@ -107,11 +159,15 @@ export const addItem = (inventory: Inventory, item: ItemId, count: number): AddO
 
   for (let index = 0; index < slots.length && remaining > 0; index += 1) {
     const slot = slots[index]
-    if (slot === undefined || slot.item !== item || slot.count >= MAX_STACK_COUNT) {
+    if (slot === undefined || slot.item !== item) {
       continue
     }
-    const accepted = Math.min(MAX_STACK_COUNT - slot.count, remaining)
-    slots[index] = { item, count: StackCount(slot.count + accepted) }
+    const held = heldCount(slot)
+    if (held >= MAX_STACK_COUNT) {
+      continue
+    }
+    const accepted = Math.min(MAX_STACK_COUNT - held, remaining)
+    slots[index] = { item, count: StackCount(held + accepted) }
     remaining -= accepted
   }
 
@@ -139,6 +195,10 @@ export type RemoveOutcome = {
  * Last-first mirrors vanilla consumption order and, more usefully, means that
  * `addItem` followed by `removeItem` of the same amount restores the original
  * slot layout rather than leaving a hole earlier in the inventory.
+ *
+ * TOTAL, including on an inventory this module did not build. See
+ * `derivedStackCount` and `heldCount` for what an out-of-range slot does here
+ * and why it cannot be allowed to throw.
  */
 export const removeItem = (inventory: Inventory, item: ItemId, count: number): RemoveOutcome => {
   if (!Number.isInteger(count) || count <= 0) {
@@ -153,11 +213,87 @@ export const removeItem = (inventory: Inventory, item: ItemId, count: number): R
     if (slot === undefined || slot.item !== item) {
       continue
     }
-    const taken = Math.min(slot.count, remaining)
-    const left = slot.count - taken
-    slots[index] = left === 0 ? undefined : { item, count: StackCount(left) }
+    const held = heldCount(slot)
+    const taken = Math.min(held, remaining)
+    const left = held - taken
+    slots[index] = left === 0 ? undefined : { item, count: derivedStackCount(left) }
     remaining -= taken
   }
 
   return { inventory: { slots }, removed: count - remaining }
+}
+
+export type NormaliseOutcome = {
+  readonly inventory: Inventory
+  /**
+   * How many items the repaired inventory had no room for. Zero on a save that
+   * only needed padding.
+   *
+   * The same currency as `AddOutcome.leftover`, and for the same reason: the
+   * caller turns it into dropped-item entities on the ground. Reported rather
+   * than discarded so that a shrinking slot count is a visible quantity instead
+   * of items that evaporate on load.
+   */
+  readonly leftover: number
+}
+
+/**
+ * Repair an inventory read from persistence into one this module's invariants
+ * hold for. The world-load counterpart of `emptyInventory`.
+ *
+ * `InventoryService.restore` used to install whatever it was handed, so a save
+ * written by a build with a different slot count silently RESIZED the player:
+ * a two-slot save turned a 36-slot player into a two-slot one, and the next
+ * 1000 mined blocks became 128 accepted and 872 on the floor with no symptom
+ * beyond a full inventory. A snapshot crosses a version boundary, which is
+ * exactly the moment a slot count changes, so the load path is where the length
+ * has to be re-established.
+ *
+ * Three repairs, and none of them destroys an item it does not report:
+ *
+ *   1. LENGTH. The result is always exactly `INVENTORY_SLOT_COUNT` slots. A
+ *      short save is padded; a long one has its tail re-inserted rather than
+ *      truncated away.
+ *   2. OVER-FULL SLOTS. A slot holding more than `MAX_STACK_COUNT` keeps a full
+ *      stack and the surplus is re-inserted. This is what makes `removeItem`'s
+ *      clamp unreachable for anything that came through here.
+ *   3. EMPTY AND NON-NUMERIC STACKS. A slot holding 0, a fraction or `NaN`
+ *      becomes an empty slot; a fraction is floored first, so the whole part of
+ *      it survives.
+ *
+ * Everything re-inserted goes back through `addItem`, so the top-up-first rule
+ * and `MAX_STACK_COUNT` apply to a repaired inventory exactly as they do to a
+ * mined one, and whatever still does not fit is returned as `leftover`.
+ */
+export const normaliseInventory = (inventory: Inventory): NormaliseOutcome => {
+  const slots: Array<Slot> = Array.from({ length: INVENTORY_SLOT_COUNT }, () => undefined)
+  // A plain count, NOT a `StackCount`: a spilled quantity may legitimately
+  // exceed one stack, which is precisely the input `addItem` takes unbranded.
+  const spilled: Array<{ readonly item: ItemId; readonly count: number }> = []
+
+  inventory.slots.forEach((slot, index) => {
+    if (slot === undefined) {
+      return
+    }
+    const held = heldCount(slot)
+    if (held === 0) {
+      return
+    }
+    if (index >= INVENTORY_SLOT_COUNT) {
+      spilled.push({ item: slot.item, count: held })
+      return
+    }
+    slots[index] = { item: slot.item, count: derivedStackCount(held) }
+    if (held > MAX_STACK_COUNT) {
+      spilled.push({ item: slot.item, count: held - MAX_STACK_COUNT })
+    }
+  })
+
+  return spilled.reduce<NormaliseOutcome>(
+    (carried, stack) => {
+      const outcome = addItem(carried.inventory, stack.item, stack.count)
+      return { inventory: outcome.inventory, leftover: carried.leftover + outcome.leftover }
+    },
+    { inventory: { slots }, leftover: 0 },
+  )
 }

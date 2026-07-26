@@ -25,7 +25,24 @@ export type InventoryServiceApi = {
   readonly remove: (item: Inv.ItemId, count: number) => Effect.Effect<number>
   readonly countOf: (item: Inv.ItemId) => Effect.Effect<number>
   readonly snapshot: Effect.Effect<Inv.Inventory>
-  readonly restore: (inventory: Inv.Inventory) => Effect.Effect<void>
+  /**
+   * Install a saved inventory. THE WORLD-LOAD PATH. Resolves to the number of
+   * items the repaired inventory had no room for — same currency as `add`.
+   *
+   * The snapshot is repaired by `Inv.normaliseInventory` before it is
+   * installed, and the reason is the version boundary a save crosses: this used
+   * to install whatever it was handed, so a two-slot save turned a 36-slot
+   * player into a two-slot one and the next 872 mined blocks went on the floor
+   * with no symptom but a full inventory. The result now always has exactly
+   * `INVENTORY_SLOT_COUNT` slots and no stack outside [0, `MAX_STACK_COUNT`],
+   * which is also what makes `Inv.removeItem` unable to meet a count it has to
+   * repair.
+   *
+   * Resolving to the leftover rather than `void` is the same decision `add`
+   * makes: a shrinking slot count is an ordinary game state whose consequence
+   * is items on the ground, and swallowing the number here would delete them.
+   */
+  readonly restore: (inventory: Inv.Inventory) => Effect.Effect<number>
   /**
    * Empty the inventory.
    *
@@ -75,11 +92,22 @@ export class InventoryService extends Context.Tag('@nerima-games/mc-sim/Inventor
   InventoryServiceApi
 >() {}
 
+/**
+ * Build an InventoryService over a fresh Ref.
+ *
+ * `initial` goes through `Inv.normaliseInventory` for the same reason
+ * `restore` does — it is the other way an inventory this module did not build
+ * gets in, and a service that starts life with two slots is the SIM-2 defect
+ * with a different entry point. The constructor drops the leftover on the floor
+ * because a world that does not exist yet has no floor to drop onto; a caller
+ * that needs the number loads through `restore`, which is the world-load path
+ * and returns it.
+ */
 export const makeInventoryService = (
   initial: Inv.Inventory = Inv.emptyInventory(),
   recipeTable: Recipe.RecipeTable = Recipe.STARTER_RECIPES,
 ): Effect.Effect<InventoryServiceApi> =>
-  Effect.map(Ref.make(initial), (state) => ({
+  Effect.map(Ref.make(Inv.normaliseInventory(initial).inventory), (state) => ({
     add: (item, count) =>
       Ref.modify(state, (current) => {
         const outcome = Inv.addItem(current, item, count)
@@ -92,7 +120,11 @@ export const makeInventoryService = (
       }),
     countOf: (item) => Ref.get(state).pipe(Effect.map((current) => Inv.countOf(current, item))),
     snapshot: Ref.get(state),
-    restore: (inventory) => Ref.set(state, inventory),
+    restore: (inventory) =>
+      Ref.modify(state, () => {
+        const outcome = Inv.normaliseInventory(inventory)
+        return [outcome.leftover, outcome.inventory]
+      }),
     reset: Ref.set(state, Inv.emptyInventory()),
     recipes: Effect.succeed(recipeTable),
     previewCraft: (grid) => Effect.sync(() => Recipe.matchRecipe(recipeTable, grid)),

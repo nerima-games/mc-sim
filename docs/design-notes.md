@@ -153,8 +153,15 @@ packages/game/application/game-state-service.ts:87-92   （同種の reset）
 2. `stop` は **detach してから interrupt**。中断された `stop` が半端な状態を残さない。
 3. `Fiber.interruptFork`（`interrupt` ではない）。遅い fiber を待たない。
 4. `start` は**再入可能**。「already running」で失敗しない。
-5. **世代ごとに状態を新規作成**（キュー・フレームカウンタ・前回時刻）。取り残された旧 fiber は
+5. **世代ごとに状態を新規作成**（キュー・3 つのカウンタ・前回時刻）。取り残された旧 fiber は
    自分の detach 済み状態に書くだけで、新しい世界を壊せない。
+6. **カウンタは `stop` を跨いで読める**（SIM-10）。teardown はセッションレポートを書く瞬間で、
+   以前はそこで 0 に戻っていた —— 一番読みたい瞬間が唯一読めない瞬間だった。
+   `stop` が退役させる世代を 1 回だけ読んで凍結し、次の `start` が 0 に戻す。
+   凍結した数値は共有可変フィールドではないので 5 と両立する。
+7. **drop を数える**（SIM-7）。`Queue.offer` は受理可否を返す。それを捨てていたので
+   「フレームを落とした」と誰も言えなかった。submitted − processed では復元できない
+   （後者はキュー滞留分だけ遅れる）ので、offer の位置で数える。
 
 ### 書くべき回帰テスト
 
@@ -165,6 +172,9 @@ packages/game/application/game-state-service.ts:87-92   （同種の reset）
 | `stop() is idempotent, so a best-effort teardown may run twice` | `test/game-loop.test.ts` | |
 | `stop() halts processing, and submitting afterwards is a silent no-op` | `test/game-loop.test.ts` | |
 | `each Layer build is an independent world, which is what re-entrancy needs` | `test/scenario.test.ts` | 2 つの世界が干渉しない + `reset` が効く |
+| `REGRESSION: frames the dropping queue refuses are counted, not silently discarded` | `test/game-loop.test.ts` | SIM-7。daemon をハンドラ内で止めてから溢れさせる（off-by-one を race にしない） |
+| `REGRESSION: the counters survive stop, which is when a teardown report reads them` | `test/game-loop.test.ts` | SIM-10 / SIM-5 |
+| `a fresh start zeroes them, so one run never reports the previous run's numbers` | `test/game-loop.test.ts` | 5 と 6 の両立 |
 | **（要追加）** `a second world load completes within N frames of the first` | 本実装時 | デッドロックしないことを時間で assert |
 | **（要追加）** `no fiber survives world teardown` | 本実装時 | `Fiber.roots` 相当で取り残し fiber を数える |
 
@@ -202,6 +212,12 @@ plan.md は §3.4（mc-physics）でも同じ制約を挙げている。**両リ
   参照実装の式は NaN をそのまま通す。NaN 位置は不可視で、数千フレーム後に発症する。
 - 「前フレーム無し」の番兵を `lastTimestamp === 0` ではなく `undefined` にする。
   単調クロックは 0 を返してよいので、参照実装では番兵と正当な値が区別できない。
+- **捨てた時間を数える**（SIM-5）。上限クランプが捨てた分は世界に届かず誰も返さない
+  （背景タブ 30 秒で 29.95 秒）。クランプ自体は正しいが、その量がどこにも無かったので
+  「どれだけ遅れているか」を誰も言えなかった。`frameDeltaLossSecs` が量を定義し、
+  `GameLoopApi.secondsLostToClamp` が世代ごとに合算する。
+  **下限側は損失に数えない**：あちらは経過より*多く*渡す側で 1 フレームで頭打ちになり、
+  符号付きで足すと本物のギャップと相殺して 0 に見える。
 
 ### 書くべき回帰テスト
 
@@ -217,6 +233,9 @@ plan.md は §3.4（mc-physics）でも同じ制約を挙げている。**両リ
 | `maps NaN to the first-frame delta rather than poisoning every later position` | |
 | `the result is always inside the clamp range, for any input at all` | 13 入力 |
 | `treats a monotonic reading of exactly 0 as a real timestamp, not as "no frame yet"` | 番兵の差分 |
+| `a 30-second background tab costs 29.95 s of simulated time, and says so` | SIM-5。`--stats` の FRAME-CLAMP と同じリテラル |
+| `the LOWER clamp is not a loss — it hands the world more time, not less` | 相殺して 0 に見えないこと |
+| `loss and applied delta always add back up to the raw interval` | 会計が閉じていること |
 
 ---
 
@@ -264,6 +283,16 @@ packages/app/application/frame/stages/input-stage-runtime.ts:17-30
 **絶対 tick カウンタが正しい表現であり、順序制約はその対価**である。
 対価は「覚えておく」ではなく「名前を付けて回帰テストで固定する」で払う。
 
+**その worked example 自体が間違っていた（SIM-11）。** `domain/time-of-day.ts` は
+ハザードを 1 か所で説明しており、そこが消費者の唯一の参照点である。にもかかわらず
+「`setTimeOfDay(0.30)` の後に `setDayLength(600)` → 0.60」と書いてあり、実際は **0.20** だった
+（1 日を 400 s から 600 s に**伸ばす**と、同じ絶対 tick はより大きな 1 日の**より早い**位置に落ちる）。
+0.60 になるのは 200 s に**縮めた**場合であり、回帰テストが使っているのはそちらである。
+誤っていた側が真実と**逆向き**に動くため、600 で再現した読者は 0.20 を見て
+「この注記は当てにならない」と結論し、正しい警告ごと信用を失う。
+コードは正しかったのでどのテストも捕まえられなかった。
+現在は**コメントが表示する数値そのもの**を assert するテストが 1 本ある（上表）。
+
 ### 新設計での差分
 
 `configureDay(dayLengthSeconds, timeOfDayFraction)` を用意し、順序制約を
@@ -277,7 +306,8 @@ packages/app/application/frame/stages/input-stage-runtime.ts:17-30
 | テスト名 | 内容 |
 | --- | --- |
 | `correct order — the requested time of day is the time of day you get` | |
-| `wrong order — setDayLength afterwards silently DOUBLES the time of day` | 0.30 が 0.60 になる |
+| `wrong order — a SHORTER day afterwards silently DOUBLES the time of day` | 400 s → 200 s（分母を半分に）で 0.30 が 0.60 になる |
+| `REGRESSION: the module header worked example is the arithmetic — a LONGER day moves the time of day DOWN, to 0.20` | 400 s → 600 s では **0.20**。誤差の符号は分母の増減に従う（SIM-11） |
 | `the two orders disagree — which is the whole reason the rule exists` | |
 | `setDayLengthThenTimeOfDay is the correct order, so callers cannot get it wrong` | |
 | `setDayLength ALONE is still legal, and its side effect on time of day is real` | 単独呼びの副作用を assert として明文化 |
@@ -319,6 +349,21 @@ IndexedDB への書き込みが 24 回連続で走り、プレイヤーが画面
 
 `spaced(d)` は**前回の実行終了から** d を測る。取りこぼしは取りこぼしたまま。
 
+### 最初の 1 回は fork 直後ではなく 1 間隔後（SIM-9）
+
+`Effect.repeat(effect, schedule)` は**先に effect を走らせてからスケジュールを見る**。
+daemon が fork されるのはワールドロード中なので、これは「今読み込んだセーブの上に、
+プレイヤーが何もしていない状態で、即座に書き戻す」を意味していた。
+変化が無いのだからロード中のクラッシュはデータを失う方向にしか働かない。
+参照実装も `Effect.repeat` だが、参照実装がそれを意図していた形跡は無い。
+
+本実装は `Effect.schedule` を使う。こちらは**先にスケジュールを見る**ので
+sleep → save の順になり、最初のセーブは t = interval に来る。`spaced` の性質
+（前回終了からの計測）は変わらない。
+
+**古いテストはこれを見られなかった。** `toBeGreaterThanOrEqual(4)` は 4 回でも 5 回でも通る。
+現在は正確な回数を assert している。
+
 ### 併せて必須: tick は total、catch は repeat の内側
 
 ```
@@ -344,7 +389,10 @@ packages/app/application/main/session-autosave.ts:20-33（コメント全文が�
 | `recovers from a TYPED failure and stays total` | |
 | `recovers from a DEFECT too — this is why it is catchAllCause, not catchAll` | |
 | `a DEFECT in the status reporter cannot abort persistence` | |
-| `keeps saving after a failing tick, which fixed-outside-repeat would not` | daemon 経由 |
+| `keeps saving after a failing tick, which catch-outside-repeat would not` | daemon 経由。**回数は正確に** 4（下項の理由） |
+| `REGRESSION: the first save is due after one interval, NOT the instant it is forked` | SIM-9。t=0 で 0 回、t=5 s で 1 回 |
+| `a slow tick still spaces from the END of the previous run, as the schedule promises` | `Effect.schedule` にしても `spaced` の性質が変わらないこと |
+| `the schedule is driven entirely by the Effect Clock, with no wall-clock read` | SIM-6。10 分の仮想時間で 120 回。Port ではないが**注入されている**ことの証拠 |
 | `the default interval is the reference implementation value` | 5000 ms |
 
 ---
@@ -370,11 +418,25 @@ packages/app/application/main/session-autosave.ts:20-33（コメント全文が�
 **「境界でブランドする」と「内部でブランドを持つ」は別**である。上の 2 つの例外は、
 ブランドを付けると関数の存在理由が消えるケース。
 
+### 3 つ目の例外 —— **既存スロットから派生した数**（SIM-3）
+
+`removeItem` は残数に `StackCount(left)` を書いていた。`itemStack` ではこれが正しい
+（レシピ出力 65 は、それを書いた場所で落ちるべきである）。しかし `removeItem` の `left` は
+**すでに壊れているかもしれないスロットから引き算した結果**であり、[0, 64] の外で throw する。
+純粋な domain 関数からの throw はフレームループで `Cause.Die` になり、
+`game-loop.ts` がログに出して**握り潰す**（DN-08）。症状は「採掘とクラフトが止まった」だけだった。
+
+規則: **人間が書いたリテラルはブランドで弾く。既存の値から派生した数は clamp して全域を保つ。**
+後者で余りが失われることの精算は `normaliseInventory` が持ち、`restore` がそれを通す。
+
 ### 書くべき回帰テスト
 
 | テスト名 | 場所 | 状態 |
 | --- | --- | --- |
 | `rejects non-positive and non-integer counts without corrupting anything` | `test/inventory.test.ts` | 済 |
+| `removeItem does not throw on a slot holding more than MAX_STACK_COUNT` | `test/inventory.test.ts` | 済（SIM-3） |
+| `a NaN or fractional count cannot poison `removed` with arithmetic` | `test/inventory.test.ts` | 済（SIM-3） |
+| `an over-full slot keeps a full stack and the surplus spills into free slots` | `test/inventory.test.ts` | 済（SIM-2 / SIM-3 の精算側） |
 | **（要追加）** `every branded constructor rejects its out-of-range value` | mc-kernel 側 | mc-kernel の `test/branded-types.test.ts` が担当 |
 
 ---

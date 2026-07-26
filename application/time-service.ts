@@ -44,15 +44,44 @@ export type TimeServiceApi = {
   /**
    * Set day length and time of day together, in the order that works.
    *
-   * This is what world bootstrap and world load should call. The reference's
-   * bootstrap gets the order right by hand
+   * WORLD BOOTSTRAP CALLS THIS. WORLD LOAD CALLS `restore`, NOT THIS.
+   *
+   * An earlier version of this comment said "world bootstrap and world load",
+   * and the second half was wrong in a way that only shows up several in-game
+   * days later. `setTimeOfDay` writes `ticks = fraction * dayLengthTicks`,
+   * which moves the state into day ZERO; a world reloaded through
+   * `configureDay` therefore comes back on moon phase 0 whatever night it was
+   * saved on. `domain/time-of-day.ts` keeps an absolute tick counter
+   * specifically because `moonPhase` needs it, and this call is the one way to
+   * throw it away. A load has a whole `TimeState` in hand and must put it back
+   * as it was: that is `restore`.
+   *
+   * The reference's bootstrap gets the ORDER right by hand
    * (ts-minecraft/.../session-bootstrap-world-presentation-time.ts:26-27);
    * making it one call means it cannot be got wrong by the next caller.
    */
   readonly configureDay: (dayLengthSeconds: number, timeOfDayFraction: number) => Effect.Effect<void>
   /** Whole state, for persistence. */
   readonly snapshot: Effect.Effect<Time.TimeState>
-  /** Restore from persistence. Used by world load and by `reset`. */
+  /**
+   * Restore from persistence. THE WORLD-LOAD PATH, and what `reset` uses.
+   *
+   * Unlike `configureDay` this preserves the absolute tick counter, so the day
+   * number and therefore the moon phase survive a save/load round trip.
+   *
+   * The incoming state is repaired by `Time.normaliseTimeState` before it is
+   * installed. It arrives from disk, across a version boundary, and a
+   * `dayLengthTicks` of 0 used to make every reader `NaN` while `isNight`
+   * answered `false` — a world stuck in permanent daylight that no reader could
+   * detect and that `setTimeOfDay` could not recover, because 0 x anything is
+   * still 0. Repairing here rather than in the readers keeps `isNight` the
+   * character-identical predicate mx-gameplay mirrors.
+   *
+   * A caller that needs to know whether a save was repaired asks
+   * `Time.isValidTimeState` BEFORE restoring; this method has no error channel
+   * on purpose, because failing a world load over a recoverable field would
+   * turn a repairable save into an unopenable one.
+   */
   readonly restore: (state: Time.TimeState) => Effect.Effect<void>
 }
 
@@ -69,11 +98,18 @@ export class TimeService extends Context.Tag('@nerima-games/mc-sim/TimeService')
  * side by side) can have several, rather than fighting an app-scoped singleton.
  * plan.md §3.8's re-entrancy requirement is easiest to satisfy by not creating
  * the shared thing in the first place.
+ *
+ * `initial` goes through `Time.normaliseTimeState` for exactly the reason
+ * `restore` does — it is the OTHER way a state this repository did not compute
+ * gets in. `TimeServiceLayer(loadedState)` is the natural way a host supplies a
+ * loaded world at layer-construction time, and a service that starts life with
+ * `dayLengthTicks: 0` is the permanent-daylight defect with a different entry
+ * point. `makeInventoryService` makes the same argument about slot counts.
  */
 export const makeTimeService = (
   initial: Time.TimeState = Time.INITIAL_TIME_STATE,
 ): Effect.Effect<TimeServiceApi> =>
-  Effect.map(Ref.make(initial), (state) => ({
+  Effect.map(Ref.make(Time.normaliseTimeState(initial)), (state) => ({
     advance: (dt) => Ref.update(state, (current) => Time.advance(current, dt)),
     timeOfDay: Ref.get(state).pipe(Effect.map(Time.timeOfDay)),
     dayLengthSecs: Ref.get(state).pipe(Effect.map(Time.dayLengthSecs)),
@@ -86,7 +122,7 @@ export const makeTimeService = (
         Time.setDayLengthThenTimeOfDay(current, dayLengthSeconds, timeOfDayFraction),
       ),
     snapshot: Ref.get(state),
-    restore: (next) => Ref.set(state, next),
+    restore: (next) => Ref.set(state, Time.normaliseTimeState(next)),
   }))
 
 export const TimeServiceLayer = (

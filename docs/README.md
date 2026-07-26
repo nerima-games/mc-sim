@@ -46,6 +46,12 @@ mc-render / mc-playground-kit / mx-gameplay / mx-redstone / mx-ui / mx-multiplay
 | 自動保存の `Schedule.spaced` | `application/autosave.ts` | DN-05 |
 | `Ref.modify` による TOCTOU 回避 | `application/inventory-service.ts` | DN-07 |
 | レシピ表とクラフトの原子性 | `domain/recipe.ts` / `domain/crafting.ts` | DN-07 / DN-11（[public-api.md](./public-api.md) §4.1） |
+| **セーブ/ロード境界の修復**（`normaliseTimeState` / `normaliseInventory`） | `domain/time-of-day.ts` / `domain/inventory.ts` | [public-api.md](./public-api.md) §2-2 / §4-1 |
+| **捨てたものを数える**（`framesDropped` / `secondsLostToClamp`） | `application/game-loop.ts` / `domain/frame-timing.ts` | [public-api.md](./public-api.md) §3-1 |
+
+内蔵プレビュー `--stats` が挙げた 11 件の発見は**全件決着済み**（10 件修正 + 1 件は
+「移さない」判断）。一覧と決着内容は [testing.md](./testing.md) §2.2 と
+[`apps/preview-sim/README.md`](../apps/preview-sim/README.md)。
 
 まだ無いもの: EntityManager、体力/空腹/XP、実績/統計、設定状態、内蔵障害物コースプレビュー、
 かまど/醸造/金床/エンチャント、リポジトリ内 workspace 分割（entity / inventory / game）。

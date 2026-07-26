@@ -95,10 +95,72 @@ type TimeServiceApi = {
   readonly setDayLength: (seconds: number) => Effect.Effect<void>
   readonly setTimeOfDay: (fraction: number) => Effect.Effect<void>
   readonly configureDay: (dayLengthSeconds: number, timeOfDayFraction: number) => Effect.Effect<void>
+                                                     // ワールド**ブートストラップ**専用。§2-1
   readonly snapshot: Effect.Effect<TimeState>
-  readonly restore: (state: TimeState) => Effect.Effect<void>
+  readonly restore: (state: TimeState) => Effect.Effect<void>   // ワールド**ロード**。§2-1
 }
 ```
+
+`domain/time-of-day.ts` 側に純粋な補助が 2 つある。
+
+```typescript
+const isValidTimeState: (state: TimeState) => boolean      // 復元前に呼ぶ側の問い合わせ口
+const normaliseTimeState: (state: TimeState) => TimeState  // restore が内部で適用する修復
+```
+
+### 2-1. `configureDay` はブートストラップ、`restore` はロード
+
+**両方をワールドロードが呼ぶものだと書いていた。後半は誤りだった（SIM-8）。**
+
+`setTimeOfDay` は `ticks = fraction * dayLengthTicks` を書くので、状態を**day 0 に移す**。
+ブートストラップはそれでよい。ロードは違う: 4 日目の夜にセーブしたワールドを
+`configureDay(同じ引数)` で読み直すと、時刻は合っているのに**月齢が 0 に戻る**。
+絶対 tick カウンタを保持している理由がまさに `moonPhase` なので（§2-0）、
+これは「保持している意味を、保持しているコードが捨てる」形になる。
+
+ロードは `restore(snapshot)` である。こちらは tick カウンタをそのまま戻す。
+
+### 2-2. `restore` は壊れた `TimeState` を**修復**する（失敗しない）
+
+セーブはバージョン境界を跨いで届く。`dayLengthTicks: 0` は分母なので、
+全読み取りが `NaN` になり、そして **`isNight` は `false` を返した** ——
+`NaN < 0.25` も `NaN > 0.75` も false だからである。エラーでも `NaN` でもなく、
+呼び出し側がそのまま使う**ブール値**として恒久的な昼が返っていた（SIM-1）。
+`setTimeOfDay` でも回復できない（`0.5 × 0 = 0`）。
+
+`restore` は `normaliseTimeState` を通す。`setDayLength` と**同じ** [120, 1200] クランプを当て、
+**大きさを持たない値**（`NaN` / `null` / `undefined` / 非数）は `DEFAULT_DAY_LENGTH_SECS` に落とす。
+`±Infinity` は向きを持つので、指している側の境界にクランプする。
+有効な `ticks` は**触らない**（日番号だから）。
+
+- **エラーチャネルは足さない。** 修復可能なフィールド 1 つでワールドロードを失敗させると、
+  直せるセーブが開けないセーブになる。知りたい呼び出し側は先に `isValidTimeState` を呼ぶ。
+- **修復は `isNight` ではなく境界に置いた。** 理由は §2-0 のとおり、
+  mx-gameplay がこの述語を文字単位で再掲しているためである。
+- **型が `number` でも足りない。** これはバージョン境界を越えて届く値であり、
+  欠落フィールドは `undefined`、`JSON.stringify(NaN)` は `null` を書く。どちらも `number` を名乗る。
+  `Number.isNaN(null)` は `false` で `null / 60` は `0` なので、素朴な NaN 判定だけだと
+  **最小値 120 s にクランプされて、意図的な値に見えてしまう**。判定は算術より前に置く。
+- **`makeTimeService(initial)` / `TimeServiceLayer(initial)` も同じ修復を通す。**
+  ロード済みワールドを層の構築時に渡すのは自然な使い方であり、`restore` だけを守ると
+  同じ欠陥が別の入口で残る。
+
+### 2-3. 個別 setter も全域である
+
+`restore` は唯一の境界ではない。`clampDayLengthSecs` / `clampFraction` は
+`Math.max` / `Math.min` の連鎖で、**`NaN` を伝播する**。したがって
+
+```typescript
+setDayLength(Number(''))   // 設定欄を空にした
+```
+
+は健全なワールドに `dayLengthTicks: NaN` を書き込み、そこから先は恒久的な昼になっていた。
+`time-service.ts` は `setDayLength` 単独呼びを「**セッション中の設定変更**」の口として文書化しており、
+まさにその経路である。しかも汚染はセーブを跨ぐ: `null` として保存され、120 s の日として復元され、
+`restore` が守るはずだった**月齢がずれる**。
+
+現在は clamp 自体が全域である。大きさを持たない日長は `DEFAULT_DAY_LENGTH_SECS`、
+大きさを持たない fraction は `0`（真夜中 —— レンジ下限の入力が既に落ちる場所）になる。
 
 ### 2-0. `timeOfDay` の規約 — **0 は真夜中である**
 
@@ -128,12 +190,15 @@ type TimeServiceApi = {
   `a fresh world starts in daylight, not at midnight with hostile mobs`
 - mx-gameplay `test/day-night.test.ts` — `is the half of the day centred on the 0/1 boundary, exactly as mc-sim computes it`
 
-> **既知の不整合（コード側の修正待ち）**: `domain/time-of-day.ts:106` の `timeOfDay` の doc コメントは
-> 「`0 = dawn boundary, 0.5 = dusk boundary`」と書いており、**間違っている**。
-> 同じファイルの `INITIAL_TIME_STATE` のコメント（:85「in this cycle 0 is MIDNIGHT」）とも、
-> 直下の `isNight` の実装とも矛盾する。
-> **挙動は一貫しており、正しいのは本節の表のほうである** — mx-gameplay もその挙動に合わせてある。
-> 直すべきは 1 行のコメントだけである。
+> **解消済み**: `domain/time-of-day.ts` の `timeOfDay` の doc コメントは以前
+> 「`0 = dawn boundary, 0.5 = dusk boundary`」と書いており、同じファイルの
+> `INITIAL_TIME_STATE` のコメント（「in this cycle 0 is MIDNIGHT」）とも、
+> 直下の `isNight` の実装とも矛盾していた。挙動は一貫していて、正しいのは本節の表のほうだった。
+> 現在のコメントは本節に一致し、旧記述が何と矛盾していたかも併記してある。
+>
+> **`isNight` の実装には触れないこと。** SIM-1（`dayLengthTicks: 0` で恒久的な昼）は
+> ここに `NaN` 分岐を足せば消えるように見えるが、それをすると mx-gameplay のミラーと
+> 黙って食い違う。修復は `TimeService.restore` の側に置いてある（§2-2）。
 
 参照実装 `packages/game/application/time-service.ts:16-62` は 7 メソッド
 （`advanceTick` / `getTimeOfDay` / `getMoonPhase` / `isNight` / `getDayLength` /
@@ -162,9 +227,30 @@ type GameLoopApi = {
   readonly submitFrame: (at: MonotonicTimeSecs) => Effect.Effect<void>
   readonly stop: Effect.Effect<void>                                // 冪等・非ブロッキング
   readonly isRunning: Effect.Effect<boolean>
-  readonly framesProcessed: Effect.Effect<number>
+  readonly framesProcessed: Effect.Effect<number>    // stop を跨いで読める。§3-1
+  readonly framesDropped: Effect.Effect<number>      // dropping queue が拒否した数。§3-1
+  readonly secondsLostToClamp: Effect.Effect<number> // clamp が捨てたシミュレーション時間。§3-1
 }
 ```
+
+### 3-1. 捨てたものは数える
+
+キューを drop すること自体も、巨大な delta を clamp すること自体も**正しい**。
+間違っていたのは、どちらも**観測できなかった**ことである（SIM-7 / SIM-5）。
+
+- `Queue.offer` は受理されたか否かを**返す**。それを `Effect.asVoid` で捨てていたので、
+  ループも HUD もバグ報告も「フレームを落とした」と言えなかった。
+  **引き算では復元できない**: submitted は呼び出し側の数字であり、processed は
+  キューに残っている分だけ遅れる。だから offer の位置で数える。
+- clamp の上限を超えた時間は世界に届かず、誰も返さない（背景タブ 30 秒で 29.95 秒）。
+  `domain/frame-timing.ts` の `frameDeltaLossSecs` が量を定義し、ループが世代ごとに合算する。
+  **下限側は数えない**。あちらは経過より*多く*時間を渡す側で、1 フレームで頭打ちになり、
+  損失として符号付きで足すと本物のギャップと相殺して 0 に見えてしまう。
+
+3 つとも `stop` を跨いで読める（SIM-10）。teardown はセッションレポートを書く瞬間であり、
+以前はそこで 0 に戻っていた —— 一番読みたい瞬間が、唯一読めない瞬間だった。
+`stop` が世代の最終値を 1 回読んで保持し、次の `start` が 0 に戻す。
+「各 `start` が自分の状態を所有する」という規約は破れていない: 凍結した数値は共有可変フィールドではない。
 
 参照実装 `packages/game/application/game-loop.ts:260 行` との差分:
 
@@ -187,7 +273,7 @@ type InventoryServiceApi = {
   readonly remove: (item: ItemId, count: number) => Effect.Effect<number>  // 戻り値 = 実際に取れた数
   readonly countOf: (item: ItemId) => Effect.Effect<number>
   readonly snapshot: Effect.Effect<Inventory>
-  readonly restore: (inventory: Inventory) => Effect.Effect<void>
+  readonly restore: (inventory: Inventory) => Effect.Effect<number>  // 戻り値 = 入らなかった数。§4-1
   readonly reset: Effect.Effect<void>
 
   // --- クラフト（§4.1） ---
@@ -214,6 +300,38 @@ type InventoryServiceApi = {
   呼び出し側（mx-gameplay）はそれを地面のドロップアイテムに変換する。エラーにすると
   すべての呼び出し側が握り潰すことになり、握り潰した瞬間にアイテムが消える。
 - `ItemId` は暫定 `string`。本来は mc-kernel の `ItemType`（リテラル union、網羅性チェックつき）。
+
+### 4-1. `restore` はスロット数を再確立し、入らなかった数を返す
+
+**`restore` は渡されたものをそのまま入れていた（SIM-2）。** スロット数の違うビルドが書いたセーブは
+プレイヤーを黙って**リサイズ**する —— 2 スロットのセーブは 36 スロットのプレイヤーを 2 スロットにし、
+その後に採掘した 1000 ブロックのうち 872 が地面に落ちる。症状は「なぜか常に満杯」だけである。
+スナップショットはバージョン境界を跨いで届き、それはまさにスロット数が変わる瞬間である。
+
+`domain/inventory.ts` の `normaliseInventory` が修復を 1 か所に持つ。
+
+```typescript
+type NormaliseOutcome = { readonly inventory: Inventory; readonly leftover: number }
+const normaliseInventory: (inventory: Inventory) => NormaliseOutcome
+```
+
+- 長さは常に `INVENTORY_SLOT_COUNT`。短いセーブは詰め物をし、**長いセーブは末尾を切り捨てず再挿入**する。
+- `MAX_STACK_COUNT` 超のスロットは 1 スタックを残して余りを再挿入する。
+- 0 / 小数 / `NaN` のスタックは空スロットになる（小数は整数部が残る）。
+- 再挿入は `addItem` を通るので top-up 規則が効き、**どうしても入らない分は `leftover` として返る**。
+
+`restore` の戻り値が `void` ではなく `number` なのは `add` と同じ判断である。満杯は正常なゲーム状態で、
+その帰結は地面のドロップアイテムであり、ここで数を握り潰せばアイテムが消える。
+`makeInventoryService(initial)` も同じ修復を通す（`Layer` 経由で 2 スロットの世界が始まらないように）。
+
+**`domain/inventory.ts` は「純粋かつ全域」と書いてある。書いてあるだけだった（SIM-3）。**
+`removeItem` は `StackCount(left)` を書き、`StackCount` は `Brand.refined` なので [0, 64] の外で
+**throw する**。フレームループの中ではそれが `Cause.Die` になり、`game-loop.ts` がログに出して
+**握り潰す** —— 症状は「採掘とクラフトが動かなくなった」だけで、何も失敗しない。
+現在はスロットの読みをガードし、派生する書き込みを clamp してあるので、
+**この module が作っていない `Inventory` に対しても全域**である。
+clamp は余りを失うので、それは sanctioned な道ではない: 精算するのは `normaliseInventory` であり、
+`restore` がそれを通す以上、そのようなスロットはもう到達不能である。
 
 ## 4.1 レシピとクラフト
 

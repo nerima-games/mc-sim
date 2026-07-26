@@ -13,7 +13,7 @@
 <!-- ------------------------------------------------------------------------- -->
 
 format: 1
-exported declarations: 96
+exported declarations: 102
 supporting declarations: 17
 
 ## Exported
@@ -127,6 +127,8 @@ type GameLoopApi = {
     readonly stop: Effect.Effect<void>;
     readonly isRunning: Effect.Effect<boolean>;
     readonly framesProcessed: Effect.Effect<number>;
+    readonly framesDropped: Effect.Effect<number>;
+    readonly secondsLostToClamp: Effect.Effect<number>;
 };
 ```
 
@@ -186,7 +188,7 @@ type InventoryServiceApi = {
     readonly remove: (item: Inv.ItemId, count: number) => Effect.Effect<number>;
     readonly countOf: (item: Inv.ItemId) => Effect.Effect<number>;
     readonly snapshot: Effect.Effect<Inv.Inventory>;
-    readonly restore: (inventory: Inv.Inventory) => Effect.Effect<void>;
+    readonly restore: (inventory: Inv.Inventory) => Effect.Effect<number>;
     readonly reset: Effect.Effect<void>;
     readonly recipes: Effect.Effect<Recipe.RecipeTable>;
     readonly previewCraft: (grid: Recipe.CraftGrid) => Effect.Effect<Recipe.RecipeMatch>;
@@ -257,6 +259,15 @@ const MOON_PHASE_COUNT = 8;
 type MissingIngredient = {
     readonly item: ItemId;
     readonly short: number;
+};
+```
+
+### NormaliseOutcome  `type`
+
+```ts
+type NormaliseOutcome = {
+    readonly inventory: Inventory;
+    readonly leftover: number;
 };
 ```
 
@@ -559,6 +570,18 @@ const forwardVector: (snapshot: CameraPoseSnapshot) => Position;
 const frameDeltaBetween: (previousSecs: number | undefined, nowSecs: number) => DeltaTimeSecs;
 ```
 
+### frameDeltaLossBetween  `const`
+
+```ts
+const frameDeltaLossBetween: (previousSecs: number | undefined, nowSecs: number) => number;
+```
+
+### frameDeltaLossSecs  `const`
+
+```ts
+const frameDeltaLossSecs: (rawDeltaSecs: number) => number;
+```
+
 ### ingredientCost  `const`
 
 ```ts
@@ -581,6 +604,12 @@ const isEmpty: (inventory: Inventory) => boolean;
 
 ```ts
 const isNight: (state: TimeState) => boolean;
+```
+
+### isValidTimeState  `const`
+
+```ts
+const isValidTimeState: (state: TimeState) => boolean;
 ```
 
 ### itemStack  `const`
@@ -623,6 +652,18 @@ const matchRecipe: (table: RecipeTable, grid: CraftGrid) => RecipeMatch;
 
 ```ts
 const moonPhase: (state: TimeState) => number;
+```
+
+### normaliseInventory  `const`
+
+```ts
+const normaliseInventory: (inventory: Inventory) => NormaliseOutcome;
+```
+
+### normaliseTimeState  `const`
+
+```ts
+const normaliseTimeState: (state: TimeState) => TimeState;
 ```
 
 ### performAutoSaveTick  `const`

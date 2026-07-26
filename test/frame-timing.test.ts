@@ -18,6 +18,8 @@ import {
   clampFrameDelta,
   FIRST_FRAME_DELTA_SECS,
   frameDeltaBetween,
+  frameDeltaLossBetween,
+  frameDeltaLossSecs,
   MAX_FRAME_DELTA_SECS,
   MIN_FRAME_DELTA_SECS,
 } from '../domain/frame-timing'
@@ -105,6 +107,76 @@ describe('frameDeltaBetween', () => {
     Effect.sync(() => {
       expect(frameDeltaBetween(100, 130)).toBe(MAX_FRAME_DELTA_SECS)
       expect(frameDeltaBetween(100, 99)).toBe(MIN_FRAME_DELTA_SECS)
+    }),
+  )
+})
+
+/**
+ * The time the upper clamp throws away is a QUANTITY, and it is computed here.
+ *
+ * The clamp itself stays exactly as it is — the tests above pin it. What these
+ * add is that the discarded amount can be named: it was previously derivable
+ * from nothing a caller had, so a session could not say how far behind the
+ * driving clock it had fallen and a 30-second background tab cost 29.95 s of
+ * in-game time that appeared in no number anywhere.
+ */
+describe('frameDeltaLossSecs', () => {
+  it.effect('a 30-second background tab costs 29.95 s of simulated time, and says so', () =>
+    Effect.sync(() => {
+      // The literal from apps/preview-sim `--stats`, FRAME-CLAMP: raw 30
+      // becomes an applied 0.05, and the remaining 29.95 is never delivered.
+      expect(frameDeltaLossSecs(30)).toBeCloseTo(29.95, 12)
+      expect(frameDeltaLossSecs(0.051)).toBeCloseTo(0.001, 12)
+    }),
+  )
+
+  it.effect('an ordinary frame loses nothing at all', () =>
+    Effect.sync(() => {
+      expect(frameDeltaLossSecs(1 / 60)).toBe(0)
+      expect(frameDeltaLossSecs(0.05)).toBe(0)
+      expect(frameDeltaLossSecs(0.001)).toBe(0)
+    }),
+  )
+
+  it.effect('the LOWER clamp is not a loss — it hands the world more time, not less', () =>
+    Effect.sync(() => {
+      // Reporting these as a negative loss would let them cancel a real
+      // background-tab gap and make the total read zero. They are bounded by
+      // one frame and cannot accumulate into a visible drift; the upper clamp
+      // can, which is the whole reason the counter exists.
+      expect(frameDeltaLossSecs(0)).toBe(0)
+      expect(frameDeltaLossSecs(-30)).toBe(0)
+      expect(frameDeltaLossSecs(Number.NaN)).toBe(0)
+    }),
+  )
+
+  it.effect('loss and applied delta always add back up to the raw interval', () =>
+    Effect.sync(() => {
+      for (const raw of [0.008, 0.05, 0.0501, 0.2, 1, 30, 1e6]) {
+        expect(clampFrameDelta(raw) + frameDeltaLossSecs(raw)).toBeCloseTo(raw, 9)
+      }
+    }),
+  )
+})
+
+describe('frameDeltaLossBetween', () => {
+  it.effect('measures the loss of the same two readings frameDeltaBetween used', () =>
+    Effect.sync(() => {
+      expect(frameDeltaBetween(100, 130)).toBe(0.05)
+      expect(frameDeltaLossBetween(100, 130)).toBeCloseTo(29.95, 12)
+    }),
+  )
+
+  it.effect('a first frame loses nothing, because no interval elapsed to clamp', () =>
+    Effect.sync(() => {
+      expect(frameDeltaLossBetween(undefined, 1e9)).toBe(0)
+    }),
+  )
+
+  it.effect('a clock that ran BACKWARDS is not counted as lost time', () =>
+    Effect.sync(() => {
+      expect(frameDeltaBetween(10, 5)).toBe(0.001)
+      expect(frameDeltaLossBetween(10, 5)).toBe(0)
     }),
   )
 })

@@ -14,17 +14,24 @@
  *    read. This app backs it with a `Ref<number>` the operator advances.
  *
  * 2. Effect's own `Clock` — what `Schedule.spaced` sleeps on.
- *    `startAutoSaveDaemon` (application/autosave.ts:102-108) is typed
- *    `Effect<Fiber.RuntimeFiber<number, never>>` with NO `ClockPort`
- *    requirement, because it does not use one. This app backs it with
- *    `TestContext.TestContext`, so a five-second autosave interval costs zero
- *    real seconds and the schedule is as reproducible as everything else.
+ *    `startAutoSaveDaemon` is typed `Effect<Fiber.RuntimeFiber<number, never>>`
+ *    with NO `ClockPort` requirement, because it does not use one. This app
+ *    backs it with `TestContext.TestContext`, so a five-second autosave
+ *    interval costs zero real seconds and the schedule is as reproducible as
+ *    everything else.
  *
- * Nothing in mc-sim ties the two together, and `scripts/check-dependency-whitelist.ts`
- * cannot see the second one — it greps for `Date.now()` / `new Date()` /
- * `performance.now()`, and `Schedule.spaced` reaches the platform clock through
- * Effect's `Clock` service instead. The `clock-divergence` scenario drives them
- * apart on purpose; `probes.ts` states the consequence.
+ * That second clock is NOT an oversight, and `application/autosave.ts` now
+ * carries the reasoning: a Port READS AN INSTANT, a schedule SLEEPS FOR A
+ * DURATION, and `ClockPort` is mirrored from mc-kernel and may not grow a
+ * `sleep`. Both clocks here are injected and both are deterministic; they are
+ * simply two mechanisms, and this app is the place that shows they can
+ * disagree.
+ *
+ * `scripts/check-dependency-whitelist.ts` cannot see the second one — it greps
+ * for `Date.now()` / `new Date()` / `performance.now()`, and `Schedule.spaced`
+ * reaches the platform clock through Effect's `Clock` service instead. The
+ * `clock-divergence` scenario drives them apart on purpose; `probes.ts` states
+ * the consequence.
  *
  * ---------------------------------------------------------------------------
  * Why ManagedRuntime
@@ -53,7 +60,7 @@ import { makeInventoryService } from '../../application/inventory-service'
 import { makePlayerService } from '../../application/player-service'
 import { makeTimeService } from '../../application/time-service'
 import * as Camera from '../../domain/camera-pose'
-import type { Slot } from '../../domain/inventory'
+import { INVENTORY_SLOT_COUNT, type Inventory, type Slot } from '../../domain/inventory'
 import {
   ClockPort,
   EpochMillis,
@@ -94,6 +101,10 @@ export type WorldView = {
   readonly frame: number
   readonly framesSubmitted: number
   readonly framesProcessed: number
+  /** Frames the dropping queue refused. Counted at the offer, not inferred. */
+  readonly framesDropped: number
+  /** Simulated seconds the delta clamp discarded over this generation. */
+  readonly secondsLostToClamp: number
   readonly loopRunning: boolean
 
   /** The injected `ClockPort` reading, seconds. */
@@ -119,8 +130,31 @@ export type WorldView = {
 
   readonly slots: ReadonlyArray<SlotView>
   readonly slotCount: number
-  /** False once a slot exists that `removeItem` would throw on. */
+  /**
+   * False once a slot exists that `StackCount` would reject.
+   *
+   * This used to mean "the next remove() of that item dies". It no longer does
+   * — `removeItem` is total — but the panel keeps watching, because such a slot
+   * should now be unreachable: `InventoryService.restore` normalises, so one
+   * appearing here would mean something bypassed the load path.
+   */
   readonly inventoryUsable: boolean
+  /**
+   * Items `restore()` could not fit, cumulative.
+   *
+   * The number that used to be silently dropped when a save resized the player.
+   */
+  readonly restoreLeftover: number
+  /**
+   * How many restores handed the services a state they had to repair.
+   *
+   * Counted HERE, at the call, rather than inferred from the world afterwards:
+   * a repaired state is by design indistinguishable from one that was always
+   * legal, so the only honest place to observe the repair is where the bad
+   * value went in.
+   */
+  readonly timeStatesRepaired: number
+  readonly inventoriesResized: number
 
   readonly autoSaveFired: number
   readonly autoSaveStatus: AutoSaveStatus | undefined
@@ -149,6 +183,9 @@ type Bookkeeping = {
   autoSaveFired: number
   autoSaveStatus: AutoSaveStatus | undefined
   autoSaveLastAtMillis: number | undefined
+  restoreLeftover: number
+  timeStatesRepaired: number
+  inventoriesResized: number
   faults: number
   log: Array<LogLine>
 }
@@ -206,6 +243,9 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
     autoSaveFired: 0,
     autoSaveStatus: undefined,
     autoSaveLastAtMillis: undefined,
+    restoreLeftover: 0,
+    timeStatesRepaired: 0,
+    inventoriesResized: 0,
     faults: 0,
     log: [],
   }
@@ -341,34 +381,63 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
           ),
         )
 
-      case 'restoreTime':
-        return guarded('time.restore', time.restore({ ticks: action.ticks, dayLengthTicks: action.dayLengthTicks })).pipe(
+      case 'restoreTime': {
+        const incoming: Time.TimeState = {
+          ticks: action.ticks,
+          dayLengthTicks: action.dayLengthTicks,
+        }
+        const repairable = !Time.isValidTimeState(incoming)
+        return Effect.sync(() => {
+          if (repairable) {
+            book.timeStatesRepaired += 1
+          }
+        }).pipe(
+          Effect.zipRight(guarded('time.restore', time.restore(incoming))),
           Effect.zipRight(
             note(
-              `time.restore({ticks:${String(action.ticks)}, dayLengthTicks:${String(action.dayLengthTicks)}})`,
-              action.dayLengthTicks === 0 ? 'fault' : 'event',
+              `time.restore({ticks:${String(action.ticks)}, dayLengthTicks:${String(action.dayLengthTicks)}})` +
+                (repairable ? ' — INVALID, repaired by normaliseTimeState' : ''),
+              'event',
             ),
           ),
         )
+      }
 
-      case 'restoreInventory':
-        return guarded(
-          'inventory.restore',
-          inventory.restore({
-            slots: Array.from({ length: action.slots }, (_unused, index) =>
-              index === 0 && action.stack !== undefined
-                ? { item: action.stack.item, count: action.stack.count as StackCount }
-                : undefined,
+      case 'restoreInventory': {
+        const incoming: Inventory = {
+          slots: Array.from({ length: action.slots }, (_unused, index) =>
+            index === 0 && action.stack !== undefined
+              ? { item: action.stack.item, count: action.stack.count as StackCount }
+              : undefined,
+          ),
+        }
+        return Effect.sync(() => {
+          if (action.slots !== INVENTORY_SLOT_COUNT) {
+            book.inventoriesResized += 1
+          }
+        }).pipe(
+          Effect.zipRight(
+            guarded(
+              'inventory.restore',
+              // The leftover is the number that used to vanish when a save
+              // resized the player. Recording it is the point of the scenario.
+              inventory.restore(incoming).pipe(
+                Effect.tap((leftover) =>
+                  Effect.sync(() => {
+                    book.restoreLeftover += leftover
+                  }),
+                ),
+              ),
             ),
-          }),
-        ).pipe(
+          ),
           Effect.zipRight(
             note(
-              `inventory.restore(${String(action.slots)} slots${action.stack === undefined ? '' : `, [0] = ${String(action.stack.count)} ${action.stack.item}`})`,
-              'fault',
+              `inventory.restore(${String(action.slots)} slots${action.stack === undefined ? '' : `, [0] = ${String(action.stack.count)} ${action.stack.item}`}) — normalised to ${String(INVENTORY_SLOT_COUNT)} slots`,
+              'event',
             ),
           ),
         )
+      }
 
       case 'hiccup':
         return Ref.update(clockSecs, (value) => value + action.seconds).pipe(
@@ -480,6 +549,8 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
           frame: book.frame,
           framesSubmitted: book.framesSubmitted,
           framesProcessed: yield* loop.framesProcessed,
+          framesDropped: yield* loop.framesDropped,
+          secondsLostToClamp: yield* loop.secondsLostToClamp,
           loopRunning: yield* loop.isRunning,
           clockPortSecs: book.clockPortSecs,
           effectClockMillis: yield* Effect.clockWith((clock) => clock.currentTimeMillis),
@@ -497,11 +568,15 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
           isNight: Time.isNight(timeState),
           slots,
           slotCount: inventorySnapshot.slots.length,
-          // `removeItem` writes `StackCount(left)`, and `StackCount` is a
-          // `Brand.refined` constructor: it THROWS when the remainder is outside
-          // [0, 64]. One overfull slot therefore makes every later `remove` of
-          // that item die. The panel says so rather than finding out.
+          // An over-full slot no longer kills the next `remove` — `removeItem`
+          // is total and repairs it — but it should now be UNREACHABLE, since
+          // `InventoryService.restore` normalises everything it installs. The
+          // panel keeps watching so that one appearing here is visible as
+          // something having bypassed the load path.
           inventoryUsable: !slots.some((slot) => slot.overfull),
+          restoreLeftover: book.restoreLeftover,
+          timeStatesRepaired: book.timeStatesRepaired,
+          inventoriesResized: book.inventoriesResized,
           autoSaveFired: book.autoSaveFired,
           autoSaveStatus: book.autoSaveStatus,
           autoSaveLastAtMillis: book.autoSaveLastAtMillis,

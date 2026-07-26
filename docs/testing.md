@@ -62,17 +62,24 @@ camera-pose / frame-timing / time-of-day）。そして
 plan.md §3.8 が実際に要求していること（「クロックPortでfast-forward」）に
 3D の散歩より近い。
 
-`--stats` は数値レポートで、**11 件の発見**に file:line と再現コマンドを付けて出す。
-主なもの:
+`--stats` は数値レポートで、**11 件の発見**に file:line と再現コマンドを付けて出した。
+**11 件とも決着済み**（10 件修正 + SIM-6 は「移さない」という判断）。主なもの:
 
-| # | 内容 | 場所 |
+| # | 内容 | 決着 |
 | --- | --- | --- |
-| SIM-11 | 順序ハザードの正典的な worked example が算術的に誤り（`0.60` ではなく `0.20`） | `domain/time-of-day.ts:17-18` |
-| SIM-1 | `restore({dayLengthTicks: 0})` で全読み取りが NaN、**`isNight` は `false`** | `application/time-service.ts:89` |
-| SIM-3 | `removeItem` が `MAX_STACK_COUNT` 超のスロットで throw する | `domain/inventory.ts:158` (`removeItem`) |
-| SIM-6 | オートセーブのクロックだけが `ClockPort` ではない | `application/autosave.ts:102-108` |
+| SIM-11 | 順序ハザードの正典的な worked example が算術的に誤り（`0.60` ではなく `0.20`） | ヘッダを修正し、**コメントが表示する数値**を assert するテストを追加 |
+| SIM-1 | `restore({dayLengthTicks: 0})` で全読み取りが NaN、**`isNight` は `false`**（恒久的な昼） | `normaliseTimeState` を境界で適用。`isNight` は**触っていない**（mx-gameplay がミラーしている） |
+| SIM-3 | `removeItem` が `MAX_STACK_COUNT` 超のスロットで throw する | 派生カウントを clamp して全域化。破棄せず精算する道は `normaliseInventory` |
+| SIM-2 | `restore` がスロット数を検査せず、36 → 2 に縮む | `normaliseInventory` を `restore` と constructor に適用。`restore` は leftover を返す |
+| SIM-9 | `Effect.repeat` の性質で fork 直後に 1 回保存する | `Effect.schedule` に変更。最初の保存は t = interval |
+| SIM-6 | オートセーブのクロックだけが `ClockPort` ではない | **移さない**判断。Port は瞬間を読むだけで `sleep` を持たず、mc-kernel ミラーなので増やせない。Effect の `Clock` は注入可能で、その事実をテストで固定した |
+| SIM-7 / SIM-10 / SIM-5 | drop 数 / 停止後の frame 数 / clamp 損失が読めない | `GameLoopApi` に `framesDropped` / `secondsLostToClamp` を追加し、カウンタは `stop` を跨いで残す |
 
 全件は [`apps/preview-sim/README.md`](../apps/preview-sim/README.md)。
+
+**レポートは発見を削除していない。** 各節は「何が間違っていたか」を、いま読める値と
+固定しているテスト名の隣に印字し続ける。修正された境界と、そもそも誰も見ていない境界とが、
+再現可能であることだけを取り柄とするレポートの中で見分けられなくなるからである。
 
 ### 2.3 プレビューの依存
 
@@ -91,22 +98,53 @@ org パッケージも新規 npm 依存も無い。
 
 ## 3. 現在のテスト
 
-`vitest run`。9 ファイル / 99 テスト。
+`vitest run`。13 ファイル / 217 テスト。
 
 | ファイル | テスト数 | 対応 |
 | --- | ---: | --- |
 | `test/scenario.test.ts` | 3 | plan.md §3.8 の決定論シナリオ本体 |
-| `test/time-of-day.test.ts` | 13 | DN-04 |
-| `test/frame-timing.test.ts` | 10 | DN-03 |
-| `test/game-loop.test.ts` | 7 | DN-02 / DN-08 |
+| `test/time-of-day.test.ts` | 27 | DN-04。SIM-11 / SIM-1 の domain 側。clamp の全域性 |
+| `test/time-service.test.ts` | 10 | **ワールドロード経路**。SIM-1 / SIM-8 |
+| `test/frame-timing.test.ts` | 17 | DN-03。clamp 損失の定量化（SIM-5） |
+| `test/game-loop.test.ts` | 12 | DN-02 / DN-08。SIM-7 / SIM-10 / SIM-5 |
 | `test/camera-pose.test.ts` | 13 | DN-01 |
-| `test/inventory.test.ts` | 11 | DN-06 / DN-07 |
+| `test/inventory.test.ts` | 26 | DN-06 / DN-07。SIM-2 / SIM-3 |
 | `test/recipe.test.ts` | 25 | レシピモデル（[public-api.md](./public-api.md) §4.1）。§3.2 |
 | `test/crafting.test.ts` | 13 | クラフトの原子性。DN-07 |
-| `test/autosave.test.ts` | 9 | DN-05 / DN-08 |
+| `test/autosave.test.ts` | 12 | DN-05 / DN-08。SIM-9 / SIM-6 |
 | `test/kernel-mirror.test.ts` | 7 | `domain/kernel-vocabulary.ts` が mc-kernel と同形であること（§4.4） |
 | `test/check-dependency-whitelist.test.ts` | 26 | DN-12 + 依存ホワイトリスト本体 |
 | `test/api-lock.test.ts` | 26 | 生成器 `scripts/api-lock.ts` の機構そのもの（§7 末尾） |
+
+### 3.0 `--stats` の発見を閉じたときに何をしたか
+
+**ゆるいテストは、それ自体が発見だった。** SIM-9（fork 直後の保存）を長く見逃した直接の原因は
+`test/autosave.test.ts` の `toBeGreaterThanOrEqual(4)` で、4 回でも 5 回でも通る。
+SIM-11 に至ってはどのテストも捕まえられない —— テストは**コード**を assert しており、
+コードは正しく、間違っていたのはコメントのほうだったからである。
+
+したがって発見を閉じるたびに、対応するテストは次のどちらかにした。
+
+1. **正確な値に締める。** 下限ではなく回数、`not.toThrow()` を明示的に、境界は両側から。
+2. **assert する対象を変える。** SIM-11 のテストは「コメントが印字している数値」を assert する。
+   コードではなくドキュメントを固定するテストであり、§4.5 の「失敗の名前を付ける」に従って
+   `REGRESSION: the module header worked example is the arithmetic` と名乗っている。
+
+### 3.0.1 修正そのものへの敵対的レビューで出た 3 件
+
+修正を入れたあと、それを**壊しにいく**レビューを別途かけた。インベントリ・フレームタイミング・
+ゲームループ・オートセーブは破れなかったが、時刻モジュールで 3 件が出た。いずれも修正済みで、
+3 件とも「片方だけ直した」形の欠陥だった —— **同じ関数の隣の行が既に守っている**、あるいは
+**兄弟サービスが既に閉じている**穴が残っていた。
+
+| 何が出たか | なぜ出たか | 現在 |
+| --- | --- | --- |
+| `normaliseTimeState({ticks: 0})`（フィールド欠落）が `dayLengthTicks: NaN` を返す —— **修復関数が SIM-1 を再生産していた** | `ticks` は `Number.isFinite` で守り、`dayLengthTicks` は `Number.isNaN` で守った。`Number.isNaN(undefined)` は `false` | 両方 `typeof` + NaN で判定。`null`（`JSON.stringify(NaN)` の出力）も `undefined` も文字列も DEFAULT に落ちる |
+| `makeTimeService(initial)` が `initial` を正規化しない | `makeInventoryService` では閉じた穴を、時刻側で閉じ忘れた。`TimeServiceLayer(loadedState)` は公開 API | constructor も `normaliseTimeState` を通す |
+| `setDayLength(NaN)` / `setTimeOfDay(NaN)` が健全な世界を汚染し、セーブを跨いで月齢がずれる | `clampDayLengthSecs` は `Math.max`/`Math.min` の連鎖で、**NaN を伝播する**。`Number('')` は `NaN` で、空にした設定欄がそれ | clamp 自体を全域化。`restore` だけが境界ではなかった |
+
+3 件目は、`isNight` の doc コメントが「これは値が入る境界の側で直してある」と主張していたので、
+**その主張を真にするために必要**でもあった。ドキュメントに書いた保証は、テストと同じ強さで守る。
 
 ### 3.1 `test/kernel-mirror.test.ts` が守っているもの
 

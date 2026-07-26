@@ -201,6 +201,137 @@ describe('game loop lifecycle', () => {
 
       expect(yield* loop.framesProcessed).toBe(0)
       expect(yield* loop.isRunning).toBe(false)
+      // Not counted as drops. There is no queue to refuse them; a stopped
+      // world ignoring a stray rAF callback is documented behaviour, and
+      // counting it would report a torn-down world as a lossy one.
+      expect(yield* loop.framesDropped).toBe(0)
+    }),
+  )
+})
+
+/**
+ * REGRESSION: what the loop discards, it counts.
+ *
+ * Dropping frames under load and clamping a huge delta are both correct and
+ * both argued for in the module headers. What was wrong is that neither was
+ * OBSERVABLE: `Queue.offer` returns whether the item was accepted and the
+ * boolean was thrown away, and the time above the clamp was computed nowhere.
+ * Nothing — not the loop, not a HUD, not a bug report — could say the
+ * simulation had lost anything.
+ *
+ * Frames submitted minus frames processed does NOT recover the drop count:
+ * submitted is the caller's own number and processed lags it by whatever is
+ * still queued, which is why the signal had to be kept at the offer.
+ */
+describe('loop observability', () => {
+  it.effect('REGRESSION: frames the dropping queue refuses are counted, not silently discarded', () =>
+    Effect.gen(function* () {
+      const loop = yield* makeGameLoop()
+      // Park the daemon inside the handler FIRST, so that the flood below meets
+      // an empty queue and a consumer that cannot drain it. Without the
+      // handshake the daemon may or may not have taken one frame before the
+      // flood starts, and the drop count would be off by one at random — a
+      // flaky assertion is not a pin.
+      const entered = yield* Deferred.make<void>()
+      const blocked = yield* Deferred.make<void>()
+
+      yield* loop.start(() =>
+        Deferred.succeed(entered, undefined).pipe(Effect.zipRight(Deferred.await(blocked))),
+      )
+      yield* loop.submitFrame(MonotonicTimeSecs(0))
+      yield* Deferred.await(entered)
+
+      const submitted = FRAME_QUEUE_CAPACITY * 3
+      yield* Effect.forEach(
+        Array.from({ length: submitted }, (_, index) => MonotonicTimeSecs(index + 1)),
+        (at) => loop.submitFrame(at),
+        { discard: true },
+      )
+
+      // FRAME_QUEUE_CAPACITY are held; every frame after that was refused.
+      expect(yield* loop.framesDropped).toBe(submitted - FRAME_QUEUE_CAPACITY)
+      // And the count is not derivable from the other two numbers: nothing has
+      // been processed, yet 120 frames are demonstrably gone.
+      expect(yield* loop.framesProcessed).toBe(0)
+
+      yield* Deferred.succeed(blocked, undefined)
+      yield* loop.stop
+    }),
+  )
+
+  it.effect('REGRESSION: the counters survive stop, which is when a teardown report reads them', () =>
+    Effect.gen(function* () {
+      // They used to read 0 the moment the loop stopped, because the counter
+      // belongs to the generation. The one moment a caller most wants the
+      // count — after teardown, writing a session report — was the one moment
+      // it was unavailable.
+      const loop = yield* makeGameLoop()
+      const probe = yield* recordingHandler(3)
+
+      yield* loop.start(probe.handler)
+      yield* loop.submitFrame(MonotonicTimeSecs(10))
+      yield* loop.submitFrame(MonotonicTimeSecs(10.02))
+      yield* loop.submitFrame(MonotonicTimeSecs(40.02))
+      yield* Deferred.await(probe.reached)
+
+      expect(yield* loop.framesProcessed).toBe(3)
+      yield* loop.stop
+
+      expect(yield* loop.isRunning).toBe(false)
+      expect(yield* loop.framesProcessed).toBe(3)
+      // The 30-second gap above, priced: 30 - 0.05 delivered.
+      expect(yield* loop.secondsLostToClamp).toBeCloseTo(29.95, 9)
+    }),
+  )
+
+  it.effect('a fresh start zeroes them, so one run never reports the previous run’s numbers', () =>
+    Effect.gen(function* () {
+      const loop = yield* makeGameLoop()
+      const first = yield* recordingHandler(1)
+
+      yield* loop.start(first.handler)
+      yield* loop.submitFrame(MonotonicTimeSecs(100))
+      yield* Deferred.await(first.reached)
+      yield* loop.stop
+      expect(yield* loop.framesProcessed).toBe(1)
+
+      const second = yield* recordingHandler(1)
+      yield* loop.start(second.handler)
+      expect(yield* loop.framesProcessed).toBe(0)
+      expect(yield* loop.framesDropped).toBe(0)
+      expect(yield* loop.secondsLostToClamp).toBe(0)
+
+      yield* loop.stop
+    }),
+  )
+
+  it.effect('a loop that was never started reports zeroes rather than anything invented', () =>
+    Effect.gen(function* () {
+      const loop = yield* makeGameLoop()
+
+      expect(yield* loop.framesProcessed).toBe(0)
+      expect(yield* loop.framesDropped).toBe(0)
+      expect(yield* loop.secondsLostToClamp).toBe(0)
+    }),
+  )
+
+  it.effect('REGRESSION: an ordinary 60 Hz session loses nothing, so the counter is not noise', () =>
+    Effect.gen(function* () {
+      // A counter that ticks up on every normal frame would be ignored within a
+      // day. Only the upper clamp counts, and a 60 Hz frame is nowhere near it.
+      const loop = yield* makeGameLoop()
+      const probe = yield* recordingHandler(4)
+
+      yield* loop.start(probe.handler)
+      yield* Effect.forEach(
+        [10, 10.016, 10.032, 10.048],
+        (at) => loop.submitFrame(MonotonicTimeSecs(at)),
+        { discard: true },
+      )
+      yield* Deferred.await(probe.reached)
+
+      expect(yield* loop.secondsLostToClamp).toBe(0)
+      yield* loop.stop
     }),
   )
 })

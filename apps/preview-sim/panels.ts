@@ -102,7 +102,10 @@ export const framePanel = (view: WorldView, style: Style, width: number): Readon
     raw === undefined ? 'first frame (no previous instant)' : `${fixed(raw, 6)} s`
   const appliedText = applied === undefined ? '—' : `${fixed(applied, 6)} s`
 
-  const dropped = view.framesSubmitted - view.framesProcessed
+  // Submitted minus processed is "in flight or gone" and was the closest thing
+  // to a drop count available. It is kept as a cross-check against the real
+  // one, which the loop now counts at the offer.
+  const unaccounted = view.framesSubmitted - view.framesProcessed
 
   return [
     heading(style, 'frame', width),
@@ -121,11 +124,18 @@ export const framePanel = (view: WorldView, style: Style, width: number): Readon
     ),
     row(
       style,
+      'lost',
+      `${style.paint(`${fixed(view.secondsLostToClamp, 3)} s`, view.secondsLostToClamp > 0 ? WARN : VALUE)}  ` +
+        style.dim('simulated time the clamp discarded — GameLoopApi.secondsLostToClamp'),
+    ),
+    row(
+      style,
       'loop',
       `${view.loopRunning ? style.paint('running', GOOD) : style.paint('STOPPED', BAD)}   ` +
         `submitted ${style.paint(String(view.framesSubmitted), VALUE)}   ` +
         `processed ${style.paint(String(view.framesProcessed), VALUE)}   ` +
-        `unaccounted ${style.paint(String(dropped), dropped === 0 ? VALUE : BAD)}`,
+        `dropped ${style.paint(String(view.framesDropped), view.framesDropped === 0 ? VALUE : BAD)}   ` +
+        style.dim(`unaccounted ${String(unaccounted)}`),
     ),
   ]
 }
@@ -301,30 +311,49 @@ export const timelinePanel = (
  * The findings, evaluated against the world as it stands.
  *
  * These are not decorations and not assertions. Each one is a predicate over the
- * current `WorldView` that is FALSE in an ordinary run and TRUE once the
- * corresponding scenario has driven the world into the state described. Keeping
- * them here, next to the numbers they read, is what stops the README's claims
- * and the app's behaviour from drifting apart.
+ * current `WorldView`, TRUE once the corresponding scenario has driven the world
+ * into the state described. Keeping them here, next to the numbers they read, is
+ * what stops the README's claims and the app's behaviour from drifting apart.
+ *
+ * The defects these named are fixed, and the predicates were rewritten to match
+ * rather than deleted. Two kinds remain:
+ *
+ *   - a REPAIRED condition — the corrupt input still arrives, and the panel now
+ *     shows that the world absorbed it. `HIT` there means the repair ran, and a
+ *     `corrupt-save` run that shows no hits would mean the scenario stopped
+ *     reaching the boundary it exists to reach.
+ *   - a QUANTITY that was previously uncountable and is now published. `HIT`
+ *     means there is something to report, not that something is wrong.
+ *
+ * The distinction is in the text of each line, because a panel of green ticks
+ * would say nothing about whether these boundaries are still being exercised.
  */
 export const findingsPanel = (view: WorldView, style: Style, width: number): ReadonlyArray<string> => {
+  const behindSecs = view.clockPortSecs - view.simulatedSecs
   const findings: Array<{ readonly id: string; readonly hit: boolean; readonly text: string }> = [
     {
       id: 'SIM-1',
-      hit: !Number.isFinite(view.timeOfDay),
-      text: 'TimeService.restore accepted dayLengthTicks 0; isNight now reports day forever',
+      hit: view.timeStatesRepaired > 0,
+      text: !Number.isFinite(view.timeOfDay)
+        ? 'timeOfDay is NOT FINITE — normaliseTimeState was bypassed, and isNight is about to report day forever'
+        : view.timeStatesRepaired > 0
+          ? `${String(view.timeStatesRepaired)} un-answerable TimeState(s) repaired on restore; the world reads ${fixed(view.dayLengthSecs, 0)} s days and isNight is a real ${String(view.isNight)}`
+          : 'no restore has handed TimeService a state it had to repair; isValidTimeState is what a caller asks first',
     },
     {
       id: 'SIM-2',
-      hit: view.slotCount !== INVENTORY_SLOT_COUNT,
+      hit: view.inventoriesResized > 0,
       text:
         view.slotCount === INVENTORY_SLOT_COUNT
-          ? `InventoryService.restore does not check the slot count against INVENTORY_SLOT_COUNT (${String(INVENTORY_SLOT_COUNT)})`
-          : `InventoryService.restore accepted ${String(view.slotCount)} slots, not ${String(INVENTORY_SLOT_COUNT)}`,
+          ? `${String(view.inventoriesResized)} save(s) of the wrong length restored, all held at ${String(INVENTORY_SLOT_COUNT)} slots; ${String(view.restoreLeftover)} item(s) reported as leftover for the caller to drop`
+          : `InventoryService.restore accepted ${String(view.slotCount)} slots, not ${String(INVENTORY_SLOT_COUNT)} — the resize defect is back`,
     },
     {
       id: 'SIM-3',
       hit: !view.inventoryUsable,
-      text: 'a slot exceeds MAX_STACK_COUNT; the next remove() of it throws out of removeItem',
+      text: view.inventoryUsable
+        ? 'no slot exceeds MAX_STACK_COUNT: restore() normalises, and removeItem is total even if one did'
+        : 'a slot exceeds MAX_STACK_COUNT — removeItem repairs it rather than throwing, but nothing should have produced it',
     },
     {
       id: 'SIM-4',
@@ -333,25 +362,25 @@ export const findingsPanel = (view: WorldView, style: Style, width: number): Rea
     },
     {
       id: 'SIM-5',
-      hit: view.clockPortSecs - view.simulatedSecs > 0.1,
-      text: `the world is ${fixed(view.clockPortSecs - view.simulatedSecs, 3)} s behind the injected clock, and nothing repays it`,
+      hit: behindSecs > 0.1,
+      text: `the world is ${fixed(behindSecs, 3)} s behind the injected clock; the loop counts ${fixed(view.secondsLostToClamp, 3)} s of that as clamp loss`,
     },
     {
       id: 'SIM-6',
       hit: Math.abs(view.effectClockMillis / 1000 - view.clockPortSecs) > 0.001,
-      text: 'ClockPort and the Effect clock disagree; autosave follows the one that is not a Port',
+      text: 'ClockPort and the Effect clock disagree; autosave follows the Effect clock, deliberately — a schedule sleeps, and a Port only reads an instant',
     },
     {
       id: 'SIM-7',
-      hit: view.loopRunning && view.framesSubmitted > view.framesProcessed,
-      text: view.loopRunning
-        ? `${String(view.framesSubmitted - view.framesProcessed)} submitted frame(s) unaccounted for; Queue.offer's drop signal is discarded at game-loop.ts:193-195`
-        : "Queue.offer's drop signal is discarded at game-loop.ts:193-195; there is no framesDropped to read",
+      hit: view.framesDropped > 0,
+      text: `${String(view.framesDropped)} frame(s) refused by the dropping queue, counted at the offer — submitted minus processed could never have told you`,
     },
     {
       id: 'SIM-10',
       hit: !view.loopRunning && view.framesSubmitted > 0,
-      text: `framesProcessed reads ${String(view.framesProcessed)} because the loop is stopped, though ${String(view.framesSubmitted)} frames were submitted; the counter belongs to the generation, so it is unreadable exactly when a teardown report wants it`,
+      text: view.loopRunning
+        ? `framesProcessed reads ${String(view.framesProcessed)} while running; stop the loop (the second-world scenario does) to see that the reading survives its generation`
+        : `the loop is stopped and framesProcessed still reads ${String(view.framesProcessed)} of ${String(view.framesSubmitted)} submitted; the teardown reading survives the generation that produced it`,
     },
   ]
 

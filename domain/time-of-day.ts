@@ -14,8 +14,21 @@
  * contrast, multiplies by the denominator that happens to be installed when it
  * runs. The two therefore do not commute:
  *
+ * Both start from the fresh-world state, whose day is 400 s:
+ *
  *   setDayLength(600) then setTimeOfDay(0.30)  ->  timeOfDay 0.30   (intended)
- *   setTimeOfDay(0.30) then setDayLength(600)  ->  timeOfDay 0.60   (a bug)
+ *   setTimeOfDay(0.30) then setDayLength(600)  ->  timeOfDay 0.20   (a bug)
+ *
+ * The SIGN of the error follows the denominator, and both directions are real:
+ *
+ *   - LENGTHENING the day (400 s -> 600 s) leaves the same absolute tick count
+ *     sitting earlier in a bigger day, so the time of day moves DOWN: 0.30 into
+ *     a 400 s day is tick 7200, and 7200 of 36000 is 0.20.
+ *   - SHORTENING it (400 s -> 200 s) does the reverse and moves the time of day
+ *     UP: 7200 of 12000 is 0.60. `test/time-of-day.test.ts` pins this half,
+ *     because a doubling from mid-morning to dusk is the more alarming of the
+ *     two to read; it pins the 600 s half too, so this worked example cannot
+ *     drift away from the arithmetic again.
  *
  * Hence the rule: ALWAYS `setDayLength` BEFORE `setTimeOfDay`.
  *
@@ -98,10 +111,115 @@ export const INITIAL_TIME_STATE: TimeState = {
 /** The fresh-world day length in seconds, for callers that want it named. */
 export const DEFAULT_DAY_LENGTH_SECS = 400
 
-const clampDayLengthSecs = (seconds: number): number =>
-  Math.max(MIN_DAY_LENGTH_SECS, Math.min(MAX_DAY_LENGTH_SECS, seconds))
+/**
+ * Does this value carry a magnitude at all?
+ *
+ * `Math.max` and `Math.min` PROPAGATE `NaN`, so a clamp built from them is not a
+ * clamp for a `NaN` input — it is a pass-through, and the `NaN` lands in the
+ * denominator where `isNight` turns it into permanent daylight. The type says
+ * `number`, and that is not enough: `Number('')` and `parseFloat('')` are both
+ * `NaN`, and a settings field a player cleared is the documented caller of
+ * `setDayLength`.
+ *
+ * The `typeof` test is not redundant with the `NaN` test, and TypeScript cannot
+ * make it so. These values come off disk and across a version boundary, where
+ * `undefined` (a field a newer schema added) and `null` (what `JSON.stringify`
+ * writes for `NaN`) both arrive wearing the `number` type. `Number.isNaN` is
+ * false for both, and `Math.min(1200, null)` is 0 — so without this, a `NaN` day
+ * length that has been through a save file would clamp to the MINIMUM rather
+ * than reaching the default below.
+ */
+const hasMagnitude = (value: number): boolean => typeof value === 'number' && !Number.isNaN(value)
 
-const clampFraction = (fraction: number): number => Math.max(0, Math.min(MAX_TIME_FRACTION, fraction))
+/**
+ * Clamp a day length in seconds into [MIN, MAX]. TOTAL over every input.
+ *
+ * A value with no magnitude falls back to `DEFAULT_DAY_LENGTH_SECS`: it is the
+ * fresh-world day, and the only non-arbitrary choice available when the input
+ * says nothing. An INFINITY is not such a value — it has a direction — and is
+ * clamped to the bound it points at.
+ *
+ * `setDayLength`, `setDayLengthThenTimeOfDay` and `normaliseTimeState` all go
+ * through here, which is what makes "the save path and the setter path cannot
+ * disagree about what a legal day is" true rather than aspirational.
+ */
+const clampDayLengthSecs = (seconds: number): number =>
+  hasMagnitude(seconds)
+    ? Math.max(MIN_DAY_LENGTH_SECS, Math.min(MAX_DAY_LENGTH_SECS, seconds))
+    : DEFAULT_DAY_LENGTH_SECS
+
+/**
+ * Clamp a time-of-day fraction into [0, MAX_TIME_FRACTION]. TOTAL over every
+ * input, for the same reason as above.
+ *
+ * A value with no magnitude becomes 0 — midnight — which is where every other
+ * below-range input already lands. It is a real instant, which is the property
+ * that matters: `setTimeOfDay(Number(''))` used to write `ticks: NaN` and leave
+ * the world reporting daylight forever.
+ */
+const clampFraction = (fraction: number): number =>
+  hasMagnitude(fraction) ? Math.max(0, Math.min(MAX_TIME_FRACTION, fraction)) : 0
+
+/**
+ * Can the readers below answer questions about this state?
+ *
+ * `dayLengthTicks` is a DENOMINATOR. At zero every reader returns `NaN`, and
+ * `isNight` — which is `fraction < 0.25 || fraction > 0.75` — then returns
+ * `false`, because both comparisons against `NaN` are false. A world restored
+ * from a truncated save therefore reported permanent DAYLIGHT: not an error,
+ * not a `NaN` a UI could notice, but the boolean a caller would act on. Mobs
+ * never spawn and the sky never darkens.
+ *
+ * Exported so that a persistence layer (mc-save) can tell a save it must repair
+ * from one it may load verbatim, WITHOUT having to know the clamp bounds.
+ */
+export const isValidTimeState = (state: TimeState): boolean =>
+  Number.isFinite(state.ticks) &&
+  state.ticks >= 0 &&
+  Number.isFinite(state.dayLengthTicks) &&
+  state.dayLengthTicks >= MIN_DAY_LENGTH_SECS * TICKS_PER_SECOND &&
+  state.dayLengthTicks <= MAX_DAY_LENGTH_SECS * TICKS_PER_SECOND
+
+/**
+ * Repair a state read from persistence into one every reader can answer for.
+ *
+ * REPAIRS, RATHER THAN REJECTS, and the choice is the same one
+ * `domain/frame-timing.ts` makes about a raw frame delta: the input may be out
+ * of range because it crossed a version boundary or was truncated, and the
+ * simulation wants a world it can run rather than a throw at the boundary.
+ * `TimeService.restore` is on the world-load path and has no error channel to
+ * report into; `isValidTimeState` is how a caller that DOES want to know asks.
+ *
+ * What it does NOT do is invent a time of day. Only the two broken fields move:
+ *
+ *   - `dayLengthTicks` goes through the SAME clamp `setDayLength` uses, so the
+ *     two paths cannot disagree about what a legal day is — an infinity lands
+ *     on the maximum here exactly as `setDayLength(Infinity)` does, and anything
+ *     with no magnitude at all lands on `DEFAULT_DAY_LENGTH_SECS`.
+ *   - `ticks` non-finite or negative becomes 0. A finite, non-negative counter
+ *     is left ALONE even when it is enormous: it carries the day number, which
+ *     `moonPhase` needs and which nothing else can reconstruct.
+ *
+ * TOTAL OVER ANY RUNTIME VALUE, not merely over any `number`. A field that is
+ * absent, `null` or a string still satisfies the declared type at the boundary
+ * this function guards — that is what "crossed a version boundary" means — so
+ * every field is dividing a value it does not trust, and the division is kept
+ * on the `number` side of the `typeof` test rather than after it. The output
+ * always satisfies `isValidTimeState`; `test/time-of-day.test.ts` asserts that
+ * over the malformed shapes as well as the out-of-range ones.
+ */
+export const normaliseTimeState = (state: TimeState): TimeState => ({
+  ticks: Number.isFinite(state.ticks) && state.ticks >= 0 ? state.ticks : 0,
+  dayLengthTicks:
+    clampDayLengthSecs(
+      // `undefined / 60` is NaN and would be caught, but `null / 60` is 0 and
+      // would clamp to the minimum. Deciding on the value itself, before any
+      // arithmetic can coerce it, is what keeps the two indistinguishable.
+      typeof state.dayLengthTicks === 'number'
+        ? state.dayLengthTicks / TICKS_PER_SECOND
+        : Number.NaN,
+    ) * TICKS_PER_SECOND,
+})
 
 /**
  * Position within the current day, in [0, 1).
@@ -121,7 +239,21 @@ export const dayLengthSecs = (state: TimeState): number => state.dayLengthTicks 
 export const moonPhase = (state: TimeState): number =>
   Math.floor(state.ticks / state.dayLengthTicks) % MOON_PHASE_COUNT
 
-/** Night is the half of the day centred on the 0/1 boundary. */
+/**
+ * Night is the half of the day centred on the 0/1 boundary.
+ *
+ * DO NOT ADD A `NaN` BRANCH HERE. `mx-gameplay/domain/day-night.ts` restates
+ * this predicate character for character by design — the hostile-mob spawn rule
+ * and the state it reads live in different repositories, so the boundary is
+ * written down twice and pinned by a test on both sides (docs/public-api.md
+ * §2-0). Widening it here would silently make the two disagree, and mx-gameplay
+ * cannot be edited from this repository.
+ *
+ * A `NaN` fraction used to reach this function and leave it returning `false`
+ * — permanent daylight. That is fixed where it belongs, at the boundary that
+ * let the bad state in: see `normaliseTimeState` above and
+ * `TimeService.restore`. This predicate is total on every state those produce.
+ */
 export const isNight = (state: TimeState): boolean => {
   const fraction = timeOfDay(state)
   return fraction < 0.25 || fraction > 0.75

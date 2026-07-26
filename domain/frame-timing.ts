@@ -74,3 +74,33 @@ export const clampFrameDelta = (rawDeltaSecs: number): DeltaTimeSecs =>
  */
 export const frameDeltaBetween = (previousSecs: number | undefined, nowSecs: number): DeltaTimeSecs =>
   previousSecs === undefined ? FIRST_FRAME_DELTA_SECS : clampFrameDelta(nowSecs - previousSecs)
+
+/**
+ * Simulated time the upper clamp threw away, in seconds. Never negative.
+ *
+ * The upper bound is deliberate and stays (see above): a thirty-second delta
+ * integrated in one step teleports the player through the world. But the world
+ * then never receives those 29.95 seconds and nothing repays them, so a session
+ * falls quietly behind the clock that drives it, and until now the quantity was
+ * computed nowhere — it could not be logged, shown, or put in a bug report.
+ *
+ * Only the UPPER clamp counts as loss. The lower bound and the NaN substitution
+ * hand the simulation MORE time than elapsed rather than less, which is a
+ * different phenomenon: it is bounded by one frame, it cannot accumulate into a
+ * visible drift, and reporting it as a negative loss would let the two cancel
+ * out and read as zero.
+ *
+ * `application/game-loop.ts` accumulates this across a generation and publishes
+ * it as `secondsLostToClamp`.
+ */
+export const frameDeltaLossSecs = (rawDeltaSecs: number): number =>
+  Number.isNaN(rawDeltaSecs) ? 0 : Math.max(0, rawDeltaSecs - clampFrameDelta(rawDeltaSecs))
+
+/**
+ * The loss `frameDeltaBetween` incurred on the same two readings.
+ *
+ * A first frame loses nothing: there is no elapsed interval to clamp, only the
+ * `FIRST_FRAME_DELTA_SECS` fiction.
+ */
+export const frameDeltaLossBetween = (previousSecs: number | undefined, nowSecs: number): number =>
+  previousSecs === undefined ? 0 : frameDeltaLossSecs(nowSecs - previousSecs)
