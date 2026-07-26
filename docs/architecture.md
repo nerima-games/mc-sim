@@ -107,7 +107,7 @@ npm 公開・バージョン bump 運用は界面安定（APIロック 4 週間�
 | `mc-kernel` | 共有語彙。**どのリポジトリからも import 可**。ただし `package.json#dependencies` への記載は必要 |
 | `mc-physics` | `step(state, world, dt)`、AABBクエリ、voxel-DDA レイキャスト |
 | `mc-save` | `defineFormat` / `StoragePort`。mc-sim は自分のセーブフォーマットをこれで**定義する側** |
-| `mc-worldgen` | `generateChunk` / `BiomeService` / `ChunkManager` |
+| `mc-worldgen` | `generateChunk` / `BiomeService` / `ChunkStore`（ブロックの読み書きとダーティ購読） |
 
 ### 3.2 子（mc-sim に依存するもの）— 6リポジトリ
 
@@ -115,7 +115,12 @@ npm 公開・バージョン bump 運用は界面安定（APIロック 4 週間�
 
 これが plan.md §8 の第2リスク「mc-sim のAPIが揺れて全下流に波及」の実体である。
 対策は **APIロックファイルを最初から適用**し、公開APIの変更を明示的なレビュー対象にすること
-（plan.md §6 Step 0-3 / §9 未決: ツール選定は api-extractor 相当の Effect-TS 互換手段）。
+（plan.md §6 Step 0-3）。**これは実装済みで、§9 のツール選定も決着している。**
+`api-lock.md` が公開面の正本、`scripts/api-lock.ts` が生成器、`pnpm api:check` が
+`pnpm verify` と CI の両方で走る。この 6 リポジトリが依存している `PlayerService` などの
+`Context.Tag` は Tag 識別子文字列ごとロックされるので、
+文字列を変えて全下流の `Layer` 解決を黙って壊す変更は commit 前に落ちる
+（[public-api.md](./public-api.md) §6）。
 
 ### 3.3 推移閉包は禁止
 

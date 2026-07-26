@@ -25,7 +25,7 @@ plan.md §2.3-1 の分類でいう **名詞**。
 | ゲームループ | フレーム駆動、開始/停止、再入可能な初期化 | 実装済 `application/game-loop.ts` |
 | 自動保存 | いつ保存するか（何を書くかは mc-save のフォーマット定義） | 実装済 `application/autosave.ts` |
 | 設定状態 | グラフィックス / 音量 / 操作の**値の保持**（画面は mx-ui、適用は各所） | 未実装 |
-| チャンクダーティ通知 | 「このチャンクが変わった」の発行（購読者は mc-render） | 未実装 |
+| ~~チャンクダーティ通知~~ | **mc-worldgen に移った**（`ChunkStore.subscribeDirty`）。mc-sim は中継しない — §3.3 | — |
 | レシピ / クラフト状態 | レシピ表とクラフト結果の状態（画面は mx-ui） | 未実装 |
 
 ## 3. 非スコープ（明示的に持たない）
@@ -48,6 +48,7 @@ plan.md §2.3-1 の分類でいう **名詞**。
 | **DOM UI 全般（HUD / メニュー / インベントリ画面 / 設定画面 / 実績画面）** | mx-ui | plan.md §3.13 |
 | **ネットワークプロトコル・状態同期** | mx-multiplayer | plan.md §3.14 |
 | **stage の全順序表** | mc-compose | plan.md §2.3-3。mc-sim は `after` 制約を宣言するだけ |
+| **ブロック値の保持・ブロック書き込み・チャンクダーティ通知** | mc-worldgen（`ChunkStore`） | §3.3 |
 | **Layer の最終合成・セッションライフサイクル（タイトル⇄ゲーム）** | mc-compose | plan.md §3.15 |
 | **QA/デバッグAPI・Modding 入口・E2E** | mc-compose | plan.md §3.15 |
 | **プレビュー共通ハーネス** | mc-playground-kit | plan.md §3.10 |
@@ -68,6 +69,31 @@ plan.md §7「sim(状態) + gameplay(ルール)」。
 ただし「かまどが何秒で焼けるか」の進行は tick を持つ mc-sim 側になる可能性が高い。
 最初の実装時に決めて本文書に追記すること。
 
+### 3.3 チャンクダーティ通知は mc-sim のものではなくなった
+
+plan.md §3.8 の**公開 API 文**は「チャンクダーティ通知」を挙げている。
+一方 §3.7 は mc-worldgen に `ChunkManager`（ロード / アンロード / **ダーティフラグ**）を与えている。
+**この 2 つは両立しない。** mc-worldgen は mc-sim を import できない（循環）ので、
+worldgen が持つフラグを mc-sim が発行するには mc-sim が毎フレーム全ロードチャンクを走査するしかなく、
+それは `mc-render/docs/public-api.md` §3.3 が名指しで却下している pull 設計である。
+
+決着: **`ChunkStore` は mc-worldgen が所有し、ダーティチャンネルもそこにある**
+（`@nerima-games/mc-worldgen/ChunkStore`、`subscribeDirty`）。
+mc-render は plan.md §2.1 に既にある `render → worldgen` エッジで直接購読する。
+mc-sim は中継しない。
+
+この判断が本リポジトリにとって望ましい理由は、§3.2 の問い 3 と 4 がそのまま答えになっている:
+チャンクの中身を*決める*のは worldgen（生成・ライト・直列化）で mc-sim は物理のために*読む*だけであり、
+かつ plan.md §8 は mc-sim の公開 API 肥大を第 2 リスクに挙げている。
+下流 6 者の界面を増やさずに済む。
+
+根拠と、逆の選択のコストの全文は
+`mc-worldgen/docs/public-api.md` §6-0 〜 §6-2 にある。
+
+**mc-sim が引き続き所有するもの**: 掘ったブロックが入る `InventoryService`。
+plan.md §2.3-1 の「採掘→インベントリに入る」は sim 経由、という例はそのまま生きている。
+変わったのは「掘られた側」の置き場だけである。
+
 ### 3.2 判断手順
 
 新しいコードをどこに置くか迷ったら、順に問う。
@@ -87,13 +113,13 @@ plan.md §7「sim(状態) + gameplay(ルール)」。
 | `mc-kernel` | 語彙全般（ブランデッド型、座標、`CameraPoseSnapshot`、Clock Port、`GameModule`） | `domain/kernel-vocabulary.ts` に暫定ミラー |
 | `mc-physics` | `step(state, world, dt)`、AABB クエリ、voxel-DDA | 未使用 |
 | `mc-save` | `defineFormat(name, version, schema, migrations)`、`StoragePort` | 未使用（`autosave.ts` は永続化 Effect を引数で受ける） |
-| `mc-worldgen` | `generateChunk`、`BiomeService`、`ChunkManager` | 未使用 |
+| `mc-worldgen` | `generateChunk`、`BiomeService`、`ChunkStore`（物理のためにブロックを読む） | 未使用 |
 
 ### 子（mc-sim に依存する）
 
 | リポジトリ | 何を使うか | mc-sim 側で壊してはいけないもの |
 | --- | --- | --- |
-| `mc-render` | `CameraPoseSnapshot`、チャンクダーティ購読、プレイヤー状態 | 姿勢スナップショットの形と発行タイミング |
+| `mc-render` | `CameraPoseSnapshot`、プレイヤー状態（**チャンクダーティ購読は mc-worldgen から**） | 姿勢スナップショットの形と発行タイミング |
 | `mc-playground-kit` | ミニ世界のセッション構築、`GameLoop` | `start` / `stop` の再入可能性 |
 | `mx-gameplay` | `InventoryService`、`EntityManager`、`TimeService`、体力/空腹 | 状態サービスの読み書き API |
 | `mx-redstone` | ワールド状態の読み書き、tick | 同上 |
@@ -102,3 +128,7 @@ plan.md §7「sim(状態) + gameplay(ルール)」。
 
 **この 6 者への影響を評価せずに公開 API を変更しないこと。**
 APIロックファイル（plan.md §6 Step 0-3）を最初から適用し、公開 API の diff をレビュー対象にする。
+これは実装済みで、`pnpm api:check` が `pnpm verify` と CI の両方で走る。
+公開面を変える PR は `pnpm api:update` の結果を同じ PR に含めること —— その差分が、
+上の表の「壊れると困るもの」に何が起きたかを 6 者に見せる唯一の場所である
+（[public-api.md](./public-api.md) §6）。

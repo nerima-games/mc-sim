@@ -38,12 +38,19 @@ mc-sim が `1.0.0` を出せるのは、以下がすべて満たされたとき�
 1. **[testing.md](./testing.md) §2 の完了条件を満たしている。**
    テスト green **かつ**内蔵障害物コースプレビューが操作可能。
 2. **APIロックファイルが 4 週間変更されていない**（plan.md §6 Step 3）。
-   ツールは未選定（plan.md §9 未決: api-extractor 相当の Effect-TS 互換手段）。
+   ツール選定（plan.md §9 の未決事項「api-extractor 相当の Effect-TS 互換手段」）は決着し、
+   `api-lock.md` / `scripts/api-lock.ts` / `pnpm api:check` として実装済み（[public-api.md](./public-api.md) §6）。
+   **計測の起点は `api-lock.md` が最後に変わったコミット**であり、主観の入らない事実になった。
 3. **下流が実際に消費して契約を確認している。** 少なくとも mc-render と
    mc-playground-kit が mc-sim を使って動いていること。使われていない界面に
    「壊さない」と約束しても意味がない。
 4. **[public-api.md](./public-api.md) §5 の未設計 API が埋まっている。**
-   特に**チャンクダーティ通知**。これが無いと mc-render が着手できず、条件 3 も満たせない。
+   ただし**チャンクダーティ通知はここには来ない**。plan.md §3.8 はそれを mc-sim の API に
+   挙げているが、フラグを持つのは §3.7 により mc-worldgen であり、worldgen は sim を
+   呼べない（循環）。sim が公開するには毎フレーム全チャンクをポーリングするしかなく、
+   それは §3.11 の O(chunks × blocks) の失敗そのものになる。チャンネルはフラグと同じ
+   場所 —— `mc-worldgen` の `ChunkStore.subscribeDirty` —— に置かれた。
+   根拠は `mc-worldgen/docs/public-api.md` §6-2。
 5. `domain/kernel-vocabulary.ts` が削除され、`@nerima-games/mc-kernel` を
    `dependencies` から参照している（§5 参照）。
 
@@ -133,9 +140,13 @@ kernel の語彙を取ると真実の出所が 2 つになり、上記の削除�
 | changesets | plan.md §6 Step 3。bump とチェンジログの運用 |
 | publish ワークフロー | `.github/workflows/` に追加。タグ or changeset 起点 |
 | カバレッジ 99% ゲート | `vitest.config.ts` + CI（[testing.md](./testing.md) §5） |
-| APIロックの diff チェック | CI ジョブとして追加 |
 
 `.gitignore` は既に `dist/` `build/` `out/` を無視するようにしてある。
+
+**APIロックの diff チェックはこの表から外れた。** 完了条件を待たずに済ませてあり、
+`pnpm api:check` が `pnpm verify` の `check:deps` と `test` の間で、また CI の独立ステップとして走る
+（[public-api.md](./public-api.md) §6）。ビルド段が無いままで動くことが選定の条件だったので、
+上の「ビルド」行が埋まるのを待つ必要が無かった。
 
 ## 7. 依存の固定
 

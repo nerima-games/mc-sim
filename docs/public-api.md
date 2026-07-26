@@ -220,17 +220,85 @@ plan.md §3.8 の責務のうち、界面をまだ書いていないもの。**�
 | 体力 / 空腹 / XP | `health-service.ts` / `hunger-service.ts` / `xp-service.ts` | mx-gameplay / mx-ui |
 | 実績 / 統計 | `achievement-service.ts` / `statistics-service.ts` | mx-ui |
 | 設定状態 | `packages/game/application/settings-service.ts` (107) + `.config.ts` (70) + `.schema.ts` (79) | mx-ui / mc-render |
-| チャンクダーティ通知 | `packages/world` 側の dirty フラグ + `packages/app` の同期 stage | **mc-render**（`WorldRenderer` が購読） |
+| ~~チャンクダーティ通知~~ | — | **mc-worldgen に移った。下記** |
 | ドロップ / 経験値オーブ | `dropped-item-service.ts` / `dropped-xp-orb-service.ts` | mx-gameplay / mc-render |
 | かまど / チェスト / 装備 / レシピ | `packages/inventory/application/` の各 service | mx-ui / mx-gameplay |
 | `GameModule` の実体 | — | mc-compose |
 
-チャンクダーティ通知は**最優先で設計すべき**である。mc-render の `WorldRenderer` は
-「chunk ダーティ購読 → メッシュ更新」が主機能であり（plan.md §3.9）、この界面が無いと
-mc-render が着手できない。
+### チャンクダーティ通知は mc-worldgen のものになった
+
+これは長らく本リポジトリの最優先項目として挙がっていた（mc-render の `WorldRenderer` が
+着手できない直接の原因だった）。**設計されたが、ここではない。**
+
+plan.md §3.8 の公開 API 文が挙げる「チャンクダーティ通知」は、
+§3.7 が mc-worldgen に与える `ChunkManager`（ロード / アンロード / **ダーティフラグ**）と
+両立しない。フラグと通知を別リポジトリに置くと、worldgen → sim のエッジが無い（循環になる）以上、
+mc-sim 側は毎フレーム全チャンクを走査するしかなくなる。
+
+決着は `ChunkStore`（`@nerima-games/mc-worldgen/ChunkStore`）で、
+`subscribeDirty` が「前回見て以降に変わったチャンク」を購読者ごとに返す。
+mc-render は plan.md §2.1 に既にある `render → worldgen` エッジで直接購読し、
+**mc-sim の公開 API はこの件で 1 つも増えない**（plan.md §8 の第 2 リスクに照らすと、これは利得である）。
+
+詳細と、逆の選択のコストは `mc-worldgen/docs/public-api.md` §6。
+本リポジトリ側の判断根拠は [responsibility.md](./responsibility.md) §3.3。
 
 ## 6. APIロック
 
-plan.md §6 Step 0-3 / §9 未決。ツールは未選定（api-extractor 相当の Effect-TS 互換手段）。
-決まるまでの暫定運用として `test/public-api.test.ts` 相当（公開シンボルの一覧を assert する
-テスト）を置く手はあるが、現時点では未実装。**publish 開始（plan.md §6 Step 3）までに必須。**
+plan.md §6 Step 0-3 が初回コミットに求める「公開 API のレポートを diff レビュー」。
+**実装されている。** §9 の未決事項「API ロックファイルのツール選定
+（api-extractor 相当の Effect-TS 互換手段）」はこれで決着した。
+
+| 項目 | 内容 |
+| --- | --- |
+| 生成物 | リポジトリ直下の `api-lock.md`（公開宣言 70 件 + 参照されている非 export 宣言 17 件。コミット対象） |
+| 生成器 | `scripts/api-lock.ts`（16 リポジトリに byte-identical で vendor。`scripts/check-dependency-whitelist.ts` と同じ方式で、編集してよいのは `REPOSITORY_POLICY` だけ） |
+| 検査 | `pnpm api:check` — `api-lock.md` が実際の公開 API と食い違えば非ゼロ終了 |
+| 更新 | `pnpm api:update` |
+| 配線 | `pnpm verify` の `check:deps` と `test` の間、および CI の独立ステップ |
+| 追加依存 | **なし**（`typescript` は既に devDependency） |
+
+理由と実測の正本は mc-kernel の `docs/versioning.md` §7（§7-1 なぜ api-extractor ではないのか、
+§7-2 仕組み、§7-3 決定性、§7-4 捕まえないもの、§7-5 運用）。ここでは mc-sim にとって何が変わったかだけ書く。
+
+### 6.1 mc-sim がまさに api-extractor に見えないケースだった
+
+本ドキュメント §0 が決めた通り、新実装のサービスは `Context.Tag` + 明示的な `Layer` である。
+TypeScript の declaration emit はこれを 2 つに分けて出し、`api-lock.md` は両方を記録する:
+
+```ts
+class PlayerService extends PlayerService_base {
+}
+const PlayerService_base: Context.TagClass<PlayerService, "@nerima-games/mc-sim/PlayerService", PlayerServiceApi>;
+```
+
+`@microsoft/api-extractor` は後者を「forgotten export」として警告に落とし、前者の空の殻しかレポートに書かない。
+つまり **Tag 識別子文字列と束ねられた service 型 —— 契約そのもの —— が消える**。
+mc-kernel で実測したところ、Tag 識別子を改名してもレポートはバイト単位で同一だった。
+mc-sim にとってこれは致命的である。Tag 識別子は §3.2 の 6 リポジトリが `Layer` を解決する鍵であり、
+これが黙って変わると各リポジトリは単体では型検査を通ったまま、合成した瞬間に実行時で壊れる。
+自前の `scripts/api-lock.ts` は「公開面が参照している非 export の宣言」を第 2 節に取り込むので、
+`PlayerService_base` / `GameLoop_base` / `InventoryService_base` / `TimeService_base` が全部写る。
+
+api-extractor の名誉のために書いておくと、ノイズ耐性（関数本体の編集・非公開ヘルパの追加・
+barrel の並べ替え・devDependency の bump で diff が出ないこと）は api-extractor も全部通っていた。
+差が出たのは**検出側**だけである。
+
+### 6.2 plan.md §8 第 2 リスクに対する意味
+
+[architecture.md](./architecture.md) §3.2 が言う通り、mc-sim の API が揺れると 6 リポジトリに波及する。
+これまでその「揺れ」を検出する仕組みは無く、レビュアの注意力が唯一の防波堤だった。
+いまは `PlayerService` の Tag 文字列を書き換えれば `pnpm api:check` が
+`pnpm verify` の `test` より**前**の段で非ゼロで落ちる。リスクは緩和済みと言ってよい。
+
+`docs/versioning.md` §3 の「APIロックファイルが 4 週間変更されていない」も、
+`api-lock.md` が最後に変わったコミットから数えられるようになった。計測の起点が客観的な事実になっている。
+
+### 6.3 捕まえないもの
+
+- **挙動。** `clampPitch` の境界や `advance` の返り値が変わってもこのファイルは動かない。
+  DN-01 / DN-03 の回帰テストの仕事である（[testing.md](./testing.md)）。
+- **interface / 型リテラルのメンバ順。** tsc の emit 順（＝ソース順）を保つので、
+  `PlayerServiceApi` のメンバを並べ替えると API 変更でなくても diff になる。承認は 1 行で済む。
+
+公開面を変える PR は `pnpm api:update` の結果を**同じ PR に**含めること。差分がレビュー対象そのものである。

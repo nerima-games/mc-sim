@@ -47,7 +47,8 @@ mc-render / mc-playground-kit / mx-gameplay / mx-redstone / mx-ui / mx-multiplay
 | `Ref.modify` による TOCTOU 回避 | `application/inventory-service.ts` | DN-07 |
 
 まだ無いもの: EntityManager、体力/空腹/XP、実績/統計、設定状態、内蔵障害物コースプレビュー、
-リポジトリ内 workspace 分割（entity / inventory / game）、APIロックファイル。
+リポジトリ内 workspace 分割（entity / inventory / game）。
+APIロックファイルは**ある** —— `api-lock.md` と `pnpm api:check`（[public-api.md](./public-api.md) §6）。
 `domain/kernel-vocabulary.ts` は mc-kernel 公開までの暫定ミラーであり、公開後に削除する。
 ミラーは最小だが Clock Port だけは丸ごと写してある（`ClockPort` は文字列キーで解決される `Context.Tag` であり、
 狭いミラーは実行時ハザードになる）。`test/kernel-mirror.test.ts` が形を固定している

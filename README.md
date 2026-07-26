@@ -15,7 +15,7 @@
 | `mc-kernel` | 共有語彙。どのリポジトリからも import 可（許可リストに書かずに import できる） |
 | `mc-physics` | `step(state, world, dt)`、AABB クエリ、voxel-DDA |
 | `mc-save` | `defineFormat` / `StoragePort`。mc-sim は自分のフォーマットを定義する側 |
-| `mc-worldgen` | `generateChunk` / `BiomeService` / `ChunkManager` |
+| `mc-worldgen` | `generateChunk` / `BiomeService` / `ChunkStore`（ブロックの読み書きとダーティ購読） |
 
 `mc-noise` は **import できない**（`mc-worldgen` 経由の推移依存に過ぎないため）。
 `mc-render` は下流なので当然依存しない。`mc-playground-kit` には実行時にも devDependency にも依存しない。
@@ -39,6 +39,10 @@ mc-render / mc-playground-kit / mx-gameplay / mx-redstone / mx-ui / mx-multiplay
 plan.md §8 のリスク表第 2 項が「mc-sim のAPIが揺れて全下流に波及（依存ハブ）」であり、
 **本リポジトリの公開 API 設計はプロジェクト全体の最大リスクそのもの**である。
 対策は APIロックファイルを最初から適用し、公開 API の変更を明示的なレビュー対象にすること。
+**これは実装されている。** リポジトリ直下の `api-lock.md`（公開宣言 70 件 + 参照されている非 export 宣言 17 件）が
+公開面の正本で、`pnpm api:check` が `pnpm verify` と CI の両方で走る
+（[`docs/public-api.md`](./docs/public-api.md) §6）。6 リポジトリが黙って壊れる変更は、
+レビューの前に diff として目に見える。
 
 依存グラフ全体・4 階層・名詞/動詞ルール・kit の devDependency 専用規則・stage 全順序の所有者は
 [`docs/architecture.md`](./docs/architecture.md) を参照。
@@ -98,7 +102,9 @@ Nix を使わない場合は Node.js 22 以上と pnpm 9.15.0（`corepack` 推�
 | `pnpm test:watch` | vitest watch |
 | `pnpm test:coverage` | カバレッジ計測（閾値は未設定。後述） |
 | `pnpm check:deps` | 依存ホワイトリスト + 循環検査 + `Date.now()` 禁止の検査 |
-| `pnpm verify` | `typecheck && lint && check:deps && test`。CI と同じ内容 |
+| `pnpm api:check` | `api-lock.md` が実際の公開 API と食い違えば非ゼロ終了（[`docs/public-api.md`](./docs/public-api.md) §6） |
+| `pnpm api:update` | `api-lock.md` を書き直す。公開面を変える PR は結果を同じ PR に含める |
+| `pnpm verify` | `typecheck && lint && check:deps && api:check && test`。CI と同じ内容 |
 
 ## 現状
 
@@ -120,13 +126,14 @@ Nix を使わない場合は Node.js 22 以上と pnpm 9.15.0（`corepack` 推�
 
 ### まだ無いもの
 
-- **EntityManager / 体力・空腹・XP / 実績・統計 / 設定状態 / チャンクダーティ通知。**
-  特に**チャンクダーティ通知は最優先**。これが無いと mc-render が着手できない
+- **EntityManager / 体力・空腹・XP / 実績・統計 / 設定状態。**
+- ~~チャンクダーティ通知~~ → **mc-worldgen の `ChunkStore` に決着した。ここには来ない。**
+  plan.md §3.8 の公開 API 文は挙げているが、§3.7 が mc-worldgen に与える
+  「ダーティフラグ」と両立しない。根拠は [docs/responsibility.md](./docs/responsibility.md) §3.3
   （[`docs/public-api.md`](./docs/public-api.md) §5）。
 - **内蔵障害物コースプレビュー。** plan.md §6 Step 2 の完了条件の半分。
   mc-render / mc-playground-kit の完成後にしか作れない（[`docs/testing.md`](./docs/testing.md) §2.1）。
 - **リポジトリ内 workspace 分割**（entity / inventory / game）。plan.md §3.8 内部構成。
-- **APIロックファイル。** plan.md §6 Step 0-3。ツール未選定（§9 未決）。publish 開始までに必須。
 - **`ItemId` が暫定 `string`。** 本来は mc-kernel の `ItemType`（リテラル union、網羅性チェックつき）。
 - **ビルド／publish はまだない。** `exports` は TypeScript ソースを直接指している。
   それまで `version` は `0.x` に留める（[`docs/versioning.md`](./docs/versioning.md)）。

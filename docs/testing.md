@@ -171,9 +171,14 @@ DN-xx に対応するテストは `REGRESSION: ...` で始め、**機能名で�
 typecheck (build + test の 2 プロジェクト)
   → lint (oxlint)
   → check:deps (依存ホワイトリスト + 循環 + Date.now() 禁止)  ← ハードゲート
+  → api:check (api-lock.md が公開 API と一致するか)          ← ハードゲート
   → test
   → coverage (閾値なし、アーティファクト化)
 ```
+
+`API lock` を `verify` 経由だけでなく独立ステップにしてあるのは、ステップ名を見ただけで
+落ちた理由が分かるようにするため。中身は `pnpm api:check` で、`pnpm verify` の中でも
+`check:deps` と `test` の間で走る（[public-api.md](./public-api.md) §6）。
 
 `check:deps` は plan.md §5.1-4「依存ホワイトリストCIを初回コミットから」の実体。
 参照実装の `check-package-dag.ts` は警告を出して常に 0 で終了していた
@@ -191,5 +196,14 @@ typecheck (build + test の 2 プロジェクト)
 | `feet origin and AABB centre are not interchangeable` | DN-10 | 同上 |
 | `no behavioural branch names a block or item literal` | DN-11 | インベントリ本実装時 |
 | `every app-scoped service exposes reset` | DN-09 | サービスを増やすたび |
-| APIロックの diff テスト | plan.md §6 Step 0-3 | publish 開始前（必須） |
 | 参照実装 fixture との互換テスト | plan.md §3.5 | セーブフォーマット定義時 |
+
+**APIロックの diff はこの表から外れた。** 実装済みで、しかも vitest のテストではない。
+「コミット済みの `api-lock.md` が現在の公開面と一致するか」は `pnpm api:check` が見る
+（`pnpm verify` と CI の両方で走る）。vitest 側の `test/api-lock.test.ts` が見ているのは
+別のこと —— 生成器 `scripts/api-lock.ts` の機構そのもの（並びがロケール非依存であること、
+可搬性ガードが弾くべきものを弾き `import("effect/Cause")` を弾かないこと、
+レンダリングしたスナップショットが元のエントリに parse し戻ること、失敗時に出す diff が正しいこと）である。
+このファイルも 16 リポジトリに byte-identical で vendor されている。
+ゲート本体を vitest に複製しないのは、同じことを知るために Program をもう一度丸ごと構築する
+コストを払うことになるからである。詳細は [public-api.md](./public-api.md) §6。
