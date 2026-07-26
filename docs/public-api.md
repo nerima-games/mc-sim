@@ -558,7 +558,7 @@ plan.md §3.8 の責務のうち、界面をまだ書いていないもの。**�
 
 | 領域 | 参照実装 | 主な消費者 |
 | --- | --- | --- |
-| `EntityManager` | `packages/entity/application/`（mob/ 含む） | mx-gameplay / mx-multiplayer / mc-render |
+| ~~`EntityManager`~~ | — | **§7 で設計済** |
 | 体力 / 空腹 / XP | `health-service.ts` / `hunger-service.ts` / `xp-service.ts` | mx-gameplay / mx-ui |
 | 実績 / 統計 | `achievement-service.ts` / `statistics-service.ts` | mx-ui |
 | 設定状態 | `packages/game/application/settings-service.ts` (107) + `.config.ts` (70) + `.schema.ts` (79) | mx-ui / mc-render |
@@ -645,3 +645,265 @@ barrel の並べ替え・devDependency の bump で diff が出ないこと）�
   `PlayerServiceApi` のメンバを並べ替えると API 変更でなくても diff になる。承認は 1 行で済む。
 
 公開面を変える PR は `pnpm api:update` の結果を**同じ PR に**含めること。差分がレビュー対象そのものである。
+
+## 7. EntityManager —— エンティティ台帳
+
+plan.md §3.8 が責務文の**先頭**に置き、§5 の表が初回コミットから
+「着手前に本書へ追記すること」付きで空けていた枠。本節がその追記である。
+節番号が §6 の後ろなのは、§5 / §6 が他 5 ファイルから参照されているためで、
+順序ではなく参照の安定を採った（`docs/versioning.md` §3-4、`README.md`、
+`docs/testing.md`、`docs/architecture.md`、`docs/responsibility.md`）。
+
+```typescript
+// domain/entity.ts —— 純粋・全域・クロック無し
+type EntityId   = string & Brand.Brand<'EntityId'>     // 'e:0'
+type EntityKind = string & Brand.Brand<'EntityKind'>   // 'creeper'（**開いた**型。§7-2）
+
+type EntityState<S> = {
+  readonly feetPosition: Position     // 足元原点。命名で座標規約を運ぶ（DN-10）
+  readonly healthPoints: number
+  readonly behaviour: S               // ルール層の値。mc-sim は中を読まない（§7-1）
+}
+type Entity<S>      = EntityState<S> & { readonly id: EntityId; readonly kind: EntityKind }
+type EntityRoster<S> = { readonly entities: ReadonlyArray<Entity<S>>; readonly nextSerial: number }
+
+type EntityTransition<S> =
+  | { readonly _tag: 'Unchanged' }                                  // 同じオブジェクトを再利用
+  | { readonly _tag: 'Changed'; readonly state: EntityState<S> }
+  | { readonly _tag: 'Despawned' }
+type EntityStep<S, A> = { readonly transition: EntityTransition<S>; readonly emit: A | undefined }
+
+const spawnEntity:    <S>(roster, request: SpawnRequest<S>) => SpawnOutcome<S>
+const despawnEntity:  <S>(roster, id: EntityId) => DespawnOutcome<S>
+const findEntity:     <S>(roster, id: EntityId) => Entity<S> | undefined
+const countOfKind:    <S>(roster, kind: EntityKind) => number
+const sweepRoster:    <S, A>(roster, step: (e: Entity<S>) => EntityStep<S, A>) => SweepOutcome<S, A>
+const normaliseRoster: <S>(roster, repairBehaviour?: BehaviourRepair<S>) => NormaliseRosterOutcome<S>
+const mintEntityId / serialOfEntityId / isEntityId / isEntityKind / emptyRoster
+const UNCHANGED / DESPAWNED / changed
+
+// application/entity-manager.ts
+type EntityManagerApi<S> = {
+  readonly spawn:       (request: SpawnRequest<S>) => Effect.Effect<Entity<S>>
+  readonly despawn:     (id: EntityId) => Effect.Effect<boolean>
+  readonly entities:    Effect.Effect<ReadonlyArray<Entity<S>>>        // ゼロコピー。§7-3
+  readonly find:        (id: EntityId) => Effect.Effect<Entity<S> | undefined>
+  readonly count:       Effect.Effect<number>
+  readonly countOfKind: (kind: EntityKind) => Effect.Effect<number>
+  readonly sweep:       <A>(step: (e: Entity<S>) => EntityStep<S, A>) => Effect.Effect<ReadonlyArray<A>>
+  readonly snapshot:    Effect.Effect<EntityRoster<S>>
+  readonly restore:     (roster: EntityRoster<S>) => Effect.Effect<RosterRepair>   // §7-4
+  readonly reset:       Effect.Effect<void>
+}
+const ENTITY_MANAGER_TAG_KEY = '@nerima-games/mc-sim/EntityManager'
+const entityManagerTag:   <S>() => Context.Tag<EntityManager, EntityManagerApi<S>>
+const makeEntityManager:  <S>(initial?, repairBehaviour?) => Effect.Effect<EntityManagerApi<S>>
+const EntityManagerLayer: <S>(initial?, repairBehaviour?) => Layer.Layer<EntityManager>
+```
+
+### 7-0 なぜ今これが要るのか —— mx-gameplay が書き残した理由
+
+mx-gameplay の `domain/mob/` には**完成したクリーパーのルールが 4 本**ある
+（導火線・爆風・スポーン条件・ドロップ）。`gameplay:entities` stage はその 4 本を
+**1 本も呼んでいない**。`mx-gameplay/stages/registration.ts:230-246` が理由を書いている:
+
+> THE CREEPER IS NOT RUN HERE, AND THE REASON IS THE POINT. [...] Running them
+> would need something to iterate over: a roster of mobs with positions and
+> health, and a way to ask how far each one is from the player. That is state, it
+> has to survive a save/load round trip, and by the test in this file's header it
+> therefore belongs to mc-sim.
+>
+> A local `Ref<Map<MobId, CreeperFuse>>` here would run today and would be the
+> same mistake as the `timeOfDaySecs` Ref this file used to hold: a second owner
+> of a noun, diverging from the one that gets saved.
+
+plan.md §7 の「状態管理は sim、AI/スポーン/ドロップのルールは gameplay」と
+[responsibility.md](./responsibility.md) §3.1 の「Mob という存在がいて座標と体力を持つ」が
+そのまま本節の範囲である。**Mob の挙動は 1 行も入っていない。**
+`domain/entity.ts` に `'creeper'` という文字列は 1 つも無く、`countOfKind` は
+呼び出し側が渡した文字列を比較するだけである（DN-11）。
+
+### 7-1 `CreeperFuse` を「知らないまま」運ぶ —— 型引数
+
+mx-gameplay の `CreeperFuse` は明示的に**ホストが保持して返す値**として設計されている
+（`creeper-fuse.ts`: 「No `Ref`, no map from entity to fuse [...] the CREEPER is
+saved state (mc-sim's)」）。したがって mc-sim は**名指しできない値**を持つ必要がある。
+mx-gameplay を import することはできない（逆向き＝循環で `pnpm check:deps` が落とす）し、
+「これはクリーパーだから」と分岐することもできない（DN-11 の境界）。
+
+素直な綴り 2 通りはどちらも同じ方向に間違っている。
+
+| 案 | 何が壊れるか |
+| --- | --- |
+| `behaviour: Record<string, unknown>` / `unknown` | **型が消える。** mx-gameplay 側の読み出しが全部キャストになり、それは `ItemId = string` が作った「間違いようがないので正しくもなれない型」（`application/inventory-service.ts`）そのもの |
+| 挙動の閉じた union を**ここで**宣言 | mc-sim が Mob ロスタの第 2 の所有者になる。mx-gameplay が Mob を 1 種類足すたびに mc-sim の公開面が変わる —— plan.md §8 の第 1 リスクを、意見を持てないリポジトリが駆動する |
+
+採ったのは**型引数**である。`Entity<S>` が `S` を運び、本モジュールのすべての関数が
+`S` に対して parametric で、`S` に対して行う操作は「入れる」「そのまま返す」
+「ロード時にホスト自身の修復関数へ渡す」の 3 つしかない。
+ホストは `S` を 1 度だけ —— 両リポジトリが同時に見える唯一の場所で —— 具体化し、
+mx-gameplay はキャストもアダプタも無しで `CreeperFuse` を読み書きする。
+`test/entity.test.ts` は無知そのものを固定する: mc-sim が解釈しうるフィールドを 1 つも持たない値が、
+spawn / sweep / snapshot / restore を**参照同一性のまま**通り抜ける。
+
+**Tag が `Context.Tag` クラスではなく関数なのはこのためである。** クラスは自分の Tag に対して
+generic になれない。`Context.GenericTag<EntityManager, EntityManagerApi<S>>(KEY)` は
+クラスが束ねている 2 つを分ける —— **コンテキスト同一性**（`EntityManager`。引数を持たず、
+すべての `R` に現れるのはこちら）と**サービス値型**（引数を持つ）。
+Effect は Tag を文字列キーで解決するので、どの具体化も同じ 1 つのサービスを指す。
+
+これは `test/kernel-mirror.test.ts` が守っている ClockPort のハザードとは**別物**である。
+あちらは**形の不一致**（1 フィールドのミラーの Layer が 2 フィールドの Tag を満たし、
+欠けたフィールドが `undefined` になる）。こちらはどの具体化もメソッドも引数も同一で、
+違うのは **mc-sim が決して読まないフィールドの静的な型だけ**である。
+間違った `S` を選んだ消費者が得るのは「自分で誤って説明した値」であり、
+それは `unknown` 経由のキャストと同じ帰結で、違いは選択が 1 か所
+（ホストの `EntityManagerLayer<S>()`）に書き下されていることである。
+
+### 7-2 ID の設計 —— ブランデッド文字列と、**保存されるカウンタ**
+
+`EntityId` は `Brand.refined` の非空白文字列で、`mc-kernel/domain/identifiers.ts` の
+`WorldId` / `StageId` と**同じ形・同じ refinement** である。数値 ID ではなく文字列なのは
+永続化境界で 2^53 の問題を持ち込まないためで、ブランドが付いているのは
+「無関係な文字列を数種類持っている」唯一のフィールドだからである。
+
+**kernel のミラー（`domain/kernel-vocabulary.ts`）には入れていない。** 同ファイルのヘッダが
+「ソースより**広い**ミラー」を危険な方向として名指しており、kernel の `identifiers.ts` に
+エンティティ ID は無い。台帳が mc-sim のものである以上、その鍵も mc-sim のものである
+—— kernel が kernel 側の理由で公開する日までは（`ItemType` のときと同じ順序）。
+
+**`EntityRoster.nextSerial` はセーブされる状態の一部である。これが「ID がセーブを生き延びる」の実体である。**
+毎回 0 から採番する台帳は、ロード直後の新しい Mob に `e:1` を再発行する ——
+セーブが既に `e:1` を持っているのに。同じ ID の 2 体は `findEntity` から片方しか見えず、
+もう片方は despawn 不能になる。参照実装で最も高くついたシングルトンのバグ
+（"Player already exists"、`packages/entity/application/player-service.ts:15-18`）の、
+名前を数字に替えた形である。
+
+採番は**乱数ではない**。`Math.random()` が無い理由は `Date.now()` が無い理由と同じで（DN-12）、
+plan.md §5.1-3 が参照実装のテストをオラクルとして使う前提に決定性を置いているためである。
+カウンタは再現するが UUID は再現しない。
+
+### 7-3 反復はホットパスである —— `entities` はゼロコピー、無風の sweep は無音
+
+`gameplay:entities` は**毎フレーム全 Mob**を走る。plan.md §5.2 は 1 節まるごとが
+フレーム毎のアロケーションの話であり、ここは公開面がそれを取り消せる場所である。
+契約は実装詳細ではなく**性質**として書いてあり、テストは時間ではなく**参照同一性**を assert する。
+
+- `entities` は台帳が持っている**その配列**を返す。コピーも `Array.from` も投影も無い。
+  書き込みを挟まない 2 回の読みは、同じ配列・同じオブジェクトを返す。
+- `Unchanged` のエンティティは**同じオブジェクトが結果に入る**。1 体だけ変えた sweep の後、
+  他の 999 体は `toBe` で同一である（レンダラとネットワーク差分が参照比較できる）。
+- **何も変わらず何も emit しなかった sweep は、引数の roster をそのまま返し、配列を 1 本も作らない。**
+  結果配列は最初に実際に変わったエンティティで初めて生成され、変わらなかった前半から作られる。
+  無風のフレーム —— 全員 Dormant、プレイヤーは遠く —— のコストは Mob 1 体あたり
+  クロージャ呼び出し 1 回だけである。これは mx-gameplay が 1 階層上で DN-GP-1 に対して
+  やっていること（「An idle tick stops HERE, without touching the store」）と同じ規律である。
+
+`find` は線形である。Map を併置すれば O(1) になるが**書き込みのたびに第 2 の構造を作る**ことになり、
+参照実装が敵対 Mob を 16 体で打ち切っている（`MAX_HOSTILE_COUNT`）台帳に対して、
+フレーム上のパスでアロケーションを払ってフレーム外のパスを速くすることになる。
+索引は「検討して作らなかった」ものであり、`domain/entity.ts` に再検討の引き金ごと書いてある。
+
+**書き込み口は `sweep` 1 本だけである。** `moveTo` も `damage` も `setBehaviour` も無い。
+第 2 の書き込み口は不変条件を守る場所が 2 か所になることであり、しかも爆風の場合は
+「半径内の全エンティティにダメージ」＝ 1 パスであって N 回の原子更新ではない。
+1 体だけの更新は `sweep` の中で id を見ればよく、触らなかったエンティティのコストはゼロである。
+
+### 7-4 `restore` は全域 —— そして**修復が修復対象を再生産しかけた**
+
+`normaliseInventory` / `normaliseTimeState` と同じ判断である。セーブはバージョン境界を跨いで届き、
+それは異常ではなく通常であり、直せるフィールドでワールドロードを失敗させると
+**直せるセーブが開けないセーブになる**。エラーチャネルは無く、代わりに何を変えたかが
+`RosterRepair` として返る（`InventoryService.restore` が `leftover` を返すのと同じ判断）。
+
+修復は 5 つ。
+
+1. **入れ物。** `entities` が無い / 配列でない → 空。穴や `null` は飛ばす。
+2. **kind。** 非空白文字列でなければ**エンティティごと捨てて `discarded` に数える**。
+   唯一修復不能なフィールドである —— 既定の kind は「mc-sim が Mob を発明する」ことにしかならない。
+3. **座標と体力。** 値に修復する。**捨てない。** 大きさを持たない座標は 0 になる ——
+   `domain/time-of-day.ts` の `clampFraction`（「大きさを持たない値は 0 = 真夜中。実在する瞬間であることが効く」）
+   と同じ論法である。逆（`NaN` の Mob を捨てる）を採らなかったのは、`NaN` があらゆる距離判定を
+   false にするため、起爆範囲からも despawn 半径からも見えない**不死で到達不能な Mob** になるからで、
+   原点に立っている Mob は少なくとも**目で見える間違い**である。
+4. **ID。** 空白の ID と、同じセーブ内で既に使われた ID は**採番し直して `reidentified` に数える**。
+   本モジュールが採番していない ID でも一意なら**触らない** —— 他ビルドの `'creeper-7'` は
+   鍵として完璧に機能し、改名はロードが守ろうとしている参照そのものを壊す。
+5. **カウンタ。** 保存された値が何であれ、結果の `nextSerial` は存在するどの採番済み serial よりも大きい。
+
+**修復 5 は 2 度読む必要があった。** [testing.md](./testing.md) §3.0.1 が記録している
+「修復関数が SIM-1 を再生産していた」には、ここに正確な相似形がある:
+修復 4 の採番には serial が要る → 素直な供給源は保存された `nextSerial` →
+その `nextSerial` は**いま修復しているファイルのフィールド**である。
+信じると、`nextSerial: 0` と書いてある切り詰められたセーブの重複 `e:0` は `e:0` に採番し直され、
+**修復が取り除くはずの衝突をそのまま出力しながら `reidentified: 1` と報告する。**
+だからカウンタは、何かが採番するより**先に**、実際に存在する ID の上で確定する。
+`test/entity.test.ts` は両方を固定する ——「カウンタが嘘のセーブを修復しても衝突しない」と、
+「修復済みを修復すると 0 を報告する」（不動点であること。将来の修復が不動点でなければ落ちる）。
+
+**コンストラクタも同じ修復を通る。** `makeInventoryService` がスロット数で塞ぎ、
+`makeTimeService` が後から日長で塞いだ穴と同じである（§3.0.1）: `XxxLayer(loadedState)` は
+ホストがロード済みワールドを渡す自然な形であり、`restore` だけを守ると別の入口が空く。
+
+### 7-5 ホストがやること —— クリーパーを動かすための呼び出し列
+
+`simModule` には**まだ入れていない**。`stages/registration.ts` が `InventoryService` を
+`simModule.layers` に入れている理由（mc-compose の `docs/e2e-triage.md` §4.3 が計測した
+「2 リポジトリが共有するサービスを組み立てる場所が 1 つでないと何が起きるか」）は
+1 語残らずここにも当てはまるが、`simModule` は `const` であり `S` は**ホストの選択**である。
+既定値を出荷することは `BehaviourRepair` の無い `EntityManagerApi<unknown>` を出荷することであり、
+その隣に自分の型付き Layer を merge したホストは、モジュール契約に従ったつもりで
+§4.3 が計測した 2 インスタンスの欠陥を作る。**どのホストにとっても誤っている既定値は、既定値が無いより悪い。**
+`simModule` が型引数を持つかどうかは配線の段の判断であり、公開面の破壊的変更なので、
+計測できるホストができてから採るべきである。
+
+したがってホストは、`simModule.layers` と**同じ `Effect.provide` の中で**明示的に渡す。
+
+```typescript
+// 1. 世界を組む —— roster は sim の他のサービスと同じ 1 回の provide の中で建てる
+const world = Layer.merge(simModule.layers, EntityManagerLayer<CreeperFuse>())
+
+// 2. gameplay:entities の中身（mx-gameplay 側。mc-sim は 1 行も書かない）
+const roster = yield* entityManagerTag<CreeperFuse>()
+const player = yield* PlayerService
+const feet   = (yield* player.pose).feetPosition
+
+const blasts = yield* roster.sweep<Explosion>((entity) => {
+  if (entity.kind !== CREEPER_KIND) {
+    return { transition: UNCHANGED, emit: undefined }        // 触らない = 無コスト
+  }
+  const senses = { distanceToTargetBlocks: distance(entity.feetPosition, feet) }
+  const step   = stepCreeperFuse(entity.behaviour, senses, dt)   // ← mx-gameplay の既存ルール
+  return {
+    transition: step.fuse === entity.behaviour
+      ? UNCHANGED
+      : changed({ ...entity, behaviour: step.fuse }),
+    emit: step.explosion,
+  }
+})
+
+// 3. 爆風を解決する（これも mx-gameplay。mc-sim は damage を数えるだけ）
+for (const blast of blasts) { /* explosionDamageAt(blast, ...) → roster.sweep / health */ }
+
+// 4. スポーン: canHostileSpawnAt(candidate) が Spawn を返し、かつ
+//    (yield* roster.countOfKind(CREEPER_KIND)) < MAX_HOSTILE_COUNT のときだけ
+yield* roster.spawn({ kind: CREEPER_KIND, feetPosition, healthPoints: 20, behaviour: DORMANT_FUSE })
+
+// 5. ドロップ: rollMobDrops(CREEPER_DROPS, kill, rollsFor) → inventory.add(...)
+//    そのあと roster.despawn(id)（あるいは同じ sweep の中で DESPAWNED）
+```
+
+`mx-gameplay/domain/mob/` は**この配線で 1 行も変わらない。**
+`hostile-spawn.ts` のヘッダが「HOW MANY（`MAX_HOSTILE_COUNT = 16` against a live census）は
+mc-sim と一緒に到着する」と書いているものが `countOfKind` であり、
+`stages/registration.ts` が「this stage grows a loop」と書いているループが `sweep` である。
+
+### 7-6 いま入れていないもの
+
+| 繰り延べ | いまどう見えるか |
+| --- | --- |
+| `EntityKind` の閉じたロスタ | **開いた**ブランデッド文字列。kernel が `EntityType` を公開する日に別名 1 本の付け替えになる。ここで発明すれば「推測されたロスタ」を 3 度目にやることになり、しかも plan.md §3.11 が Mob の同一性をルール層に置いている以上、見えないリポジトリの代わりに推測することになる |
+| 最大体力 / 当たり判定 / 移動速度 | 無い。kind ごとの定数はルール層のもので、表をミラーすれば mc-sim が「クリーパーとは何か」を知る商売に戻る |
+| `find` の索引 | 線形のまま（§7-3） |
+| ドロップアイテム / 経験値オーブのエンティティ | §5 の表に残っている。台帳自体は kind を選ばないので、`EntityKind('dropped_item')` として**今日でも入る** —— 入っていないのは「落ちたアイテムがどう振る舞うか」がルールだからである |
+| `simModule` への同梱 | §7-5 |

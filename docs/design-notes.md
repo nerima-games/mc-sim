@@ -520,6 +520,8 @@ packages/game/application/game-state-service.ts:87-92
 | テスト名 | 場所 |
 | --- | --- |
 | `each Layer build is an independent world, which is what re-entrancy needs` | `test/scenario.test.ts` |
+| `each build is an independent world, which is what re-entrancy needs` | `test/entity-manager.test.ts` |
+| `reset empties the roster AND the counter — a new world, not a reload` | `test/entity-manager.test.ts`。台帳の `reset` は採番カウンタも 0 に戻す（**リロードは `restore`**） |
 | **（要追加）** `every app-scoped service exposes reset, and reset returns it to its initial snapshot` | 本実装時。サービスを増やすたびに追加 |
 
 ---

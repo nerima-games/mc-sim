@@ -23,6 +23,7 @@
 // --- Domain: pure values and transitions -----------------------------------
 export * from './domain/camera-pose'
 export * from './domain/crafting'
+export * from './domain/entity'
 export * from './domain/frame-timing'
 export * from './domain/inventory'
 export * from './domain/recipe'
@@ -30,6 +31,7 @@ export * from './domain/time-of-day'
 
 // --- Application: Effect services -------------------------------------------
 export * from './application/autosave'
+export * from './application/entity-manager'
 export * from './application/game-loop'
 export * from './application/inventory-service'
 export * from './application/player-service'

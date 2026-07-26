@@ -15,7 +15,7 @@ plan.md §2.3-1 の分類でいう **名詞**。
 
 | 領域 | 具体 | 状態 |
 | --- | --- | --- |
-| エンティティ管理 | `EntityManager`。存在・ID・トランスフォームの台帳 | 未実装 |
+| エンティティ管理 | `EntityManager`。存在・ID・トランスフォームの台帳 | 実装済 `domain/entity.ts` / `application/entity-manager.ts`。§3.1 |
 | プレイヤー状態 | `PlayerService`。姿勢（feet 原点）、モード | 骨組みのみ `application/player-service.ts` |
 | **カメラ姿勢** | `CameraPoseSnapshot` の**正**。唯一の発行者 | 実装済 `application/player-service.ts` |
 | インベントリ | スタックの置き場、追加/削除/照会 | 骨組みのみ `application/inventory-service.ts` |
@@ -94,7 +94,25 @@ plan.md §2.3-3 により mc-compose のもの、(2) mc-render は mc-sim に依
 
 **Mob。** 「Mob という存在がいて座標と体力を持つ」は mc-sim（`EntityManager`）。
 「クリーパーがプレイヤーに近づいて起爆する」は mx-gameplay。plan.md §7 が
-「状態管理は sim、AI/スポーン/ドロップのルールは gameplay」と明記している。
+「状態管理は sim、AI/スポーン/ドロップのルールは gameplay」と明記している。**実装済。**
+
+この行は長らく両側から空いていた。mx-gameplay の `domain/mob/` には完成した
+クリーパーのルールが 4 本（導火線・爆風・スポーン条件・ドロップ）あり、
+`gameplay:entities` stage はそのどれも呼んでいなかった ——
+`mx-gameplay/stages/registration.ts:230-246` が「走らせるには座標と体力を持つ Mob の名簿が要る。
+それはセーブを跨ぐ状態であり、したがって mc-sim のものである。ここに
+`Ref<Map<MobId, CreeperFuse>>` を置けば今日動くが、それは削除した `timeOfDaySecs` の Ref と
+同じ間違い（名詞の第 2 の所有者）になる」と書いて**意図的に空けていた**。名簿が本節の側である。
+
+境界の実装上の形は 1 つの型引数である。`Entity<S>` の `behaviour` が
+mx-gameplay の `CreeperFuse` を運ぶが、**mc-sim はその中を読まないし読めない**
+（mx-gameplay を import すれば循環で `pnpm check:deps` が落ちる）。
+`domain/entity.ts` に `'creeper'` という文字列は 1 つも無く、kind による分岐も無い。
+根拠と、`Record<string, unknown>` にしなかった理由は
+[public-api.md](./public-api.md) §7-1。
+
+**体力の数値は台帳が持ち、最大体力は持たない。** kind ごとの定数はルール層のものであり、
+その表をミラーすれば mc-sim が「クリーパーとは何か」を知ることになる（§7-6）。
 
 **戦闘・体力。** 体力の数値と減算は mc-sim。「剣が何ダメージか」「落下で何ダメージか」は mx-gameplay。
 plan.md §7「sim(状態) + gameplay(ルール)」。

@@ -122,6 +122,7 @@ Nix を使わない場合は Node.js 22 以上と pnpm 9.15.0（`corepack` 推�
 | 自動保存の `Schedule.spaced` | `application/autosave.ts` | DN-05 |
 | `Ref.modify` による TOCTOU 回避 | `application/inventory-service.ts` | DN-07 |
 | レシピ表とクラフトの原子性 | `domain/recipe.ts` / `domain/crafting.ts` | DN-07 / DN-11 |
+| **エンティティ台帳（`EntityManager`）** | `domain/entity.ts` / `application/entity-manager.ts` | DN-07 / DN-09 / DN-11。[公開API §7](./docs/public-api.md) |
 | **`sim:physics` の登録** | `stages/registration.ts` / `stages/stage-ids.ts` | [責務 §2.1](./docs/responsibility.md) |
 
 `sim:physics` は**ロスターのリポジトリ間順序エッジ 4 本すべての宛先**であり、
@@ -135,7 +136,16 @@ Nix を使わない場合は Node.js 22 以上と pnpm 9.15.0（`corepack` 推�
 
 ### まだ無いもの
 
-- **EntityManager / 体力・空腹・XP / 実績・統計 / 設定状態。**
+- ~~EntityManager~~ → **入った**（`domain/entity.ts` / `application/entity-manager.ts`）。
+  mx-gameplay の `domain/mob/` にあるクリーパーのルール 4 本が待っていた名簿であり、
+  向こうの `gameplay:entities` が「走らせるには座標と体力を持つ名簿が要る。それは
+  セーブを跨ぐ状態なので mc-sim のものだ」と書いて**意図的に空けていた**枠である。
+  `CreeperFuse` は**型引数**として運ぶ —— mc-sim は中を読まないし、mx-gameplay を
+  import できない（循環）。設計と、ホスト側の呼び出し列は
+  [`docs/public-api.md`](./docs/public-api.md) §7。
+  **`simModule` にはまだ入れていない**（§7-5 に理由）。
+- **体力・空腹・XP / 実績・統計 / 設定状態。** 台帳が持つ体力はエンティティの
+  `healthPoints` だけで、プレイヤーの空腹・XP・最大体力はまだ無い。
 - **かまど / 醸造 / 金床 / エンチャント**（plan.md §7 のうちクラフト以外）。
   グリッド形ではないので `domain/recipe.ts` には 1 行も無い。レシピモデルは
   shaped / shapeless までで、材料タグ（「任意の板材」）は `Ingredient` を

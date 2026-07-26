@@ -13,7 +13,7 @@
 <!-- ------------------------------------------------------------------------- -->
 
 format: 1
-exported declarations: 111
+exported declarations: 148
 supporting declarations: 24
 
 ## Exported
@@ -43,6 +43,12 @@ type AutoSaveStatus = 'saving' | 'saved' | 'error';
 
 ```ts
 type AutoSaveStatusReporter = (status: AutoSaveStatus) => Effect.Effect<void>;
+```
+
+### BehaviourRepair  `type`
+
+```ts
+type BehaviourRepair<S> = (kind: EntityKind, behaviour: S) => S;
 ```
 
 ### CraftGrid  `type`
@@ -87,6 +93,33 @@ type CraftResult = {
 const DEFAULT_DAY_LENGTH_SECS = 400;
 ```
 
+### DESPAWNED  `const`
+
+```ts
+const DESPAWNED: EntityTransition<never>;
+```
+
+### DespawnOutcome  `type`
+
+```ts
+type DespawnOutcome<S> = {
+    readonly roster: EntityRoster<S>;
+    readonly despawned: boolean;
+};
+```
+
+### ENTITY_ID_PREFIX  `const`
+
+```ts
+const ENTITY_ID_PREFIX = "e:";
+```
+
+### ENTITY_MANAGER_TAG_KEY  `const`
+
+```ts
+const ENTITY_MANAGER_TAG_KEY = "@nerima-games/mc-sim/EntityManager";
+```
+
 ### EXPERIENCE_MODULE_STAGE_PREFIXES  `const`
 
 ```ts
@@ -97,6 +130,111 @@ const EXPERIENCE_MODULE_STAGE_PREFIXES: readonly ["gameplay:", "redstone:", "ui:
 
 ```ts
 const EYE_LEVEL_OFFSET = 1.62;
+```
+
+### Entity  `type`
+
+```ts
+type Entity<S> = EntityState<S> & {
+    readonly id: EntityId;
+    readonly kind: EntityKind;
+};
+```
+
+### EntityId  `const`
+
+```ts
+const EntityId: Brand.Brand.Constructor<EntityId>;
+```
+
+### EntityId  `type`
+
+```ts
+type EntityId = string & Brand.Brand<'EntityId'>;
+```
+
+### EntityKind  `const`
+
+```ts
+const EntityKind: Brand.Brand.Constructor<EntityKind>;
+```
+
+### EntityKind  `type`
+
+```ts
+type EntityKind = string & Brand.Brand<'EntityKind'>;
+```
+
+### EntityManager  `type`
+
+```ts
+type EntityManager = {
+    readonly _tag: '@nerima-games/mc-sim/EntityManager';
+};
+```
+
+### EntityManagerApi  `type`
+
+```ts
+type EntityManagerApi<S> = {
+    readonly spawn: (request: SpawnRequest<S>) => Effect.Effect<Entity<S>>;
+    readonly despawn: (id: EntityId) => Effect.Effect<boolean>;
+    readonly entities: Effect.Effect<ReadonlyArray<Entity<S>>>;
+    readonly find: (id: EntityId) => Effect.Effect<Entity<S> | undefined>;
+    readonly count: Effect.Effect<number>;
+    readonly countOfKind: (kind: EntityKind) => Effect.Effect<number>;
+    readonly sweep: <A>(step: (entity: Entity<S>) => EntityStep<S, A>) => Effect.Effect<ReadonlyArray<A>>;
+    readonly snapshot: Effect.Effect<EntityRoster<S>>;
+    readonly restore: (roster: EntityRoster<S>) => Effect.Effect<RosterRepair>;
+    readonly reset: Effect.Effect<void>;
+};
+```
+
+### EntityManagerLayer  `const`
+
+```ts
+const EntityManagerLayer: <S>(initial?: EntityRoster<S>, repairBehaviour?: BehaviourRepair<S>) => Layer.Layer<EntityManager>;
+```
+
+### EntityRoster  `type`
+
+```ts
+type EntityRoster<S> = {
+    readonly entities: ReadonlyArray<Entity<S>>;
+    readonly nextSerial: number;
+};
+```
+
+### EntityState  `type`
+
+```ts
+type EntityState<S> = {
+    readonly feetPosition: Position;
+    readonly healthPoints: number;
+    readonly behaviour: S;
+};
+```
+
+### EntityStep  `type`
+
+```ts
+type EntityStep<S, A> = {
+    readonly transition: EntityTransition<S>;
+    readonly emit: A | undefined;
+};
+```
+
+### EntityTransition  `type`
+
+```ts
+type EntityTransition<S> = {
+    readonly _tag: 'Unchanged';
+} | {
+    readonly _tag: 'Changed';
+    readonly state: EntityState<S>;
+} | {
+    readonly _tag: 'Despawned';
+};
 ```
 
 ### FIRST_FRAME_DELTA_SECS  `const`
@@ -272,6 +410,14 @@ type NormaliseOutcome = {
 };
 ```
 
+### NormaliseRosterOutcome  `type`
+
+```ts
+type NormaliseRosterOutcome<S> = RosterRepair & {
+    readonly roster: EntityRoster<S>;
+};
+```
+
 ### OWN_STAGE_PREFIX  `const`
 
 ```ts
@@ -396,6 +542,15 @@ type RemoveOutcome = {
 };
 ```
 
+### RosterRepair  `type`
+
+```ts
+type RosterRepair = {
+    readonly discarded: number;
+    readonly reidentified: number;
+};
+```
+
 ### SIM_STAGE_IDS  `const`
 
 ```ts
@@ -446,6 +601,35 @@ type SimFrameState = {
 type Slot = ItemStack | undefined;
 ```
 
+### SpawnOutcome  `type`
+
+```ts
+type SpawnOutcome<S> = {
+    readonly roster: EntityRoster<S>;
+    readonly entity: Entity<S>;
+};
+```
+
+### SpawnRequest  `type`
+
+```ts
+type SpawnRequest<S> = {
+    readonly kind: EntityKind;
+    readonly feetPosition: Position;
+    readonly healthPoints: number;
+    readonly behaviour: S;
+};
+```
+
+### SweepOutcome  `type`
+
+```ts
+type SweepOutcome<S, A> = {
+    readonly roster: EntityRoster<S>;
+    readonly emitted: ReadonlyArray<A>;
+};
+```
+
 ### TICKS_PER_SECOND  `const`
 
 ```ts
@@ -491,6 +675,12 @@ type TimeState = {
 };
 ```
 
+### UNCHANGED  `const`
+
+```ts
+const UNCHANGED: EntityTransition<never>;
+```
+
 ### UPSTREAM_STAGE_IDS  `const`
 
 ```ts
@@ -533,6 +723,12 @@ const cameraPoseOf: (pose: PlayerPose, capturedAtSecs: MonotonicTimeSecs) => Cam
 const cellAt: (grid: CraftGrid, x: number, y: number) => Slot;
 ```
 
+### changed  `const`
+
+```ts
+const changed: <S>(state: EntityState<S>) => EntityTransition<S>;
+```
+
 ### clampFrameDelta  `const`
 
 ```ts
@@ -557,6 +753,12 @@ const conflictsIn: (table: RecipeTable) => ReadonlyArray<RecipeConflict>;
 const countOf: (inventory: Inventory, item: ItemType) => number;
 ```
 
+### countOfKind  `const`
+
+```ts
+const countOfKind: <S>(roster: EntityRoster<S>, kind: EntityKind) => number;
+```
+
 ### craftFromGrid  `const`
 
 ```ts
@@ -575,16 +777,40 @@ const craftGrid: (width: number, height: number, items: ReadonlyArray<ItemType |
 const dayLengthSecs: (state: TimeState) => number;
 ```
 
+### despawnEntity  `const`
+
+```ts
+const despawnEntity: <S>(roster: EntityRoster<S>, id: EntityId) => DespawnOutcome<S>;
+```
+
 ### emptyInventory  `const`
 
 ```ts
 const emptyInventory: () => Inventory;
 ```
 
+### emptyRoster  `const`
+
+```ts
+const emptyRoster: <S>() => EntityRoster<S>;
+```
+
+### entityManagerTag  `const`
+
+```ts
+const entityManagerTag: <S>() => Context.Tag<EntityManager, EntityManagerApi<S>>;
+```
+
 ### exactly  `const`
 
 ```ts
 const exactly: (item: ItemType) => Ingredient;
+```
+
+### findEntity  `const`
+
+```ts
+const findEntity: <S>(roster: EntityRoster<S>, id: EntityId) => Entity<S> | undefined;
 ```
 
 ### forwardVector  `const`
@@ -629,6 +855,18 @@ const ingredientMatches: (ingredient: Ingredient, item: ItemType) => boolean;
 const isEmpty: (inventory: Inventory) => boolean;
 ```
 
+### isEntityId  `const`
+
+```ts
+const isEntityId: (value: unknown) => value is EntityId;
+```
+
+### isEntityKind  `const`
+
+```ts
+const isEntityKind: (value: unknown) => value is EntityKind;
+```
+
 ### isNight  `const`
 
 ```ts
@@ -645,6 +883,12 @@ const isValidTimeState: (state: TimeState) => boolean;
 
 ```ts
 const itemStack: (item: ItemType, count: number) => ItemStack;
+```
+
+### makeEntityManager  `const`
+
+```ts
+const makeEntityManager: <S>(initial?: EntityRoster<S>, repairBehaviour?: BehaviourRepair<S>) => Effect.Effect<EntityManagerApi<S>>;
 ```
 
 ### makeGameLoop  `const`
@@ -698,6 +942,12 @@ const makeTimeService: (initial?: Time.TimeState) => Effect.Effect<TimeServiceAp
 const matchRecipe: (table: RecipeTable, grid: CraftGrid) => RecipeMatch;
 ```
 
+### mintEntityId  `const`
+
+```ts
+const mintEntityId: (serial: number) => EntityId;
+```
+
 ### moonPhase  `const`
 
 ```ts
@@ -708,6 +958,12 @@ const moonPhase: (state: TimeState) => number;
 
 ```ts
 const normaliseInventory: (inventory: Inventory) => NormaliseOutcome;
+```
+
+### normaliseRoster  `const`
+
+```ts
+const normaliseRoster: <S>(roster: EntityRoster<S>, repairBehaviour?: BehaviourRepair<S>) => NormaliseRosterOutcome<S>;
 ```
 
 ### normaliseTimeState  `const`
@@ -726,6 +982,12 @@ const performAutoSaveTick: <E>(persist: Effect.Effect<void, E>, reporter?: AutoS
 
 ```ts
 const removeItem: (inventory: Inventory, item: ItemType, count: number) => RemoveOutcome;
+```
+
+### serialOfEntityId  `const`
+
+```ts
+const serialOfEntityId: (id: string) => number | undefined;
 ```
 
 ### setDayLength  `const`
@@ -782,10 +1044,22 @@ const slotAt: (inventory: Inventory, index: number) => Slot;
 const snapshotAgeSecs: (snapshot: CameraPoseSnapshot, now: MonotonicTimeSecs) => number;
 ```
 
+### spawnEntity  `const`
+
+```ts
+const spawnEntity: <S>(roster: EntityRoster<S>, request: SpawnRequest<S>) => SpawnOutcome<S>;
+```
+
 ### startAutoSaveDaemon  `const`
 
 ```ts
 const startAutoSaveDaemon: <E>(persist: Effect.Effect<void, E>, interval?: Duration.Duration, reporter?: AutoSaveStatusReporter) => Effect.Effect<Fiber.RuntimeFiber<number, never>>;
+```
+
+### sweepRoster  `const`
+
+```ts
+const sweepRoster: <S, A>(roster: EntityRoster<S>, step: (entity: Entity<S>) => EntityStep<S, A>) => SweepOutcome<S, A>;
 ```
 
 ### timeOfDay  `const`

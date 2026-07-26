@@ -98,11 +98,13 @@ org パッケージも新規 npm 依存も無い。
 
 ## 3. 現在のテスト
 
-`vitest run`。13 ファイル / 217 テスト。
+`vitest run`。16 ファイル / 296 テスト。
 
 | ファイル | テスト数 | 対応 |
 | --- | ---: | --- |
 | `test/scenario.test.ts` | 3 | plan.md §3.8 の決定論シナリオ本体 |
+| `test/entity.test.ts` | 32 | エンティティ台帳の値側（[public-api.md](./public-api.md) §7）。§3.4 |
+| `test/entity-manager.test.ts` | 20 | 台帳サービス・Tag・セーブ経路。DN-07 / DN-09。§3.4 |
 | `test/time-of-day.test.ts` | 27 | DN-04。SIM-11 / SIM-1 の domain 側。clamp の全域性 |
 | `test/time-service.test.ts` | 10 | **ワールドロード経路**。SIM-1 / SIM-8 |
 | `test/frame-timing.test.ts` | 17 | DN-03。clamp 損失の定量化（SIM-5） |
@@ -113,7 +115,8 @@ org パッケージも新規 npm 依存も無い。
 | `test/crafting.test.ts` | 13 | クラフトの原子性。DN-07 |
 | `test/autosave.test.ts` | 12 | DN-05 / DN-08。SIM-9 / SIM-6 |
 | `test/kernel-mirror.test.ts` | 11 | `domain/kernel-vocabulary.ts` が mc-kernel と同形であること（§4.4）。アイテムロスタを含む（§3.1） |
-| `test/check-dependency-whitelist.test.ts` | 26 | DN-12 + 依存ホワイトリスト本体 |
+| `test/stage-registration.test.ts` | 17 | `sim:physics` の id と `after` 0 本（[responsibility.md](./responsibility.md) §2.1） |
+| `test/check-dependency-whitelist.test.ts` | 27 | DN-12 + 依存ホワイトリスト本体 |
 | `test/api-lock.test.ts` | 26 | 生成器 `scripts/api-lock.ts` の機構そのもの（§7 末尾） |
 
 ### 3.0 `--stats` の発見を閉じたときに何をしたか
@@ -214,6 +217,33 @@ Effect は Tag を**その文字列キー**で解決する。3 つのコピー�
 
 型の上では `isItemType(slot.item)` の否定側は `never` に絞られる。**そこがテストする理由である** ——
 この関数が存在する目的の値は、このリポジトリから来ない。
+
+### 3.4 エンティティ台帳のテストが守っているもの
+
+3 つは**時間ではなく参照同一性**を assert する。ホットパスの性質を「速い」で固定すると
+CI のノイズで落ちるか、遅くなっても緑のままになるかのどちらかにしかならない
+（[public-api.md](./public-api.md) §7-3）。
+
+| 何が壊れたら落ちるか | テスト |
+| --- | --- |
+| `entities` が防御的コピーを返すようになる | `entities resolves to the roster's OWN array, not a copy`（2 回の読みが `toBe`） |
+| 無風の sweep が配列を作り直す | `an idle sweep returns the ARGUMENT roster — no array, no object, nothing` |
+| 変わらなかったエンティティが作り直される | `an UNCHANGED entity is the SAME object after a sweep that changed a different one` |
+| ルールが id や kind を書き換えられるようになる | `a rule cannot change an id or a kind, because a transition does not carry one` |
+| mc-sim が behaviour の中を見はじめる | `the behaviour is carried through BY REFERENCE`、`per-kind state survives the round trip, and mc-sim never looked inside it`（どちらも `toBe`） |
+| ID がセーブを跨いで安定しなくなる | `ids are stable across a snapshot/restore cycle`（カウンタが戻ることまで見る） |
+| 切り詰められた / 他ビルドのセーブで例外が出る | `a truncated save loads as an empty world instead of throwing`、`restore repairs a FOREIGN save rather than throwing, and says what it changed` |
+| **修復が修復対象を再生産する** | `REGRESSION: the repair does not re-mint the very collision it exists to remove`（`nextSerial` が嘘のセーブ）、`a repaired roster is a FIXED POINT — repairing it again reports nothing` |
+| コンストラクタ経由の入口が塞がれていない | `the CONSTRUCTOR repairs too, because a Layer is the other way a save gets in`（§3.0.1 の 2 件目と同型） |
+| 並行 spawn が同じ ID を採番する | `REGRESSION: concurrent spawns all land — Ref.modify, not get-then-set`（DN-07） |
+| Tag のキー文字列が黙って変わる | `the key is the contract with four repositories, pinned as a literal`（§4.6 のとおりリテラルで） |
+
+**mx-gameplay のルールは transcribe してある。** `test/entity.test.ts` の
+`describe('the shape mx-gameplay is waiting for')` は導火線の状態機械を書き写して
+sweep 越しに走らせる。import はできない（mx-gameplay → mc-sim の逆向きは循環）ので、
+これは**ルールの第 2 実装ではなく**、台帳が実際に使われる形で動くことを見るための代役である。
+定数（3 ブロック / 1.5 秒 / オーバーシュートで起爆）は
+`mx-gameplay/domain/mob/creeper-fuse.ts` のものであり、あちらの `test/mob.test.ts` が本体を固定している。
 
 ## 4. テストの書き方（本リポジトリの規約）
 
