@@ -180,11 +180,26 @@ describe('the mirrored brands are kernel’s brands', () => {
  * SAME commit as `domain/kernel-vocabulary.ts`, from kernel's `ITEM_TYPES`, and
  * never from what mc-sim would like to write a recipe for.
  *
- * That has now happened once, and it is worth reading as the procedure working
- * rather than as a one-off: sixteen became twenty-three because kernel decided
- * it did, with drop rules and mob drops behind each literal, and this list was
- * re-transcribed from kernel's module in the same commit as the mirror and the
- * two recipe rows that needed it.
+ * That has now happened twice, and the second time is the one to read, because
+ * the procedure did NOT work. Sixteen became twenty-three with drop rules and
+ * mob drops behind each literal, and this list was re-transcribed in the same
+ * commit — that is the procedure working. Then kernel went from twenty-three to
+ * ninety-seven and NOTHING HERE MOVED, for as long as it took mc-dev-meta's
+ * `pnpm check:repoint` to delete the mirror and typecheck against the real
+ * module.
+ *
+ * Note what this test could and could not do about that. It pins mc-sim's
+ * transcription against a SECOND hand-written copy of kernel's roster, so it
+ * catches an author editing one and not the other — real drift, worth catching.
+ * It cannot catch BOTH being stale together, which is exactly what happened,
+ * because neither copy can see kernel. Only the cross-repository check can, and
+ * the two are complementary rather than redundant: this one says "the mirror is
+ * what its author thought it was", `check:repoint` says "what its author
+ * thought was right".
+ *
+ * BOTH LISTS ARE NOW MACHINE-DUMPED from kernel's module rather than retyped,
+ * which removes the transcription slip but not the staleness — the update still
+ * has to be triggered by somebody, and `check:repoint` is what triggers it.
  */
 describe('the mirrored item roster is kernel’s item roster', () => {
   /**
@@ -215,6 +230,80 @@ describe('the mirrored item roster is kernel’s item roster', () => {
     'blaze_powder',
     'flint_and_steel',
     'fire_charge',
+    'granite',
+    'diorite',
+    'andesite',
+    'deepslate',
+    'obsidian',
+    'smooth_basalt',
+    'calcite',
+    'amethyst_block',
+    'sandstone',
+    'prismarine',
+    'soul_sand',
+    'coal_block',
+    'iron_block',
+    'gold_block',
+    'diamond_block',
+    'redstone_block',
+    'lapis_block',
+    'emerald_block',
+    'redstone_torch',
+    'lever',
+    'stone_button',
+    'repeater',
+    'redstone_lamp',
+    'observer',
+    'comparator',
+    'dispenser',
+    'hopper',
+    'end_stone',
+    'end_portal_frame',
+    'end_portal_frame_filled',
+    'chorus_flower',
+    'chorus_plant',
+    'dragon_egg',
+    'end_crystal',
+    'end_rod',
+    'end_stone_bricks',
+    'ender_chest',
+    'purpur_block',
+    'purpur_pillar',
+    'purpur_slab',
+    'purpur_stairs',
+    'shulker_box',
+    'crafting_table',
+    'furnace',
+    'chest',
+    'door',
+    'oak_stairs',
+    'anvil',
+    'cauldron',
+    'bed',
+    'enchanting_table',
+    'brewing_stand',
+    'tnt',
+    'nether_brick',
+    'netherrack',
+    'raw_iron',
+    'raw_gold',
+    'diamond',
+    'emerald',
+    'lapis_lazuli',
+    'redstone_dust',
+    'amethyst_shard',
+    'wheat_seeds',
+    'potato',
+    'nether_wart',
+    'ladder',
+    'kelp',
+    'seagrass',
+    'rail',
+    'powered_rail',
+    'pressure_plate',
+    'stone_slab',
+    'string',
+    'snowball',
   ] as const
 
   it.effect('REGRESSION: the roster is kernel’s, member for member and in order', () =>
@@ -251,14 +340,18 @@ describe('the mirrored item roster is kernel’s item roster', () => {
       for (const item of KERNEL_ITEM_TYPES) {
         expect({ item, accepted: isItemType(item) }).toStrictEqual({ item, accepted: true })
       }
-      // `crafting_table` is the item mc-sim asked for and kernel DECLINED: its
-      // recipe row was replaced by a vanilla one of identical shape, so nothing
-      // needs the literal. It is listed first because it is the one an author
-      // restoring recipe rows is most likely to reach for, and reaching for it
-      // here — rather than in kernel — is the widening drift this file exists to
-      // catch. The seven that WERE granted moved into the roster above in the
-      // same commit that restored the two recipe rows.
-      for (const absent of ['crafting_table', 'air', 'water', 'bedrock', '']) {
+      // `crafting_table` USED TO BE ASSERTED HERE, as the item mc-sim asked for
+      // and kernel declined. Kernel has since added it on a block-side reason of
+      // its own, so this line was asserting a refusal that had expired — the
+      // mirror was 74 literals short and this probe was one of the things
+      // standing guard over the gap. It now lives in the roster above.
+      //
+      // `air`, `water` and `bedrock` are the durable ones: kernel's header calls
+      // `air` a sentinel meaning "no block here" and not a thing, and none of
+      // the three is an item in this build. `snow` is the interesting probe —
+      // `snowball` IS an item (it is what snow drops) and `snow` is not, so a
+      // transcription that reached for the block name would fail here.
+      for (const absent of ['air', 'water', 'bedrock', 'lava', 'snow', '']) {
         expect({ absent, accepted: isItemType(absent) }).toStrictEqual({ absent, accepted: false })
       }
     }),

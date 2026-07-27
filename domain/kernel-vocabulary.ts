@@ -45,7 +45,7 @@
  * the next divergence fails CI rather than a frame.
  *
  * ---------------------------------------------------------------------------
- * THE SECOND EXCEPTION: `ITEM_TYPES` is mirrored WHOLE, all twenty-three literals
+ * THE SECOND EXCEPTION: `ITEM_TYPES` is mirrored WHOLE, all ninety-seven literals
  * ---------------------------------------------------------------------------
  *
  * For every other declaration here, "minimal" means "the names mc-sim uses".
@@ -68,18 +68,37 @@
  * `docs/versioning.md` §6 classifies growing it MINOR), and mc-sim's part is to
  * ask for what it needs and to live inside the answer meanwhile.
  *
- * That is what happened, in both directions, and the last seven entries are the
- * record of it: mc-sim asked for eight literals with the cost written down
- * (`domain/recipe.ts`, `docs/public-api.md` §4.1-7), kernel granted SEVEN of them
- * on kernel-side reasons of its own — ore and gravel drops, mob drops, and the
- * two ignition items for the flammable capability — and declined the eighth.
- * The seven are transcribed here in the SAME COMMIT that restores the two recipe
- * rows, which is the only order that keeps this mirror behind its source.
+ * That is what happened, in both directions. mc-sim asked for eight literals
+ * with the cost written down (`domain/recipe.ts`, `docs/public-api.md` §4.1-7),
+ * kernel granted SEVEN of them on kernel-side reasons of its own — ore and
+ * gravel drops, mob drops, and the two ignition items for the flammable
+ * capability — and declined the eighth, `crafting_table`.
  *
- * `crafting_table` is the declined one and is deliberately still absent: its row
- * was replaced by a vanilla recipe of identical shape, so nothing needs the
- * literal, and a mirror carrying an item kernel does not have is the widening
- * hazard above with a friendly name on it.
+ * ---------------------------------------------------------------------------
+ * HOW THIS MIRROR CAME TO BE WRONG, which is the thing worth reading
+ * ---------------------------------------------------------------------------
+ *
+ * The roster then went from 23 to 97 in kernel and THIS FILE DID NOT FOLLOW, so
+ * it sat at 23 while claiming in its own header to be kernel's vocabulary. The
+ * gap was not caught by anything local, and could not have been: mc-sim's suite
+ * is green against its own copy, because a mirror that pins itself is a test
+ * that a value equals itself. It surfaced only in mc-dev-meta's
+ * `pnpm check:repoint`, which deletes a mirror, points the imports at the real
+ * module and runs `tsc` — mx-gameplay mirrors kernel at 97, mc-sim mirrored it
+ * at 23, and the two disagreed at the seam.
+ *
+ * That is worth stating plainly because a SHORT mirror is not the safe
+ * direction. The header above warns about the WIDE one (an item mc-sim finds
+ * convenient) and that warning is right, but a short mirror is the same defect:
+ * it is a NARROWER type under kernel's name, and it fails at the same moment —
+ * the day the mirror is deleted.
+ *
+ * `crafting_table` is now IN the roster, and the route it took is the reason
+ * this paragraph exists rather than a footnote. It was declined on mc-sim's
+ * request and this file recorded the refusal correctly; kernel later added it on
+ * a block-side reason of its own (its registry row drops itself, so the row
+ * needed an item of that name to be true). Nothing told mc-sim. A recorded "no"
+ * does not stay "no", and a mirror that treats one as settled drifts silently.
  *
  * What is NOT mirrored, deliberately: `mc-kernel/domain/block-item.ts`
  * (`PlaceableItemType`, `itemOfBlock`, `blockOfPlaceableItem`) and the drop
@@ -156,10 +175,17 @@ export const StackCount = Brand.refined<StackCount>(
  * The rosters OVERLAP rather than nest: an item that is also a block is spelled
  * identically to the block (`dirt`), which is what makes kernel's
  * `PlaceableItemType = ItemType & BlockType` a derivation instead of a third
- * hand-written list. `stick`, `glowstone_dust` and `wooden_pickaxe` are the
- * entries that are not blocks and never will be.
+ * hand-written list. `stick`, `glowstone_dust` and `wooden_pickaxe` are among
+ * the entries that are not blocks and never will be; the drop-override items
+ * further down (`raw_iron`, `diamond`, `string`, `snowball`, …) are the rest.
+ *
+ * THE LIST BELOW WAS NOT TYPED BY HAND. It was dumped from kernel's module by
+ * importing `ITEM_TYPES` and emitting its members in index order, because the
+ * failure this file has already had once is a transcription that drifted, and
+ * re-transcribing 97 literals by eye is how it would have happened again.
  */
 export const ITEM_TYPES = [
+  // Items that are also blocks. Spelled identically to their `BlockType`.
   'stone',
   'cobblestone',
   'dirt',
@@ -173,6 +199,9 @@ export const ITEM_TYPES = [
   'torch',
   'glowstone',
   'piston',
+
+  // Items that are not blocks, and never will be. These are the entries that
+  // make `ItemType` un-assignable to `BlockType`.
   'stick',
   'glowstone_dust',
   'wooden_pickaxe',
@@ -182,7 +211,7 @@ export const ITEM_TYPES = [
   // `flint` are what ore blocks and gravel drop (`BlockDropRule.item` is
   // `ItemType | 'self'`), `gunpowder` / `blaze_powder` are mob drops, and
   // `flint_and_steel` / `fire_charge` are the two ignition items the flammable
-  // capability names. NOT `crafting_table` — see the header.
+  // capability names.
   'coal',
   'iron_ingot',
   'flint',
@@ -190,6 +219,104 @@ export const ITEM_TYPES = [
   'blaze_powder',
   'flint_and_steel',
   'fire_charge',
+
+  // Items that are also blocks (55), added when kernel's `BLOCK_TYPES` reached
+  // the reference's full roster. Kernel's rule, stated before it was applied: a
+  // block gets an item form if and only if its registry row's `drops` rule
+  // resolves to ITSELF and yields something. Without these the rows would be
+  // lies — a row saying a block drops itself, with no item of that name to drop.
+  //
+  // `crafting_table` is here. It was DECLINED on mc-sim's original request and
+  // this mirror recorded that; kernel later added it on its own block-side
+  // reason, which is the roster moving under the mirror exactly as the header
+  // says it may.
+  'granite',
+  'diorite',
+  'andesite',
+  'deepslate',
+  'obsidian',
+  'smooth_basalt',
+  'calcite',
+  'amethyst_block',
+  'sandstone',
+  'prismarine',
+  'soul_sand',
+  'coal_block',
+  'iron_block',
+  'gold_block',
+  'diamond_block',
+  'redstone_block',
+  'lapis_block',
+  'emerald_block',
+  'redstone_torch',
+  'lever',
+  'stone_button',
+  'repeater',
+  'redstone_lamp',
+  'observer',
+  'comparator',
+  'dispenser',
+  'hopper',
+  'end_stone',
+  'end_portal_frame',
+  'end_portal_frame_filled',
+  'chorus_flower',
+  'chorus_plant',
+  'dragon_egg',
+  'end_crystal',
+  'end_rod',
+  'end_stone_bricks',
+  'ender_chest',
+  'purpur_block',
+  'purpur_pillar',
+  'purpur_slab',
+  'purpur_stairs',
+  'shulker_box',
+  'crafting_table',
+  'furnace',
+  'chest',
+  'door',
+  'oak_stairs',
+  'anvil',
+  'cauldron',
+  'bed',
+  'enchanting_table',
+  'brewing_stand',
+  'tnt',
+  'nether_brick',
+  'netherrack',
+
+  // Items that are NOT blocks (10), each the right-hand side of a row in the
+  // reference's `INVENTORY_DROP_OVERRIDES`. `raw_iron` / `raw_gold` rather than
+  // ingots is the reference's answer and not a slip: the ore yields raw material
+  // and the furnace pays the XP. `iron_ingot` above is a different item.
+  'raw_iron',
+  'raw_gold',
+  'diamond',
+  'emerald',
+  'lapis_lazuli',
+  'redstone_dust',
+  'amethyst_shard',
+  'wheat_seeds',
+  'potato',
+  'nether_wart',
+
+  // Seven older registry rows that carried the default "yields itself" rule and
+  // had no item form, so breaking a ladder gave you nothing. Not guesses: the
+  // item a block drops when NOT overridden is its own name.
+  'ladder',
+  'kelp',
+  'seagrass',
+  'rail',
+  'powered_rail',
+  'pressure_plate',
+  'stone_slab',
+
+  // `cobweb` -> `string` and `snow` -> `snowball` are override rows. NOTE that
+  // `string` is an ITEM NAME — the thread a cobweb drops — and not a stray type
+  // name that wandered in. It is the entry most likely to be "tidied away".
+  'string',
+  'snowball',
 ] as const
 
 /**

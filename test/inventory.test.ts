@@ -29,6 +29,32 @@ const corruptSlot = (item: string, count: number): Inventory => ({
   slots: [{ item: item as ItemType, count: count as StackCount }, ...emptyInventory().slots.slice(1)],
 })
 
+/**
+ * A name this build has no vocabulary for, and the one fixture in this file
+ * that has to be CHOSEN rather than written.
+ *
+ * This was `'diamond'`, and `'diamond'` broke — which is worth recording. When
+ * these tests were written `diamond` was not in kernel's roster, so it was a
+ * fine stand-in for a save from another build. Kernel later added it as a drop
+ * override, the literal became real, and two tests that meant "this item does
+ * not exist" started quietly asserting the opposite about an item that does.
+ *
+ * So the name must be one kernel's OWN STATED RULE can never admit. That rule
+ * is: a block gets an item form if and only if its registry row drops itself,
+ * plus the override targets. Every safe-LOOKING candidate that is a block is
+ * therefore not safe at all — `sapling`, `poppy`, `lily_pad` and `cactus` are
+ * absent from `ITEM_TYPES` today and are the worst available choices, because
+ * they are in `BLOCK_TYPES` and kernel's header calls itemising them "the last
+ * step, not a wait". Picking one would re-break these tests on somebody else's
+ * commit, for the second time, in the same way.
+ *
+ * `mythril_ingot` is in neither roster and is not a block, so no rule kernel
+ * has stated can reach it. It also reads like the thing it stands in for — the
+ * modded world opened without its mod — where `'NOT_AN_ITEM'` would suggest the
+ * discard path only catches obvious junk.
+ */
+const FOREIGN_ITEM = 'mythril_ingot'
+
 describe('addItem', () => {
   it.effect('tops up an existing partial stack before opening a new slot', () =>
     Effect.sync(() => {
@@ -316,12 +342,12 @@ describe('REGRESSION: normaliseInventory re-establishes the slot count without l
    */
   it.effect('an item this build has no vocabulary for is DISCARDED, and counted', () =>
     Effect.sync(() => {
-      const repaired = normaliseInventory(corruptSlot('diamond', 12))
+      const repaired = normaliseInventory(corruptSlot(FOREIGN_ITEM, 12))
 
       expect(isEmpty(repaired.inventory)).toBe(true)
       expect(repaired.discarded).toBe(12)
       // Not folded into `leftover`: a leftover is spawned on the ground by
-      // mx-gameplay, and there is no `diamond` entity to spawn.
+      // mx-gameplay, and there is no entity of this name to spawn.
       expect(repaired.leftover).toBe(0)
     }),
   )
@@ -400,7 +426,7 @@ describe('REGRESSION: InventoryService.restore is the guarded path, and reports 
   it.effect('a discarded item is not in restore’s number, and the number is still obtainable', () =>
     Effect.gen(function* () {
       const service = yield* makeInventoryService()
-      const foreign = corruptSlot('diamond', 12)
+      const foreign = corruptSlot(FOREIGN_ITEM, 12)
 
       // Zero, and correctly so: `restore` answers "how many go on the ground",
       // and nothing here can go on the ground. Folding the discard in would ask
