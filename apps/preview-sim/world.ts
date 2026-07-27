@@ -58,9 +58,15 @@ import { startAutoSaveDaemon, type AutoSaveStatus } from '../../application/auto
 import { makeGameLoop, type FrameHandler } from '../../application/game-loop'
 import { makeInventoryService } from '../../application/inventory-service'
 import { makePlayerService } from '../../application/player-service'
+import { makeSettingsService } from '../../application/settings-service'
+import { makeStatisticsService } from '../../application/statistics-service'
 import { makeTimeService } from '../../application/time-service'
+import { makeVitalsService } from '../../application/vitals-service'
 import * as Camera from '../../domain/camera-pose'
 import { INVENTORY_SLOT_COUNT, type Inventory, type Slot } from '../../domain/inventory'
+import * as Settings from '../../domain/settings'
+import * as Statistics from '../../domain/statistics'
+import * as Vitals from '../../domain/vitals'
 import {
   ClockPort,
   EpochMillis,
@@ -160,6 +166,21 @@ export type WorldView = {
   readonly autoSaveStatus: AutoSaveStatus | undefined
   readonly autoSaveLastAtMillis: number | undefined
 
+  readonly vitals: Vitals.Vitals
+  /** The six numbers mx-ui's `VitalsSnapshot` is built from. */
+  readonly vitalsView: Vitals.VitalsView
+  /** Food-tick signals seen, by kind. mc-sim EMITS these and applies none of them. */
+  readonly foodSignals: Readonly<Record<Vitals.FoodTickSignal, number>>
+  /** Blows whose amount had no magnitude, counted at the call. */
+  readonly blowsWithoutMagnitude: number
+  /** Vitals a restore had to repair, counted at the call for the same reason. */
+  readonly vitalsRepaired: number
+  readonly deaths: number
+  readonly statistics: Statistics.Statistics
+  readonly settings: Settings.Settings
+  /** Settings writes the clamp had to move, counted at the call. */
+  readonly settingsClamped: number
+
   readonly faults: number
   readonly log: ReadonlyArray<LogLine>
 }
@@ -186,6 +207,11 @@ type Bookkeeping = {
   restoreLeftover: number
   timeStatesRepaired: number
   inventoriesResized: number
+  foodSignals: Record<Vitals.FoodTickSignal, number>
+  blowsWithoutMagnitude: number
+  vitalsRepaired: number
+  deaths: number
+  settingsClamped: number
   faults: number
   log: Array<LogLine>
 }
@@ -246,6 +272,11 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
     restoreLeftover: 0,
     timeStatesRepaired: 0,
     inventoriesResized: 0,
+    foodSignals: { none: 0, regen: 0, starve: 0 },
+    blowsWithoutMagnitude: 0,
+    vitalsRepaired: 0,
+    deaths: 0,
+    settingsClamped: 0,
     faults: 0,
     log: [],
   }
@@ -264,12 +295,15 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
         player: yield* makePlayerService(),
         inventory: yield* makeInventoryService(),
         time: yield* makeTimeService(),
+        vitals: yield* makeVitalsService(),
+        statistics: yield* makeStatisticsService(),
+        settings: yield* makeSettingsService(),
         loop: yield* makeGameLoop(),
       }
     }),
   )
 
-  const { clockSecs, clockLayer, player, inventory, time, loop } = built
+  const { clockSecs, clockLayer, player, inventory, time, vitals, statistics, settings, loop } = built
 
   /**
    * The frame handler.
@@ -283,7 +317,24 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
     Effect.sync(() => {
       book.lastDeltaSecs = dt
       book.simulatedSecs += dt
-    }).pipe(Effect.zipRight(time.advance(dt)))
+    }).pipe(
+      Effect.zipRight(time.advance(dt)),
+      // The food timer takes THE SAME delta the world clock does, and this app
+      // is the only place the two are visibly one number. The signal is counted
+      // and DELIBERATELY NOT ACTED ON: `'starve'` means mx-gameplay would now
+      // choose a damage amount and a cause, and this preview has neither, which
+      // is what the boundary looks like from mc-sim's side.
+      Effect.zipRight(
+        Effect.flatMap(vitals.advanceFoodTimer(dt), (signal) =>
+          Effect.sync(() => {
+            book.foodSignals[signal] += 1
+            if (signal !== 'none') {
+              pushLog(book, `food tick -> ${signal} (mc-sim emits it and applies nothing)`, 'event')
+            }
+          }),
+        ),
+      ),
+    )
 
   const autoSaveTick = Effect.gen(function* () {
     book.autoSaveFired += 1
@@ -481,6 +532,130 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
           Effect.zipRight(note('teardown + reload on the SAME service instances', 'event')),
         )
 
+      case 'damage': {
+        // Counted HERE, at the call, because a blow that did nothing is by
+        // design indistinguishable from a blow that was never thrown. The
+        // panels can only show that mc-sim absorbed a `NaN` if the app records
+        // having thrown one.
+        const withoutMagnitude = Number.isNaN(action.amount)
+        return Effect.sync(() => {
+          if (withoutMagnitude) {
+            book.blowsWithoutMagnitude += 1
+          }
+        }).pipe(
+          Effect.zipRight(
+            guarded(
+              'vitals.damage',
+              vitals
+                .damage({ amount: action.amount, cause: action.cause })
+                .pipe(
+                  Effect.tap((outcome) =>
+                    Effect.sync(() => {
+                      if (outcome.died) {
+                        book.deaths += 1
+                      }
+                    }).pipe(
+                      Effect.zipRight(
+                        note(
+                          `damage ${String(action.amount)} (${action.cause}) -> ${outcome.vitals.healthPoints.toFixed(1)} hp` +
+                            (outcome.died ? ' — DIED' : '') +
+                            (withoutMagnitude ? ' — NO MAGNITUDE, absorbed' : ''),
+                          outcome.died || withoutMagnitude ? 'fault' : 'event',
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ),
+          ),
+          Effect.zipRight(statistics.record(`damage.taken.${action.cause}`)),
+        )
+      }
+
+      case 'heal':
+        return guarded('vitals.heal', vitals.heal(action.amount)).pipe(
+          Effect.zipRight(note(`heal ${String(action.amount)}`, 'event')),
+        )
+
+      case 'exhaust':
+        return guarded('vitals.addExhaustion', vitals.addExhaustion(action.amount)).pipe(
+          Effect.zipRight(
+            note(`exhaustion +${String(action.amount)} (the COST is mx-gameplay's)`, 'event'),
+          ),
+        )
+
+      case 'eat':
+        return guarded(
+          'vitals.eat',
+          vitals.eat(action.foodPoints, action.saturationModifier),
+        ).pipe(
+          Effect.zipRight(
+            note(
+              `eat ${String(action.foodPoints)} food, modifier ${String(action.saturationModifier)}`,
+              'event',
+            ),
+          ),
+        )
+
+      case 'award':
+        return guarded('vitals.addExperience', vitals.addExperience(action.experience)).pipe(
+          Effect.zipRight(note(`experience ${action.experience >= 0 ? '+' : ''}${String(action.experience)}`, 'event')),
+        )
+
+      case 'respawn':
+        return guarded('vitals.respawn', vitals.respawn).pipe(
+          Effect.zipRight(statistics.record('deaths')),
+          Effect.zipRight(note('respawn — experience survives, because the penalty is a RULE', 'event')),
+        )
+
+      case 'unlock':
+        return guarded('statistics.unlock', statistics.unlock(action.id)).pipe(
+          Effect.zipRight(note(`unlock ${action.id} (mc-sim holds no registry)`, 'event')),
+        )
+
+      case 'setting': {
+        const patch = action.patch
+        return guarded(
+          'settings.update',
+          settings.update(patch).pipe(
+            Effect.tap((next) =>
+              Effect.sync(() => {
+                // A write the clamp moved is the only interesting kind, and it
+                // has to be noticed at the call — the stored value afterwards
+                // looks exactly like one that was always legal.
+                const moved = Object.entries(patch).some(
+                  ([key, value]) => next[key as keyof typeof next] !== value,
+                )
+                if (moved) {
+                  book.settingsClamped += 1
+                }
+              }),
+            ),
+          ),
+        ).pipe(
+          Effect.zipRight(
+            note(`settings.update(${JSON.stringify(patch)}) — held, never applied`, 'event'),
+          ),
+        )
+      }
+
+      case 'restoreVitals': {
+        const repairable = !Vitals.isValidVitals(action.vitals)
+        return Effect.sync(() => {
+          if (repairable) {
+            book.vitalsRepaired += 1
+          }
+        }).pipe(
+          Effect.zipRight(guarded('vitals.restore', vitals.restore(action.vitals))),
+          Effect.zipRight(
+            note(
+              'vitals.restore(...)' + (repairable ? ' — INVALID, repaired by normaliseVitals' : ''),
+              repairable ? 'fault' : 'event',
+            ),
+          ),
+        )
+      }
+
       case 'stopLoop':
         return loop.stop.pipe(
           Effect.zipRight(note('loop.stop — submitFrame is a silent no-op from here', 'event')),
@@ -544,6 +719,7 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
         const slots = slotViews(inventorySnapshot.slots)
         const snapshot = yield* player.cameraPose.pipe(Effect.provide(clockLayer))
         const timeState = yield* time.snapshot
+        const vitalsSnapshot = yield* vitals.snapshot
 
         return {
           frame: book.frame,
@@ -580,6 +756,18 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
           autoSaveFired: book.autoSaveFired,
           autoSaveStatus: book.autoSaveStatus,
           autoSaveLastAtMillis: book.autoSaveLastAtMillis,
+          vitals: vitalsSnapshot,
+          // Produced by the library, not by the panel. A preview that rebuilt
+          // the six numbers itself would be showing its own arithmetic and
+          // could not disagree with mc-sim about anything.
+          vitalsView: Vitals.vitalsView(vitalsSnapshot),
+          foodSignals: { ...book.foodSignals },
+          blowsWithoutMagnitude: book.blowsWithoutMagnitude,
+          vitalsRepaired: book.vitalsRepaired,
+          deaths: book.deaths,
+          statistics: yield* statistics.snapshot,
+          settings: yield* settings.snapshot,
+          settingsClamped: book.settingsClamped,
           faults: book.faults,
           log: [...book.log],
         } satisfies WorldView

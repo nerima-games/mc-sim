@@ -98,7 +98,7 @@ org パッケージも新規 npm 依存も無い。
 
 ## 3. 現在のテスト
 
-`vitest run`。16 ファイル / 296 テスト。
+`vitest run`。20 ファイル / 396 テスト。
 
 | ファイル | テスト数 | 対応 |
 | --- | ---: | --- |
@@ -118,6 +118,35 @@ org パッケージも新規 npm 依存も無い。
 | `test/stage-registration.test.ts` | 17 | `sim:physics` の id と `after` 0 本（[responsibility.md](./responsibility.md) §2.1） |
 | `test/check-dependency-whitelist.test.ts` | 27 | DN-12 + 依存ホワイトリスト本体 |
 | `test/api-lock.test.ts` | 26 | 生成器 `scripts/api-lock.ts` の機構そのもの（§7 末尾） |
+| `test/vitals.test.ts` | 50 | 体力 / 空腹 / XP の値側（[responsibility.md](./responsibility.md) §3.4）。NaN 免疫・XP 曲線・レート換算・修復順序。§3.5 |
+| `test/vitals-service.test.ts` | 11 | 死の遷移の原子性、ワールドロード経路、DN-07 / DN-09。§3.5 |
+| `test/statistics.test.ts` | 17 | 記録の全域性と冪等な `unlock`（[responsibility.md](./responsibility.md) §3.5） |
+| `test/settings.test.ts` | 22 | clamp と、第 2 の所有者を作らないこと（[responsibility.md](./responsibility.md) §3.6） |
+
+### 3.5 体力 / 空腹 / XP のテストが守っているもの
+
+**この 4 ファイルのうち「機能が動くこと」を見ているものは半分も無い。** 名前を付けた失敗のほうを挙げる。
+
+| テスト | 何を守るか | 変異させると |
+| --- | --- | --- |
+| `REGRESSION: a NaN blow must not make a player immortal` | `20 - NaN` は `NaN` で、`NaN <= 0` は偽。一撃で**二度と死なないプレイヤー**ができる。緑のスイートからは見えない（何も throw せず、型も合っており、単に死ななくなる）。mx-gameplay のアリーナプレビューが F5 として実測した欠陥のプレイヤー側 | `delta` の NaN ガードを外すと 4 本赤 |
+| `REGRESSION: the food tick is FOUR SECONDS, not eighty of mc-sim ticks` | 参照実装の 80 は 20 tick/s での 4 秒。mc-sim は 60 tick/s なので、転記すると空腹が 3 倍速く減り、しかも忠実な移植に見える | `FOOD_TICK_SECS` を `80 / 60` にすると 4 本赤 |
+| `REGRESSION: the XP curve is the reference curve, and its closed form is the sum of it` | 累計の閉じた式は**導出**であり、誰も検算しない導出は手数の多い捏造定数である。`experienceCostOfLevel` の逐次加算と 0..400 で突き合わせる | 閉じた式の `352` を `350` にすると 2 本赤 |
+| `REGRESSION: a non-finite experience total must not hang the level lookup` | 参照実装の `levelFromXP` は `while (true)` で、`NaN` でも `Infinity` でも比較が永久に偽。セーブファイル 1 つでフレームループが**無音で凍る** | ガードを外すと「誤った数」ではなく**ハング**する。実測: 60 秒で未完了（正常時 0.5 秒）。同期の無限ループなので vitest のタイムアウトでは中断できない |
+| `REGRESSION: a broken maximum must not drag a legal current value out of range` | 各フィールドは**修復済みの**上限に対して clamp する。上限のほうが壊れているセーブが 2 つの実装を分ける唯一のケースで、全フィールド境界を満たしつつ交差境界を破る状態を作る —— 参照実装の `PlayerHealthInvariant` が捕まえるために存在し、schema では**拒否しかできない**形 | 上限をディスク上の値にすると 1 本赤 |
+| `REGRESSION: a repaired maximum must be a number a screen can build a row from` | **プレビューが見つけた。** 無限大の上限を「指している側の境界」= `MAX_SAFE_INTEGER` に clamp すると、`isValidVitals` が通し、全テストが緑のまま、画面が `hunger 99.0/9007199254740991` と表示する。mx-ui は 2 ポイントごとに 1 アイコンを `Array.from` で作る | `MAX_SAFE_INTEGER` clamp に戻すと 1 本赤 |
+| `REGRESSION: a restored accumulator must not sit above its own threshold` | **プレビューが見つけた。** 疲労度を [0, 40] に clamp するだけだと、復元された 40 が閾値の上に居座り、**次の 0.01 のスプリントが空腹を 10 減らす**。剰余はカスケードが残したはずの値そのものなので、これは reset ではなく修復である | clamp に戻すと 3 本赤 |
+| `REGRESSION: exactly one blow reports the kill` | 「この一撃が殺したか」は書き込み前後の比較であり、書き込みの外で計算すれば read-decide-write になる。死亡画面が 2 回出るのと 1 回も出ないのは同じバグ | `died` を `isDead(next)` にすると 1 本赤 |
+| `REGRESSION: settings must not become a second owner of the day length` | 日長は `TimeState` の分母として既に mc-sim にある。2 人目の所有者が空を飛ばす（`mx-gameplay/docs/architecture.md:142-148`） | フィールドを足すとキー一覧が赤 |
+| `REGRESSION: the string "false" must not become a true` | `Boolean('false')` は `true`。古い schema が書いたセーブは stringify されたブールが来る場所そのもので、これはプレイヤーが切った設定を勝手に入れ直す唯一の型変換 | `Boolean(...)` にすると 1 本赤 |
+| `REGRESSION: reset is RESTORE DEFAULTS, and must not be on the world-teardown path` | 他の 5 サービスと `reset` の意味が違う唯一のサービス。ワールド teardown に繋ぐと、別のセーブを開くたびに設定が無音で戻る | —— 意味の記録であり、変異ではなくホストの配線を守る |
+
+**同時実行テストの限界を実測した。** `twenty concurrent blows produce exactly one kill` は、
+`damage` を `Ref.get` + 別の `Ref.updateAndGet` に書き換える変異では**緑のまま**である
+（Effect のファイバがその 2 操作の間で交錯しなかった）。
+このテストが固定しているのは**不変条件であって実装ではない**。
+`Ref.modify` の根拠はサービスのヘッダの議論であり、この assertion ではない ——
+スイートが通ることを理由に `Ref.modify` を消そうとする人のために、テストファイルにも書いてある。
 
 ### 3.0 `--stats` の発見を閉じたときに何をしたか
 

@@ -39,6 +39,8 @@
  */
 
 import type { ItemType } from '../../domain/kernel-vocabulary'
+import type { Settings } from '../../domain/settings'
+import type { DamageCause, Vitals } from '../../domain/vitals'
 
 /** One scripted action, applied at the top of a frame, before the frame is submitted. */
 export type ScriptedAction =
@@ -73,6 +75,31 @@ export type ScriptedAction =
   | { readonly kind: 'skewClockPort'; readonly seconds: number }
   /** Tear the world down and stand a new one up on the same service instances. */
   | { readonly kind: 'secondWorld' }
+  /**
+   * Take damage.
+   *
+   * `cause` is a bare string here for the same reason it is one in
+   * `domain/vitals.ts`: the roster of things that can kill a player belongs to
+   * mx-gameplay, and neither mc-sim nor this app reads it. The strings below are
+   * mx-gameplay's `DeathCause` members, written out to show that they cross
+   * unchanged.
+   */
+  | { readonly kind: 'damage'; readonly amount: number; readonly cause: DamageCause }
+  | { readonly kind: 'heal'; readonly amount: number }
+  /** Charge exhaustion. The COST is mx-gameplay's; the accumulator is mc-sim's. */
+  | { readonly kind: 'exhaust'; readonly amount: number }
+  | {
+      readonly kind: 'eat'
+      readonly foodPoints: number
+      readonly saturationModifier: number
+    }
+  | { readonly kind: 'award'; readonly experience: number }
+  | { readonly kind: 'respawn' }
+  | { readonly kind: 'unlock'; readonly id: string }
+  /** Write settings values. Held, never applied — that is the whole row. */
+  | { readonly kind: 'setting'; readonly patch: Partial<Settings> }
+  /** Write vitals straight in, as a world load would. */
+  | { readonly kind: 'restoreVitals'; readonly vitals: Vitals }
   /** Stop the frame loop without restarting it. Frames submitted after are dropped. */
   | { readonly kind: 'stopLoop' }
   /** A caption for the timeline. Changes nothing. */
@@ -450,6 +477,141 @@ const CLOCK_DIVERGENCE: Scenario = {
   ],
 }
 
+/**
+ * The vitals boundary, driven until it shows.
+ *
+ * `domain/vitals.ts` claims four things that a reader has to take on trust from
+ * the module header. This scenario makes each of them a number on the screen:
+ *
+ *   1. A `NaN` blow is ABSORBED, and the player stays killable. The failure it
+ *      prevents — permanent immortality — is invisible from inside a green
+ *      suite, because nothing throws and the player simply stops dying.
+ *   2. mc-sim EMITS a food-tick signal and applies nothing. `starve` appears in
+ *      the panel while health does not move, which is the boundary made
+ *      visible: the amount and the cause are mx-gameplay's, and this app has
+ *      neither.
+ *   3. Exhaustion drains the hidden reserve before the visible bar, four at a
+ *      time, and the COST of each action came from the caller.
+ *   4. A level-up is arithmetic over one stored total, so the bar and the
+ *      counter cannot disagree.
+ */
+const VITALS: Scenario = {
+  name: 'vitals',
+  headline: 'health / hunger / XP, and the line 「何がダメージを与えるか」 sits on',
+  detail: [
+    'A food tick is FOUR SECONDS, which at the default 60 fps is every 240th',
+    'frame — so the steps below are placed around f240 / f480 / f720 / f960 on',
+    'purpose, and the FOOD row is the thing to watch. (The reference stores 80',
+    'TICKS for the same four seconds because it runs at 20 t/s; carrying that',
+    '80 across would fire every 1.33 s here and starve a player three times too',
+    'fast, while looking like a faithful port.)',
+    'Frame 60 throws a NaN blow: health must NOT move and the player must stay',
+    'killable — the alternative is an immortal player no assertion caught.',
+    'f240 signals regen. f300-f420 drain the hidden saturation reserve before',
+    'the visible bar, so f480 signals starve. NOTHING APPLIES EITHER SIGNAL:',
+    'the amount and the cause are mx-gameplay’s, and this app has neither.',
+    'f960 kills the player; f1020 respawns them with their experience intact,',
+    'because the death penalty is a rule and rules are not held here.',
+  ],
+  steps: [
+    step(0, 'a long day, so the vitals rows are what moves', {
+      kind: 'configureDay',
+      seconds: 1200,
+      fraction: 0.3,
+    }),
+    step(0, 'settings are VALUES: this render distance is held and applied by nobody', {
+      kind: 'setting',
+      patch: { renderDistance: 12, masterVolume: 0.4 },
+    }),
+    step(30, 'an ordinary blow: 6 of 20, no cause recorded because nobody died', {
+      kind: 'damage',
+      amount: 6,
+      cause: 'fall',
+    }),
+    step(60, 'A BLOW WITH NO MAGNITUDE. Health must not move, and must stay killable', {
+      kind: 'damage',
+      amount: Number.NaN,
+      cause: 'explosion',
+    }),
+    step(120, 'hurt and well fed, which is the only state that signals regen', {
+      kind: 'note',
+      text: 'the first food tick is at f240',
+    }),
+    step(300, 'sprinting, priced by mx-gameplay at 0.1 per block: 40 blocks', {
+      kind: 'exhaust',
+      amount: 4,
+    }),
+    step(330, 'and again — the RESERVE drains first, the shanks do not move', {
+      kind: 'exhaust',
+      amount: 4,
+    }),
+    step(360, 'a long sprint. One call is capped at 40, i.e. ten points at a time', {
+      kind: 'exhaust',
+      amount: 100,
+    }),
+    step(390, 'the reserve is gone; from here every four takes a visible shank', {
+      kind: 'exhaust',
+      amount: 40,
+    }),
+    step(420, 'and the bar reaches zero', { kind: 'exhaust', amount: 40 }),
+    step(450, 'still empty at the second tick, which is what makes it a starve', {
+      kind: 'note',
+      text: 'the second food tick is at f480',
+    }),
+    step(600, 'bread: 5 food, saturation modifier 0.6 — the numbers are the CALLER’s', {
+      kind: 'eat',
+      foodPoints: 5,
+      saturationModifier: 0.6,
+    }),
+    step(620, 'and a full meal, so the third tick at f720 signals regen again', {
+      kind: 'eat',
+      foodPoints: 20,
+      saturationModifier: 1.2,
+    }),
+    step(660, 'mining pays experience; the level is derived from one stored total', {
+      kind: 'award',
+      experience: 16,
+    }),
+    step(700, 'enough to cross a level boundary: the bar resets, the counter climbs', {
+      kind: 'award',
+      experience: 20,
+    }),
+    step(760, 'an achievement is RECORDED here and DECIDED somewhere else', {
+      kind: 'unlock',
+      id: 'time-to-mine',
+    }),
+    step(800, 'a settings write the clamp has to move: 400 chunks is not loadable', {
+      kind: 'setting',
+      patch: { renderDistance: 400, fovDegrees: Number.NaN },
+    }),
+    step(960, 'the killing blow. Its cause is the one that survives', {
+      kind: 'damage',
+      amount: 40,
+      cause: 'lava',
+    }),
+    step(990, 'a corpse struck again: the death message must NOT be rewritten', {
+      kind: 'damage',
+      amount: 100,
+      cause: 'explosion',
+    }),
+    step(1020, 'respawn — health returns, experience does not reset', { kind: 'respawn' }),
+    step(1100, 'a save no transition here could have produced. Read every row after', {
+      kind: 'restoreVitals',
+      vitals: {
+        healthPoints: 20,
+        maxHealthPoints: Number.NaN,
+        hungerPoints: 99,
+        maxHungerPoints: Number.POSITIVE_INFINITY,
+        saturation: -3,
+        exhaustion: 1e9,
+        foodTimerSecs: Number.NaN,
+        totalExperience: Number.POSITIVE_INFINITY,
+        lastDamageCause: undefined,
+      },
+    }),
+  ],
+}
+
 export const SCENARIOS: ReadonlyArray<Scenario> = [
   MINE_AND_NIGHTFALL,
   OBSTACLE_COURSE,
@@ -458,6 +620,7 @@ export const SCENARIOS: ReadonlyArray<Scenario> = [
   SECOND_WORLD,
   CORRUPT_SAVE,
   CLOCK_DIVERGENCE,
+  VITALS,
 ]
 
 export const SCENARIO_NAMES = [
@@ -468,6 +631,7 @@ export const SCENARIO_NAMES = [
   'second-world',
   'corrupt-save',
   'clock-divergence',
+  'vitals',
 ] as const
 
 export type ScenarioName = (typeof SCENARIO_NAMES)[number]

@@ -35,7 +35,9 @@ import {
 import { MAX_FRAME_DELTA_SECS, MIN_FRAME_DELTA_SECS } from '../../domain/frame-timing'
 import { INVENTORY_SLOT_COUNT } from '../../domain/inventory'
 import { MAX_STACK_COUNT } from '../../domain/kernel-vocabulary'
+import { MAX_RENDER_DISTANCE } from '../../domain/settings'
 import { MOON_PHASE_COUNT, TICKS_PER_SECOND } from '../../domain/time-of-day'
+import { EXHAUSTION_PER_POINT, FOOD_TICK_SECS } from '../../domain/vitals'
 import type { WorldView } from './world'
 
 const LABEL_WIDTH = 14
@@ -249,6 +251,134 @@ export const inventoryPanel = (view: WorldView, style: Style, width: number): Re
   ]
 }
 
+// --- vitals ------------------------------------------------------------------
+
+/**
+ * Health, hunger and experience, with the numbers the picture is claiming.
+ *
+ * Every value on these rows comes out of `Vitals.vitalsView` — the same function
+ * mx-ui's `VitalsSnapshot` is built from — rather than being recomputed here. A
+ * panel with its own arithmetic could not disagree with the library about
+ * anything, which would make it decorative.
+ *
+ * The SATURATION row is the one worth watching. It is invisible in vanilla and
+ * invisible in mx-ui, so this is the only place in the whole chain where the
+ * hidden reserve draining ahead of the visible bar can actually be seen.
+ */
+export const vitalsPanel = (view: WorldView, style: Style, width: number): ReadonlyArray<string> => {
+  const vitals = view.vitals
+  const projected = view.vitalsView
+  const dead = projected.healthPoints <= 0
+  const healthStyle = dead ? BAD : projected.healthPoints < projected.maxHealthPoints ? WARN : GOOD
+
+  return [
+    heading(style, 'vitals  (the NUMBERS are mc-sim’s; what causes them is not)', width),
+    row(
+      style,
+      'health',
+      `${style.paint(padStart(fixed(projected.healthPoints, 1), 6), healthStyle)}${style.dim(`/${fixed(projected.maxHealthPoints, 0)}`)} ` +
+        `${style.paint(bar(projected.healthPoints, projected.maxHealthPoints, 20), healthStyle)}  ` +
+        (dead
+          ? style.paint(`DEAD — cause ${vitals.lastDamageCause ?? '(none recorded)'}`, BAD)
+          : style.dim(`deaths ${String(view.deaths)}; the cause is carried, never interpreted`)),
+    ),
+    row(
+      style,
+      'hunger',
+      `${style.paint(padStart(fixed(vitals.hungerPoints, 1), 6), VALUE)}${style.dim(`/${fixed(vitals.maxHungerPoints, 0)}`)} ` +
+        `${style.paint(bar(vitals.hungerPoints, vitals.maxHungerPoints, 20), VALUE)}  ` +
+        style.dim('the visible bar — the only half mx-ui draws'),
+    ),
+    row(
+      style,
+      'saturation',
+      `${style.paint(padStart(fixed(vitals.saturation, 2), 6), NOTE)}${style.dim(`/${fixed(vitals.hungerPoints, 0)}`)} ` +
+        `${style.paint(bar(vitals.saturation, Math.max(1, vitals.hungerPoints), 20), NOTE)}  ` +
+        style.dim('HIDDEN reserve, spent before the bar; capped at it'),
+    ),
+    row(
+      style,
+      'exhaustion',
+      `${style.paint(padStart(fixed(vitals.exhaustion, 3), 6), VALUE)}${style.dim(`/${String(EXHAUSTION_PER_POINT)}`)}  ` +
+        style.dim('four spends one reserve point. The COST of an action is mx-gameplay’s'),
+    ),
+    row(
+      style,
+      'food tick',
+      `${style.paint(`${fixed(vitals.foodTimerSecs, 3)} s`, VALUE)}${style.dim(`/${String(FOOD_TICK_SECS)} s`)}   ` +
+        `regen ${style.paint(String(view.foodSignals.regen), VALUE)}   ` +
+        `starve ${style.paint(String(view.foodSignals.starve), view.foodSignals.starve > 0 ? WARN : VALUE)}   ` +
+        style.dim('signals EMITTED; mc-sim applies neither, because both are amounts'),
+    ),
+    row(
+      style,
+      'experience',
+      `level ${style.paint(padStart(String(projected.experienceLevel), 4), VALUE)}   ` +
+        `${style.paint(bar(projected.experienceProgress, 1, 20), VALUE)} ` +
+        `${style.paint(`${String(Math.floor(projected.experienceProgress * 100))}%`, VALUE)}   ` +
+        style.dim(`total ${fixed(vitals.totalExperience, 0)} — the level is DERIVED from it`),
+    ),
+  ]
+}
+
+// --- settings and statistics --------------------------------------------------
+
+/**
+ * The values held, and the record kept.
+ *
+ * Both rows exist to show an ABSENCE. Nothing in mc-sim reads a render distance
+ * or a volume, and nothing here decides that a block was mined — the panel is
+ * printing a ledger, and the ledger is the whole responsibility.
+ */
+export const heldStatePanel = (view: WorldView, style: Style, width: number): ReadonlyArray<string> => {
+  const counters = Object.entries(view.statistics.counters)
+
+  return [
+    heading(style, 'held state  (settings: 値の保持 only · statistics: 記録 only)', width),
+    row(
+      style,
+      'graphics',
+      `renderDistance ${style.paint(String(view.settings.renderDistance), VALUE)}${style.dim(`/${String(MAX_RENDER_DISTANCE)}`)}   ` +
+        `fov ${style.paint(fixed(view.settings.fovDegrees, 0), VALUE)}   ` +
+        `quality ${style.paint(view.settings.graphicsQuality, VALUE)}   ` +
+        style.dim('applied by mc-render, which mc-sim cannot see'),
+    ),
+    row(
+      style,
+      'volume',
+      `audio ${style.paint(view.settings.audioEnabled ? 'on' : 'off', view.settings.audioEnabled ? GOOD : LABEL)}   ` +
+        `master ${style.paint(fixed(view.settings.masterVolume, 2), VALUE)}   ` +
+        `music ${style.paint(fixed(view.settings.musicVolume, 2), VALUE)}   ` +
+        `sfx ${style.paint(fixed(view.settings.sfxVolume, 2), VALUE)}`,
+    ),
+    row(
+      style,
+      'controls',
+      `sensitivity ${style.paint(fixed(view.settings.mouseSensitivity, 2), VALUE)}   ` +
+        `rebinds ${style.paint(String(Object.keys(view.settings.keyBindings).length), VALUE)}   ` +
+        style.dim('the roster of ACTIONS is mc-render’s; this map is overrides only'),
+    ),
+    row(
+      style,
+      'statistics',
+      counters.length === 0
+        ? style.dim('(nothing counted yet — mc-sim never decides that something happened)')
+        : counters
+            .slice(0, 3)
+            .map(([key, count]) => `${style.dim(key)} ${style.paint(String(count), VALUE)}`)
+            .join('   ') + (counters.length > 3 ? style.dim(`   +${String(counters.length - 3)} more`) : ''),
+    ),
+    row(
+      style,
+      'achievements',
+      view.statistics.unlocked.length === 0
+        ? style.dim('(none — the registry and its predicates are mx-gameplay’s)')
+        : `${style.paint(view.statistics.unlocked.join(', '), VALUE)}   ` +
+          style.dim('recorded here, decided elsewhere'),
+    ),
+  ]
+}
+
 // --- autosave ----------------------------------------------------------------
 
 export const autoSavePanel = (view: WorldView, style: Style, width: number): ReadonlyArray<string> => [
@@ -376,6 +506,26 @@ export const findingsPanel = (view: WorldView, style: Style, width: number): Rea
       text: `${String(view.framesDropped)} frame(s) refused by the dropping queue, counted at the offer — submitted minus processed could never have told you`,
     },
     {
+      id: 'SIM-12',
+      hit: view.blowsWithoutMagnitude > 0,
+      text:
+        view.blowsWithoutMagnitude === 0
+          ? 'no blow with a NaN amount has been thrown; the vitals scenario throws one at f60'
+          : Number.isFinite(view.vitals.healthPoints)
+            ? `${String(view.blowsWithoutMagnitude)} blow(s) with no magnitude absorbed; health is a real ${fixed(view.vitals.healthPoints, 1)} and the player is still killable`
+            : 'health is NOT FINITE — the delta guard was bypassed, and this player can no longer die',
+    },
+    {
+      id: 'SIM-13',
+      hit: view.foodSignals.starve > 0 || view.foodSignals.regen > 0,
+      text: `${String(view.foodSignals.regen)} regen and ${String(view.foodSignals.starve)} starve signal(s) emitted and NONE applied — the amount and the cause are mx-gameplay's, and this app has neither`,
+    },
+    {
+      id: 'SIM-14',
+      hit: view.settingsClamped > 0 || view.vitalsRepaired > 0,
+      text: `${String(view.settingsClamped)} settings write(s) the clamp had to move and ${String(view.vitalsRepaired)} vitals state(s) repaired on restore; both are counted at the CALL, because a repaired value is indistinguishable from one that was always legal`,
+    },
+    {
       id: 'SIM-10',
       hit: !view.loopRunning && view.framesSubmitted > 0,
       text: view.loopRunning
@@ -448,7 +598,11 @@ export const renderFrame = (
     '',
     ...timePanel(view, style, width),
     '',
+    ...vitalsPanel(view, style, width),
+    '',
     ...inventoryPanel(view, style, width),
+    '',
+    ...heldStatePanel(view, style, width),
     '',
     ...autoSavePanel(view, style, width),
     ...(toggles.timeline ? ['', ...timelinePanel(scenario, view.frame, style, width)] : []),
@@ -469,6 +623,7 @@ export const scenarioCatalogue = (style: Style, width: number): ReadonlyArray<st
     'second-world',
     'corrupt-save',
     'clock-divergence',
+    'vitals',
   ] as const) {
     const found = scenarioFor(scenario)
     lines.push('')

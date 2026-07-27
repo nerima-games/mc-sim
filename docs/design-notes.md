@@ -20,6 +20,7 @@ plan.md §3.8「設計注意（参照実装の実測知見）」の全項目を�
 | DN-10 | 足元原点 vs AABB中心の Y 規約を型で区別 | 要 |
 | DN-11 | 名指しブロックID判定をしない（能力フラグ参照） | 要 |
 | DN-12 | `Date.now()` を使わない | 済 |
+| DN-13 | 非有限な入力には 2 通りの答えがあり、取り違えると恒久化する | 済 |
 
 ---
 
@@ -617,3 +618,61 @@ Clock Port の実装アダプタだけは実クロックを読む必要がある
 | `ignores the same text inside a comment or a string` | 同上 |
 | `the escape hatch exempts exactly the line that carries it` | 同上 |
 | `is reproducible: the same script twice produces byte-identical state` | `test/scenario.test.ts` |
+
+---
+
+## DN-13 非有限な入力には 2 通りの答えがあり、取り違えると恒久化する
+
+plan.md §3.8 の項目ではなく、**本リポジトリと mx-gameplay の実測から出た**注意である。
+DN-03 の deltaTime クランプ、`normaliseTimeState`、`domain/entity.ts` の `repairState`、
+`domain/vitals.ts` の `delta` / `settle` / `normaliseVitals` が全部これの実例で、
+書かれるたびに同じ議論を最初からやり直していたので 1 か所にまとめる。
+
+境界を越えてくる数には 2 種類あり、**答えは逆である**。
+
+| 種類 | 答え | 理由 |
+| --- | --- | --- |
+| **デルタ**（ダメージ量、疲労の課金、XP 報酬、フレーム間隔） | `NaN` は**無視**して状態を動かさない | 「これだけ変えろ」と言われて何も言われていないのだから、動かさないのが正しい。動かすと**それまで正常だった状態が壊れる** |
+| **状態**（セーブから来た `TimeState` / `Vitals` / `Inventory` / `Statistics` / `Settings`） | **修復**して、その読み手全員が答えられる値にする | ワールドロード経路にはエラーチャネルが無い。回復可能なフィールドでロードを失敗させると、修復可能なセーブが開けないセーブになる |
+
+**`Infinity` は「大きさを持たない値」ではない —— 向きがある。** だから clamp は
+それが指している側の境界へ運ぶ。`clampDayLengthSecs(Infinity)` は最大値であり、
+無限のダメージは殺し、無限の回復は満たす。
+
+**その例外が 1 つあり、プレビューが見つけた。上限は例外である。**
+`maxHungerPoints: Infinity` を「指している側の境界」= `Number.MAX_SAFE_INTEGER` に clamp すると、
+`isValidVitals` が通し、全テストが緑のまま、画面が `hunger 99.0/9007199254740991` と表示する。
+mx-ui は 2 ポイントごとに 1 アイコンを `Array.from` で作るので、
+**巨大な上限は「長い行」ではなく「行が無い」**のと同じである。
+上限は行を作れる大きさを述べていなければならず、無限大はそれを述べていない ——
+だから大きさを持たない値と同じ扱いにしてデフォルトへ落とす。
+（有限で大きい上限は**触らない**。何が正当な上限かはルールであり、mc-sim はその所有者ではない。）
+
+### 恒久化するとはどういうことか
+
+3 件とも実測されている。どれも throw せず、型も合っており、テストは緑である。
+
+1. **恒久的な昼**（SIM-1）。`dayLengthTicks: 0` から全読み取りが `NaN` になり、
+   `isNight` は `NaN` の比較が偽なので `false` を返す。Mob が湧かず空も暗くならない。
+2. **恒久的な不死**（mx-gameplay アリーナプレビューの F5）。`20 - NaN` は `NaN` で、
+   `NaN <= 0` は偽。一撃で二度と死なないエンティティができる。
+3. **恒久的な凍結**（`domain/vitals.ts`）。参照実装の `levelFromXP` は `while (true)` で、
+   `accumulated + cost > totalXP` は `NaN` でも `Infinity` でも永久に偽。
+   そういう `totalXP` を持つセーブがフレームループを無音で止める。
+   **同期の無限ループなので vitest のタイムアウトでも中断できない**（実測: 60 秒で未完了）。
+
+共通しているのは、**壊れた値そのものではなく、壊れた値が通ったあとの述語が嘘をつく**ことである。
+だから修復は述語の側ではなく、値が入ってきた境界で行う。
+
+### 書くべき回帰テスト
+
+| テスト名 | 場所 |
+| --- | --- |
+| `REGRESSION: a NaN blow must not make a player immortal` | `test/vitals.test.ts` |
+| `REGRESSION: a non-finite experience total must not hang the level lookup` | 同上 |
+| `REGRESSION: a repaired maximum must be a number a screen can build a row from` | 同上 |
+| `REGRESSION: a restored accumulator must not sit above its own threshold` | 同上 |
+| `REGRESSION: a broken maximum must not drag a legal current value out of range` | 同上 |
+| `REGRESSION: a NaN amount must not disable a counter for the rest of the world` | `test/statistics.test.ts` |
+| `REGRESSION: the string "false" must not become a true` | `test/settings.test.ts` |
+| （既出）`normaliseTimeState` の全域性 | `test/time-of-day.test.ts` |

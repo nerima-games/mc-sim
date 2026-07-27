@@ -19,13 +19,13 @@ plan.md §2.3-1 の分類でいう **名詞**。
 | プレイヤー状態 | `PlayerService`。姿勢（feet 原点）、モード | 骨組みのみ `application/player-service.ts` |
 | **カメラ姿勢** | `CameraPoseSnapshot` の**正**。唯一の発行者 | 実装済 `application/player-service.ts` |
 | インベントリ | スタックの置き場、追加/削除/照会 | 骨組みのみ `application/inventory-service.ts` |
-| 体力 / 空腹 / XP | 数値状態と遷移（「何がダメージを与えるか」は持たない） | 未実装 |
-| 実績 / 統計 | **記録**（画面は mx-ui） | 未実装 |
+| 体力 / 空腹 / XP | 数値状態と遷移（「何がダメージを与えるか」は持たない） | 実装済 `domain/vitals.ts` / `application/vitals-service.ts`。§3.4 |
+| 実績 / 統計 | **記録**（画面は mx-ui） | 実装済 `domain/statistics.ts` / `application/statistics-service.ts`。§3.5 |
 | 時間 | `TimeService`。tick カウンタ、昼夜、月齢 | 実装済 `application/time-service.ts` |
 | ゲームループ | フレーム駆動、開始/停止、再入可能な初期化 | 実装済 `application/game-loop.ts` |
 | 自動保存 | いつ保存するか（何を書くかは mc-save のフォーマット定義） | 実装済 `application/autosave.ts` |
 | **stage 登録** | `sim:physics` 1 本。`after` 制約は **0 本**（§2.1） | 実装済 `stages/registration.ts` |
-| 設定状態 | グラフィックス / 音量 / 操作の**値の保持**（画面は mx-ui、適用は各所） | 未実装 |
+| 設定状態 | グラフィックス / 音量 / 操作の**値の保持**（画面は mx-ui、適用は各所） | 実装済 `domain/settings.ts` / `application/settings-service.ts`。§3.6 |
 | ~~チャンクダーティ通知~~ | **mc-worldgen に移った**（`ChunkStore.subscribeDirty`）。mc-sim は中継しない — §3.3 | — |
 | レシピ / クラフト状態 | レシピ表とクラフト結果の状態（画面は mx-ui） | 実装済 `domain/recipe.ts` / `domain/crafting.ts` / `application/inventory-service.ts`。§3.1 |
 
@@ -185,6 +185,126 @@ plan.md §2.3-1 の「採掘→インベントリに入る」は sim 経由、�
 3. **他のリポジトリが「読む」ためのものか、「決める」ためのものか** → 決めるなら所有者側へ
 4. **6 つの下流のうち 2 つ以上が必要とするか** → 1 つだけなら、その 1 つに置けないか再検討する
    （依存ハブの API を増やすコストは plan.md §8 の第 2 リスクそのもの）
+
+### 3.4 体力 / 空腹 / XP —— 「何がダメージを与えるか」を持たないとはどういうことか
+
+`domain/vitals.ts` / `application/vitals-service.ts`。**実装済。**
+本行の但し書きは API の形そのものであり、注釈ではない。
+
+- **`applyDamage(vitals, { amount, cause })` は量と死因を受け取り、どちらも解釈しない。**
+  クリーパーの爆風か落下か溶岩かはルールであり mx-gameplay のもの（plan.md §2.3-1）。
+  ダメージ表も落下距離の算術も、燃えるものの一覧も、`cause` による分岐も **1 つも無い**。
+  `DamageCause` は裸の `string` である —— `mx-gameplay/domain/death-cause.ts` が
+  11 個の死因ロスタとその文言を所有しており、ここでその union をミラーすれば
+  `ItemType` の狭いミラーとまったく同じ「第 2 の所有者」になる。
+  **死因は殺した一撃のときだけ記録する**（参照実装の `justDied ? …` と同じ、
+  `health-service.ts:82`）。死体への 2 撃目が死亡メッセージを書き換えないのはそのためである。
+
+- **飽和度(saturation)と疲労度(exhaustion)はここ。消耗の「原因表」はここではない。**
+  この分割が本節でいちばん判断を要した箇所である。
+  - 両者は**フレームとセーブを跨いで残る数値**であり、両者のあいだのカスケード
+    （疲労 4 で飽和 1、飽和が空なら空腹 1）は**数値の遷移**である。だからここ。
+  - 一方 `EXHAUSTION_SPRINT_PER_BLOCK = 0.1` / `EXHAUSTION_JUMP = 0.05` /
+    `EXHAUSTION_ATTACK = 0.1`（`hunger-service.config.ts:20-25`）は
+    「**何が消耗させるか**」であり、これは「何がダメージを与えるか」の動詞違いにすぎない。
+    **持っていない。** `addExhaustion` は `applyDamage` と同様、呼び手が計算した量を受け取る。
+  - **境界上の定数が 1 つあり、明記してある。** `EXHAUSTION_PER_REGEN = 6` はコストなので
+    上の議論ではルール層のものになるはずだが、それが課金される「行為」を行うのは
+    この状態機械自身（食事タイマー）であり、呼び手には課金の機会が見えない。
+    `domain/vitals.ts` の当該定数の doc comment にこの但し書きごと書いてある。
+
+- **`advanceFoodTimer` は信号を返し、何も適用しない。** 餓死が何ダメージか、回復が何ポイントかは
+  量であり、この module は量を 1 つも知らない。参照実装も同じ線を引いている
+  （`hunger-service.ts:60-62`「for the caller to apply to HealthService」）。
+  違いは、あちらでは呼び手が同じパッケージ内にいたのに対し、こちらでは mc-sim から見えない
+  別リポジトリにいることである。
+
+- **食事タイマーは「4 秒」であって「80 tick」ではない。** 参照実装の
+  `FOOD_TICK_INTERVAL = 80` はコメント自身が「80 ticks = 4 s at 20 t/s」と測定を述べている。
+  **mc-sim は 60 tick/s である。** 80 をそのまま転記すると 1.33 秒ごとに発火し、
+  空腹の減りが 3 倍速くなる —— しかも忠実な移植に見える。
+  移るのは**持続時間**のほうであり、それがコメントが実際に測っていたものだからである。
+  `test/vitals.test.ts` の `REGRESSION: the food tick is FOUR SECONDS` がこれを固定する。
+
+- **XP は 2 つの数ではなく 1 つの数である。** `totalExperience` だけを保持し、
+  レベルと進捗は導出する。曲線は参照実装の 3 区分
+  （`player-xp-calc.ts:5-13`、レベル 0-15 / 16-30 / 31+）をコメントごと転記したもので、
+  **捏造した定数は 1 つも無い**。累計の閉じた式はその走行和の導出であり、
+  `experienceCostOfLevel` の逐次加算と 0..400 で一致することをテストが固定している
+  —— 誰も検算しない導出は、手数の多い捏造定数と同じだからである。
+
+- **参照実装の `levelFromXP` は非有限入力で停止しない。** `while (true)` の
+  `accumulated + cost > totalXP` は `NaN` でも `Infinity` でも永久に偽であり、
+  そういう `totalXP` を持つセーブファイルはフレームループを**無音で凍らせる**。
+  正直な移植はこれを無料で相続する。ここでは倍増 + 二分探索にしてあり、
+  ガードを外すと該当テストは「誤った数」ではなく**ハング**して赤くなる（実測 60 秒で未完了、
+  正常時 0.5 秒）。
+
+- **mx-ui の `VitalsSnapshot` に合わせてあるのはフィールド名である。**
+  `healthPoints` / `maxHealthPoints` / `hungerPoints` / `maxHungerPoints` /
+  `experienceLevel` / `experienceProgress` の 6 つを `vitalsView` が出す。
+  残る 2 つ（`hotbar` / `selectedHotbarIndex`）はインベントリ側であり、
+  **選択中スロットは mc-sim にまだ無い**。状態なので来るときはここに来るが、
+  呼び手のいない公開 API を先に生やすのは plan.md §8 の第 2 リスクそのものなので、
+  `domain/vitals.ts` に行き先つきで名指ししてある。
+
+- **プレイヤーの体力が `EntityManager` の台帳に入らない理由。** §3.1 の
+  「最大体力を持たない」は **kind の表**についての議論であり、プレイヤーはその表の行ではない。
+  プレイヤーは 1 人しかおらず、mx-ui はハートの本数を知るために `maxHealthPoints` を要求し、
+  空腹と経験値は他の誰にも存在しない。台帳に入れればクリーパーが飽和度を持つことになる。
+
+### 3.5 実績 / 統計 —— 記録だけを持つ
+
+`domain/statistics.ts` / `application/statistics-service.ts`。**実装済。**
+本行で働いている語は **記録** である。この行には 3 つのものがあり、ここにあるのは 1 つ目だけ。
+
+1. **何が今までに起きたか** —— 集計と、解除済み実績の集合。状態、セーブ対象、所有者 1 つ。**ここ。**
+2. **何をイベントと数えるか** —— ブロックを壊したのは採掘イベントか、日光で死んだクリーパーは
+   キルか。ルール。mx-gameplay。
+3. **実績の解除条件と前提実績** —— 参照実装は
+   `isUnlocked: (stats) => boolean` の表と不動点掃引である
+   （`achievement/achievement.ts:10-44`）。**世界に対する述語の表はルール表である。**
+   mc-sim は `unlock` と言われて記録するだけで、レジストリも述語も持たない。
+
+**カウンタが名前付きフィールドではなく開いた map なのはなぜか。** 参照実装の
+`Statistics` は 8 つの名前付きフィールドを持つ（`statistics/statistics.ts:9-18`）が、
+その内訳は `Partial<Record<EntityType, number>>` である。`EntityType` は **Mob のロスタ**であり、
+§3.1 がまさに mc-sim に持たせないと決めたものである。そして名前付きフィールドは、
+9 個目の統計が「6 リポジトリが読む公開面の変更」になることを意味する（plan.md §8 第 2 リスク）。
+**代償は引き受けてある** —— mc-sim は `blocks.mined` が
+`blocks.mined.stone` の和であるべきだと言えない。キーを書く側がその関係を所有する。
+
+### 3.6 設定状態 —— 値の保持だけを持つ
+
+`domain/settings.ts` / `application/settings-service.ts`。**実装済。**
+括弧の中（画面は mx-ui、適用は各所）が境界のすべてである。読んで何かを決めるフィールドは
+ここに属さない。参照実装の `GRAPHICS_PRESETS` / `resolvePreset`
+（`settings-service.config.ts:26-70`）は `'high'` を 14 個のレンダラつまみ
+（THREE のピクセル型定数を含む）に変える表であり、それは**適用**で mc-render のものである。
+
+参照実装の `SettingsSchema` は 18 フィールド。ここには 9 つある。**断った 9 つのほうが有用である。**
+
+| 断ったもの | 理由 |
+| --- | --- |
+| **`dayLengthSeconds`**（schema:54） | **これが重要。** 日長は既に mc-sim が持っている —— `TimeState` の**分母**であり、`domain/time-of-day.ts` はそれを変えると何が起きるかを説明するために存在している。ここにも置けば **1 つのリポジトリの中に 1 つの数の所有者が 2 人**いることになる。`mx-gameplay/docs/architecture.md:142-148` が記録している失敗と同じ形である。参照実装はまさにこれをやっており、そのミッドセッション `setDayLength` が `domain/time-of-day.ts` 冒頭に名指しされている live bug である |
+| `difficulty`（schema:55） | peaceful は「敵性 Mob がスポーンしない」「空腹でダメージを受けない」であり、どちら向きにもルール |
+| `reducedMotion` / `uiScale` / `colorVisionMode` / `audioCaptionsEnabled`（schema:56-65） | 消費者が全部画面。mx-ui は `domain/accessibility.ts` と `domain/caption.ts` を既に持つ。本行が挙げる 3 分類に**表示**は無い |
+| `adaptivePerformanceMode`（schema:70） | グラフィックスの値ではあるが、これが有効化するのは **`graphicsQuality` を実行時に下げる mc-render のアルゴリズム**である。フラグをここに置きつつ隣のフィールドをあちらが書き換えるのは、mc-sim が持つ値の第 2 の書き手を作ることである |
+| `ResolvedGraphics`（schema:14-46） | 14 個のレンダラつまみ。適用 |
+
+**デフォルト値は測定ではなく転記である。** `renderDistance: 5` は参照実装で
+「the perf floor measured in the parity doc」を根拠にしているが、その文書は mc-sim に無く、
+その測定は mc-sim では繰り返せない。`mx-gameplay/docs/responsibility.md` §5-4 が要求する最低条件
+（転記であることを定数の doc comment に明記する）をそのまま満たしてある。
+`audioEnabled: false` は特に読み返す価値がある —— 参照実装の根拠は
+「audio causes noise during development and testing」であり、**プレイヤーではなく開発ループについての主張**である。
+
+**`SettingsService.reset` はここだけ意味が違う。** 他の 5 サービスの `reset` は
+「このワールドを捨てる」だが、設定はワールドではない。ワールド teardown 経路に繋いだホストは、
+別のセーブを開くたびにプレイヤーの設定を無音で工場出荷状態に戻す —— クラッシュもエラーも無く、
+「設定が勝手に戻る」以外のバグ報告が書けない欠陥である。
+DN-09 が要求するので存在し、意味は設定画面の RESTORE DEFAULTS ボタンだけである。
+`test/settings.test.ts` がこの失敗に名前を付けて固定している。
 
 ## 4. 親と子
 

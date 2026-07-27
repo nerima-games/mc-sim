@@ -13,8 +13,8 @@
 <!-- ------------------------------------------------------------------------- -->
 
 format: 1
-exported declarations: 148
-supporting declarations: 24
+exported declarations: 220
+supporting declarations: 27
 
 ## Exported
 
@@ -22,6 +22,12 @@ supporting declarations: 24
 
 ```ts
 const AUTO_SAVE_INTERVAL: Duration.Duration;
+```
+
+### AchievementId  `type`
+
+```ts
+type AchievementId = string;
 ```
 
 ### AddOutcome  `type`
@@ -93,10 +99,52 @@ type CraftResult = {
 const DEFAULT_DAY_LENGTH_SECS = 400;
 ```
 
+### DEFAULT_MAX_HEALTH_POINTS  `const`
+
+```ts
+const DEFAULT_MAX_HEALTH_POINTS = 20;
+```
+
+### DEFAULT_MAX_HUNGER_POINTS  `const`
+
+```ts
+const DEFAULT_MAX_HUNGER_POINTS = 20;
+```
+
+### DEFAULT_SETTINGS  `const`
+
+```ts
+const DEFAULT_SETTINGS: Settings;
+```
+
 ### DESPAWNED  `const`
 
 ```ts
 const DESPAWNED: EntityTransition<never>;
+```
+
+### Damage  `type`
+
+```ts
+type Damage = {
+    readonly amount: number;
+    readonly cause: DamageCause;
+};
+```
+
+### DamageCause  `type`
+
+```ts
+type DamageCause = string;
+```
+
+### DamageOutcome  `type`
+
+```ts
+type DamageOutcome = {
+    readonly vitals: Vitals.Vitals;
+    readonly died: boolean;
+};
 ```
 
 ### DespawnOutcome  `type`
@@ -106,6 +154,12 @@ type DespawnOutcome<S> = {
     readonly roster: EntityRoster<S>;
     readonly despawned: boolean;
 };
+```
+
+### EMPTY_STATISTICS  `const`
+
+```ts
+const EMPTY_STATISTICS: Statistics;
 ```
 
 ### ENTITY_ID_PREFIX  `const`
@@ -118,6 +172,18 @@ const ENTITY_ID_PREFIX = "e:";
 
 ```ts
 const ENTITY_MANAGER_TAG_KEY = "@nerima-games/mc-sim/EntityManager";
+```
+
+### EXHAUSTION_PER_POINT  `const`
+
+```ts
+const EXHAUSTION_PER_POINT = 4;
+```
+
+### EXHAUSTION_PER_REGEN  `const`
+
+```ts
+const EXHAUSTION_PER_REGEN = 6;
 ```
 
 ### EXPERIENCE_MODULE_STAGE_PREFIXES  `const`
@@ -243,16 +309,34 @@ type EntityTransition<S> = {
 const FIRST_FRAME_DELTA_SECS: DeltaTimeSecs;
 ```
 
+### FOOD_TICK_SECS  `const`
+
+```ts
+const FOOD_TICK_SECS = 4;
+```
+
 ### FRAME_QUEUE_CAPACITY  `const`
 
 ```ts
 const FRAME_QUEUE_CAPACITY = 60;
 ```
 
+### FoodTickSignal  `type`
+
+```ts
+type FoodTickSignal = 'none' | 'regen' | 'starve';
+```
+
 ### FrameHandler  `type`
 
 ```ts
 type FrameHandler = (dt: DeltaTimeSecs) => Effect.Effect<void>;
+```
+
+### GRAPHICS_QUALITIES  `const`
+
+```ts
+const GRAPHICS_QUALITIES: readonly ["low", "medium", "high", "ultra"];
 ```
 
 ### GameLoop  `class`
@@ -280,6 +364,12 @@ type GameLoopApi = {
 
 ```ts
 const GameLoopLayer: Layer.Layer<GameLoop>;
+```
+
+### GraphicsQuality  `type`
+
+```ts
+type GraphicsQuality = (typeof GRAPHICS_QUALITIES)[number];
 ```
 
 ### INITIAL_PLAYER_POSE  `const`
@@ -361,10 +451,34 @@ type ItemStack = {
 const MAX_DAY_LENGTH_SECS = 1200;
 ```
 
+### MAX_EXHAUSTION  `const`
+
+```ts
+const MAX_EXHAUSTION = 40;
+```
+
+### MAX_FOV_DEGREES  `const`
+
+```ts
+const MAX_FOV_DEGREES = 110;
+```
+
 ### MAX_FRAME_DELTA_SECS  `const`
 
 ```ts
 const MAX_FRAME_DELTA_SECS = 0.05;
+```
+
+### MAX_MOUSE_SENSITIVITY  `const`
+
+```ts
+const MAX_MOUSE_SENSITIVITY = 3;
+```
+
+### MAX_RENDER_DISTANCE  `const`
+
+```ts
+const MAX_RENDER_DISTANCE = 16;
 ```
 
 ### MAX_TIME_FRACTION  `const`
@@ -373,16 +487,46 @@ const MAX_FRAME_DELTA_SECS = 0.05;
 const MAX_TIME_FRACTION = 0.9999;
 ```
 
+### MAX_VOLUME  `const`
+
+```ts
+const MAX_VOLUME = 1;
+```
+
 ### MIN_DAY_LENGTH_SECS  `const`
 
 ```ts
 const MIN_DAY_LENGTH_SECS = 120;
 ```
 
+### MIN_FOV_DEGREES  `const`
+
+```ts
+const MIN_FOV_DEGREES = 30;
+```
+
 ### MIN_FRAME_DELTA_SECS  `const`
 
 ```ts
 const MIN_FRAME_DELTA_SECS = 0.001;
+```
+
+### MIN_MOUSE_SENSITIVITY  `const`
+
+```ts
+const MIN_MOUSE_SENSITIVITY = 0.1;
+```
+
+### MIN_RENDER_DISTANCE  `const`
+
+```ts
+const MIN_RENDER_DISTANCE = 2;
+```
+
+### MIN_VOLUME  `const`
+
+```ts
+const MIN_VOLUME = 0;
 ```
 
 ### MOON_PHASE_COUNT  `const`
@@ -484,6 +628,12 @@ type PlayerServiceApi = {
 const PlayerServiceLayer: (initial?: Camera.PlayerPose) => Layer.Layer<PlayerService>;
 ```
 
+### REGEN_HUNGER_THRESHOLD  `const`
+
+```ts
+const REGEN_HUNGER_THRESHOLD = 18;
+```
+
 ### Recipe  `type`
 
 ```ts
@@ -559,10 +709,64 @@ const SIM_STAGE_IDS: {
 };
 ```
 
+### SPAWN_SATURATION  `const`
+
+```ts
+const SPAWN_SATURATION = 5;
+```
+
+### SPAWN_VITALS  `const`
+
+```ts
+const SPAWN_VITALS: Vitals;
+```
+
 ### STARTER_RECIPES  `const`
 
 ```ts
 const STARTER_RECIPES: RecipeTable;
+```
+
+### Settings  `type`
+
+```ts
+type Settings = {
+    readonly renderDistance: number;
+    readonly fovDegrees: number;
+    readonly graphicsQuality: GraphicsQuality;
+    readonly audioEnabled: boolean;
+    readonly masterVolume: number;
+    readonly musicVolume: number;
+    readonly sfxVolume: number;
+    readonly mouseSensitivity: number;
+    readonly keyBindings: Readonly<Record<string, string>>;
+};
+```
+
+### SettingsService  `class`
+
+```ts
+class SettingsService extends SettingsService_base {
+}
+```
+
+### SettingsServiceApi  `type`
+
+```ts
+type SettingsServiceApi = {
+    readonly snapshot: Effect.Effect<Settings.Settings>;
+    readonly update: (patch: Partial<Settings.Settings>) => Effect.Effect<Settings.Settings>;
+    readonly bindKey: (action: string, code: string) => Effect.Effect<void>;
+    readonly unbindKey: (action: string) => Effect.Effect<void>;
+    readonly restore: (settings: Settings.Settings) => Effect.Effect<void>;
+    readonly reset: Effect.Effect<void>;
+};
+```
+
+### SettingsServiceLayer  `const`
+
+```ts
+const SettingsServiceLayer: (initial?: Settings.Settings) => Layer.Layer<SettingsService>;
 ```
 
 ### ShapedRecipe  `type`
@@ -619,6 +823,48 @@ type SpawnRequest<S> = {
     readonly healthPoints: number;
     readonly behaviour: S;
 };
+```
+
+### StatisticKey  `type`
+
+```ts
+type StatisticKey = string;
+```
+
+### Statistics  `type`
+
+```ts
+type Statistics = {
+    readonly counters: Readonly<Record<StatisticKey, number>>;
+    readonly unlocked: ReadonlyArray<AchievementId>;
+};
+```
+
+### StatisticsService  `class`
+
+```ts
+class StatisticsService extends StatisticsService_base {
+}
+```
+
+### StatisticsServiceApi  `type`
+
+```ts
+type StatisticsServiceApi = {
+    readonly snapshot: Effect.Effect<Statistics.Statistics>;
+    readonly record: (key: Statistics.StatisticKey, amount?: number) => Effect.Effect<void>;
+    readonly counterOf: (key: Statistics.StatisticKey) => Effect.Effect<number>;
+    readonly unlock: (id: Statistics.AchievementId) => Effect.Effect<void>;
+    readonly isUnlocked: (id: Statistics.AchievementId) => Effect.Effect<boolean>;
+    readonly restore: (statistics: Statistics.Statistics) => Effect.Effect<void>;
+    readonly reset: Effect.Effect<void>;
+};
+```
+
+### StatisticsServiceLayer  `const`
+
+```ts
+const StatisticsServiceLayer: (initial?: Statistics.Statistics) => Layer.Layer<StatisticsService>;
 ```
 
 ### SweepOutcome  `type`
@@ -687,6 +933,78 @@ const UNCHANGED: EntityTransition<never>;
 const UPSTREAM_STAGE_IDS: {};
 ```
 
+### Vitals  `type`
+
+```ts
+type Vitals = {
+    readonly healthPoints: number;
+    readonly maxHealthPoints: number;
+    readonly hungerPoints: number;
+    readonly maxHungerPoints: number;
+    readonly saturation: number;
+    readonly exhaustion: number;
+    readonly foodTimerSecs: number;
+    readonly totalExperience: number;
+    readonly lastDamageCause: DamageCause | undefined;
+};
+```
+
+### VitalsService  `class`
+
+```ts
+class VitalsService extends VitalsService_base {
+}
+```
+
+### VitalsServiceApi  `type`
+
+```ts
+type VitalsServiceApi = {
+    readonly snapshot: Effect.Effect<Vitals.Vitals>;
+    readonly view: Effect.Effect<Vitals.VitalsView>;
+    readonly damage: (damage: Vitals.Damage) => Effect.Effect<DamageOutcome>;
+    readonly heal: (amount: number) => Effect.Effect<Vitals.Vitals>;
+    readonly addExhaustion: (amount: number) => Effect.Effect<void>;
+    readonly eat: (foodPoints: number, saturationModifier: number) => Effect.Effect<void>;
+    readonly advanceFoodTimer: (dt: DeltaTimeSecs) => Effect.Effect<Vitals.FoodTickSignal>;
+    readonly addExperience: (amount: number) => Effect.Effect<Vitals.Vitals>;
+    readonly respawn: Effect.Effect<void>;
+    readonly restore: (vitals: Vitals.Vitals) => Effect.Effect<void>;
+    readonly reset: Effect.Effect<void>;
+};
+```
+
+### VitalsServiceLayer  `const`
+
+```ts
+const VitalsServiceLayer: (initial?: Vitals.Vitals) => Layer.Layer<VitalsService>;
+```
+
+### VitalsView  `type`
+
+```ts
+type VitalsView = {
+    readonly healthPoints: number;
+    readonly maxHealthPoints: number;
+    readonly hungerPoints: number;
+    readonly maxHungerPoints: number;
+    readonly experienceLevel: number;
+    readonly experienceProgress: number;
+};
+```
+
+### addExhaustion  `const`
+
+```ts
+const addExhaustion: (vitals: Vitals, amount: number) => Vitals;
+```
+
+### addExperience  `const`
+
+```ts
+const addExperience: (vitals: Vitals, amount: number) => Vitals;
+```
+
 ### addItem  `const`
 
 ```ts
@@ -699,16 +1017,40 @@ const addItem: (inventory: Inventory, item: ItemType, count: number) => AddOutco
 const advance: (state: TimeState, dt: DeltaTimeSecs) => TimeState;
 ```
 
+### advanceFoodTimer  `const`
+
+```ts
+const advanceFoodTimer: (vitals: Vitals, dt: DeltaTimeSecs) => readonly [FoodTickSignal, Vitals];
+```
+
+### applyDamage  `const`
+
+```ts
+const applyDamage: (vitals: Vitals, damage: Damage) => Vitals;
+```
+
 ### applyLook  `const`
 
 ```ts
 const applyLook: (pose: PlayerPose, deltaYaw: number, deltaPitch: number) => PlayerPose;
 ```
 
+### applySettings  `const`
+
+```ts
+const applySettings: (current: Settings, patch: Partial<Settings>) => Settings;
+```
+
 ### autoSaveSchedule  `const`
 
 ```ts
 const autoSaveSchedule: (interval?: Duration.Duration) => Schedule.Schedule<number>;
+```
+
+### bindKey  `const`
+
+```ts
+const bindKey: (settings: Settings, action: string, code: string) => Settings;
 ```
 
 ### cameraPoseOf  `const`
@@ -759,6 +1101,12 @@ const countOf: (inventory: Inventory, item: ItemType) => number;
 const countOfKind: <S>(roster: EntityRoster<S>, kind: EntityKind) => number;
 ```
 
+### counterOf  `const`
+
+```ts
+const counterOf: (statistics: Statistics, key: StatisticKey) => number;
+```
+
 ### craftFromGrid  `const`
 
 ```ts
@@ -783,6 +1131,12 @@ const dayLengthSecs: (state: TimeState) => number;
 const despawnEntity: <S>(roster: EntityRoster<S>, id: EntityId) => DespawnOutcome<S>;
 ```
 
+### eat  `const`
+
+```ts
+const eat: (vitals: Vitals, foodPoints: number, saturationModifier: number) => Vitals;
+```
+
 ### emptyInventory  `const`
 
 ```ts
@@ -805,6 +1159,24 @@ const entityManagerTag: <S>() => Context.Tag<EntityManager, EntityManagerApi<S>>
 
 ```ts
 const exactly: (item: ItemType) => Ingredient;
+```
+
+### experienceCostOfLevel  `const`
+
+```ts
+const experienceCostOfLevel: (level: number) => number;
+```
+
+### experienceLevel  `const`
+
+```ts
+const experienceLevel: (vitals: Vitals) => number;
+```
+
+### experienceProgress  `const`
+
+```ts
+const experienceProgress: (vitals: Vitals) => number;
 ```
 
 ### findEntity  `const`
@@ -837,6 +1209,12 @@ const frameDeltaLossBetween: (previousSecs: number | undefined, nowSecs: number)
 const frameDeltaLossSecs: (rawDeltaSecs: number) => number;
 ```
 
+### heal  `const`
+
+```ts
+const heal: (vitals: Vitals, amount: number) => Vitals;
+```
+
 ### ingredientCost  `const`
 
 ```ts
@@ -847,6 +1225,12 @@ const ingredientCost: (grid: CraftGrid) => ReadonlyMap<ItemType, number>;
 
 ```ts
 const ingredientMatches: (ingredient: Ingredient, item: ItemType) => boolean;
+```
+
+### isDead  `const`
+
+```ts
+const isDead: (vitals: Vitals) => boolean;
 ```
 
 ### isEmpty  `const`
@@ -867,10 +1251,34 @@ const isEntityId: (value: unknown) => value is EntityId;
 const isEntityKind: (value: unknown) => value is EntityKind;
 ```
 
+### isGraphicsQuality  `const`
+
+```ts
+const isGraphicsQuality: (value: unknown) => value is GraphicsQuality;
+```
+
 ### isNight  `const`
 
 ```ts
 const isNight: (state: TimeState) => boolean;
+```
+
+### isUnlocked  `const`
+
+```ts
+const isUnlocked: (statistics: Statistics, id: AchievementId) => boolean;
+```
+
+### isValidSettings  `const`
+
+```ts
+const isValidSettings: (settings: Settings) => boolean;
+```
+
+### isValidStatistics  `const`
+
+```ts
+const isValidStatistics: (statistics: Statistics) => boolean;
 ```
 
 ### isValidTimeState  `const`
@@ -879,10 +1287,28 @@ const isNight: (state: TimeState) => boolean;
 const isValidTimeState: (state: TimeState) => boolean;
 ```
 
+### isValidVitals  `const`
+
+```ts
+const isValidVitals: (vitals: Vitals) => boolean;
+```
+
 ### itemStack  `const`
 
 ```ts
 const itemStack: (item: ItemType, count: number) => ItemStack;
+```
+
+### keyBindingFor  `const`
+
+```ts
+const keyBindingFor: (settings: Settings, action: string) => string | undefined;
+```
+
+### levelForTotalExperience  `const`
+
+```ts
+const levelForTotalExperience: (totalExperience: number) => number;
 ```
 
 ### makeEntityManager  `const`
@@ -909,6 +1335,12 @@ const makeInventoryService: (initial?: Inv.Inventory, recipeTable?: Recipe.Recip
 const makePlayerService: (initial?: Camera.PlayerPose) => Effect.Effect<PlayerServiceApi>;
 ```
 
+### makeSettingsService  `const`
+
+```ts
+const makeSettingsService: (initial?: Settings.Settings) => Effect.Effect<SettingsServiceApi>;
+```
+
 ### makeSimFrameState  `const`
 
 ```ts
@@ -930,10 +1362,22 @@ const makeSimStagesForPreview: Effect.Effect<{
 }, never, TimeService | PlayerService>;
 ```
 
+### makeStatisticsService  `const`
+
+```ts
+const makeStatisticsService: (initial?: Statistics.Statistics) => Effect.Effect<StatisticsServiceApi>;
+```
+
 ### makeTimeService  `const`
 
 ```ts
 const makeTimeService: (initial?: Time.TimeState) => Effect.Effect<TimeServiceApi>;
+```
+
+### makeVitalsService  `const`
+
+```ts
+const makeVitalsService: (initial?: Vitals.Vitals) => Effect.Effect<VitalsServiceApi>;
 ```
 
 ### matchRecipe  `const`
@@ -966,10 +1410,28 @@ const normaliseInventory: (inventory: Inventory) => NormaliseOutcome;
 const normaliseRoster: <S>(roster: EntityRoster<S>, repairBehaviour?: BehaviourRepair<S>) => NormaliseRosterOutcome<S>;
 ```
 
+### normaliseSettings  `const`
+
+```ts
+const normaliseSettings: (settings: Settings) => Settings;
+```
+
+### normaliseStatistics  `const`
+
+```ts
+const normaliseStatistics: (statistics: Statistics) => Statistics;
+```
+
 ### normaliseTimeState  `const`
 
 ```ts
 const normaliseTimeState: (state: TimeState) => TimeState;
+```
+
+### normaliseVitals  `const`
+
+```ts
+const normaliseVitals: (vitals: Vitals) => Vitals;
 ```
 
 ### performAutoSaveTick  `const`
@@ -978,10 +1440,22 @@ const normaliseTimeState: (state: TimeState) => TimeState;
 const performAutoSaveTick: <E>(persist: Effect.Effect<void, E>, reporter?: AutoSaveStatusReporter) => Effect.Effect<void>;
 ```
 
+### record  `const`
+
+```ts
+const record: (statistics: Statistics, key: StatisticKey, amount?: number) => Statistics;
+```
+
 ### removeItem  `const`
 
 ```ts
 const removeItem: (inventory: Inventory, item: ItemType, count: number) => RemoveOutcome;
+```
+
+### respawn  `const`
+
+```ts
+const respawn: (vitals: Vitals) => Vitals;
 ```
 
 ### serialOfEntityId  `const`
@@ -1066,6 +1540,30 @@ const sweepRoster: <S, A>(roster: EntityRoster<S>, step: (entity: Entity<S>) => 
 
 ```ts
 const timeOfDay: (state: TimeState) => number;
+```
+
+### totalExperienceAtLevel  `const`
+
+```ts
+const totalExperienceAtLevel: (level: number) => number;
+```
+
+### unbindKey  `const`
+
+```ts
+const unbindKey: (settings: Settings, action: string) => Settings;
+```
+
+### unlock  `const`
+
+```ts
+const unlock: (statistics: Statistics, id: AchievementId) => Statistics;
+```
+
+### vitalsView  `const`
+
+```ts
+const vitalsView: (vitals: Vitals) => VitalsView;
 ```
 
 ### withFeetPosition  `const`
@@ -1204,6 +1702,12 @@ type Position = {
 };
 ```
 
+### SettingsService_base  `const`
+
+```ts
+const SettingsService_base: Context.TagClass<SettingsService, "@nerima-games/mc-sim/SettingsService", SettingsServiceApi>;
+```
+
 ### StackCount  `const`
 
 ```ts
@@ -1238,8 +1742,20 @@ interface StageRegistration {
 }
 ```
 
+### StatisticsService_base  `const`
+
+```ts
+const StatisticsService_base: Context.TagClass<StatisticsService, "@nerima-games/mc-sim/StatisticsService", StatisticsServiceApi>;
+```
+
 ### TimeService_base  `const`
 
 ```ts
 const TimeService_base: Context.TagClass<TimeService, "@nerima-games/mc-sim/TimeService", TimeServiceApi>;
+```
+
+### VitalsService_base  `const`
+
+```ts
+const VitalsService_base: Context.TagClass<VitalsService, "@nerima-games/mc-sim/VitalsService", VitalsServiceApi>;
 ```
