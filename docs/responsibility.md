@@ -16,7 +16,7 @@ plan.md §2.3-1 の分類でいう **名詞**。
 | 領域 | 具体 | 状態 |
 | --- | --- | --- |
 | エンティティ管理 | `EntityManager`。存在・ID・トランスフォームの台帳 | 実装済 `domain/entity.ts` / `application/entity-manager.ts`。§3.1 |
-| プレイヤー状態 | `PlayerService`。姿勢（feet 原点）、モード | 骨組みのみ `application/player-service.ts` |
+| プレイヤー状態 | `PlayerService`。姿勢（feet 原点）、**どの次元に居るか**、モード | 姿勢と次元は実装済 `application/player-service.ts`。§3.7 |
 | **カメラ姿勢** | `CameraPoseSnapshot` の**正**。唯一の発行者 | 実装済 `application/player-service.ts` |
 | インベントリ | スタックの置き場、追加/削除/照会 | 骨組みのみ `application/inventory-service.ts` |
 | 体力 / 空腹 / XP | 数値状態と遷移（「何がダメージを与えるか」は持たない） | 実装済 `domain/vitals.ts` / `application/vitals-service.ts`。§3.4 |
@@ -306,6 +306,50 @@ plan.md §2.3-1 の「採掘→インベントリに入る」は sim 経由、�
 DN-09 が要求するので存在し、意味は設定画面の RESTORE DEFAULTS ボタンだけである。
 `test/settings.test.ts` がこの失敗に名前を付けて固定している。
 
+### 3.7 次元 —— 語は mc-worldgen のもの、状態はここ
+
+`application/player-service.ts` の `dimension` / `setDimension`、および
+`domain/worldgen-vocabulary.ts`。**実装済。**
+
+**この行が長らく空いていた理由は、メソッドが未実装だったからではない。**
+`mx-gameplay/domain/player-port.ts` が欠けているものを名指しで記録していた ——
+「the missing thing is an OWNERSHIP DECISION and not an unwritten method」。
+`Dimension` という語をどのリポジトリが所有するかが決まっておらず、
+決まらないうちにここで union を書けば、本プロジェクトが 5 回記録した
+「二つの綴り」になる。閉じた union はメンバ集合そのものが型だからである。
+
+**決着: 語は mc-worldgen が所有する。** kernel には `Dimension` 型が無く
+（実測、`block-registry.ts` の無関係なコメント 1 件のみ）候補ではあっても現職ではない。
+参照実装は `packages/world`（= mc-worldgen）に宣言しており、
+**その union を読むルールを既に所有しているのも mc-worldgen** である。
+mc-worldgen が barrel に出したので、ここは `domain/worldgen-vocabulary.ts` に
+**文字単位で転記**している。`domain/kernel-vocabulary.ts` に足していないのは、
+あのファイルを置き換えるのは `@nerima-games/mc-kernel` であり、
+kernel は `Dimension` を出さないからである（ミラーの住所は
+「どの barrel が置き換えるか」で決まる）。
+
+**mc-sim はこの値で分岐しない。** `if (dimension === 'nether')` は 1 つも無く、
+あってはならない。ネザーの何が違うか —— 天井、溶岩湖、ポータル連結、湧くもの ——
+は生成（mc-worldgen）とルール（mx-gameplay）であって、状態ではない。
+`DamageCause` の文字列を保存して一度も読まないのと同じ姿勢である。
+
+**`moveTo` と `setDimension` を 1 本に融合しなかった。** 融合すれば
+「切り替えずに動く」が表現不能になり、それは mx-gameplay が記録している欠陥
+（別世界の座標系の目的地を、切り替えていない世界に適用する）を型で防げる。
+それでも 2 本なのは、`moveTo` 単独が**世界の中のあらゆる通常移動**
+——歩行・リスポーン・同一次元内テレポート—— であり、こちらのほうが桁違いに多いからである。
+融合すればホットパスに `Dimension` 引数が乗り、呼び手は自分が既に居る次元を
+毎回書き直すことになる。**対にするのは呼び手の責任であり、それはルールなので mx-gameplay にある**
+（`mx-gameplay/domain/portal-travel.ts`）。両順序が同じ状態に落ちることは
+`test/player-service.test.ts` が固定している。
+
+**`restore` は 2 引数になった。** 片方だけ復元する `restore(pose)` は、
+ネザーで取ったセーブをオーバーワールドの同座標で開く —— クラッシュもエラーも無く、
+「セーブが変な場所で開く」以外のバグ報告が書けない欠陥である。
+省略可能な引数はそれを全ての既存呼び手に対して起こすので、**必須**にしてある。
+`reset` も次元を戻す。片方だけ戻す teardown は §3.6 が
+`SettingsService.reset` について記録した失敗と同じ形である。
+
 ## 4. 親と子
 
 ### 親（mc-sim が依存する）
@@ -315,7 +359,7 @@ DN-09 が要求するので存在し、意味は設定画面の RESTORE DEFAULTS
 | `mc-kernel` | 語彙全般（ブランデッド型、座標、`CameraPoseSnapshot`、Clock Port、`GameModule`） | `domain/kernel-vocabulary.ts` に暫定ミラー |
 | `mc-physics` | `step(state, world, dt)`、AABB クエリ、voxel-DDA | 未使用 |
 | `mc-save` | `defineFormat(name, version, schema, migrations)`、`StoragePort` | 未使用（`autosave.ts` は永続化 Effect を引数で受ける） |
-| `mc-worldgen` | `generateChunk`、`BiomeService`、`ChunkStore`（物理のためにブロックを読む） | 未使用 |
+| `mc-worldgen` | `generateChunk`、`BiomeService`、`ChunkStore`（物理のためにブロックを読む）、**`Dimension`** | `domain/worldgen-vocabulary.ts` に暫定ミラー（`Dimension` のみ）。§3.7 |
 
 ### 子（mc-sim に依存する）
 

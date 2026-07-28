@@ -13,8 +13,8 @@
 <!-- ------------------------------------------------------------------------- -->
 
 format: 1
-exported declarations: 220
-supporting declarations: 27
+exported declarations: 221
+supporting declarations: 28
 
 ## Exported
 
@@ -372,6 +372,12 @@ const GameLoopLayer: Layer.Layer<GameLoop>;
 type GraphicsQuality = (typeof GRAPHICS_QUALITIES)[number];
 ```
 
+### INITIAL_PLAYER_DIMENSION  `const`
+
+```ts
+const INITIAL_PLAYER_DIMENSION: Dimension;
+```
+
 ### INITIAL_PLAYER_POSE  `const`
 
 ```ts
@@ -614,10 +620,12 @@ class PlayerService extends PlayerService_base {
 ```ts
 type PlayerServiceApi = {
     readonly pose: Effect.Effect<Camera.PlayerPose>;
+    readonly dimension: Effect.Effect<Dimension>;
     readonly look: (deltaYaw: number, deltaPitch: number) => Effect.Effect<Camera.PlayerPose>;
     readonly moveTo: (feetPosition: Position) => Effect.Effect<void>;
+    readonly setDimension: (dimension: Dimension) => Effect.Effect<void>;
     readonly cameraPose: Effect.Effect<CameraPoseSnapshot, never, ClockPort>;
-    readonly restore: (pose: Camera.PlayerPose) => Effect.Effect<void>;
+    readonly restore: (pose: Camera.PlayerPose, dimension: Dimension) => Effect.Effect<void>;
     readonly reset: Effect.Effect<void>;
 };
 ```
@@ -625,7 +633,7 @@ type PlayerServiceApi = {
 ### PlayerServiceLayer  `const`
 
 ```ts
-const PlayerServiceLayer: (initial?: Camera.PlayerPose) => Layer.Layer<PlayerService>;
+const PlayerServiceLayer: (initial?: Camera.PlayerPose, initialDimension?: Dimension) => Layer.Layer<PlayerService>;
 ```
 
 ### REGEN_HUNGER_THRESHOLD  `const`
@@ -1332,7 +1340,7 @@ const makeInventoryService: (initial?: Inv.Inventory, recipeTable?: Recipe.Recip
 ### makePlayerService  `const`
 
 ```ts
-const makePlayerService: (initial?: Camera.PlayerPose) => Effect.Effect<PlayerServiceApi>;
+const makePlayerService: (initial?: Camera.PlayerPose, initialDimension?: Dimension) => Effect.Effect<PlayerServiceApi>;
 ```
 
 ### makeSettingsService  `const`
@@ -1621,6 +1629,12 @@ const DeltaTimeSecs: Brand.Brand.Constructor<DeltaTimeSecs>;
 
 ```ts
 type DeltaTimeSecs = number & Brand.Brand<'DeltaTimeSecs'>;
+```
+
+### Dimension  `type`
+
+```ts
+type Dimension = 'overworld' | 'nether' | 'end';
 ```
 
 ### EpochMillis  `const`

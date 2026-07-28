@@ -59,3 +59,11 @@ export * from './stages/stage-ids'
 // Types that unavoidably appear in this repository's signatures
 // (CameraPoseSnapshot, DeltaTimeSecs, ...) are structurally identical to
 // kernel's, so a consumer importing them from kernel typechecks against these.
+//
+// `domain/worldgen-vocabulary.ts` is the same arrangement for
+// @nerima-games/mc-worldgen, and is withheld from the barrel for the same
+// reason: `Dimension` appears in `PlayerServiceApi.dimension`, `setDimension`
+// and `restore`, and a consumer takes that word from mc-worldgen — which owns
+// and publishes it — not from here. Two barrels exporting one closed union is
+// the 「二つの綴り」 failure plan.md §3.4 describes, and re-exporting it would be
+// this repository volunteering to be the second spelling.
