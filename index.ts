@@ -22,6 +22,7 @@
 
 // --- Domain: pure values and transitions -----------------------------------
 export * from './domain/camera-pose'
+export * from './domain/block-targeting'
 export * from './domain/crafting'
 export * from './domain/entity'
 export * from './domain/frame-timing'

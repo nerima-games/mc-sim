@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@nerima-games/mc-physics':
+        specifier: 0.1.0
+        version: 0.1.0
       effect:
         specifier: ^3.22.0
         version: 3.22.0
@@ -246,6 +249,10 @@ packages:
 
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
+
+  '@nerima-games/mc-physics@0.1.0':
+    resolution: {integrity: sha512-5RFYGtej8TvBFGetTbitEicGyohv2ZQrstL3R151Do1bVheqjIBJUH7R2SbtjDgOKVcTMSZgT8HogfZJ8Na7Kw==, tarball: https://npm.pkg.github.com/download/@nerima-games/mc-physics/0.1.0/83c9b8fbef29cda6f5aa9db047cfa8b3b7708fd7}
+    engines: {node: '>=24.0.0', pnpm: '>=11.0.0'}
 
   '@oxlint/binding-android-arm-eabi@1.76.0':
     resolution: {integrity: sha512-ZHIE5Zt9AsPDcY4nOlofXt0YfneEeo+QrKMPcPzLf2Z6Q8VtV2W73d7SFJ920WUwyik783u/doKCs3KXdwG+7w==}
@@ -1257,6 +1264,10 @@ snapshots:
     dependencies:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
+
+  '@nerima-games/mc-physics@0.1.0':
+    dependencies:
+      effect: 3.22.0
 
   '@oxlint/binding-android-arm-eabi@1.76.0':
     optional: true

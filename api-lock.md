@@ -13,7 +13,7 @@
 <!-- ------------------------------------------------------------------------- -->
 
 format: 1
-exported declarations: 221
+exported declarations: 223
 supporting declarations: 28
 
 ## Exported
@@ -55,6 +55,16 @@ type AutoSaveStatusReporter = (status: AutoSaveStatus) => Effect.Effect<void>;
 
 ```ts
 type BehaviourRepair<S> = (kind: EntityKind, behaviour: S) => S;
+```
+
+### BlockTarget  `type`
+
+```ts
+type BlockTarget = {
+    readonly position: Position;
+    readonly adjacentPosition: Position;
+    readonly distance: number;
+};
 ```
 
 ### CraftGrid  `type`
@@ -1542,6 +1552,12 @@ const startAutoSaveDaemon: <E>(persist: Effect.Effect<void, E>, interval?: Durat
 
 ```ts
 const sweepRoster: <S, A>(roster: EntityRoster<S>, step: (entity: Entity<S>) => EntityStep<S, A>) => SweepOutcome<S, A>;
+```
+
+### targetBlockFromCamera  `const`
+
+```ts
+const targetBlockFromCamera: (camera: CameraPoseSnapshot, maxDistance: number, isTargetable: IsTargetable) => Option.Option<BlockTarget>;
 ```
 
 ### timeOfDay  `const`
