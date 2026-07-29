@@ -13,7 +13,7 @@
 <!-- ------------------------------------------------------------------------- -->
 
 format: 1
-exported declarations: 225
+exported declarations: 228
 supporting declarations: 28
 
 ## Exported
@@ -442,6 +442,7 @@ class InventoryService extends InventoryService_base {
 type InventoryServiceApi = {
     readonly add: (item: ItemType, count: number) => Effect.Effect<number>;
     readonly remove: (item: ItemType, count: number) => Effect.Effect<number>;
+    readonly removeAt: (slotIndex: number, expectedItem: ItemType, count: number) => Effect.Effect<Inv.RemoveAtResult>;
     readonly countOf: (item: ItemType) => Effect.Effect<number>;
     readonly snapshot: Effect.Effect<Inv.Inventory>;
     readonly restore: (inventory: Inv.Inventory) => Effect.Effect<number>;
@@ -705,6 +706,36 @@ type RecipePattern = {
 
 ```ts
 type RecipeTable = ReadonlyArray<Recipe>;
+```
+
+### RemoveAtOutcome  `type`
+
+```ts
+type RemoveAtOutcome = {
+    readonly inventory: Inventory;
+    readonly result: RemoveAtResult;
+};
+```
+
+### RemoveAtResult  `type`
+
+```ts
+type RemoveAtResult = {
+    readonly _tag: 'Removed';
+    readonly removed: number;
+} | {
+    readonly _tag: 'InvalidSlot';
+} | {
+    readonly _tag: 'InvalidCount';
+} | {
+    readonly _tag: 'EmptySlot';
+} | {
+    readonly _tag: 'ItemMismatch';
+    readonly actualItem: ItemType;
+} | {
+    readonly _tag: 'Insufficient';
+    readonly available: number;
+};
 ```
 
 ### RemoveOutcome  `type`
@@ -1474,6 +1505,12 @@ const record: (statistics: Statistics, key: StatisticKey, amount?: number) => St
 
 ```ts
 const removeItem: (inventory: Inventory, item: ItemType, count: number) => RemoveOutcome;
+```
+
+### removeItemAt  `const`
+
+```ts
+const removeItemAt: (inventory: Inventory, slotIndex: number, expectedItem: ItemType, count: number) => RemoveAtOutcome;
 ```
 
 ### respawn  `const`

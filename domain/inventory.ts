@@ -197,6 +197,58 @@ export type RemoveOutcome = {
   readonly removed: number
 }
 
+export type RemoveAtResult =
+  | { readonly _tag: 'Removed'; readonly removed: number }
+  | { readonly _tag: 'InvalidSlot' }
+  | { readonly _tag: 'InvalidCount' }
+  | { readonly _tag: 'EmptySlot' }
+  | { readonly _tag: 'ItemMismatch'; readonly actualItem: ItemType }
+  | { readonly _tag: 'Insufficient'; readonly available: number }
+
+export type RemoveAtOutcome = {
+  readonly inventory: Inventory
+  readonly result: RemoveAtResult
+}
+
+/**
+ * Remove exactly `count` items from one selected slot.
+ *
+ * Validation and mutation are one pure transition so the Ref wrapper can keep
+ * the selection check and the removal inside the same atomic `Ref.modify`.
+ * Every failure returns the original inventory unchanged.
+ */
+export const removeItemAt = (
+  inventory: Inventory,
+  slotIndex: number,
+  expectedItem: ItemType,
+  count: number,
+): RemoveAtOutcome => {
+  if (!Number.isInteger(slotIndex) || slotIndex < 0 || slotIndex >= INVENTORY_SLOT_COUNT) {
+    return { inventory, result: { _tag: 'InvalidSlot' } }
+  }
+  if (!Number.isInteger(count) || count <= 0) {
+    return { inventory, result: { _tag: 'InvalidCount' } }
+  }
+
+  const slot = inventory.slots[slotIndex]
+  if (slot === undefined) {
+    return { inventory, result: { _tag: 'EmptySlot' } }
+  }
+  if (slot.item !== expectedItem) {
+    return { inventory, result: { _tag: 'ItemMismatch', actualItem: slot.item } }
+  }
+
+  const available = heldCount(slot)
+  if (available < count) {
+    return { inventory, result: { _tag: 'Insufficient', available } }
+  }
+
+  const remaining = available - count
+  const slots = [...inventory.slots]
+  slots[slotIndex] = remaining === 0 ? undefined : { item: expectedItem, count: derivedStackCount(remaining) }
+  return { inventory: { slots }, result: { _tag: 'Removed', removed: count } }
+}
+
 /**
  * Take items, draining the LAST matching slots first.
  *

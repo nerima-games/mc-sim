@@ -271,6 +271,11 @@ type GameLoopApi = {
 type InventoryServiceApi = {
   readonly add: (item: ItemType, count: number) => Effect.Effect<number>     // 戻り値 = 入らなかった数
   readonly remove: (item: ItemType, count: number) => Effect.Effect<number>  // 戻り値 = 実際に取れた数
+  readonly removeAt: (
+    slotIndex: number,
+    expectedItem: ItemType,
+    count: number,
+  ) => Effect.Effect<RemoveAtResult>
   readonly countOf: (item: ItemType) => Effect.Effect<number>
   readonly snapshot: Effect.Effect<Inventory>
   readonly restore: (inventory: Inventory) => Effect.Effect<number>  // 戻り値 = 入らなかった数。§4-1
@@ -281,6 +286,14 @@ type InventoryServiceApi = {
   readonly previewCraft: (grid: CraftGrid) => Effect.Effect<RecipeMatch>
   readonly craft: (grid: CraftGrid) => Effect.Effect<CraftResult>
 }
+
+type RemoveAtResult =
+  | { readonly _tag: 'Removed'; readonly removed: number }
+  | { readonly _tag: 'InvalidSlot' }
+  | { readonly _tag: 'InvalidCount' }
+  | { readonly _tag: 'EmptySlot' }
+  | { readonly _tag: 'ItemMismatch'; readonly actualItem: ItemType }
+  | { readonly _tag: 'Insufficient'; readonly available: number }
 ```
 
 参照実装 `packages/inventory/application/inventory-service.ts:22-101` は 14 メソッド:
@@ -291,8 +304,11 @@ type InventoryServiceApi = {
 現スケルトンはこのうち add / remove / 照会 / 直列化 / クリアに相当する 6 個だけを持つ。
 本実装で埋めるべき差分:
 
-- **スロット単位操作**（`getSlot` / `setSlot` / `moveStack` / `quickMove` / `sortInventory`）:
-  mx-ui のインベントリ画面が必要とする。
+- **スロット単位操作**: 選択スロットからの消費に必要な最小の原子的操作として
+  `removeAt` は実装済み。`expectedItem` の照合と減算を単一の `Ref.modify` で行うため、
+  UI が見た後にスロット内容が変わっても別アイテムを消費しない。失敗時は全スロット不変。
+  `getSlot` / `setSlot` / `moveStack` / `quickMove` / `sortInventory` は未実装で、
+  mx-ui のインベントリ画面には引き続き必要となる。
 - **耐久 / メンディング**（`damageSlot` / `repairMendingItemsWithXP`）: XP サービスと結合する。
   「何をしたら耐久が減るか」は mx-gameplay、「減った値を保持する」が mc-sim。
 - **`addBlock` の失敗チャネル**: 参照実装は `Effect<void, InventoryError>`。

@@ -8,6 +8,7 @@ import {
   isEmpty,
   normaliseInventory,
   removeItem,
+  removeItemAt,
   slotAt,
   type Inventory,
 } from '../domain/inventory'
@@ -156,6 +157,66 @@ describe('removeItem', () => {
 
       expect(taken.removed).toBe(0)
       expect(countOf(taken.inventory, 'stone')).toBe(3)
+    }),
+  )
+})
+
+describe('removeItemAt', () => {
+  const selectedAndLaterStone = (): Inventory => ({
+    slots: [
+      { item: 'stone', count: 3 as StackCount },
+      undefined,
+      { item: 'stone', count: 5 as StackCount },
+      ...emptyInventory().slots.slice(3),
+    ],
+  })
+
+  it.effect('removes from the selected slot only, even when a later slot holds the same item', () =>
+    Effect.sync(() => {
+      const outcome = removeItemAt(selectedAndLaterStone(), 0, 'stone', 2)
+
+      expect(outcome.result).toStrictEqual({ _tag: 'Removed', removed: 2 })
+      expect(slotAt(outcome.inventory, 0)).toStrictEqual({ item: 'stone', count: 1 })
+      expect(slotAt(outcome.inventory, 2)).toStrictEqual({ item: 'stone', count: 5 })
+    }),
+  )
+
+  it.effect('removes the selected stack when the requested count is exact', () =>
+    Effect.sync(() => {
+      const outcome = removeItemAt(selectedAndLaterStone(), 0, 'stone', 3)
+
+      expect(outcome.result).toStrictEqual({ _tag: 'Removed', removed: 3 })
+      expect(slotAt(outcome.inventory, 0)).toBeUndefined()
+      expect(slotAt(outcome.inventory, 2)).toStrictEqual({ item: 'stone', count: 5 })
+    }),
+  )
+
+  it.effect('distinguishes every rejection and leaves every slot unchanged', () =>
+    Effect.sync(() => {
+      const stocked = selectedAndLaterStone()
+      const cases = [
+        removeItemAt(stocked, -1, 'stone', 1),
+        removeItemAt(stocked, INVENTORY_SLOT_COUNT, 'stone', 1),
+        removeItemAt(stocked, 0.5, 'stone', 1),
+        removeItemAt(stocked, 0, 'stone', 0),
+        removeItemAt(stocked, 1, 'stone', 1),
+        removeItemAt(stocked, 0, 'dirt', 1),
+        removeItemAt(stocked, 0, 'stone', 4),
+      ]
+
+      expect(cases.map(({ result }) => result)).toStrictEqual([
+        { _tag: 'InvalidSlot' },
+        { _tag: 'InvalidSlot' },
+        { _tag: 'InvalidSlot' },
+        { _tag: 'InvalidCount' },
+        { _tag: 'EmptySlot' },
+        { _tag: 'ItemMismatch', actualItem: 'stone' },
+        { _tag: 'Insufficient', available: 3 },
+      ])
+      for (const outcome of cases) {
+        expect(outcome.inventory).toBe(stocked)
+        expect(outcome.inventory.slots).toStrictEqual(stocked.slots)
+      }
     }),
   )
 })
@@ -443,6 +504,47 @@ describe('REGRESSION: InventoryService.restore is the guarded path, and reports 
 })
 
 describe('InventoryService concurrency', () => {
+  it.effect('removeAt changes only the selected slot and reports stale selections', () =>
+    Effect.gen(function* () {
+      const service = yield* makeInventoryService({
+        slots: [
+          { item: 'stone', count: 3 as StackCount },
+          { item: 'dirt', count: 4 as StackCount },
+          { item: 'stone', count: 5 as StackCount },
+          ...emptyInventory().slots.slice(3),
+        ],
+      })
+
+      expect(yield* service.removeAt(0, 'stone', 2)).toStrictEqual({ _tag: 'Removed', removed: 2 })
+      const afterRemoval = yield* service.snapshot
+      expect(slotAt(afterRemoval, 0)).toStrictEqual({ item: 'stone', count: 1 })
+      expect(slotAt(afterRemoval, 2)).toStrictEqual({ item: 'stone', count: 5 })
+
+      expect(yield* service.removeAt(1, 'stone', 1)).toStrictEqual({
+        _tag: 'ItemMismatch',
+        actualItem: 'dirt',
+      })
+      expect(yield* service.snapshot).toStrictEqual(afterRemoval)
+    }),
+  )
+
+  it.effect('concurrent removeAt calls cannot remove more than the selected slot holds', () =>
+    Effect.gen(function* () {
+      const service = yield* makeInventoryService()
+      yield* service.add('stone', 10)
+
+      const fibers = yield* Effect.forEach(
+        Array.from({ length: 20 }, (_, index) => index),
+        () => Effect.fork(service.removeAt(0, 'stone', 1)),
+        { concurrency: 'unbounded' },
+      )
+      const results = yield* Effect.forEach(fibers, Fiber.join)
+
+      expect(results.filter((result) => result._tag === 'Removed')).toHaveLength(10)
+      expect(yield* service.countOf('stone')).toBe(0)
+    }),
+  )
+
   it.effect('REGRESSION: concurrent adds all land — Ref.modify, not get-then-set', () =>
     Effect.gen(function* () {
       // A get-then-set implementation loses writes here: two fibers read the

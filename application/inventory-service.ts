@@ -49,6 +49,12 @@ export type InventoryServiceApi = {
   readonly add: (item: ItemType, count: number) => Effect.Effect<number>
   /** Take items. Resolves to the number actually taken. */
   readonly remove: (item: ItemType, count: number) => Effect.Effect<number>
+  /** Remove exactly `count` items from the selected slot when its item still matches. */
+  readonly removeAt: (
+    slotIndex: number,
+    expectedItem: ItemType,
+    count: number,
+  ) => Effect.Effect<Inv.RemoveAtResult>
   readonly countOf: (item: ItemType) => Effect.Effect<number>
   readonly snapshot: Effect.Effect<Inv.Inventory>
   /**
@@ -153,6 +159,11 @@ export const makeInventoryService = (
       Ref.modify(state, (current) => {
         const outcome = Inv.removeItem(current, item, count)
         return [outcome.removed, outcome.inventory]
+      }),
+    removeAt: (slotIndex, expectedItem, count) =>
+      Ref.modify(state, (current) => {
+        const outcome = Inv.removeItemAt(current, slotIndex, expectedItem, count)
+        return [outcome.result, outcome.inventory]
       }),
     countOf: (item) => Ref.get(state).pipe(Effect.map((current) => Inv.countOf(current, item))),
     snapshot: Ref.get(state),
