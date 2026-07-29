@@ -14,7 +14,7 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Deferred, Effect, Ref } from 'effect'
 import { FIRST_FRAME_DELTA_SECS, MAX_FRAME_DELTA_SECS } from '../domain/frame-timing'
-import { DeltaTimeSecs, MonotonicTimeSecs } from "@nerima-games/mc-kernel"
+import { DeltaTimeSecs, MonotonicTimeSecs } from '../domain/kernel-vocabulary'
 import { FRAME_QUEUE_CAPACITY, makeGameLoop } from '../application/game-loop'
 
 /** A handler that records deltas and signals once it has seen `target` frames. */

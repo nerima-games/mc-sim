@@ -68,7 +68,7 @@
  * `EntityId` is `string & Brand.Brand<'EntityId'>` built with `Brand.refined`,
  * the same shape and the same non-blank refinement as `mc-kernel`'s `WorldId`
  * and `StageId` (`mc-kernel/domain/identifiers.ts`). It is NOT mirrored from
- * kernel, and that is a decision: `@nerima-games/mc-kernel`'s header names a
+ * kernel, and that is a decision: `domain/kernel-vocabulary.ts`'s header names a
  * mirror WIDER than its source as the dangerous direction — it typechecks
  * locally and breaks on the day the mirror is deleted — and kernel's
  * `identifiers.ts` has no entity id in it. The roster is mc-sim's, so the key
@@ -102,8 +102,8 @@
  * checked by nothing. See `normaliseRoster`.
  */
 import { Brand } from 'effect'
-import type { Position } from "@nerima-games/mc-kernel"
-import { position } from "@nerima-games/mc-kernel"
+import type { Position } from './kernel-vocabulary'
+import { position } from './kernel-vocabulary'
 
 // ---------------------------------------------------------------------------
 // Identity
@@ -139,7 +139,7 @@ export const EntityId = Brand.refined<EntityId>(
  * DELIBERATELY OPEN, and this is the interesting decision in the file. The
  * obvious alternative is a closed literal union like `ItemType`, which would
  * give a misspelled kind a compile error. It is refused for the reason
- * `@nerima-games/mc-kernel` refuses to grow `ITEM_TYPES` locally: the roster
+ * `domain/kernel-vocabulary.ts` refuses to grow `ITEM_TYPES` locally: the roster
  * of things that exist is a VOCABULARY, vocabularies are kernel's, and inventing
  * one here from the single mob mx-gameplay happens to have finished would be the
  * 「推測されたロスタ」 this project has now declined twice — with the added defect
@@ -164,7 +164,7 @@ export const EntityKind = Brand.refined<EntityKind>(
 /**
  * Narrowing guards for values arriving from OUTSIDE the type system.
  *
- * The same role `isItemType` plays in `@nerima-games/mc-kernel`, and mc-sim
+ * The same role `isItemType` plays in `domain/kernel-vocabulary.ts`, and mc-sim
  * has the same single boundary: a saved roster is strings in a file, parsed by
  * mc-save and handed straight back. `EntityId` and `EntityKind` above THROW on a
  * blank value, which is right where a human wrote the literal and fatal on the

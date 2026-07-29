@@ -22,7 +22,7 @@ import {
   type EntityRoster,
   type EntityStep,
 } from '../domain/entity'
-import { position } from "@nerima-games/mc-kernel"
+import { position } from '../domain/kernel-vocabulary'
 
 /**
  * A stand-in for mx-gameplay's `CreeperFuse`.

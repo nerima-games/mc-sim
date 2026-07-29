@@ -51,7 +51,16 @@ export * from './application/vitals-service'
 export * from './stages/registration'
 export * from './stages/stage-ids'
 
-// `domain/worldgen-vocabulary.ts` is a local mirror of
+// --- Provisional -------------------------------------------------------------
+// `domain/kernel-vocabulary.ts` is a temporary local mirror of
+// @nerima-games/mc-kernel and is NOT re-exported: consumers must take that
+// vocabulary from kernel, not from mc-sim, or the mirror would become a second
+// source of truth and the deletion described in that file would break them.
+// Types that unavoidably appear in this repository's signatures
+// (CameraPoseSnapshot, DeltaTimeSecs, ...) are structurally identical to
+// kernel's, so a consumer importing them from kernel typechecks against these.
+//
+// `domain/worldgen-vocabulary.ts` is the same arrangement for
 // @nerima-games/mc-worldgen, and is withheld from the barrel for the same
 // reason: `Dimension` appears in `PlayerServiceApi.dimension`, `setDimension`
 // and `restore`, and a consumer takes that word from mc-worldgen — which owns

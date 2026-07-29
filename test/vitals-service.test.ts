@@ -1,7 +1,7 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect } from 'effect'
 import { makeVitalsService, VitalsServiceLayer, VitalsService } from '../application/vitals-service'
-import { DeltaTimeSecs } from "@nerima-games/mc-kernel"
+import { DeltaTimeSecs } from '../domain/kernel-vocabulary'
 import { isDead, isValidVitals, SPAWN_VITALS, type Vitals } from '../domain/vitals'
 
 const dt = (seconds: number): DeltaTimeSecs => DeltaTimeSecs(seconds)

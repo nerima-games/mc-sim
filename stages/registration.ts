@@ -102,7 +102,7 @@ import { Effect, Layer, Option, Ref } from 'effect'
 import { InventoryService, InventoryServiceLayer } from '../application/inventory-service'
 import { PlayerService, PlayerServiceLayer, type PlayerServiceApi } from '../application/player-service'
 import { TimeService, TimeServiceLayer, type TimeServiceApi } from '../application/time-service'
-import type { GameModule, Position, StageRegistration } from "@nerima-games/mc-kernel"
+import type { GameModule, Position, StageRegistration } from '../domain/kernel-vocabulary'
 import { SIM_STAGE_IDS } from './stage-ids'
 
 /**

@@ -53,8 +53,8 @@
  * The simulation's answer to "where is the player looking" is unaffected by
  * whether a sword is currently swinging.
  */
-import type { CameraPoseSnapshot, MonotonicTimeSecs, Position } from "@nerima-games/mc-kernel"
-import { position } from "@nerima-games/mc-kernel"
+import type { CameraPoseSnapshot, MonotonicTimeSecs, Position } from './kernel-vocabulary'
+import { position } from './kernel-vocabulary'
 
 /**
  * Pitch bound, radians.

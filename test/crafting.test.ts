@@ -19,7 +19,7 @@ import {
   Inventory,
   itemStack,
 } from '../domain/inventory'
-import { ItemType, MAX_STACK_COUNT } from "@nerima-games/mc-kernel"
+import { ItemType, MAX_STACK_COUNT } from '../domain/kernel-vocabulary'
 import { CraftGrid, craftGrid, shapelessRecipe, STARTER_RECIPES } from '../domain/recipe'
 
 const LEGEND: Readonly<Record<string, ItemType>> = {

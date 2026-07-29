@@ -61,7 +61,7 @@
  * loop, and is passed down. That is what makes fast-forward possible: a
  * scenario test can advance a simulated week in a few microseconds.
  */
-import type { DeltaTimeSecs } from "@nerima-games/mc-kernel"
+import type { DeltaTimeSecs } from './kernel-vocabulary'
 
 /** Simulation ticks per second. Vanilla parity; the reference uses the same rate. */
 export const TICKS_PER_SECOND = 60

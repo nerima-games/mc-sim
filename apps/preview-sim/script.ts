@@ -38,7 +38,7 @@
  * scenarios drive.
  */
 
-import type { ItemType } from "@nerima-games/mc-kernel"
+import type { ItemType } from '../../domain/kernel-vocabulary'
 import type { Settings } from '../../domain/settings'
 import type { DamageCause, Vitals } from '../../domain/vitals'
 

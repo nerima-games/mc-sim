@@ -36,7 +36,7 @@
  * (application/game-loop.ts) is concurrent and awkward to test, whereas the
  * arithmetic that decides whether the player teleports is not.
  */
-import { DeltaTimeSecs } from "@nerima-games/mc-kernel"
+import { DeltaTimeSecs } from './kernel-vocabulary'
 
 /** Lower clamp bound, seconds. Below this, rate computations divide by ~zero. */
 export const MIN_FRAME_DELTA_SECS = 0.001

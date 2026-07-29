@@ -14,8 +14,8 @@
  */
 import { Context, Effect, Layer, Ref } from 'effect'
 import * as Camera from '../domain/camera-pose'
-import type { CameraPoseSnapshot, Position } from "@nerima-games/mc-kernel"
-import { ClockPort, monotonicSecs } from "@nerima-games/mc-kernel"
+import type { CameraPoseSnapshot, Position } from '../domain/kernel-vocabulary'
+import { ClockPort, monotonicSecs } from '../domain/kernel-vocabulary'
 import type { Dimension } from '../domain/worldgen-vocabulary'
 
 /**
