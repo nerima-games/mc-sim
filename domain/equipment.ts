@@ -1,0 +1,239 @@
+import type { ItemStack } from './inventory'
+import { isItemType, MAX_STACK_COUNT } from './kernel-vocabulary'
+
+export const EQUIPMENT_SLOTS = ['head', 'chest', 'legs', 'feet', 'offhand'] as const
+
+export type EquipmentSlot = (typeof EQUIPMENT_SLOTS)[number]
+
+export type Durability = {
+  readonly current: number
+  readonly max: number
+}
+
+/** An inventory-compatible stack with optional per-item durability state. */
+export type EquipmentItem = ItemStack & {
+  readonly durability: Durability | null
+}
+
+export type EquipmentSlots = Readonly<Record<EquipmentSlot, EquipmentItem | null>>
+
+export type Equipment = {
+  readonly slots: EquipmentSlots
+}
+
+export type EquipmentValidationError = {
+  readonly _tag: 'EquipmentValidationError'
+  readonly path: string
+  readonly reason: string
+}
+
+export type EquipmentValidationResult =
+  | { readonly _tag: 'Valid'; readonly equipment: Equipment }
+  | { readonly _tag: 'Invalid'; readonly error: EquipmentValidationError }
+
+export type EquipmentOutcome<A> = {
+  readonly equipment: Equipment
+  readonly result: A
+}
+
+export type DamageEquipmentResult =
+  | { readonly _tag: 'InvalidAmount'; readonly amount: number }
+  | { readonly _tag: 'Empty' }
+  | { readonly _tag: 'NotDamageable'; readonly item: EquipmentItem }
+  | {
+      readonly _tag: 'Damaged'
+      readonly item: EquipmentItem
+      readonly applied: number
+    }
+  | {
+      readonly _tag: 'Broken'
+      readonly item: EquipmentItem
+      readonly applied: number
+    }
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const hasExactKeys = (value: Record<string, unknown>, expected: ReadonlyArray<string>): boolean => {
+  const actual = Object.keys(value)
+  return actual.length === expected.length && expected.every((key) => Object.hasOwn(value, key))
+}
+
+const validPositiveSafeInteger = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value > 0
+
+export const isEquipmentSlot = (value: unknown): value is EquipmentSlot =>
+  typeof value === 'string' && EQUIPMENT_SLOTS.some((slot) => slot === value)
+
+export const isDurability = (value: unknown): value is Durability => {
+  if (!isRecord(value) || !hasExactKeys(value, ['current', 'max'])) return false
+  return (
+    validPositiveSafeInteger(value['current']) &&
+    validPositiveSafeInteger(value['max']) &&
+    value['current'] <= value['max']
+  )
+}
+
+export const isEquipmentItem = (value: unknown): value is EquipmentItem => {
+  if (!isRecord(value) || !hasExactKeys(value, ['item', 'count', 'durability'])) return false
+  return (
+    typeof value['item'] === 'string' &&
+    isItemType(value['item']) &&
+    validPositiveSafeInteger(value['count']) &&
+    value['count'] <= MAX_STACK_COUNT &&
+    (value['durability'] === null || isDurability(value['durability']))
+  )
+}
+
+export const durability = (current: number, max: number): Durability => {
+  const value: Durability = { current, max }
+  if (!isDurability(value)) {
+    throw new RangeError('Durability requires positive safe integers with current <= max')
+  }
+  return value
+}
+
+/** Add equipment state without changing the ItemStack fields consumed by inventory code. */
+export const equipmentItem = (
+  stack: ItemStack,
+  itemDurability: Durability | null = null,
+): EquipmentItem => {
+  const value: EquipmentItem = {
+    ...stack,
+    durability: itemDurability === null ? null : { ...itemDurability },
+  }
+  if (!isEquipmentItem(value)) throw new RangeError('Invalid equipment item')
+  return value
+}
+
+const copyEquipmentItem = (item: EquipmentItem): EquipmentItem => ({
+  ...item,
+  durability: item.durability === null ? null : { ...item.durability },
+})
+
+export const emptyEquipment = (): Equipment => ({
+  slots: {
+    head: null,
+    chest: null,
+    legs: null,
+    feet: null,
+    offhand: null,
+  },
+})
+
+export const equippedAt = (equipment: Equipment, slot: EquipmentSlot): EquipmentItem | null =>
+  equipment.slots[slot]
+
+export const equip = (
+  equipment: Equipment,
+  slot: EquipmentSlot,
+  item: EquipmentItem,
+): EquipmentOutcome<EquipmentItem | null> => ({
+  equipment: { slots: { ...equipment.slots, [slot]: copyEquipmentItem(item) } },
+  result: equipment.slots[slot],
+})
+
+export const unequip = (
+  equipment: Equipment,
+  slot: EquipmentSlot,
+): EquipmentOutcome<EquipmentItem | null> => {
+  const item = equipment.slots[slot]
+  if (item === null) return { equipment, result: null }
+  return {
+    equipment: { slots: { ...equipment.slots, [slot]: null } },
+    result: item,
+  }
+}
+
+export const swapEquipment = (
+  equipment: Equipment,
+  first: EquipmentSlot,
+  second: EquipmentSlot,
+): Equipment => {
+  if (first === second) return equipment
+  return {
+    slots: {
+      ...equipment.slots,
+      [first]: equipment.slots[second],
+      [second]: equipment.slots[first],
+    },
+  }
+}
+
+export const damageEquipment = (
+  equipment: Equipment,
+  slot: EquipmentSlot,
+  amount: number,
+): EquipmentOutcome<DamageEquipmentResult> => {
+  if (!validPositiveSafeInteger(amount)) {
+    return { equipment, result: { _tag: 'InvalidAmount', amount } }
+  }
+
+  const item = equipment.slots[slot]
+  if (item === null) return { equipment, result: { _tag: 'Empty' } }
+  if (item.durability === null) {
+    return { equipment, result: { _tag: 'NotDamageable', item } }
+  }
+
+  const applied = Math.min(amount, item.durability.current)
+  if (applied === item.durability.current) {
+    return {
+      equipment: { slots: { ...equipment.slots, [slot]: null } },
+      result: { _tag: 'Broken', item, applied },
+    }
+  }
+
+  const damaged: EquipmentItem = {
+    ...item,
+    durability: {
+      current: item.durability.current - applied,
+      max: item.durability.max,
+    },
+  }
+  return {
+    equipment: { slots: { ...equipment.slots, [slot]: damaged } },
+    result: { _tag: 'Damaged', item: damaged, applied },
+  }
+}
+
+const invalid = (path: string, reason: string): EquipmentValidationResult => ({
+  _tag: 'Invalid',
+  error: { _tag: 'EquipmentValidationError', path, reason },
+})
+
+/** Validate the exact persistence shape before any saved state reaches the Ref. */
+export const validateEquipmentSnapshot = (value: unknown): EquipmentValidationResult => {
+  if (!isRecord(value) || !hasExactKeys(value, ['slots'])) {
+    return invalid('equipment', 'expected an object containing only slots')
+  }
+  const slots = value['slots']
+  if (!isRecord(slots) || !hasExactKeys(slots, EQUIPMENT_SLOTS)) {
+    return invalid('equipment.slots', 'expected exactly head, chest, legs, feet, and offhand')
+  }
+
+  for (const slot of EQUIPMENT_SLOTS) {
+    const item = slots[slot]
+    if (item !== null && !isEquipmentItem(item)) {
+      return invalid(
+        `equipment.slots.${slot}`,
+        'expected null or a valid item stack with durability',
+      )
+    }
+  }
+
+  const validatedSlots = slots as EquipmentSlots
+
+  return {
+    _tag: 'Valid',
+    equipment: {
+      slots: {
+        head: validatedSlots.head === null ? null : copyEquipmentItem(validatedSlots.head),
+        chest: validatedSlots.chest === null ? null : copyEquipmentItem(validatedSlots.chest),
+        legs: validatedSlots.legs === null ? null : copyEquipmentItem(validatedSlots.legs),
+        feet: validatedSlots.feet === null ? null : copyEquipmentItem(validatedSlots.feet),
+        offhand:
+          validatedSlots.offhand === null ? null : copyEquipmentItem(validatedSlots.offhand),
+      },
+    },
+  }
+}

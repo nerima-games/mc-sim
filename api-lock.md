@@ -13,8 +13,8 @@
 <!-- ------------------------------------------------------------------------- -->
 
 format: 1
-exported declarations: 241
-supporting declarations: 29
+exported declarations: 267
+supporting declarations: 30
 
 ## Exported
 
@@ -154,6 +154,28 @@ type Damage = {
 type DamageCause = string;
 ```
 
+### DamageEquipmentResult  `type`
+
+```ts
+type DamageEquipmentResult = {
+    readonly _tag: 'InvalidAmount';
+    readonly amount: number;
+} | {
+    readonly _tag: 'Empty';
+} | {
+    readonly _tag: 'NotDamageable';
+    readonly item: EquipmentItem;
+} | {
+    readonly _tag: 'Damaged';
+    readonly item: EquipmentItem;
+    readonly applied: number;
+} | {
+    readonly _tag: 'Broken';
+    readonly item: EquipmentItem;
+    readonly applied: number;
+};
+```
+
 ### DamageOutcome  `type`
 
 ```ts
@@ -169,6 +191,15 @@ type DamageOutcome = {
 type DespawnOutcome<S> = {
     readonly roster: EntityRoster<S>;
     readonly despawned: boolean;
+};
+```
+
+### Durability  `type`
+
+```ts
+type Durability = {
+    readonly current: number;
+    readonly max: number;
 };
 ```
 
@@ -188,6 +219,12 @@ const ENTITY_ID_PREFIX = "e:";
 
 ```ts
 const ENTITY_MANAGER_TAG_KEY = "@nerima-games/mc-sim/EntityManager";
+```
+
+### EQUIPMENT_SLOTS  `const`
+
+```ts
+const EQUIPMENT_SLOTS: readonly ["head", "chest", "legs", "feet", "offhand"];
 ```
 
 ### EXHAUSTION_PER_POINT  `const`
@@ -316,6 +353,92 @@ type EntityTransition<S> = {
     readonly state: EntityState<S>;
 } | {
     readonly _tag: 'Despawned';
+};
+```
+
+### Equipment  `type`
+
+```ts
+type Equipment = {
+    readonly slots: EquipmentSlots;
+};
+```
+
+### EquipmentItem  `type`
+
+```ts
+type EquipmentItem = ItemStack & {
+    readonly durability: Durability | null;
+};
+```
+
+### EquipmentOutcome  `type`
+
+```ts
+type EquipmentOutcome<A> = {
+    readonly equipment: Equipment;
+    readonly result: A;
+};
+```
+
+### EquipmentService  `class`
+
+```ts
+class EquipmentService extends EquipmentService_base {
+}
+```
+
+### EquipmentServiceApi  `type`
+
+```ts
+type EquipmentServiceApi = {
+    readonly equip: (slot: Equipment.EquipmentSlot, item: Equipment.EquipmentItem) => Effect.Effect<Equipment.EquipmentItem | null, Equipment.EquipmentValidationError>;
+    readonly unequip: (slot: Equipment.EquipmentSlot) => Effect.Effect<Equipment.EquipmentItem | null, Equipment.EquipmentValidationError>;
+    readonly swap: (first: Equipment.EquipmentSlot, second: Equipment.EquipmentSlot) => Effect.Effect<void, Equipment.EquipmentValidationError>;
+    readonly damage: (slot: Equipment.EquipmentSlot, amount: number) => Effect.Effect<Equipment.DamageEquipmentResult, Equipment.EquipmentValidationError>;
+    readonly snapshot: Effect.Effect<Equipment.Equipment>;
+    readonly restore: (snapshot: unknown) => Effect.Effect<void, Equipment.EquipmentValidationError>;
+    readonly reset: Effect.Effect<void>;
+};
+```
+
+### EquipmentServiceLayer  `const`
+
+```ts
+const EquipmentServiceLayer: Layer.Layer<EquipmentService>;
+```
+
+### EquipmentSlot  `type`
+
+```ts
+type EquipmentSlot = (typeof EQUIPMENT_SLOTS)[number];
+```
+
+### EquipmentSlots  `type`
+
+```ts
+type EquipmentSlots = Readonly<Record<EquipmentSlot, EquipmentItem | null>>;
+```
+
+### EquipmentValidationError  `type`
+
+```ts
+type EquipmentValidationError = {
+    readonly _tag: 'EquipmentValidationError';
+    readonly path: string;
+    readonly reason: string;
+};
+```
+
+### EquipmentValidationResult  `type`
+
+```ts
+type EquipmentValidationResult = {
+    readonly _tag: 'Valid';
+    readonly equipment: Equipment;
+} | {
+    readonly _tag: 'Invalid';
+    readonly error: EquipmentValidationError;
 };
 ```
 
@@ -1267,6 +1390,12 @@ const craftFromGrid: (inventory: Inventory, table: RecipeTable, grid: CraftGrid)
 const craftGrid: (width: number, height: number, items: ReadonlyArray<ItemType | undefined>) => CraftGrid;
 ```
 
+### damageEquipment  `const`
+
+```ts
+const damageEquipment: (equipment: Equipment, slot: EquipmentSlot, amount: number) => EquipmentOutcome<DamageEquipmentResult>;
+```
+
 ### dayLengthSecs  `const`
 
 ```ts
@@ -1279,10 +1408,22 @@ const dayLengthSecs: (state: TimeState) => number;
 const despawnEntity: <S>(roster: EntityRoster<S>, id: EntityId) => DespawnOutcome<S>;
 ```
 
+### durability  `const`
+
+```ts
+const durability: (current: number, max: number) => Durability;
+```
+
 ### eat  `const`
 
 ```ts
 const eat: (vitals: Vitals, foodPoints: number, saturationModifier: number) => Vitals;
+```
+
+### emptyEquipment  `const`
+
+```ts
+const emptyEquipment: () => Equipment;
 ```
 
 ### emptyInventory  `const`
@@ -1301,6 +1442,24 @@ const emptyRoster: <S>() => EntityRoster<S>;
 
 ```ts
 const entityManagerTag: <S>() => Context.Tag<EntityManager, EntityManagerApi<S>>;
+```
+
+### equip  `const`
+
+```ts
+const equip: (equipment: Equipment, slot: EquipmentSlot, item: EquipmentItem) => EquipmentOutcome<EquipmentItem | null>;
+```
+
+### equipmentItem  `const`
+
+```ts
+const equipmentItem: (stack: ItemStack, itemDurability?: Durability | null) => EquipmentItem;
+```
+
+### equippedAt  `const`
+
+```ts
+const equippedAt: (equipment: Equipment, slot: EquipmentSlot) => EquipmentItem | null;
 ```
 
 ### exactly  `const`
@@ -1381,6 +1540,12 @@ const ingredientMatches: (ingredient: Ingredient, item: ItemType) => boolean;
 const isDead: (vitals: Vitals) => boolean;
 ```
 
+### isDurability  `const`
+
+```ts
+const isDurability: (value: unknown) => value is Durability;
+```
+
 ### isEmpty  `const`
 
 ```ts
@@ -1397,6 +1562,18 @@ const isEntityId: (value: unknown) => value is EntityId;
 
 ```ts
 const isEntityKind: (value: unknown) => value is EntityKind;
+```
+
+### isEquipmentItem  `const`
+
+```ts
+const isEquipmentItem: (value: unknown) => value is EquipmentItem;
+```
+
+### isEquipmentSlot  `const`
+
+```ts
+const isEquipmentSlot: (value: unknown) => value is EquipmentSlot;
 ```
 
 ### isGraphicsQuality  `const`
@@ -1475,6 +1652,12 @@ const levelForTotalExperience: (totalExperience: number) => number;
 
 ```ts
 const makeEntityManager: <S>(initial?: EntityRoster<S>, repairBehaviour?: BehaviourRepair<S>) => Effect.Effect<EntityManagerApi<S>>;
+```
+
+### makeEquipmentService  `const`
+
+```ts
+const makeEquipmentService: () => Effect.Effect<EquipmentServiceApi>;
 ```
 
 ### makeGameLoop  `const`
@@ -1708,6 +1891,12 @@ const spawnEntity: <S>(roster: EntityRoster<S>, request: SpawnRequest<S>) => Spa
 const startAutoSaveDaemon: <E>(persist: Effect.Effect<void, E>, interval?: Duration.Duration, reporter?: AutoSaveStatusReporter) => Effect.Effect<Fiber.RuntimeFiber<number, never>>;
 ```
 
+### swapEquipment  `const`
+
+```ts
+const swapEquipment: (equipment: Equipment, first: EquipmentSlot, second: EquipmentSlot) => Equipment;
+```
+
 ### sweepRoster  `const`
 
 ```ts
@@ -1744,10 +1933,22 @@ const totalExperienceAtLevel: (level: number) => number;
 const unbindKey: (settings: Settings, action: string) => Settings;
 ```
 
+### unequip  `const`
+
+```ts
+const unequip: (equipment: Equipment, slot: EquipmentSlot) => EquipmentOutcome<EquipmentItem | null>;
+```
+
 ### unlock  `const`
 
 ```ts
 const unlock: (statistics: Statistics, id: AchievementId) => Statistics;
+```
+
+### validateEquipmentSnapshot  `const`
+
+```ts
+const validateEquipmentSnapshot: (value: unknown) => EquipmentValidationResult;
 ```
 
 ### vitalsView  `const`
@@ -1829,6 +2030,12 @@ const EpochMillis: Brand.Brand.Constructor<EpochMillis>;
 
 ```ts
 type EpochMillis = number & Brand.Brand<'EpochMillis'>;
+```
+
+### EquipmentService_base  `const`
+
+```ts
+const EquipmentService_base: Context.TagClass<EquipmentService, "@nerima-games/mc-sim/EquipmentService", EquipmentServiceApi>;
 ```
 
 ### FrameServices  `type`
