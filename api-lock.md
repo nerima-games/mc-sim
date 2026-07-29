@@ -13,7 +13,7 @@
 <!-- ------------------------------------------------------------------------- -->
 
 format: 1
-exported declarations: 267
+exported declarations: 286
 supporting declarations: 30
 
 ## Exported
@@ -145,6 +145,14 @@ const DESPAWNED: EntityTransition<never>;
 type Damage = {
     readonly amount: number;
     readonly cause: DamageCause;
+};
+```
+
+### DamageAtResult  `type`
+
+```ts
+type DamageAtResult = Eq.DamageEquipmentResult | {
+    readonly _tag: 'InvalidLocation';
 };
 ```
 
@@ -356,6 +364,27 @@ type EntityTransition<S> = {
 };
 ```
 
+### EquipFromInventoryResult  `type`
+
+```ts
+type EquipFromInventoryResult = {
+    readonly _tag: 'Equipped';
+    readonly item: Eq.EquipmentItem;
+} | {
+    readonly _tag: 'InvalidInventorySlot';
+} | {
+    readonly _tag: 'InvalidEquipmentSlot';
+} | {
+    readonly _tag: 'Empty';
+} | {
+    readonly _tag: 'Occupied';
+    readonly item: Eq.EquipmentItem;
+} | {
+    readonly _tag: 'Incompatible';
+    readonly item: Inv.ItemStack;
+};
+```
+
 ### Equipment  `type`
 
 ```ts
@@ -446,6 +475,12 @@ type EquipmentValidationResult = {
 
 ```ts
 const FIRST_FRAME_DELTA_SECS: DeltaTimeSecs;
+```
+
+### FLINT_AND_STEEL_MAX_DURABILITY  `const`
+
+```ts
+const FLINT_AND_STEEL_MAX_DURABILITY = 64;
 ```
 
 ### FOOD_TICK_SECS  `const`
@@ -558,17 +593,31 @@ type Inventory = {
 };
 ```
 
+### InventoryCarriedSlot  `type`
+
+```ts
+type InventoryCarriedSlot = InventoryCarriedStack | undefined;
+```
+
+### InventoryCarriedStack  `type`
+
+```ts
+type InventoryCarriedStack = Inv.ItemStack & {
+    readonly durability?: Eq.Durability | undefined;
+};
+```
+
 ### InventoryClick  `type`
 
 ```ts
 type InventoryClick = {
     readonly _tag: 'LeftClick';
     readonly slotIndex: number;
-    readonly carried: Inv.Slot;
+    readonly carried: InventoryCarriedSlot;
 } | {
     readonly _tag: 'RightClick';
     readonly slotIndex: number;
-    readonly carried: Inv.Slot;
+    readonly carried: InventoryCarriedSlot;
 };
 ```
 
@@ -577,25 +626,25 @@ type InventoryClick = {
 ```ts
 type InventoryClickResult = {
     readonly _tag: 'PickedUp';
-    readonly carried: Inv.ItemStack;
+    readonly carried: InventoryCarriedStack;
 } | {
     readonly _tag: 'Placed';
-    readonly carried: Inv.Slot;
+    readonly carried: InventoryCarriedSlot;
 } | {
     readonly _tag: 'Merged';
-    readonly carried: Inv.Slot;
+    readonly carried: InventoryCarriedSlot;
 } | {
     readonly _tag: 'Swapped';
-    readonly carried: Inv.ItemStack;
+    readonly carried: InventoryCarriedStack;
 } | {
     readonly _tag: 'NoChange';
-    readonly carried: Inv.Slot;
+    readonly carried: InventoryCarriedSlot;
 } | {
     readonly _tag: 'InvalidSlot';
-    readonly carried: Inv.Slot;
+    readonly carried: InventoryCarriedSlot;
 } | {
     readonly _tag: 'InvalidCount';
-    readonly carried: Inv.Slot;
+    readonly carried: InventoryCarriedSlot;
 };
 ```
 
@@ -616,6 +665,12 @@ type InventoryServiceApi = {
     readonly click: (click: InventoryClick) => Effect.Effect<InventoryClickResult>;
     readonly countOf: (item: ItemType) => Effect.Effect<number>;
     readonly snapshot: Effect.Effect<Inv.Inventory>;
+    readonly equipmentSnapshot: Effect.Effect<Eq.Equipment>;
+    readonly storageSnapshot: Effect.Effect<Storage.PlayerStorage>;
+    readonly restoreStorage: (snapshot: unknown) => Effect.Effect<void, Storage.PlayerStorageValidationError>;
+    readonly equipFromInventory: (inventorySlot: number, equipmentSlot: Eq.EquipmentSlot) => Effect.Effect<Storage.EquipFromInventoryResult>;
+    readonly unequipToInventory: (equipmentSlot: Eq.EquipmentSlot, inventorySlot?: number) => Effect.Effect<Storage.UnequipToInventoryResult>;
+    readonly damageAt: (location: Storage.StorageLocation, amount: number) => Effect.Effect<Storage.DamageAtResult>;
     readonly restore: (inventory: Inv.Inventory) => Effect.Effect<number>;
     readonly reset: Effect.Effect<void>;
     readonly recipes: Effect.Effect<Recipe.RecipeTable>;
@@ -822,6 +877,38 @@ type PlayerServiceApi = {
 
 ```ts
 const PlayerServiceLayer: (initial?: Camera.PlayerPose, initialDimension?: Dimension) => Layer.Layer<PlayerService>;
+```
+
+### PlayerStorage  `type`
+
+```ts
+type PlayerStorage = {
+    readonly inventory: Inv.Inventory;
+    readonly equipment: Eq.Equipment;
+    readonly inventoryDurability: ReadonlyArray<Eq.Durability | null>;
+};
+```
+
+### PlayerStorageValidationError  `type`
+
+```ts
+type PlayerStorageValidationError = {
+    readonly _tag: 'PlayerStorageValidationError';
+    readonly path: string;
+    readonly reason: string;
+};
+```
+
+### PlayerStorageValidationResult  `type`
+
+```ts
+type PlayerStorageValidationResult = {
+    readonly _tag: 'Valid';
+    readonly storage: PlayerStorage;
+} | {
+    readonly _tag: 'Invalid';
+    readonly error: PlayerStorageValidationError;
+};
 ```
 
 ### REGEN_HUNGER_THRESHOLD  `const`
@@ -1093,6 +1180,27 @@ type StatisticsServiceApi = {
 const StatisticsServiceLayer: (initial?: Statistics.Statistics) => Layer.Layer<StatisticsService>;
 ```
 
+### StorageLocation  `type`
+
+```ts
+type StorageLocation = {
+    readonly _tag: 'Inventory';
+    readonly slotIndex: number;
+} | {
+    readonly _tag: 'Equipment';
+    readonly slot: Eq.EquipmentSlot;
+};
+```
+
+### StorageOutcome  `type`
+
+```ts
+type StorageOutcome<A> = {
+    readonly storage: PlayerStorage;
+    readonly result: A;
+};
+```
+
 ### SweepOutcome  `type`
 
 ```ts
@@ -1157,6 +1265,26 @@ const UNCHANGED: EntityTransition<never>;
 
 ```ts
 const UPSTREAM_STAGE_IDS: {};
+```
+
+### UnequipToInventoryResult  `type`
+
+```ts
+type UnequipToInventoryResult = {
+    readonly _tag: 'Unequipped';
+    readonly item: Eq.EquipmentItem;
+    readonly slotIndex: number;
+} | {
+    readonly _tag: 'InvalidEquipmentSlot';
+} | {
+    readonly _tag: 'InvalidInventorySlot';
+} | {
+    readonly _tag: 'Empty';
+} | {
+    readonly _tag: 'OccupiedInventorySlot';
+} | {
+    readonly _tag: 'InventoryFull';
+};
 ```
 
 ### Vitals  `type`
@@ -1390,6 +1518,12 @@ const craftFromGrid: (inventory: Inventory, table: RecipeTable, grid: CraftGrid)
 const craftGrid: (width: number, height: number, items: ReadonlyArray<ItemType | undefined>) => CraftGrid;
 ```
 
+### damageAt  `const`
+
+```ts
+const damageAt: (storage: PlayerStorage, location: StorageLocation, amount: number) => StorageOutcome<DamageAtResult>;
+```
+
 ### damageEquipment  `const`
 
 ```ts
@@ -1432,6 +1566,12 @@ const emptyEquipment: () => Equipment;
 const emptyInventory: () => Inventory;
 ```
 
+### emptyPlayerStorage  `const`
+
+```ts
+const emptyPlayerStorage: () => PlayerStorage;
+```
+
 ### emptyRoster  `const`
 
 ```ts
@@ -1448,6 +1588,12 @@ const entityManagerTag: <S>() => Context.Tag<EntityManager, EntityManagerApi<S>>
 
 ```ts
 const equip: (equipment: Equipment, slot: EquipmentSlot, item: EquipmentItem) => EquipmentOutcome<EquipmentItem | null>;
+```
+
+### equipFromInventory  `const`
+
+```ts
+const equipFromInventory: (storage: PlayerStorage, inventorySlot: number, equipmentSlot: Eq.EquipmentSlot) => StorageOutcome<EquipFromInventoryResult>;
 ```
 
 ### equipmentItem  `const`
@@ -1735,6 +1881,12 @@ const makeWeatherService: (initial?: Weather.WeatherState) => Effect.Effect<Weat
 const matchRecipe: (table: RecipeTable, grid: CraftGrid) => RecipeMatch;
 ```
 
+### maxStackCountForItem  `const`
+
+```ts
+const maxStackCountForItem: (item: ItemType) => number;
+```
+
 ### mintEntityId  `const`
 
 ```ts
@@ -1891,6 +2043,12 @@ const spawnEntity: <S>(roster: EntityRoster<S>, request: SpawnRequest<S>) => Spa
 const startAutoSaveDaemon: <E>(persist: Effect.Effect<void, E>, interval?: Duration.Duration, reporter?: AutoSaveStatusReporter) => Effect.Effect<Fiber.RuntimeFiber<number, never>>;
 ```
 
+### storageFromInventory  `const`
+
+```ts
+const storageFromInventory: (inventory: Inv.Inventory) => PlayerStorage;
+```
+
 ### swapEquipment  `const`
 
 ```ts
@@ -1939,6 +2097,12 @@ const unbindKey: (settings: Settings, action: string) => Settings;
 const unequip: (equipment: Equipment, slot: EquipmentSlot) => EquipmentOutcome<EquipmentItem | null>;
 ```
 
+### unequipToInventory  `const`
+
+```ts
+const unequipToInventory: (storage: PlayerStorage, equipmentSlot: Eq.EquipmentSlot, requestedSlot?: number) => StorageOutcome<UnequipToInventoryResult>;
+```
+
 ### unlock  `const`
 
 ```ts
@@ -1951,6 +2115,12 @@ const unlock: (statistics: Statistics, id: AchievementId) => Statistics;
 const validateEquipmentSnapshot: (value: unknown) => EquipmentValidationResult;
 ```
 
+### validatePlayerStorageSnapshot  `const`
+
+```ts
+const validatePlayerStorageSnapshot: (value: unknown) => PlayerStorageValidationResult;
+```
+
 ### vitalsView  `const`
 
 ```ts
@@ -1961,6 +2131,12 @@ const vitalsView: (vitals: Vitals) => VitalsView;
 
 ```ts
 const withFeetPosition: (pose: PlayerPose, feetPosition: Position) => PlayerPose;
+```
+
+### withInventory  `const`
+
+```ts
+const withInventory: (storage: PlayerStorage, inventory: Inv.Inventory) => PlayerStorage;
 ```
 
 ## Supporting declarations

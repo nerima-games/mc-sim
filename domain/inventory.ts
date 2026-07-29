@@ -67,10 +67,16 @@ export type ItemStack = {
  * flowing into a slot as a bare number. Contrast `addItem(count: number)`, which
  * deliberately does NOT brand: see DN-06 in docs/design-notes.md.
  */
-export const itemStack = (item: ItemType, count: number): ItemStack => ({
-  item,
-  count: StackCount(count),
-})
+/** Per-item stack limit. Durable tools occupy one slot each. */
+export const maxStackCountForItem = (item: ItemType): number =>
+  item === 'flint_and_steel' ? 1 : MAX_STACK_COUNT
+
+export const itemStack = (item: ItemType, count: number): ItemStack => {
+  if (count > maxStackCountForItem(item)) {
+    throw new RangeError(`Invalid stack count for ${item}: ${String(count)}`)
+  }
+  return { item, count: StackCount(count) }
+}
 
 /**
  * How many items a slot holds, as a plain number, for a slot that may itself be
@@ -171,10 +177,11 @@ export const addItem = (inventory: Inventory, item: ItemType, count: number): Ad
       continue
     }
     const held = heldCount(slot)
-    if (held >= MAX_STACK_COUNT) {
+    const maxStackCount = maxStackCountForItem(item)
+    if (held >= maxStackCount) {
       continue
     }
-    const accepted = Math.min(MAX_STACK_COUNT - held, remaining)
+    const accepted = Math.min(maxStackCount - held, remaining)
     slots[index] = { item, count: StackCount(held + accepted) }
     remaining -= accepted
   }
@@ -183,7 +190,7 @@ export const addItem = (inventory: Inventory, item: ItemType, count: number): Ad
     if (slots[index] !== undefined) {
       continue
     }
-    const accepted = Math.min(MAX_STACK_COUNT, remaining)
+    const accepted = Math.min(maxStackCountForItem(item), remaining)
     slots[index] = { item, count: StackCount(accepted) }
     remaining -= accepted
   }
@@ -385,9 +392,10 @@ export const normaliseInventory = (inventory: Inventory): NormaliseOutcome => {
       spilled.push({ item: slot.item, count: held })
       return
     }
-    slots[index] = { item: slot.item, count: derivedStackCount(held) }
-    if (held > MAX_STACK_COUNT) {
-      spilled.push({ item: slot.item, count: held - MAX_STACK_COUNT })
+    const maxStackCount = maxStackCountForItem(slot.item)
+    slots[index] = { item: slot.item, count: derivedStackCount(Math.min(held, maxStackCount)) }
+    if (held > maxStackCount) {
+      spilled.push({ item: slot.item, count: held - maxStackCount })
     }
   })
 

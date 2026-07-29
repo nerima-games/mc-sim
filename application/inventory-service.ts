@@ -10,39 +10,52 @@
  */
 import { Context, Effect, Layer, Ref } from 'effect'
 import * as Craft from '../domain/crafting'
+import * as Eq from '../domain/equipment'
 import * as Inv from '../domain/inventory'
-import { MAX_STACK_COUNT, type ItemType } from '../domain/kernel-vocabulary'
+import type { ItemType } from '../domain/kernel-vocabulary'
+import * as Storage from '../domain/player-storage'
 import * as Recipe from '../domain/recipe'
+
+export type InventoryCarriedStack = Inv.ItemStack & {
+  readonly durability?: Eq.Durability | undefined
+}
+export type InventoryCarriedSlot = InventoryCarriedStack | undefined
 
 export type InventoryClick =
   | {
       readonly _tag: 'LeftClick'
       readonly slotIndex: number
-      readonly carried: Inv.Slot
+      readonly carried: InventoryCarriedSlot
     }
   | {
       readonly _tag: 'RightClick'
       readonly slotIndex: number
-      readonly carried: Inv.Slot
+      readonly carried: InventoryCarriedSlot
     }
 
 export type InventoryClickResult =
-  | { readonly _tag: 'PickedUp'; readonly carried: Inv.ItemStack }
-  | { readonly _tag: 'Placed'; readonly carried: Inv.Slot }
-  | { readonly _tag: 'Merged'; readonly carried: Inv.Slot }
-  | { readonly _tag: 'Swapped'; readonly carried: Inv.ItemStack }
-  | { readonly _tag: 'NoChange'; readonly carried: Inv.Slot }
-  | { readonly _tag: 'InvalidSlot'; readonly carried: Inv.Slot }
-  | { readonly _tag: 'InvalidCount'; readonly carried: Inv.Slot }
+  | { readonly _tag: 'PickedUp'; readonly carried: InventoryCarriedStack }
+  | { readonly _tag: 'Placed'; readonly carried: InventoryCarriedSlot }
+  | { readonly _tag: 'Merged'; readonly carried: InventoryCarriedSlot }
+  | { readonly _tag: 'Swapped'; readonly carried: InventoryCarriedStack }
+  | { readonly _tag: 'NoChange'; readonly carried: InventoryCarriedSlot }
+  | { readonly _tag: 'InvalidSlot'; readonly carried: InventoryCarriedSlot }
+  | { readonly _tag: 'InvalidCount'; readonly carried: InventoryCarriedSlot }
 
 type InventoryClickOutcome = {
   readonly inventory: Inv.Inventory
   readonly result: InventoryClickResult
 }
 
-const validCarried = (carried: Inv.Slot): boolean =>
+const validCarried = (carried: InventoryCarriedSlot): boolean =>
   carried === undefined ||
-  (Number.isInteger(carried.count) && carried.count > 0 && carried.count <= MAX_STACK_COUNT)
+  (Number.isInteger(carried.count) && carried.count > 0 &&
+    carried.count <= Inv.maxStackCountForItem(carried.item) &&
+    (carried.item === 'flint_and_steel'
+      ? carried.durability === undefined ||
+        (Eq.isDurability(carried.durability) &&
+          carried.durability.max === Storage.FLINT_AND_STEEL_MAX_DURABILITY)
+      : carried.durability === undefined))
 
 /** Apply one Minecraft-style slot click without exposing an intermediate inventory. */
 const clickInventory = (inventory: Inv.Inventory, click: InventoryClick): InventoryClickOutcome => {
@@ -78,7 +91,7 @@ const clickInventory = (inventory: Inv.Inventory, click: InventoryClick): Invent
       return { inventory: { slots }, result: { _tag: 'Swapped', carried: slot } }
     }
 
-    const accepted = Math.min(MAX_STACK_COUNT - slot.count, click.carried.count)
+    const accepted = Math.min(Inv.maxStackCountForItem(slot.item) - slot.count, click.carried.count)
     if (accepted <= 0) {
       return { inventory, result: { _tag: 'NoChange', carried: click.carried } }
     }
@@ -108,7 +121,8 @@ const clickInventory = (inventory: Inv.Inventory, click: InventoryClick): Invent
     }
   }
 
-  if (slot !== undefined && (slot.item !== click.carried.item || slot.count >= MAX_STACK_COUNT)) {
+  if (slot !== undefined &&
+      (slot.item !== click.carried.item || slot.count >= Inv.maxStackCountForItem(slot.item))) {
     return { inventory, result: { _tag: 'NoChange', carried: click.carried } }
   }
   const slots = [...inventory.slots]
@@ -168,6 +182,23 @@ export type InventoryServiceApi = {
   readonly click: (click: InventoryClick) => Effect.Effect<InventoryClickResult>
   readonly countOf: (item: ItemType) => Effect.Effect<number>
   readonly snapshot: Effect.Effect<Inv.Inventory>
+  readonly equipmentSnapshot: Effect.Effect<Eq.Equipment>
+  readonly storageSnapshot: Effect.Effect<Storage.PlayerStorage>
+  readonly restoreStorage: (
+    snapshot: unknown,
+  ) => Effect.Effect<void, Storage.PlayerStorageValidationError>
+  readonly equipFromInventory: (
+    inventorySlot: number,
+    equipmentSlot: Eq.EquipmentSlot,
+  ) => Effect.Effect<Storage.EquipFromInventoryResult>
+  readonly unequipToInventory: (
+    equipmentSlot: Eq.EquipmentSlot,
+    inventorySlot?: number,
+  ) => Effect.Effect<Storage.UnequipToInventoryResult>
+  readonly damageAt: (
+    location: Storage.StorageLocation,
+    amount: number,
+  ) => Effect.Effect<Storage.DamageAtResult>
   /**
    * Install a saved inventory. THE WORLD-LOAD PATH. Resolves to the number of
    * items the repaired inventory had no room for — same currency as `add`.
@@ -260,43 +291,85 @@ export const makeInventoryService = (
   initial: Inv.Inventory = Inv.emptyInventory(),
   recipeTable: Recipe.RecipeTable = Recipe.STARTER_RECIPES,
 ): Effect.Effect<InventoryServiceApi> =>
-  Effect.map(Ref.make(Inv.normaliseInventory(initial).inventory), (state) => ({
+  Effect.map(
+    Ref.make(Storage.storageFromInventory(Inv.normaliseInventory(initial).inventory)),
+    (state) => ({
     add: (item, count) =>
       Ref.modify(state, (current) => {
-        const outcome = Inv.addItem(current, item, count)
-        return [outcome.leftover, outcome.inventory]
+        const outcome = Inv.addItem(current.inventory, item, count)
+        return [outcome.leftover, Storage.withInventory(current, outcome.inventory)]
       }),
     remove: (item, count) =>
       Ref.modify(state, (current) => {
-        const outcome = Inv.removeItem(current, item, count)
-        return [outcome.removed, outcome.inventory]
+        const outcome = Inv.removeItem(current.inventory, item, count)
+        return [outcome.removed, Storage.withInventory(current, outcome.inventory)]
       }),
     removeAt: (slotIndex, expectedItem, count) =>
       Ref.modify(state, (current) => {
-        const outcome = Inv.removeItemAt(current, slotIndex, expectedItem, count)
-        return [outcome.result, outcome.inventory]
+        const outcome = Inv.removeItemAt(current.inventory, slotIndex, expectedItem, count)
+        return [outcome.result, Storage.withInventory(current, outcome.inventory)]
       }),
     click: (click) =>
       Ref.modify(state, (current) => {
-        const outcome = clickInventory(current, click)
-        return [outcome.result, outcome.inventory]
+        const beforeDurability = current.inventoryDurability[click.slotIndex]
+        const outcome = clickInventory(current.inventory, click)
+        let next = Storage.withInventory(current, outcome.inventory)
+        if ((outcome.result._tag === 'Placed' || outcome.result._tag === 'Swapped' ||
+             outcome.result._tag === 'Merged') && click.carried?.item === 'flint_and_steel') {
+          const durability = click.carried.durability ?? {
+            current: Storage.FLINT_AND_STEEL_MAX_DURABILITY,
+            max: Storage.FLINT_AND_STEEL_MAX_DURABILITY,
+          }
+          const values = [...next.inventoryDurability]
+          values[click.slotIndex] = durability
+          next = { ...next, inventoryDurability: values }
+        }
+        const result = (outcome.result._tag === 'PickedUp' || outcome.result._tag === 'Swapped') &&
+          outcome.result.carried.item === 'flint_and_steel' && beforeDurability !== null
+          ? { ...outcome.result, carried: { ...outcome.result.carried, durability: beforeDurability } }
+          : outcome.result
+        return [result, next]
       }),
-    countOf: (item) => Ref.get(state).pipe(Effect.map((current) => Inv.countOf(current, item))),
-    snapshot: Ref.get(state),
+    countOf: (item) => Ref.get(state).pipe(Effect.map((current) => Inv.countOf(current.inventory, item))),
+    snapshot: Ref.get(state).pipe(Effect.map((current) => current.inventory)),
+    equipmentSnapshot: Ref.get(state).pipe(Effect.map((current) => current.equipment)),
+    storageSnapshot: Ref.get(state),
+    restoreStorage: (snapshot) => {
+      const validated = Storage.validatePlayerStorageSnapshot(snapshot)
+      return validated._tag === 'Invalid'
+        ? Effect.fail(validated.error)
+        : Ref.set(state, validated.storage)
+    },
+    equipFromInventory: (inventorySlot, equipmentSlot) =>
+      Ref.modify(state, (current) => {
+        const outcome = Storage.equipFromInventory(current, inventorySlot, equipmentSlot)
+        return [outcome.result, outcome.storage]
+      }),
+    unequipToInventory: (equipmentSlot, inventorySlot) =>
+      Ref.modify(state, (current) => {
+        const outcome = Storage.unequipToInventory(current, equipmentSlot, inventorySlot)
+        return [outcome.result, outcome.storage]
+      }),
+    damageAt: (location, amount) =>
+      Ref.modify(state, (current) => {
+        const outcome = Storage.damageAt(current, location, amount)
+        return [outcome.result, outcome.storage]
+      }),
     restore: (inventory) =>
       Ref.modify(state, () => {
         const outcome = Inv.normaliseInventory(inventory)
-        return [outcome.leftover, outcome.inventory]
+        return [outcome.leftover, Storage.storageFromInventory(outcome.inventory)]
       }),
-    reset: Ref.set(state, Inv.emptyInventory()),
+    reset: Ref.set(state, Storage.emptyPlayerStorage()),
     recipes: Effect.succeed(recipeTable),
     previewCraft: (grid) => Effect.sync(() => Recipe.matchRecipe(recipeTable, grid)),
     craft: (grid) =>
       Ref.modify(state, (current) => {
-        const outcome = Craft.craftFromGrid(current, recipeTable, grid)
-        return [outcome.result, outcome.inventory]
+        const outcome = Craft.craftFromGrid(current.inventory, recipeTable, grid)
+        return [outcome.result, Storage.withInventory(current, outcome.inventory)]
       }),
-  }))
+    }),
+  )
 
 export const InventoryServiceLayer = (
   initial: Inv.Inventory = Inv.emptyInventory(),
