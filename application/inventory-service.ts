@@ -11,7 +11,7 @@
 import { Context, Effect, Layer, Ref } from 'effect'
 import * as Craft from '../domain/crafting'
 import * as Inv from '../domain/inventory'
-import type { ItemType } from '../domain/kernel-vocabulary'
+import type { ItemType } from "@nerima-games/mc-kernel"
 import * as Recipe from '../domain/recipe'
 
 export type InventoryServiceApi = {

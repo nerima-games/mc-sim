@@ -2,7 +2,7 @@ import { describe, expect, it } from '@effect/vitest'
 import { Effect } from 'effect'
 import { INITIAL_PLAYER_DIMENSION, makePlayerService } from '../application/player-service'
 import { INITIAL_PLAYER_POSE } from '../domain/camera-pose'
-import { position } from '../domain/kernel-vocabulary'
+import { position } from "@nerima-games/mc-kernel"
 import type { Dimension } from '../domain/worldgen-vocabulary'
 
 /**

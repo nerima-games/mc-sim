@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect } from 'effect'
-import { DeltaTimeSecs } from '../domain/kernel-vocabulary'
+import { DeltaTimeSecs } from "@nerima-games/mc-kernel"
 import {
   addExhaustion,
   addExperience,

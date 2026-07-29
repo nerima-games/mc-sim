@@ -15,7 +15,7 @@
  * computes `justDied` inside the same step so the death signal fires once.
  */
 import { Context, Effect, Layer, Ref } from 'effect'
-import type { DeltaTimeSecs } from '../domain/kernel-vocabulary'
+import type { DeltaTimeSecs } from "@nerima-games/mc-kernel"
 import * as Time from '../domain/time-of-day'
 
 export type TimeServiceApi = {

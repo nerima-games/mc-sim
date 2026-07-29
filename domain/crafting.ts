@@ -30,7 +30,7 @@
  * change to this function.
  */
 import { addItem, countOf, Inventory, ItemStack, removeItem } from './inventory'
-import { ItemType } from './kernel-vocabulary'
+import { ItemType } from "@nerima-games/mc-kernel"
 import { CraftGrid, cellAt, matchRecipe, RecipeId, RecipeTable } from './recipe'
 
 /**

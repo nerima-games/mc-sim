@@ -35,7 +35,7 @@
  *   not crafting-grid shaped. None of them is modelled here.
  */
 import { ItemStack, itemStack, Slot } from './inventory'
-import { ItemType } from './kernel-vocabulary'
+import { ItemType } from "@nerima-games/mc-kernel"
 
 /**
  * A recipe's identity, namespaced.
@@ -599,7 +599,7 @@ export const conflictsIn = (table: RecipeTable): ReadonlyArray<RecipeConflict> =
  * decides how matching works.
  *
  * Item ids are members of kernel's `ITEM_TYPES` (mirrored in
- * `./kernel-vocabulary`), so a misspelled row does not compile. They are still
+ * `@nerima-games/mc-kernel`), so a misspelled row does not compile. They are still
  * DATA, not behaviour: nothing in this file branches on a literal item id, which
  * is the trap DN-11 records.
  *

@@ -11,7 +11,7 @@ import {
   slotAt,
   type Inventory,
 } from '../domain/inventory'
-import { MAX_STACK_COUNT, type ItemType, type StackCount } from '../domain/kernel-vocabulary'
+import { MAX_STACK_COUNT, type ItemType, type StackCount } from "@nerima-games/mc-kernel"
 import { makeInventoryService } from '../application/inventory-service'
 
 /**

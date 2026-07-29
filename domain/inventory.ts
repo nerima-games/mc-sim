@@ -31,7 +31,7 @@
  * What is here is the part the mining scenario test needs, plus the stacking
  * rule, which is the part that is easy to get subtly wrong.
  */
-import { isItemType, ItemType, MAX_STACK_COUNT, StackCount } from './kernel-vocabulary'
+import { isItemType, ItemType, MAX_STACK_COUNT, StackCount } from "@nerima-games/mc-kernel"
 
 /*
  * THERE IS NO `ItemId` HERE ANY MORE.

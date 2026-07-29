@@ -67,7 +67,7 @@
  * that the two are different mechanisms rather than two spellings of one:
  *
  *   - `ClockPort` READS AN INSTANT. `monotonicSecs` and `wallClockEpochMillis`
- *     are its whole surface (`domain/kernel-vocabulary.ts`), and it is mirrored
+ *     are its whole surface (`@nerima-games/mc-kernel`), and it is mirrored
  *     from mc-kernel — a mirror that may not grow a field here, because a wider
  *     or narrower copy of a `Context.Tag` resolved by textual key is the exact
  *     runtime hazard `test/kernel-mirror.test.ts` exists to prevent.

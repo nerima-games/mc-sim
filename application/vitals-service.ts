@@ -33,7 +33,7 @@
  * to the caller that caused it, in the same frame.
  */
 import { Context, Effect, Layer, Ref } from 'effect'
-import type { DeltaTimeSecs } from '../domain/kernel-vocabulary'
+import type { DeltaTimeSecs } from "@nerima-games/mc-kernel"
 import * as Vitals from '../domain/vitals'
 
 /**

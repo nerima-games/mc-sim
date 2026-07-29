@@ -14,7 +14,7 @@
 
 format: 1
 exported declarations: 221
-supporting declarations: 28
+supporting declarations: 8
 
 ## Exported
 
@@ -1586,73 +1586,10 @@ Not exported from the barrel, but named by the signatures above, so a
 consumer is exposed to them. `Context.Tag` service classes emit their real
 type onto one of these.
 
-### CameraPoseSnapshot  `type`
-
-```ts
-type CameraPoseSnapshot = {
-    readonly position: Position;
-    readonly yawRadians: number;
-    readonly pitchRadians: number;
-    readonly capturedAtSecs: MonotonicTimeSecs;
-};
-```
-
-### ClockPort  `class`
-
-```ts
-class ClockPort extends ClockPort_base {
-}
-```
-
-### ClockPort_base  `const`
-
-```ts
-const ClockPort_base: Context.TagClass<ClockPort, "@nerima-games/mc-kernel/ClockPort", ClockService>;
-```
-
-### ClockService  `type`
-
-```ts
-type ClockService = {
-    readonly monotonicSecs: Effect.Effect<MonotonicTimeSecs>;
-    readonly wallClockEpochMillis: Effect.Effect<EpochMillis>;
-};
-```
-
-### DeltaTimeSecs  `const`
-
-```ts
-const DeltaTimeSecs: Brand.Brand.Constructor<DeltaTimeSecs>;
-```
-
-### DeltaTimeSecs  `type`
-
-```ts
-type DeltaTimeSecs = number & Brand.Brand<'DeltaTimeSecs'>;
-```
-
 ### Dimension  `type`
 
 ```ts
 type Dimension = 'overworld' | 'nether' | 'end';
-```
-
-### EpochMillis  `const`
-
-```ts
-const EpochMillis: Brand.Brand.Constructor<EpochMillis>;
-```
-
-### EpochMillis  `type`
-
-```ts
-type EpochMillis = number & Brand.Brand<'EpochMillis'>;
-```
-
-### FrameServices  `type`
-
-```ts
-type FrameServices = ClockPort;
 ```
 
 ### GameLoop_base  `const`
@@ -1661,43 +1598,10 @@ type FrameServices = ClockPort;
 const GameLoop_base: Context.TagClass<GameLoop, "@nerima-games/mc-sim/GameLoop", GameLoopApi>;
 ```
 
-### GameModule  `interface`
-
-```ts
-interface GameModule<ROut, E, RIn, RRegister = never> {
-    readonly layers: Layer.Layer<ROut, E, RIn>;
-    readonly frameStages: Effect.Effect<ReadonlyArray<StageRegistration>, never, RRegister>;
-}
-```
-
-### ITEM_TYPES  `const`
-
-```ts
-const ITEM_TYPES: readonly ["stone", "cobblestone", "dirt", "grass_block", "sand", "gravel", "oak_log", "oak_planks", "oak_leaves", "glass", "torch", "glowstone", "piston", "stick", "glowstone_dust", "wooden_pickaxe", "coal", "iron_ingot", "flint", "gunpowder", "blaze_powder", "flint_and_steel", "fire_charge", "granite", "diorite", "andesite", "deepslate", "obsidian", "smooth_basalt", "calcite", "amethyst_block", "sandstone", "prismarine", "soul_sand", "coal_block", "iron_block", "gold_block", "diamond_block", "redstone_block", "lapis_block", "emerald_block", "redstone_torch", "lever", "stone_button", "repeater", "redstone_lamp", "observer", "comparator", "dispenser", "hopper", "end_stone", "end_portal_frame", "end_portal_frame_filled", "chorus_flower", "chorus_plant", "dragon_egg", "end_crystal", "end_rod", "end_stone_bricks", "ender_chest", "purpur_block", "purpur_pillar", "purpur_slab", "purpur_stairs", "shulker_box", "crafting_table", "furnace", "chest", "door", "oak_stairs", "anvil", "cauldron", "bed", "enchanting_table", "brewing_stand", "tnt", "nether_brick", "netherrack", "raw_iron", "raw_gold", "diamond", "emerald", "lapis_lazuli", "redstone_dust", "amethyst_shard", "wheat_seeds", "potato", "nether_wart", "ladder", "kelp", "seagrass", "rail", "powered_rail", "pressure_plate", "stone_slab", "string", "snowball"];
-```
-
 ### InventoryService_base  `const`
 
 ```ts
 const InventoryService_base: Context.TagClass<InventoryService, "@nerima-games/mc-sim/InventoryService", InventoryServiceApi>;
-```
-
-### ItemType  `type`
-
-```ts
-type ItemType = (typeof ITEM_TYPES)[number];
-```
-
-### MonotonicTimeSecs  `const`
-
-```ts
-const MonotonicTimeSecs: Brand.Brand.Constructor<MonotonicTimeSecs>;
-```
-
-### MonotonicTimeSecs  `type`
-
-```ts
-type MonotonicTimeSecs = number & Brand.Brand<'MonotonicTimeSecs'>;
 ```
 
 ### PlayerService_base  `const`
@@ -1706,54 +1610,10 @@ type MonotonicTimeSecs = number & Brand.Brand<'MonotonicTimeSecs'>;
 const PlayerService_base: Context.TagClass<PlayerService, "@nerima-games/mc-sim/PlayerService", PlayerServiceApi>;
 ```
 
-### Position  `type`
-
-```ts
-type Position = {
-    readonly x: number;
-    readonly y: number;
-    readonly z: number;
-};
-```
-
 ### SettingsService_base  `const`
 
 ```ts
 const SettingsService_base: Context.TagClass<SettingsService, "@nerima-games/mc-sim/SettingsService", SettingsServiceApi>;
-```
-
-### StackCount  `const`
-
-```ts
-const StackCount: Brand.Brand.Constructor<StackCount>;
-```
-
-### StackCount  `type`
-
-```ts
-type StackCount = number & Brand.Brand<'StackCount'>;
-```
-
-### StageId  `const`
-
-```ts
-const StageId: Brand.Brand.Constructor<StageId>;
-```
-
-### StageId  `type`
-
-```ts
-type StageId = string & Brand.Brand<'StageId'>;
-```
-
-### StageRegistration  `interface`
-
-```ts
-interface StageRegistration {
-    readonly id: StageId;
-    readonly after?: ReadonlyArray<StageId>;
-    readonly run: (dt: DeltaTimeSecs) => Effect.Effect<void, never, FrameServices>;
-}
 ```
 
 ### StatisticsService_base  `const`

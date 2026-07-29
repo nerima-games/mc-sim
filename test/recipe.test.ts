@@ -8,7 +8,7 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect } from 'effect'
 import { itemStack } from '../domain/inventory'
-import { ItemType } from '../domain/kernel-vocabulary'
+import { ItemType } from "@nerima-games/mc-kernel"
 import {
   cellAt,
   conflictsIn,

@@ -18,10 +18,10 @@
  *   3. repoint every `from './worldgen-vocabulary'` at `'@nerima-games/mc-worldgen'`.
  *
  * It is the SECOND mirror in this repository and the first that is not
- * `./kernel-vocabulary`. The rule that decides a mirror's home is stated in
+ * `@nerima-games/mc-kernel`. The rule that decides a mirror's home is stated in
  * `mx-gameplay/domain/portal-frame-port.ts` — 「a mirror's home is decided by
  * WHOSE BARREL REPLACES IT」 — and it is why this is a separate file rather than
- * three more lines in `./kernel-vocabulary`: that file is replaced by
+ * three more lines in `@nerima-games/mc-kernel`: that file is replaced by
  * `@nerima-games/mc-kernel`, which does not export `Dimension` and is not going
  * to. One mirror per source package, and any number of them per repository.
  *
@@ -30,7 +30,7 @@
  * ---------------------------------------------------------------------------
  *
  * `Dimension` is a CLOSED LITERAL UNION, and for those the membership IS the
- * type — the argument `./kernel-vocabulary` makes at length for `ITEM_TYPES`.
+ * type — the argument `@nerima-games/mc-kernel` makes at length for `ITEM_TYPES`.
  * A copy carrying two of the three members is not "less of the vocabulary", it
  * is a DIFFERENT TYPE under the same name: it typechecks locally, passes every
  * test in this repository, and rejects a save file that mc-worldgen considers

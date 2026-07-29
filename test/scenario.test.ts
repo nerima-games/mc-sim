@@ -17,9 +17,9 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect, Layer, Ref } from 'effect'
 import { forwardVector, snapshotAgeSecs } from '../domain/camera-pose'
-import { DeltaTimeSecs, EpochMillis, MonotonicTimeSecs, position } from '../domain/kernel-vocabulary'
+import { DeltaTimeSecs, EpochMillis, MonotonicTimeSecs, position } from "@nerima-games/mc-kernel"
 import { craftGrid } from '../domain/recipe'
-import { ClockPort, FixedClockLayer } from '../domain/kernel-vocabulary'
+import { ClockPort, FixedClockLayer } from "@nerima-games/mc-kernel"
 import {
   InventoryService,
   InventoryServiceLayer,
@@ -42,7 +42,7 @@ const controllableClock = Effect.gen(function* () {
     // Frozen, and deliberately unrelated to `nowRef`: the wall clock is not a
     // second monotonic clock, and a test that let the two move together would
     // hide a `wallClockEpochMillis` used for a duration. See
-    // domain/kernel-vocabulary.ts on why the mirror carries both fields.
+    // @nerima-games/mc-kernel on why the mirror carries both fields.
     wallClockEpochMillis: Effect.succeed(EpochMillis(1_700_000_000_000)),
   })
   return {

@@ -80,7 +80,7 @@
  */
 import { Cause, Context, Effect, Fiber, Layer, Option, Queue, Ref } from 'effect'
 import { frameDeltaBetween, frameDeltaLossBetween } from '../domain/frame-timing'
-import type { DeltaTimeSecs, MonotonicTimeSecs } from '../domain/kernel-vocabulary'
+import type { DeltaTimeSecs, MonotonicTimeSecs } from "@nerima-games/mc-kernel"
 
 /**
  * Per-frame work.

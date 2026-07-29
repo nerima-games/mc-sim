@@ -37,7 +37,7 @@
  * has no parameter and is what appears in every `R`) and the SERVICE VALUE TYPE
  * (which has one). Effect resolves tags by their textual key, so every call
  * names the same service — that is the same mechanism
- * `domain/kernel-vocabulary.ts` documents for `ClockPort` across repositories,
+ * `@nerima-games/mc-kernel` documents for `ClockPort` across repositories,
  * used deliberately here rather than tripped over.
  *
  * IT IS WORTH BEING PRECISE ABOUT WHAT THAT DOES AND DOES NOT RISK, because the
