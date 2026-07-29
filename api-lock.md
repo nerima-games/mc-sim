@@ -13,7 +13,7 @@
 <!-- ------------------------------------------------------------------------- -->
 
 format: 1
-exported declarations: 223
+exported declarations: 225
 supporting declarations: 28
 
 ## Exported
@@ -65,6 +65,12 @@ type BlockTarget = {
     readonly adjacentPosition: Position;
     readonly distance: number;
 };
+```
+
+### CameraOrientation  `type`
+
+```ts
+type CameraOrientation = Pick<CameraPoseSnapshot, 'yawRadians' | 'pitchRadians'>;
 ```
 
 ### CraftGrid  `type`
@@ -1206,7 +1212,7 @@ const findEntity: <S>(roster: EntityRoster<S>, id: EntityId) => Entity<S> | unde
 ### forwardVector  `const`
 
 ```ts
-const forwardVector: (snapshot: CameraPoseSnapshot) => Position;
+const forwardVector: (snapshot: CameraOrientation) => Position;
 ```
 
 ### frameDeltaBetween  `const`
@@ -1558,6 +1564,12 @@ const sweepRoster: <S, A>(roster: EntityRoster<S>, step: (entity: Entity<S>) => 
 
 ```ts
 const targetBlockFromCamera: (camera: CameraPoseSnapshot, maxDistance: number, isTargetable: IsTargetable) => Option.Option<BlockTarget>;
+```
+
+### targetBlockFromPlayerPose  `const`
+
+```ts
+const targetBlockFromPlayerPose: (playerPose: PlayerPose, maxDistance: number, isTargetable: IsTargetable) => Option.Option<BlockTarget>;
 ```
 
 ### timeOfDay  `const`

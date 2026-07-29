@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Option } from 'effect'
-import { targetBlockFromCamera } from '../domain/block-targeting'
+import { targetBlockFromCamera, targetBlockFromPlayerPose } from '../domain/block-targeting'
 import { cameraPoseOf, INITIAL_PLAYER_POSE, withFeetPosition } from '../domain/camera-pose'
 import { MonotonicTimeSecs, position } from '../domain/kernel-vocabulary'
 
@@ -28,5 +28,14 @@ describe('targetBlockFromCamera', () => {
     const target = targetBlockFromCamera(cameraAt(0.5, 0, 3.5), 2, (x, y, z) => x === 0 && y === 1 && z === 0)
 
     expect(Option.isNone(target)).toBe(true)
+  })
+})
+
+describe('targetBlockFromPlayerPose', () => {
+  it('applies the simulation-owned eye height before raycasting', () => {
+    const playerPose = withFeetPosition(INITIAL_PLAYER_POSE, position(0.5, 0, 2.5))
+    const target = targetBlockFromPlayerPose(playerPose, 5, (x, y, z) => x === 0 && y === 1 && z === 0)
+
+    expect(Option.getOrThrow(target).position).toStrictEqual(position(0, 1, 0))
   })
 })
