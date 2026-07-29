@@ -14,6 +14,7 @@ import {
 } from '../domain/inventory'
 import { MAX_STACK_COUNT, type ItemType, type StackCount } from '../domain/kernel-vocabulary'
 import { makeInventoryService } from '../application/inventory-service'
+import type { InventoryClick } from '../index'
 
 /**
  * A slot holding a count `StackCount` would reject, or an item `ItemType` does
@@ -504,6 +505,106 @@ describe('REGRESSION: InventoryService.restore is the guarded path, and reports 
 })
 
 describe('InventoryService concurrency', () => {
+  it.effect('left-click picks up, places, merges, and swaps whole stacks', () =>
+    Effect.gen(function* () {
+      const service = yield* makeInventoryService({
+        slots: [
+          { item: 'stone', count: 60 as StackCount },
+          { item: 'dirt', count: 7 as StackCount },
+          ...emptyInventory().slots.slice(2),
+        ],
+      })
+
+      const pickedUp = yield* service.click({ _tag: 'LeftClick', slotIndex: 0, carried: undefined })
+      expect(pickedUp).toStrictEqual({ _tag: 'PickedUp', carried: { item: 'stone', count: 60 } })
+      expect(slotAt(yield* service.snapshot, 0)).toBeUndefined()
+
+      expect(
+        yield* service.click({ _tag: 'LeftClick', slotIndex: 0, carried: pickedUp.carried }),
+      ).toStrictEqual({ _tag: 'Placed', carried: undefined })
+      expect(slotAt(yield* service.snapshot, 0)).toStrictEqual({ item: 'stone', count: 60 })
+
+      expect(
+        yield* service.click({
+          _tag: 'LeftClick',
+          slotIndex: 0,
+          carried: { item: 'stone', count: 10 as StackCount },
+        }),
+      ).toStrictEqual({ _tag: 'Merged', carried: { item: 'stone', count: 6 } })
+      expect(slotAt(yield* service.snapshot, 0)).toStrictEqual({ item: 'stone', count: MAX_STACK_COUNT })
+
+      expect(
+        yield* service.click({
+          _tag: 'LeftClick',
+          slotIndex: 1,
+          carried: { item: 'stone', count: 6 as StackCount },
+        }),
+      ).toStrictEqual({ _tag: 'Swapped', carried: { item: 'dirt', count: 7 } })
+      expect(slotAt(yield* service.snapshot, 1)).toStrictEqual({ item: 'stone', count: 6 })
+    }),
+  )
+
+  it.effect('right-click picks up the larger half and places exactly one item', () =>
+    Effect.gen(function* () {
+      const service = yield* makeInventoryService()
+      yield* service.add('stone', 5)
+
+      const pickedUp = yield* service.click({ _tag: 'RightClick', slotIndex: 0, carried: undefined })
+      expect(pickedUp).toStrictEqual({ _tag: 'PickedUp', carried: { item: 'stone', count: 3 } })
+      expect(slotAt(yield* service.snapshot, 0)).toStrictEqual({ item: 'stone', count: 2 })
+
+      const placed = yield* service.click({ _tag: 'RightClick', slotIndex: 1, carried: pickedUp.carried })
+      expect(placed).toStrictEqual({ _tag: 'Placed', carried: { item: 'stone', count: 2 } })
+      expect(slotAt(yield* service.snapshot, 1)).toStrictEqual({ item: 'stone', count: 1 })
+
+      expect(
+        yield* service.click({ _tag: 'RightClick', slotIndex: 1, carried: placed.carried }),
+      ).toStrictEqual({ _tag: 'Merged', carried: { item: 'stone', count: 1 } })
+      expect(slotAt(yield* service.snapshot, 1)).toStrictEqual({ item: 'stone', count: 2 })
+    }),
+  )
+
+  it.effect('rejects invalid slots and external carried counts without a partial update', () =>
+    Effect.gen(function* () {
+      const service = yield* makeInventoryService()
+      yield* service.add('stone', 4)
+      const before = yield* service.snapshot
+      const invalidCount = {
+        _tag: 'RightClick',
+        slotIndex: 0,
+        carried: { item: 'stone', count: (MAX_STACK_COUNT + 1) as StackCount },
+      } satisfies InventoryClick
+
+      expect(yield* service.click({ _tag: 'LeftClick', slotIndex: -1, carried: undefined })).toStrictEqual({
+        _tag: 'InvalidSlot',
+        carried: undefined,
+      })
+      expect(yield* service.click(invalidCount)).toStrictEqual({
+        _tag: 'InvalidCount',
+        carried: invalidCount.carried,
+      })
+      expect(yield* service.snapshot).toBe(before)
+    }),
+  )
+
+  it.effect('concurrent pickups are serialized, so only one caller receives the stack', () =>
+    Effect.gen(function* () {
+      const service = yield* makeInventoryService()
+      yield* service.add('stone', 1)
+
+      const fibers = yield* Effect.forEach(
+        [0, 1],
+        () => Effect.fork(service.click({ _tag: 'LeftClick', slotIndex: 0, carried: undefined })),
+        { concurrency: 'unbounded' },
+      )
+      const results = yield* Effect.forEach(fibers, Fiber.join)
+
+      expect(results.filter((result) => result._tag === 'PickedUp')).toHaveLength(1)
+      expect(results.filter((result) => result._tag === 'NoChange')).toHaveLength(1)
+      expect(isEmpty(yield* service.snapshot)).toBe(true)
+    }),
+  )
+
   it.effect('removeAt changes only the selected slot and reports stale selections', () =>
     Effect.gen(function* () {
       const service = yield* makeInventoryService({

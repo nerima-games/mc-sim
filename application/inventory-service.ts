@@ -11,8 +11,117 @@
 import { Context, Effect, Layer, Ref } from 'effect'
 import * as Craft from '../domain/crafting'
 import * as Inv from '../domain/inventory'
-import type { ItemType } from '../domain/kernel-vocabulary'
+import { MAX_STACK_COUNT, type ItemType } from '../domain/kernel-vocabulary'
 import * as Recipe from '../domain/recipe'
+
+export type InventoryClick =
+  | {
+      readonly _tag: 'LeftClick'
+      readonly slotIndex: number
+      readonly carried: Inv.Slot
+    }
+  | {
+      readonly _tag: 'RightClick'
+      readonly slotIndex: number
+      readonly carried: Inv.Slot
+    }
+
+export type InventoryClickResult =
+  | { readonly _tag: 'PickedUp'; readonly carried: Inv.ItemStack }
+  | { readonly _tag: 'Placed'; readonly carried: Inv.Slot }
+  | { readonly _tag: 'Merged'; readonly carried: Inv.Slot }
+  | { readonly _tag: 'Swapped'; readonly carried: Inv.ItemStack }
+  | { readonly _tag: 'NoChange'; readonly carried: Inv.Slot }
+  | { readonly _tag: 'InvalidSlot'; readonly carried: Inv.Slot }
+  | { readonly _tag: 'InvalidCount'; readonly carried: Inv.Slot }
+
+type InventoryClickOutcome = {
+  readonly inventory: Inv.Inventory
+  readonly result: InventoryClickResult
+}
+
+const validCarried = (carried: Inv.Slot): boolean =>
+  carried === undefined ||
+  (Number.isInteger(carried.count) && carried.count > 0 && carried.count <= MAX_STACK_COUNT)
+
+/** Apply one Minecraft-style slot click without exposing an intermediate inventory. */
+const clickInventory = (inventory: Inv.Inventory, click: InventoryClick): InventoryClickOutcome => {
+  if (
+    !Number.isInteger(click.slotIndex) ||
+    click.slotIndex < 0 ||
+    click.slotIndex >= Inv.INVENTORY_SLOT_COUNT
+  ) {
+    return { inventory, result: { _tag: 'InvalidSlot', carried: click.carried } }
+  }
+  if (!validCarried(click.carried)) {
+    return { inventory, result: { _tag: 'InvalidCount', carried: click.carried } }
+  }
+
+  const slot = inventory.slots[click.slotIndex]
+  if (click._tag === 'LeftClick') {
+    if (click.carried === undefined) {
+      if (slot === undefined) {
+        return { inventory, result: { _tag: 'NoChange', carried: undefined } }
+      }
+      const slots = [...inventory.slots]
+      slots[click.slotIndex] = undefined
+      return { inventory: { slots }, result: { _tag: 'PickedUp', carried: slot } }
+    }
+    if (slot === undefined) {
+      const slots = [...inventory.slots]
+      slots[click.slotIndex] = click.carried
+      return { inventory: { slots }, result: { _tag: 'Placed', carried: undefined } }
+    }
+    if (slot.item !== click.carried.item) {
+      const slots = [...inventory.slots]
+      slots[click.slotIndex] = click.carried
+      return { inventory: { slots }, result: { _tag: 'Swapped', carried: slot } }
+    }
+
+    const accepted = Math.min(MAX_STACK_COUNT - slot.count, click.carried.count)
+    if (accepted <= 0) {
+      return { inventory, result: { _tag: 'NoChange', carried: click.carried } }
+    }
+    const slots = [...inventory.slots]
+    slots[click.slotIndex] = Inv.itemStack(slot.item, slot.count + accepted)
+    const remaining = click.carried.count - accepted
+    return {
+      inventory: { slots },
+      result: {
+        _tag: 'Merged',
+        carried: remaining === 0 ? undefined : Inv.itemStack(click.carried.item, remaining),
+      },
+    }
+  }
+
+  if (click.carried === undefined) {
+    if (slot === undefined) {
+      return { inventory, result: { _tag: 'NoChange', carried: undefined } }
+    }
+    const pickedUp = Math.ceil(slot.count / 2)
+    const remaining = slot.count - pickedUp
+    const slots = [...inventory.slots]
+    slots[click.slotIndex] = remaining === 0 ? undefined : Inv.itemStack(slot.item, remaining)
+    return {
+      inventory: { slots },
+      result: { _tag: 'PickedUp', carried: Inv.itemStack(slot.item, pickedUp) },
+    }
+  }
+
+  if (slot !== undefined && (slot.item !== click.carried.item || slot.count >= MAX_STACK_COUNT)) {
+    return { inventory, result: { _tag: 'NoChange', carried: click.carried } }
+  }
+  const slots = [...inventory.slots]
+  slots[click.slotIndex] = Inv.itemStack(click.carried.item, (slot?.count ?? 0) + 1)
+  const remaining = click.carried.count - 1
+  return {
+    inventory: { slots },
+    result: {
+      _tag: slot === undefined ? 'Placed' : 'Merged',
+      carried: remaining === 0 ? undefined : Inv.itemStack(click.carried.item, remaining),
+    },
+  }
+}
 
 export type InventoryServiceApi = {
   /**
@@ -55,6 +164,8 @@ export type InventoryServiceApi = {
     expectedItem: ItemType,
     count: number,
   ) => Effect.Effect<Inv.RemoveAtResult>
+  /** Atomically apply one left or right slot click and return the new carried stack. */
+  readonly click: (click: InventoryClick) => Effect.Effect<InventoryClickResult>
   readonly countOf: (item: ItemType) => Effect.Effect<number>
   readonly snapshot: Effect.Effect<Inv.Inventory>
   /**
@@ -163,6 +274,11 @@ export const makeInventoryService = (
     removeAt: (slotIndex, expectedItem, count) =>
       Ref.modify(state, (current) => {
         const outcome = Inv.removeItemAt(current, slotIndex, expectedItem, count)
+        return [outcome.result, outcome.inventory]
+      }),
+    click: (click) =>
+      Ref.modify(state, (current) => {
+        const outcome = clickInventory(current, click)
         return [outcome.result, outcome.inventory]
       }),
     countOf: (item) => Ref.get(state).pipe(Effect.map((current) => Inv.countOf(current, item))),

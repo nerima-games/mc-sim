@@ -13,7 +13,7 @@
 <!-- ------------------------------------------------------------------------- -->
 
 format: 1
-exported declarations: 228
+exported declarations: 230
 supporting declarations: 28
 
 ## Exported
@@ -429,6 +429,47 @@ type Inventory = {
 };
 ```
 
+### InventoryClick  `type`
+
+```ts
+type InventoryClick = {
+    readonly _tag: 'LeftClick';
+    readonly slotIndex: number;
+    readonly carried: Inv.Slot;
+} | {
+    readonly _tag: 'RightClick';
+    readonly slotIndex: number;
+    readonly carried: Inv.Slot;
+};
+```
+
+### InventoryClickResult  `type`
+
+```ts
+type InventoryClickResult = {
+    readonly _tag: 'PickedUp';
+    readonly carried: Inv.ItemStack;
+} | {
+    readonly _tag: 'Placed';
+    readonly carried: Inv.Slot;
+} | {
+    readonly _tag: 'Merged';
+    readonly carried: Inv.Slot;
+} | {
+    readonly _tag: 'Swapped';
+    readonly carried: Inv.ItemStack;
+} | {
+    readonly _tag: 'NoChange';
+    readonly carried: Inv.Slot;
+} | {
+    readonly _tag: 'InvalidSlot';
+    readonly carried: Inv.Slot;
+} | {
+    readonly _tag: 'InvalidCount';
+    readonly carried: Inv.Slot;
+};
+```
+
 ### InventoryService  `class`
 
 ```ts
@@ -443,6 +484,7 @@ type InventoryServiceApi = {
     readonly add: (item: ItemType, count: number) => Effect.Effect<number>;
     readonly remove: (item: ItemType, count: number) => Effect.Effect<number>;
     readonly removeAt: (slotIndex: number, expectedItem: ItemType, count: number) => Effect.Effect<Inv.RemoveAtResult>;
+    readonly click: (click: InventoryClick) => Effect.Effect<InventoryClickResult>;
     readonly countOf: (item: ItemType) => Effect.Effect<number>;
     readonly snapshot: Effect.Effect<Inv.Inventory>;
     readonly restore: (inventory: Inv.Inventory) => Effect.Effect<number>;
