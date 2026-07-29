@@ -13,8 +13,8 @@
 <!-- ------------------------------------------------------------------------- -->
 
 format: 1
-exported declarations: 230
-supporting declarations: 28
+exported declarations: 241
+supporting declarations: 29
 
 ## Exported
 
@@ -404,6 +404,12 @@ const INITIAL_PLAYER_POSE: PlayerPose;
 
 ```ts
 const INITIAL_TIME_STATE: TimeState;
+```
+
+### INITIAL_WEATHER_STATE  `const`
+
+```ts
+const INITIAL_WEATHER_STATE: WeatherState;
 ```
 
 ### INVENTORY_SLOT_COUNT  `const`
@@ -1090,6 +1096,51 @@ type VitalsView = {
 };
 ```
 
+### WEATHERS  `const`
+
+```ts
+const WEATHERS: readonly ["clear", "rain", "thunder"];
+```
+
+### Weather  `type`
+
+```ts
+type Weather = (typeof WEATHERS)[number];
+```
+
+### WeatherService  `class`
+
+```ts
+class WeatherService extends WeatherService_base {
+}
+```
+
+### WeatherServiceApi  `type`
+
+```ts
+type WeatherServiceApi = {
+    readonly snapshot: Effect.Effect<Weather.WeatherState>;
+    readonly applyTransition: (next: Weather.WeatherState) => Effect.Effect<Weather.WeatherState>;
+    readonly restore: (weather: Weather.WeatherState) => Effect.Effect<void>;
+    readonly reset: Effect.Effect<void>;
+};
+```
+
+### WeatherServiceLayer  `const`
+
+```ts
+const WeatherServiceLayer: (initial?: Weather.WeatherState) => Layer.Layer<WeatherService>;
+```
+
+### WeatherState  `type`
+
+```ts
+type WeatherState = {
+    readonly weather: Weather;
+    readonly remainingSecs: number;
+};
+```
+
 ### addExhaustion  `const`
 
 ```ts
@@ -1390,6 +1441,18 @@ const isValidTimeState: (state: TimeState) => boolean;
 const isValidVitals: (vitals: Vitals) => boolean;
 ```
 
+### isValidWeatherState  `const`
+
+```ts
+const isValidWeatherState: (value: unknown) => value is WeatherState;
+```
+
+### isWeather  `const`
+
+```ts
+const isWeather: (value: unknown) => value is Weather;
+```
+
 ### itemStack  `const`
 
 ```ts
@@ -1477,6 +1540,12 @@ const makeTimeService: (initial?: Time.TimeState) => Effect.Effect<TimeServiceAp
 const makeVitalsService: (initial?: Vitals.Vitals) => Effect.Effect<VitalsServiceApi>;
 ```
 
+### makeWeatherService  `const`
+
+```ts
+const makeWeatherService: (initial?: Weather.WeatherState) => Effect.Effect<WeatherServiceApi>;
+```
+
 ### matchRecipe  `const`
 
 ```ts
@@ -1529,6 +1598,12 @@ const normaliseTimeState: (state: TimeState) => TimeState;
 
 ```ts
 const normaliseVitals: (vitals: Vitals) => Vitals;
+```
+
+### normaliseWeatherState  `const`
+
+```ts
+const normaliseWeatherState: (value: unknown) => WeatherState;
 ```
 
 ### performAutoSaveTick  `const`
@@ -1879,4 +1954,10 @@ const TimeService_base: Context.TagClass<TimeService, "@nerima-games/mc-sim/Time
 
 ```ts
 const VitalsService_base: Context.TagClass<VitalsService, "@nerima-games/mc-sim/VitalsService", VitalsServiceApi>;
+```
+
+### WeatherService_base  `const`
+
+```ts
+const WeatherService_base: Context.TagClass<WeatherService, "@nerima-games/mc-sim/WeatherService", WeatherServiceApi>;
 ```
