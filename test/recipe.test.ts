@@ -159,6 +159,27 @@ describe('shaped matching translates', () => {
     }),
   )
 
+  it.effect('the crafting table works in a player 2x2 grid and at every 3x3 offset', () =>
+    Effect.sync(() => {
+      expect(matchedId(gridOf('PP', 'PP'))).toBe('mc-sim:crafting-table')
+
+      const positions = [0, 1].flatMap((y) => [0, 1].map((x) => [x, y] as const))
+      for (const [ox, oy] of positions) {
+        const grid = placeAt(3, 3, [
+          [ox, oy, 'oak_planks'],
+          [ox + 1, oy, 'oak_planks'],
+          [ox, oy + 1, 'oak_planks'],
+          [ox + 1, oy + 1, 'oak_planks'],
+        ])
+        expect({ ox, oy, id: matchedId(grid) }).toStrictEqual({
+          ox,
+          oy,
+          id: 'mc-sim:crafting-table',
+        })
+      }
+    }),
+  )
+
   it.effect('a 1x2 shape is the SAME recipe at all six positions in a 3x3 grid', () =>
     Effect.sync(() => {
       const positions = [0, 1].flatMap((y) => [0, 1, 2].map((x) => [x, y] as const))
@@ -482,6 +503,7 @@ describe('matching is total', () => {
         ['mc-sim:oak-planks', gridOf('L')],
         ['mc-sim:stick', gridOf('P', 'P')],
         ['mc-sim:stick-from-loose-planks', gridOf('PP')],
+        ['mc-sim:crafting-table', gridOf('PP', 'PP')],
         ['mc-sim:glowstone', gridOf('GG', 'GG')],
         ['mc-sim:flint-and-steel', gridOf('I ', ' F')],
         ['mc-sim:fire-charge', gridOf('NZC')],

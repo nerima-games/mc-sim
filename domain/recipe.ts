@@ -604,42 +604,24 @@ export const conflictsIn = (table: RecipeTable): ReadonlyArray<RecipeConflict> =
  * is the trap DN-11 records.
  *
  * ---------------------------------------------------------------------------
- * The two rows the repoint took, and what asking got back
+ * Vocabulary-backed restoration
  * ---------------------------------------------------------------------------
  *
- * Repointing this table onto kernel's `ItemType` cost it three rows, because
- * they named items the roster did not have. One was replaced and two were
- * trimmed, and the two were not the same kind of loss:
+ * Repointing this table onto kernel's `ItemType` originally removed recipes
+ * whose ingredients or outputs were not yet in the shared vocabulary. Those
+ * gaps have since been resolved on kernel-side evidence: drops justify the
+ * flint-and-steel and fire-charge ingredients, while `crafting_table` is now a
+ * placeable block and item. The corresponding vanilla recipes therefore belong
+ * in this published starter table.
  *
- *   - `mc-sim:crafting-table` (2x2 symmetric, the translation case) cost
- *     NOTHING and stays replaced. Vanilla's glowstone block is the same shape
- *     over items kernel already had, so the demonstration survived with a
- *     different output. A row whose only distinction was its output was a row
- *     that was content, and `crafting_table` is therefore NOT in the roster: it
- *     was requested, declined, and the decline was right.
- *   - `mc-sim:flint-and-steel` (shaped, ASYMMETRIC) and `mc-sim:fire-charge`
- *     (shapeless, three DISTINCT ingredients) cost something real. They are the
- *     only vanilla recipes of either shape, nothing in the sixteen items then
- *     available was asymmetric or three-distinct, and both are rules
- *     `matchRecipe` implements. They lived in `test/recipe.test.ts` as local
- *     tables for as long as the literals did not exist.
+ * That ordering is the point and not a formality: a recipe table in a tier-2
+ * repository is not evidence about kernel's vocabulary; kernel capabilities
+ * must establish the item before mc-sim can make it craftable.
  *
- * Both are BACK, and on the right evidence. mc-sim asked kernel for the seven
- * literals with the cost written down; kernel granted all seven on kernel-side
- * reasons of its own — `coal` / `iron_ingot` / `flint` are what ore blocks and
- * gravel drop and belong in `BlockDropRule.item` before any recipe names them,
- * `gunpowder` / `blaze_powder` are mob drops, `flint_and_steel` / `fire_charge`
- * are the two ignition items the flammable capability names. That ordering is
- * the point and not a formality: a recipe table in a tier-2 repository is not
- * evidence about kernel's vocabulary, and a block that has to drop something is.
- *
- * The bar the trim set is the bar the restoration keeps. `STARTER_RECIPES` is
- * PUBLISHED — `InventoryService.recipes` hands it to mx-ui's recipe book — so a
- * row in it is a claim about what this game can make. Both rows below are
- * vanilla, which is exactly why they were worth asking for; inventing an
- * asymmetric recipe out of `torch` and `gravel` to keep a matcher property on
- * display would have been inventing content to test a function, and that option
- * was available the whole time and was correctly refused.
+ * `STARTER_RECIPES` is PUBLISHED — `InventoryService.recipes` hands it to
+ * mx-ui's recipe book — so every row is a claim about what this game can make.
+ * The restored rows are vanilla recipes backed by kernel vocabulary; inventing
+ * content merely to exhibit a matcher property remains out of scope.
  *
  * The one non-vanilla row remains for the reason it always had: the property it
  * shows — that the SHIPPED table resolves an ambiguity without leaning on the id
@@ -666,8 +648,15 @@ export const STARTER_RECIPES: RecipeTable = [
    */
   shapelessRecipe('mc-sim:stick-from-loose-planks', ['oak_planks', 'oak_planks'], itemStack('stick', 2)),
 
+  // Vanilla 2x2 recipe, available directly in the player's inventory grid.
+  shapedRecipe(
+    'mc-sim:crafting-table',
+    ['PP', 'PP'],
+    { P: 'oak_planks' },
+    itemStack('crafting_table', 1),
+  ),
+
   // Shaped 2x2, symmetric: the translation case. Four dust anywhere in a 3x3.
-  // Vanilla, and the replacement for the crafting table discussed above.
   shapedRecipe('mc-sim:glowstone', ['DD', 'DD'], { D: 'glowstone_dust' }, itemStack('glowstone', 1)),
 
   /*
