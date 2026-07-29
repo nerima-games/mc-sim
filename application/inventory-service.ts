@@ -51,10 +51,9 @@ const validCarried = (carried: InventoryCarriedSlot): boolean =>
   carried === undefined ||
   (Number.isInteger(carried.count) && carried.count > 0 &&
     carried.count <= Inv.maxStackCountForItem(carried.item) &&
-    (carried.item === 'flint_and_steel'
+    (Eq.isEquippableItemType(carried.item)
       ? carried.durability === undefined ||
-        (Eq.isDurability(carried.durability) &&
-          carried.durability.max === Storage.FLINT_AND_STEEL_MAX_DURABILITY)
+        Eq.isValidDurabilityForItem(carried.item, carried.durability)
       : carried.durability === undefined))
 
 /** Apply one Minecraft-style slot click without exposing an intermediate inventory. */
@@ -82,12 +81,12 @@ const clickInventory = (inventory: Inv.Inventory, click: InventoryClick): Invent
     }
     if (slot === undefined) {
       const slots = [...inventory.slots]
-      slots[click.slotIndex] = click.carried
+      slots[click.slotIndex] = Inv.itemStack(click.carried.item, click.carried.count)
       return { inventory: { slots }, result: { _tag: 'Placed', carried: undefined } }
     }
     if (slot.item !== click.carried.item) {
       const slots = [...inventory.slots]
-      slots[click.slotIndex] = click.carried
+      slots[click.slotIndex] = Inv.itemStack(click.carried.item, click.carried.count)
       return { inventory: { slots }, result: { _tag: 'Swapped', carried: slot } }
     }
 
@@ -315,17 +314,16 @@ export const makeInventoryService = (
         const outcome = clickInventory(current.inventory, click)
         let next = Storage.withInventory(current, outcome.inventory)
         if ((outcome.result._tag === 'Placed' || outcome.result._tag === 'Swapped' ||
-             outcome.result._tag === 'Merged') && click.carried?.item === 'flint_and_steel') {
-          const durability = click.carried.durability ?? {
-            current: Storage.FLINT_AND_STEEL_MAX_DURABILITY,
-            max: Storage.FLINT_AND_STEEL_MAX_DURABILITY,
-          }
+             outcome.result._tag === 'Merged') && click.carried !== undefined &&
+            Eq.isEquippableItemType(click.carried.item)) {
+          const durability = click.carried.durability ?? Eq.durabilityForItem(click.carried.item)
           const values = [...next.inventoryDurability]
-          values[click.slotIndex] = durability
+          values[click.slotIndex] = durability === null ? null : { ...durability }
           next = { ...next, inventoryDurability: values }
         }
         const result = (outcome.result._tag === 'PickedUp' || outcome.result._tag === 'Swapped') &&
-          outcome.result.carried.item === 'flint_and_steel' && beforeDurability !== null
+          Eq.isEquippableItemType(outcome.result.carried.item) && beforeDurability !== null &&
+          beforeDurability !== undefined
           ? { ...outcome.result, carried: { ...outcome.result.carried, durability: beforeDurability } }
           : outcome.result
         return [result, next]
@@ -356,9 +354,9 @@ export const makeInventoryService = (
         return [outcome.result, outcome.storage]
       }),
     restore: (inventory) =>
-      Ref.modify(state, () => {
+      Ref.modify(state, (current) => {
         const outcome = Inv.normaliseInventory(inventory)
-        return [outcome.leftover, Storage.storageFromInventory(outcome.inventory)]
+        return [outcome.leftover, Storage.withInventory(current, outcome.inventory)]
       }),
     reset: Ref.set(state, Storage.emptyPlayerStorage()),
     recipes: Effect.succeed(recipeTable),

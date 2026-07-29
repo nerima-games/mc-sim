@@ -32,6 +32,7 @@
  * rule, which is the part that is easy to get subtly wrong.
  */
 import { isItemType, ItemType, MAX_STACK_COUNT, StackCount } from './kernel-vocabulary'
+import { isEquippableItemType } from './equipment'
 
 /*
  * THERE IS NO `ItemId` HERE ANY MORE.
@@ -69,7 +70,7 @@ export type ItemStack = {
  */
 /** Per-item stack limit. Durable tools occupy one slot each. */
 export const maxStackCountForItem = (item: ItemType): number =>
-  item === 'flint_and_steel' ? 1 : MAX_STACK_COUNT
+  isEquippableItemType(item) ? 1 : MAX_STACK_COUNT
 
 export const itemStack = (item: ItemType, count: number): ItemStack => {
   if (count > maxStackCountForItem(item)) {

@@ -45,7 +45,7 @@
  * the next divergence fails CI rather than a frame.
  *
  * ---------------------------------------------------------------------------
- * THE SECOND EXCEPTION: `ITEM_TYPES` is mirrored WHOLE, all ninety-seven literals
+ * THE SECOND EXCEPTION: `ITEM_TYPES` is mirrored WHOLE, all one hundred one literals
  * ---------------------------------------------------------------------------
  *
  * For every other declaration here, "minimal" means "the names mc-sim uses".
@@ -219,6 +219,10 @@ export const ITEM_TYPES = [
   'blaze_powder',
   'flint_and_steel',
   'fire_charge',
+  'iron_helmet',
+  'iron_chestplate',
+  'iron_leggings',
+  'iron_boots',
 
   // Items that are also blocks (55), added when kernel's `BLOCK_TYPES` reached
   // the reference's full roster. Kernel's rule, stated before it was applied: a

@@ -2,7 +2,8 @@ import * as Eq from './equipment'
 import * as Inv from './inventory'
 import { isItemType, StackCount } from './kernel-vocabulary'
 
-export const FLINT_AND_STEEL_MAX_DURABILITY = 64
+export const FLINT_AND_STEEL_MAX_DURABILITY =
+  Eq.EQUIPMENT_CATALOG.flint_and_steel.maxDurability
 
 export type PlayerStorage = {
   readonly inventory: Inv.Inventory
@@ -54,11 +55,6 @@ const hasExactKeys = (value: Record<string, unknown>, expected: ReadonlyArray<st
   return actual.length === expected.length && expected.every((key) => Object.hasOwn(value, key))
 }
 
-const defaultDurability = (): Eq.Durability => ({
-  current: FLINT_AND_STEEL_MAX_DURABILITY,
-  max: FLINT_AND_STEEL_MAX_DURABILITY,
-})
-
 const copyDurability = (value: Eq.Durability | null): Eq.Durability | null =>
   value === null ? null : { ...value }
 
@@ -72,7 +68,7 @@ export const storageFromInventory = (inventory: Inv.Inventory): PlayerStorage =>
   inventory,
   equipment: Eq.emptyEquipment(),
   inventoryDurability: inventory.slots.map((slot) =>
-    slot?.item === 'flint_and_steel' ? defaultDurability() : null,
+    slot === undefined ? null : Eq.durabilityForItem(slot.item),
   ),
 })
 
@@ -80,11 +76,14 @@ export const storageFromInventory = (inventory: Inv.Inventory): PlayerStorage =>
 export const withInventory = (storage: PlayerStorage, inventory: Inv.Inventory): PlayerStorage => ({
   ...storage,
   inventory,
-  inventoryDurability: inventory.slots.map((slot, index) =>
-    slot?.item === 'flint_and_steel'
-      ? copyDurability(storage.inventoryDurability[index] ?? defaultDurability())
-      : null,
-  ),
+  inventoryDurability: inventory.slots.map((slot, index) => {
+    if (slot === undefined) return null
+    const previous = storage.inventory.slots[index]
+    const previousDurability = storage.inventoryDurability[index]
+    return previous?.item === slot.item && Eq.isValidDurabilityForItem(slot.item, previousDurability)
+      ? copyDurability(previousDurability)
+      : Eq.durabilityForItem(slot.item)
+  }),
 })
 
 export const equipFromInventory = (
@@ -98,12 +97,17 @@ export const equipFromInventory = (
     return { storage, result: { _tag: 'InvalidEquipmentSlot' } }
   const stack = storage.inventory.slots[inventorySlot]
   if (stack === undefined) return { storage, result: { _tag: 'Empty' } }
-  if (stack.item !== 'flint_and_steel' || equipmentSlot !== 'offhand')
+  const definition = Eq.equipmentDefinitionFor(stack.item)
+  if (definition?.slot !== equipmentSlot || stack.count !== 1)
     return { storage, result: { _tag: 'Incompatible', item: stack } }
   const occupied = storage.equipment.slots[equipmentSlot]
   if (occupied !== null) return { storage, result: { _tag: 'Occupied', item: occupied } }
 
-  const durability = storage.inventoryDurability[inventorySlot] ?? defaultDurability()
+  const storedDurability = storage.inventoryDurability[inventorySlot]
+  const durability = Eq.isValidDurabilityForItem(stack.item, storedDurability)
+    ? storedDurability
+    : Eq.durabilityForItem(stack.item)
+  if (durability === null) return { storage, result: { _tag: 'Incompatible', item: stack } }
   const item = Eq.equipmentItem(stack, durability)
   const slots = [...storage.inventory.slots]
   slots[inventorySlot] = undefined
@@ -171,7 +175,7 @@ export const damageAt = (
   if (item === undefined) return { storage, result: { _tag: 'Empty' } }
   const durability = storage.inventoryDurability[location.slotIndex]
   if (durability === null || durability === undefined) {
-    return { storage, result: { _tag: 'NotDamageable', item: Eq.equipmentItem(item) } }
+    return { storage, result: { _tag: 'NotDamageable', item: { ...item, durability: null } } }
   }
   const applied = Math.min(amount, durability.current)
   const equippedItem = Eq.equipmentItem(item, durability)
@@ -196,9 +200,6 @@ export const damageAt = (
 const invalid = (path: string, reason: string): PlayerStorageValidationResult => ({
   _tag: 'Invalid', error: { _tag: 'PlayerStorageValidationError', path, reason },
 })
-
-const validFlintDurability = (value: unknown): value is Eq.Durability =>
-  Eq.isDurability(value) && value.max === FLINT_AND_STEEL_MAX_DURABILITY
 
 /** Strictly validate persistence data, including item/slot compatibility. */
 export const validatePlayerStorageSnapshot = (value: unknown): PlayerStorageValidationResult => {
@@ -226,9 +227,12 @@ export const validatePlayerStorageSnapshot = (value: unknown): PlayerStorageVali
         !Number.isSafeInteger(slot['count']) || (slot['count'] as number) <= 0 ||
         (slot['count'] as number) > Inv.maxStackCountForItem(slot['item']))
       return invalid(`storage.inventory.slots.${index}`, 'expected a valid item stack')
-    if (slot['item'] === 'flint_and_steel') {
-      if (!validFlintDurability(durability))
-        return invalid(`storage.inventoryDurability.${index}`, 'flint_and_steel requires valid durability')
+    if (Eq.isEquippableItemType(slot['item'])) {
+      if (!Eq.isValidDurabilityForItem(slot['item'], durability))
+        return invalid(
+          `storage.inventoryDurability.${index}`,
+          `${slot['item']} requires its exact durability range`,
+        )
       inventoryDurability.push({ ...durability })
     } else {
       if (durability !== null) return invalid(`storage.inventoryDurability.${index}`, 'non-durable item requires null')
@@ -240,12 +244,6 @@ export const validatePlayerStorageSnapshot = (value: unknown): PlayerStorageVali
   const validatedEquipment = Eq.validateEquipmentSnapshot(value['equipment'])
   if (validatedEquipment._tag === 'Invalid')
     return invalid(`storage.${validatedEquipment.error.path}`, validatedEquipment.error.reason)
-  for (const slot of Eq.EQUIPMENT_SLOTS) {
-    const item = validatedEquipment.equipment.slots[slot]
-    if (item !== null && (slot !== 'offhand' || item.item !== 'flint_and_steel' || item.count !== 1 ||
-        !validFlintDurability(item.durability)))
-      return invalid(`storage.equipment.slots.${slot}`, 'item is incompatible with equipment slot')
-  }
   return {
     _tag: 'Valid',
     storage: { inventory: { slots }, equipment: validatedEquipment.equipment, inventoryDurability },

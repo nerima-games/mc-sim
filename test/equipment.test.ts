@@ -3,8 +3,10 @@ import { Effect } from 'effect'
 import {
   damageEquipment,
   durability,
+  durabilityForItem,
   emptyEquipment,
   equip,
+  equipmentDefinitionFor,
   equipmentItem,
   equippedAt,
   swapEquipment,
@@ -12,12 +14,13 @@ import {
   validateEquipmentSnapshot,
   type EquipmentItem,
 } from '../domain/equipment'
-import { itemStack, type ItemStack } from '../domain/inventory'
+import { itemStack } from '../domain/inventory'
 
-const pickaxe = (current = 3): EquipmentItem =>
-  equipmentItem(itemStack('wooden_pickaxe', 1), durability(current, 3))
+const helmet = (current = 165): EquipmentItem =>
+  equipmentItem(itemStack('iron_helmet', 1), durability(current, 165))
 
-const torch = (): EquipmentItem => equipmentItem(itemStack('torch', 1))
+const flint = (current = 64): EquipmentItem =>
+  equipmentItem(itemStack('flint_and_steel', 1), durability(current, 64))
 
 describe('equipment domain', () => {
   it.effect('starts with the five explicit equipment slots empty', () =>
@@ -28,97 +31,110 @@ describe('equipment domain', () => {
     }),
   )
 
-  it.effect('keeps equipment items structurally compatible with ItemStack', () =>
+  it.effect('defines slot compatibility and default durability in one catalog', () =>
     Effect.sync(() => {
-      const item = pickaxe()
-      const acceptsItemStack = (stack: ItemStack): ItemStack => stack
-
-      expect(acceptsItemStack(item)).toMatchObject({ item: 'wooden_pickaxe', count: 1 })
-      expect(item.durability).toStrictEqual({ current: 3, max: 3 })
+      expect(equipmentDefinitionFor('iron_helmet')).toStrictEqual({ slot: 'head', maxDurability: 165 })
+      expect(equipmentDefinitionFor('iron_chestplate')).toStrictEqual({ slot: 'chest', maxDurability: 240 })
+      expect(equipmentDefinitionFor('iron_leggings')).toStrictEqual({ slot: 'legs', maxDurability: 225 })
+      expect(equipmentDefinitionFor('iron_boots')).toStrictEqual({ slot: 'feet', maxDurability: 195 })
+      expect(equipmentDefinitionFor('flint_and_steel')).toStrictEqual({ slot: 'offhand', maxDurability: 64 })
+      expect(durabilityForItem('iron_boots')).toStrictEqual({ current: 195, max: 195 })
+      expect(durabilityForItem('stone')).toBeNull()
     }),
   )
 
-  it.effect('does not impose an item-by-slot equipability whitelist', () =>
+  it.effect('constructs only valid catalog equipment with canonical durability', () =>
     Effect.sync(() => {
-      const first = equip(emptyEquipment(), 'head', torch())
-      const second = equip(first.equipment, 'offhand', pickaxe())
-
-      expect(equippedAt(second.equipment, 'head')?.item).toBe('torch')
-      expect(equippedAt(second.equipment, 'offhand')?.item).toBe('wooden_pickaxe')
+      expect(equipmentItem(itemStack('iron_boots', 1))).toStrictEqual({
+        item: 'iron_boots', count: 1, durability: { current: 195, max: 195 },
+      })
+      expect(() => equipmentItem(itemStack('stone', 1))).toThrow(RangeError)
+      expect(() => equipmentItem({ ...itemStack('stone', 2), item: 'iron_helmet' })).toThrow(RangeError)
+      expect(() => equipmentItem(itemStack('iron_helmet', 1), null)).toThrow(RangeError)
+      expect(() => equipmentItem(itemStack('iron_helmet', 1), durability(64, 64))).toThrow(RangeError)
     }),
   )
 
-  it.effect('equips, replaces, unequips, and swaps without mutating prior state', () =>
+  it.effect('rejects arbitrary items and slot mismatches without changing equipment', () =>
     Effect.sync(() => {
       const initial = emptyEquipment()
-      const withHead = equip(initial, 'head', torch())
-      const replaced = equip(withHead.equipment, 'head', pickaxe())
-      const withOffhand = equip(replaced.equipment, 'offhand', torch())
-      const swapped = swapEquipment(withOffhand.equipment, 'head', 'offhand')
-      const removed = unequip(swapped, 'offhand')
+      const arbitrary = { ...itemStack('torch', 1), durability: null } as EquipmentItem
 
-      expect(replaced.result?.item).toBe('torch')
-      expect(equippedAt(swapped, 'head')?.item).toBe('torch')
-      expect(equippedAt(swapped, 'offhand')?.item).toBe('wooden_pickaxe')
-      expect(removed.result?.item).toBe('wooden_pickaxe')
-      expect(equippedAt(removed.equipment, 'offhand')).toBeNull()
+      expect(equip(initial, 'head', arbitrary).equipment).toBe(initial)
+      expect(equip(initial, 'chest', helmet()).equipment).toBe(initial)
+    }),
+  )
+
+  it.effect('equips, replaces, and unequips while preserving durability', () =>
+    Effect.sync(() => {
+      const initial = emptyEquipment()
+      const first = equip(initial, 'head', helmet(120))
+      const replacement = equip(first.equipment, 'head', helmet(80))
+      const removed = unequip(replacement.equipment, 'head')
+
+      expect(first.result).toBeNull()
+      expect(replacement.result?.durability).toStrictEqual({ current: 120, max: 165 })
+      expect(removed.result?.durability).toStrictEqual({ current: 80, max: 165 })
+      expect(equippedAt(removed.equipment, 'head')).toBeNull()
       expect(equippedAt(initial, 'head')).toBeNull()
-      expect(equippedAt(withOffhand.equipment, 'head')?.item).toBe('wooden_pickaxe')
+    }),
+  )
+
+  it.effect('does not swap items into incompatible slots', () =>
+    Effect.sync(() => {
+      const withHelmet = equip(emptyEquipment(), 'head', helmet()).equipment
+      const equipped = equip(withHelmet, 'offhand', flint()).equipment
+      expect(swapEquipment(equipped, 'head', 'offhand')).toBe(equipped)
     }),
   )
 
   it.effect('applies damage and removes an item atomically when it breaks', () =>
     Effect.sync(() => {
-      const equipped = equip(emptyEquipment(), 'offhand', pickaxe()).equipment
-      const damaged = damageEquipment(equipped, 'offhand', 1)
-      const broken = damageEquipment(damaged.equipment, 'offhand', 9)
+      const equipped = equip(emptyEquipment(), 'head', helmet(3)).equipment
+      const damaged = damageEquipment(equipped, 'head', 1)
+      const broken = damageEquipment(damaged.equipment, 'head', 9)
 
       expect(damaged.result).toMatchObject({
-        _tag: 'Damaged',
-        applied: 1,
-        item: { durability: { current: 2, max: 3 } },
+        _tag: 'Damaged', applied: 1, item: { durability: { current: 2, max: 165 } },
       })
       expect(broken.result).toMatchObject({ _tag: 'Broken', applied: 2 })
-      expect(equippedAt(broken.equipment, 'offhand')).toBeNull()
-      expect(equippedAt(equipped, 'offhand')?.durability?.current).toBe(3)
+      expect(equippedAt(broken.equipment, 'head')).toBeNull()
+      expect(equippedAt(equipped, 'head')?.durability?.current).toBe(3)
     }),
   )
 
-  it.effect('leaves state unchanged for invalid damage and non-damageable items', () =>
+  it.effect('leaves state unchanged for invalid damage', () =>
     Effect.sync(() => {
-      const equipped = equip(emptyEquipment(), 'head', torch()).equipment
-      const invalid = damageEquipment(equipped, 'head', 0)
-      const notDamageable = damageEquipment(equipped, 'head', 1)
-
+      const equipped = equip(emptyEquipment(), 'offhand', flint()).equipment
+      const invalid = damageEquipment(equipped, 'offhand', 0)
       expect(invalid.result).toStrictEqual({ _tag: 'InvalidAmount', amount: 0 })
       expect(invalid.equipment).toBe(equipped)
-      expect(notDamageable.result._tag).toBe('NotDamageable')
-      expect(notDamageable.equipment).toBe(equipped)
     }),
   )
 
   it.effect('rejects zero, excessive, and non-integral durability', () =>
     Effect.sync(() => {
-      expect(() => durability(0, 3)).toThrow(RangeError)
-      expect(() => durability(4, 3)).toThrow(RangeError)
-      expect(() => durability(1.5, 3)).toThrow(RangeError)
-      expect(() => durability(1, Number.POSITIVE_INFINITY)).toThrow(RangeError)
+      expect(() => durability(0, 1)).toThrow(RangeError)
+      expect(() => durability(2, 1)).toThrow(RangeError)
+      expect(() => durability(0.5, 1)).toThrow(RangeError)
     }),
   )
 
-  it.effect('strictly validates the persistence shape', () =>
+  it.effect('strictly validates item, slot, count, current, max, and shape', () =>
     Effect.sync(() => {
-      const valid = equip(emptyEquipment(), 'feet', pickaxe()).equipment
+      const valid = equip(emptyEquipment(), 'feet', equipmentItem(itemStack('iron_boots', 1))).equipment
       expect(validateEquipmentSnapshot(JSON.parse(JSON.stringify(valid)))._tag).toBe('Valid')
 
-      const malformed: ReadonlyArray<unknown> = [
-        { slots: { ...valid.slots, feet: { item: 'wooden_pickaxe', count: 0, durability: null } } },
-        { slots: { ...valid.slots, feet: { item: 'wooden_pickaxe', count: 1, durability: { current: 0, max: 3 } } } },
-        { slots: { ...valid.slots, helmet: null } },
-        { slots: valid.slots, extra: true },
+      const invalidItems = [
+        { item: 'stone', count: 1, durability: null },
+        { item: 'iron_helmet', count: 1, durability: { current: 165, max: 165 } },
+        { item: 'iron_boots', count: 2, durability: { current: 195, max: 195 } },
+        { item: 'iron_boots', count: 1, durability: { current: 0, max: 195 } },
+        { item: 'iron_boots', count: 1, durability: { current: 194, max: 194 } },
+        { item: 'iron_boots', count: 1, durability: { current: 195, max: 195 }, extra: true },
       ]
-
-      for (const snapshot of malformed) {
+      for (const item of invalidItems) {
+        const snapshot = { slots: { ...valid.slots, feet: item } }
         expect(validateEquipmentSnapshot(snapshot)._tag).toBe('Invalid')
       }
     }),

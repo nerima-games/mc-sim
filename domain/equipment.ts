@@ -1,9 +1,31 @@
 import type { ItemStack } from './inventory'
-import { isItemType, MAX_STACK_COUNT } from './kernel-vocabulary'
+import { isItemType, MAX_STACK_COUNT, type ItemType } from './kernel-vocabulary'
 
 export const EQUIPMENT_SLOTS = ['head', 'chest', 'legs', 'feet', 'offhand'] as const
 
 export type EquipmentSlot = (typeof EQUIPMENT_SLOTS)[number]
+
+export type EquipmentDefinition = {
+  readonly slot: EquipmentSlot
+  readonly maxDurability: number
+}
+
+/** The single source of truth for item/slot compatibility and durability. */
+export const EQUIPMENT_CATALOG = {
+  iron_helmet: { slot: 'head', maxDurability: 165 },
+  iron_chestplate: { slot: 'chest', maxDurability: 240 },
+  iron_leggings: { slot: 'legs', maxDurability: 225 },
+  iron_boots: { slot: 'feet', maxDurability: 195 },
+  flint_and_steel: { slot: 'offhand', maxDurability: 64 },
+} as const satisfies Partial<Record<ItemType, EquipmentDefinition>>
+
+export type EquippableItemType = keyof typeof EQUIPMENT_CATALOG
+
+export const isEquippableItemType = (item: ItemType): item is EquippableItemType =>
+  Object.hasOwn(EQUIPMENT_CATALOG, item)
+
+export const equipmentDefinitionFor = (item: ItemType): EquipmentDefinition | undefined =>
+  isEquippableItemType(item) ? EQUIPMENT_CATALOG[item] : undefined
 
 export type Durability = {
   readonly current: number
@@ -74,16 +96,39 @@ export const isDurability = (value: unknown): value is Durability => {
   )
 }
 
-export const isEquipmentItem = (value: unknown): value is EquipmentItem => {
+const isEquipmentItemShape = (value: unknown): value is EquipmentItem => {
   if (!isRecord(value) || !hasExactKeys(value, ['item', 'count', 'durability'])) return false
-  return (
-    typeof value['item'] === 'string' &&
-    isItemType(value['item']) &&
-    validPositiveSafeInteger(value['count']) &&
-    value['count'] <= MAX_STACK_COUNT &&
+  return typeof value['item'] === 'string' && isItemType(value['item']) &&
+    validPositiveSafeInteger(value['count']) && value['count'] <= MAX_STACK_COUNT &&
     (value['durability'] === null || isDurability(value['durability']))
-  )
 }
+
+export const isEquipmentItem = (value: unknown): value is EquipmentItem => {
+  if (!isEquipmentItemShape(value)) return false
+  const definition = equipmentDefinitionFor(value['item'])
+  return definition !== undefined && value['count'] === 1 &&
+    isDurability(value['durability']) && value['durability'].max === definition.maxDurability
+}
+
+export const durabilityForItem = (item: ItemType): Durability | null => {
+  const definition = equipmentDefinitionFor(item)
+  return definition === undefined
+    ? null
+    : { current: definition.maxDurability, max: definition.maxDurability }
+}
+
+export const isValidDurabilityForItem = (
+  item: ItemType,
+  value: unknown,
+): value is Durability => {
+  const definition = equipmentDefinitionFor(item)
+  return definition !== undefined && isDurability(value) && value.max === definition.maxDurability
+}
+
+export const isEquipmentItemForSlot = (
+  slot: EquipmentSlot,
+  item: EquipmentItem,
+): boolean => equipmentDefinitionFor(item.item)?.slot === slot && isEquipmentItem(item)
 
 export const durability = (current: number, max: number): Durability => {
   const value: Durability = { current, max }
@@ -96,7 +141,7 @@ export const durability = (current: number, max: number): Durability => {
 /** Add equipment state without changing the ItemStack fields consumed by inventory code. */
 export const equipmentItem = (
   stack: ItemStack,
-  itemDurability: Durability | null = null,
+  itemDurability: Durability | null = durabilityForItem(stack.item),
 ): EquipmentItem => {
   const value: EquipmentItem = {
     ...stack,
@@ -128,10 +173,13 @@ export const equip = (
   equipment: Equipment,
   slot: EquipmentSlot,
   item: EquipmentItem,
-): EquipmentOutcome<EquipmentItem | null> => ({
-  equipment: { slots: { ...equipment.slots, [slot]: copyEquipmentItem(item) } },
-  result: equipment.slots[slot],
-})
+): EquipmentOutcome<EquipmentItem | null> =>
+  isEquipmentItemForSlot(slot, item)
+    ? {
+        equipment: { slots: { ...equipment.slots, [slot]: copyEquipmentItem(item) } },
+        result: equipment.slots[slot],
+      }
+    : { equipment, result: item }
 
 export const unequip = (
   equipment: Equipment,
@@ -151,6 +199,10 @@ export const swapEquipment = (
   second: EquipmentSlot,
 ): Equipment => {
   if (first === second) return equipment
+  const firstItem = equipment.slots[first]
+  const secondItem = equipment.slots[second]
+  if ((secondItem !== null && !isEquipmentItemForSlot(first, secondItem)) ||
+      (firstItem !== null && !isEquipmentItemForSlot(second, firstItem))) return equipment
   return {
     slots: {
       ...equipment.slots,
@@ -213,10 +265,10 @@ export const validateEquipmentSnapshot = (value: unknown): EquipmentValidationRe
 
   for (const slot of EQUIPMENT_SLOTS) {
     const item = slots[slot]
-    if (item !== null && !isEquipmentItem(item)) {
+    if (item !== null && (!isEquipmentItem(item) || !isEquipmentItemForSlot(slot, item))) {
       return invalid(
         `equipment.slots.${slot}`,
-        'expected null or a valid item stack with durability',
+        'expected null or the slot-compatible item with count 1 and exact durability',
       )
     }
   }

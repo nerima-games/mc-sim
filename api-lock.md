@@ -13,7 +13,7 @@
 <!-- ------------------------------------------------------------------------- -->
 
 format: 1
-exported declarations: 291
+exported declarations: 299
 supporting declarations: 30
 
 ## Exported
@@ -229,6 +229,33 @@ const ENTITY_ID_PREFIX = "e:";
 const ENTITY_MANAGER_TAG_KEY = "@nerima-games/mc-sim/EntityManager";
 ```
 
+### EQUIPMENT_CATALOG  `const`
+
+```ts
+const EQUIPMENT_CATALOG: {
+    readonly iron_helmet: {
+        readonly slot: "head";
+        readonly maxDurability: 165;
+    };
+    readonly iron_chestplate: {
+        readonly slot: "chest";
+        readonly maxDurability: 240;
+    };
+    readonly iron_leggings: {
+        readonly slot: "legs";
+        readonly maxDurability: 225;
+    };
+    readonly iron_boots: {
+        readonly slot: "feet";
+        readonly maxDurability: 195;
+    };
+    readonly flint_and_steel: {
+        readonly slot: "offhand";
+        readonly maxDurability: 64;
+    };
+};
+```
+
 ### EQUIPMENT_SLOTS  `const`
 
 ```ts
@@ -393,6 +420,15 @@ type Equipment = {
 };
 ```
 
+### EquipmentDefinition  `type`
+
+```ts
+type EquipmentDefinition = {
+    readonly slot: EquipmentSlot;
+    readonly maxDurability: number;
+};
+```
+
 ### EquipmentItem  `type`
 
 ```ts
@@ -471,6 +507,12 @@ type EquipmentValidationResult = {
 };
 ```
 
+### EquippableItemType  `type`
+
+```ts
+type EquippableItemType = keyof typeof EQUIPMENT_CATALOG;
+```
+
 ### FIRST_FRAME_DELTA_SECS  `const`
 
 ```ts
@@ -480,7 +522,7 @@ const FIRST_FRAME_DELTA_SECS: DeltaTimeSecs;
 ### FLINT_AND_STEEL_MAX_DURABILITY  `const`
 
 ```ts
-const FLINT_AND_STEEL_MAX_DURABILITY = 64;
+const FLINT_AND_STEEL_MAX_DURABILITY: 64;
 ```
 
 ### FOOD_TICK_SECS  `const`
@@ -1572,6 +1614,12 @@ const despawnEntity: <S>(roster: EntityRoster<S>, id: EntityId) => DespawnOutcom
 const durability: (current: number, max: number) => Durability;
 ```
 
+### durabilityForItem  `const`
+
+```ts
+const durabilityForItem: (item: ItemType) => Durability | null;
+```
+
 ### eat  `const`
 
 ```ts
@@ -1618,6 +1666,12 @@ const equip: (equipment: Equipment, slot: EquipmentSlot, item: EquipmentItem) =>
 
 ```ts
 const equipFromInventory: (storage: PlayerStorage, inventorySlot: number, equipmentSlot: Eq.EquipmentSlot) => StorageOutcome<EquipFromInventoryResult>;
+```
+
+### equipmentDefinitionFor  `const`
+
+```ts
+const equipmentDefinitionFor: (item: ItemType) => EquipmentDefinition | undefined;
 ```
 
 ### equipmentItem  `const`
@@ -1740,10 +1794,22 @@ const isEntityKind: (value: unknown) => value is EntityKind;
 const isEquipmentItem: (value: unknown) => value is EquipmentItem;
 ```
 
+### isEquipmentItemForSlot  `const`
+
+```ts
+const isEquipmentItemForSlot: (slot: EquipmentSlot, item: EquipmentItem) => boolean;
+```
+
 ### isEquipmentSlot  `const`
 
 ```ts
 const isEquipmentSlot: (value: unknown) => value is EquipmentSlot;
+```
+
+### isEquippableItemType  `const`
+
+```ts
+const isEquippableItemType: (item: ItemType) => item is EquippableItemType;
 ```
 
 ### isGraphicsQuality  `const`
@@ -1762,6 +1828,12 @@ const isNight: (state: TimeState) => boolean;
 
 ```ts
 const isUnlocked: (statistics: Statistics, id: AchievementId) => boolean;
+```
+
+### isValidDurabilityForItem  `const`
+
+```ts
+const isValidDurabilityForItem: (item: ItemType, value: unknown) => value is Durability;
 ```
 
 ### isValidSettings  `const`
@@ -2286,7 +2358,7 @@ interface GameModule<ROut, E, RIn, RRegister = never> {
 ### ITEM_TYPES  `const`
 
 ```ts
-const ITEM_TYPES: readonly ["stone", "cobblestone", "dirt", "grass_block", "sand", "gravel", "oak_log", "oak_planks", "oak_leaves", "glass", "torch", "glowstone", "piston", "stick", "glowstone_dust", "wooden_pickaxe", "coal", "iron_ingot", "flint", "gunpowder", "blaze_powder", "flint_and_steel", "fire_charge", "granite", "diorite", "andesite", "deepslate", "obsidian", "smooth_basalt", "calcite", "amethyst_block", "sandstone", "prismarine", "soul_sand", "coal_block", "iron_block", "gold_block", "diamond_block", "redstone_block", "lapis_block", "emerald_block", "redstone_torch", "lever", "stone_button", "repeater", "redstone_lamp", "observer", "comparator", "dispenser", "hopper", "end_stone", "end_portal_frame", "end_portal_frame_filled", "chorus_flower", "chorus_plant", "dragon_egg", "end_crystal", "end_rod", "end_stone_bricks", "ender_chest", "purpur_block", "purpur_pillar", "purpur_slab", "purpur_stairs", "shulker_box", "crafting_table", "furnace", "chest", "door", "oak_stairs", "anvil", "cauldron", "bed", "enchanting_table", "brewing_stand", "tnt", "nether_brick", "netherrack", "raw_iron", "raw_gold", "diamond", "emerald", "lapis_lazuli", "redstone_dust", "amethyst_shard", "wheat_seeds", "potato", "nether_wart", "ladder", "kelp", "seagrass", "rail", "powered_rail", "pressure_plate", "stone_slab", "string", "snowball"];
+const ITEM_TYPES: readonly ["stone", "cobblestone", "dirt", "grass_block", "sand", "gravel", "oak_log", "oak_planks", "oak_leaves", "glass", "torch", "glowstone", "piston", "stick", "glowstone_dust", "wooden_pickaxe", "coal", "iron_ingot", "flint", "gunpowder", "blaze_powder", "flint_and_steel", "fire_charge", "iron_helmet", "iron_chestplate", "iron_leggings", "iron_boots", "granite", "diorite", "andesite", "deepslate", "obsidian", "smooth_basalt", "calcite", "amethyst_block", "sandstone", "prismarine", "soul_sand", "coal_block", "iron_block", "gold_block", "diamond_block", "redstone_block", "lapis_block", "emerald_block", "redstone_torch", "lever", "stone_button", "repeater", "redstone_lamp", "observer", "comparator", "dispenser", "hopper", "end_stone", "end_portal_frame", "end_portal_frame_filled", "chorus_flower", "chorus_plant", "dragon_egg", "end_crystal", "end_rod", "end_stone_bricks", "ender_chest", "purpur_block", "purpur_pillar", "purpur_slab", "purpur_stairs", "shulker_box", "crafting_table", "furnace", "chest", "door", "oak_stairs", "anvil", "cauldron", "bed", "enchanting_table", "brewing_stand", "tnt", "nether_brick", "netherrack", "raw_iron", "raw_gold", "diamond", "emerald", "lapis_lazuli", "redstone_dust", "amethyst_shard", "wheat_seeds", "potato", "nether_wart", "ladder", "kelp", "seagrass", "rail", "powered_rail", "pressure_plate", "stone_slab", "string", "snowball"];
 ```
 
 ### InventoryService_base  `const`
