@@ -1,6 +1,6 @@
 {
   "name": "@nerima-games/mc-sim",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "type": "module",
   "description": "Game-state hub for the nerima-games Minecraft-clone rebuild: entities, inventory, time, the frame loop, and the authoritative CameraPoseSnapshot.",
   "homepage": "https://github.com/nerima-games/mc-sim#readme",

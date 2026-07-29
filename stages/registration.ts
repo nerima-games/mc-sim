@@ -43,16 +43,13 @@
  *    the next section, which is the real argument and is not a short one.
  *
  * 2. THE PLAYER'S RESOLVED POSE. Written through `PlayerService.moveTo`.
- *    FIRST CUT: mc-physics is not published (plan.md §6 Step 3 is bottom-up
- *    publish-then-pin), so `step(state, world, dt)` cannot be called yet and the
- *    resolved position arrives through a `Ref` a preview or a test fills. What
- *    this stage does NOT do is integrate locally in the meantime. A stand-in
- *    Euler step here would be a second implementation of the one thing plan.md
- *    §3.4 puts in mc-physics, and the reference's entire "things are floating"
- *    bug class came from two places disagreeing about a position convention.
- *    Doing the part that is genuinely mc-sim's — making a position AUTHORITATIVE
- *    by writing it through the service that owns it — is the same discipline
- *    mc-render's FIRST CUT stages follow.
+ *    A one-frame resolved-position mailbox remains the highest-priority
+ *    compatibility path. When physics is configured, this stage instead samples
+ *    the current player pose, steps a body through mc-physics and writes the
+ *    resolved feet position back through the owning service. The body position
+ *    is intentionally reconstructed every frame rather than copied into this
+ *    module's state, so external teleports and restores become the next step's
+ *    baseline.
  *
  * ---------------------------------------------------------------------------
  * Why the clock advance is IN `sim:physics` rather than in a second stage
@@ -87,27 +84,43 @@
  * consequence of the one id this repository was already obliged to register, not
  * an opinion about the global order.
  *
- * ---------------------------------------------------------------------------
- * What is FIRST CUT here, and what is not
- * ---------------------------------------------------------------------------
- *
- * The id and the (absent) ordering edges are settled — that is what mc-compose
- * needs and it does not change when the bodies fill in. The mc-physics call is
- * FIRST CUT and says so. Nothing here invents a cross-repository dependency and
- * nothing here holds a second copy of state another module owns; the stage
- * closes over two service handles and one `Ref` that exists only because
- * mc-physics has no package to import yet.
+ * The physics state below contains only integration inputs and results. The
+ * authoritative pose and clock remain in `PlayerService` and `TimeService`.
  */
 import { Effect, Layer, Option, Ref } from 'effect'
+import {
+  CentreY,
+  FootY,
+  PLAYER_HALF_HEIGHT,
+  PLAYER_HALF_WIDTH,
+  centreOfFoot,
+  footOfCentre,
+  resolveBody,
+  stepBody,
+  vec3,
+  type Body,
+  type ResolveOptions,
+  type Vec3,
+} from '@nerima-games/mc-physics'
 import { InventoryService, InventoryServiceLayer } from '../application/inventory-service'
 import { PlayerService, PlayerServiceLayer, type PlayerServiceApi } from '../application/player-service'
 import { TimeService, TimeServiceLayer, type TimeServiceApi } from '../application/time-service'
-import type { GameModule, Position, StageRegistration } from '../domain/kernel-vocabulary'
+import { position, type GameModule, type Position, type StageRegistration } from '../domain/kernel-vocabulary'
 import { SIM_STAGE_IDS } from './stage-ids'
 
+export type MovementIntent = {
+  readonly forward: number
+  readonly strafe: number
+}
+
+export type SimPhysicsConfig = {
+  readonly resolve: ResolveOptions
+  readonly walkSpeed: number
+  readonly jumpSpeed: number
+}
+
 /**
- * Frame-local state for mc-sim's stage. Exactly one field, and it is a
- * placeholder for a published package.
+ * Frame-local inputs and integration results for mc-sim's stage.
  *
  * Note what is NOT here, because the absence is the design: no position, no
  * pose, no tick counter, no accumulated time, no frame count. `PlayerService`
@@ -118,22 +131,22 @@ import { SIM_STAGE_IDS } from './stage-ids'
  */
 export type SimFrameState = {
   /**
-   * The integrator's output for THIS frame, if one arrived.
-   *
-   * FIRST CUT. When mc-physics is published this Ref is deleted and
-   * `sim:physics` calls `step(state, world, dt)` where it currently reads this;
-   * until then whoever drives the frame — `apps/preview-sim`, a scenario test —
-   * puts the resolved feet position here.
+   * A compatibility override for the resolved feet position for this frame.
    *
    * `Option`, and taken with `getAndSet(none)` rather than read with `get`,
-   * because a resolved position belongs to the frame that produced it. A plain
+   * because an override belongs to the frame that produced it. A plain
    * value would be re-applied on every later frame, so a stalled integrator
-   * would not read as "the player stopped moving" but would actively overwrite
+   * producer would not read as "no override" but would actively overwrite
    * anything else that had legitimately moved them — a teleport, or a world
    * load's `PlayerService.restore`. Draining it is what makes "the integrator
    * spoke on this frame" distinguishable from "it spoke once, ages ago".
    */
   readonly resolvedFeetPosition: Ref.Ref<Option.Option<Position>>
+  readonly movementIntent: Ref.Ref<MovementIntent>
+  readonly jumpIntent: Ref.Ref<boolean>
+  readonly velocity: Ref.Ref<Vec3>
+  readonly isGrounded: Ref.Ref<boolean>
+  readonly physicsConfig: Ref.Ref<Option.Option<SimPhysicsConfig>>
 }
 
 /**
@@ -145,10 +158,14 @@ export type SimFrameState = {
  * deadlocked. `application/game-loop.ts` is re-entrant from its first commit for
  * the same reason and this file must not undo it.
  */
-export const makeSimFrameState: Effect.Effect<SimFrameState> = Effect.map(
-  Ref.make(Option.none<Position>()),
-  (resolvedFeetPosition) => ({ resolvedFeetPosition }),
-)
+export const makeSimFrameState: Effect.Effect<SimFrameState> = Effect.all({
+  resolvedFeetPosition: Ref.make(Option.none<Position>()),
+  movementIntent: Ref.make<MovementIntent>({ forward: 0, strafe: 0 }),
+  jumpIntent: Ref.make(false),
+  velocity: Ref.make<Vec3>(vec3(0, 0, 0)),
+  isGrounded: Ref.make(false),
+  physicsConfig: Ref.make(Option.none<SimPhysicsConfig>()),
+})
 
 /**
  * The one stage mc-sim registers.
@@ -184,18 +201,73 @@ export const simStages = (
         // by advancing nothing. Nothing here divides by `dt`.
         yield* time.advance(dt)
 
-        // The player's resolved position, made authoritative.
-        //
-        // FIRST CUT: this is where `mc-physics`' `step(state, world, dt)` is
-        // called once it is published. Drained rather than read — see
-        // `SimFrameState.resolvedFeetPosition` — so a frame on which the
-        // integrator produced nothing writes nothing, instead of re-asserting a
-        // stale position over whatever else moved the player.
+        // Compatibility overrides win for exactly one frame and skip physics.
+        // Draining the mailbox prevents a stale position from being re-applied.
         const resolved = yield* Ref.getAndSet(state.resolvedFeetPosition, Option.none<Position>())
-        yield* Option.match(resolved, {
-          onNone: () => Effect.void,
-          onSome: (feetPosition) => player.moveTo(feetPosition),
-        })
+        if (Option.isSome(resolved)) {
+          yield* player.moveTo(resolved.value)
+          return
+        }
+
+        const physicsConfig = yield* Ref.get(state.physicsConfig)
+        if (Option.isNone(physicsConfig)) return
+
+        const config = physicsConfig.value
+        const pose = yield* player.pose
+        const movementIntent = yield* Ref.get(state.movementIntent)
+        const jumpIntent = yield* Ref.get(state.jumpIntent)
+        const velocity = yield* Ref.get(state.velocity)
+        const isGrounded = yield* Ref.get(state.isGrounded)
+        const intentMagnitude = Math.hypot(movementIntent.forward, movementIntent.strafe)
+        const intentScale = intentMagnitude > 1 ? 1 / intentMagnitude : 1
+        const forward = movementIntent.forward * intentScale
+        const strafe = movementIntent.strafe * intentScale
+        const sinYaw = Math.sin(pose.yawRadians)
+        const cosYaw = Math.cos(pose.yawRadians)
+        const vx = (-sinYaw * forward + cosYaw * strafe) * config.walkSpeed
+        const vz = (-cosYaw * forward - sinYaw * strafe) * config.walkSpeed
+        const resolveOptions: ResolveOptions = {
+          ...config.resolve,
+          halfWidth: PLAYER_HALF_WIDTH,
+          halfHeight: PLAYER_HALF_HEIGHT,
+        }
+        const centreY = centreOfFoot(FootY(pose.feetPosition.y), PLAYER_HALF_HEIGHT)
+        const supportedNow =
+          jumpIntent &&
+          !isGrounded &&
+          resolveBody(
+            {
+              kind: 'kinematic',
+              x: pose.feetPosition.x,
+              y: centreY,
+              z: pose.feetPosition.z,
+              vx,
+              vy: velocity.y,
+              vz,
+            },
+            dt,
+            resolveOptions,
+          ).isGrounded
+        const body: Body = {
+          kind: 'dynamic',
+          x: pose.feetPosition.x,
+          y: centreY,
+          z: pose.feetPosition.z,
+          vx,
+          vy: jumpIntent && (isGrounded || supportedNow) ? config.jumpSpeed : velocity.y,
+          vz,
+        }
+        const stepped = stepBody(body, dt, resolveOptions)
+
+        yield* Ref.set(state.velocity, vec3(stepped.body.vx, stepped.body.vy, stepped.body.vz))
+        yield* Ref.set(state.isGrounded, stepped.isGrounded)
+        yield* player.moveTo(
+          position(
+            stepped.body.x,
+            footOfCentre(CentreY(stepped.body.y), PLAYER_HALF_HEIGHT),
+            stepped.body.z,
+          ),
+        )
       }),
   },
 ]
@@ -221,6 +293,17 @@ export const makeSimStages: Effect.Effect<
   const state = yield* makeSimFrameState
   return simStages(state, time, player)
 })
+
+export const makeSimStagesWithPhysics = (
+  config: SimPhysicsConfig,
+): Effect.Effect<ReadonlyArray<StageRegistration>, never, TimeService | PlayerService> =>
+  Effect.gen(function* () {
+    const time = yield* TimeService
+    const player = yield* PlayerService
+    const state = yield* makeSimFrameState
+    yield* Ref.set(state.physicsConfig, Option.some(config))
+    return simStages(state, time, player)
+  })
 
 /**
  * mc-sim as a `GameModule` (plan.md §4.1).
@@ -294,3 +377,26 @@ export const makeSimStagesForPreview: Effect.Effect<
   const state = yield* makeSimFrameState
   return { state, stages: simStages(state, time, player) }
 })
+
+/**
+ * Physics-enabled stages together with the input state a production host owns.
+ * The host writes movement and jump intent; player position remains owned by
+ * `PlayerService` and is sampled afresh by the stage on every frame.
+ */
+export const makeControllableSimStagesWithPhysics = (
+  config: SimPhysicsConfig,
+): Effect.Effect<
+  { readonly state: SimFrameState; readonly stages: ReadonlyArray<StageRegistration> },
+  never,
+  TimeService | PlayerService
+> =>
+  Effect.gen(function* () {
+    const time = yield* TimeService
+    const player = yield* PlayerService
+    const state = yield* makeSimFrameState
+    yield* Ref.set(state.physicsConfig, Option.some(config))
+    return { state, stages: simStages(state, time, player) }
+  })
+
+/** Preview-compatible name retained alongside the production host API. */
+export const makeSimStagesForPreviewWithPhysics = makeControllableSimStagesWithPhysics

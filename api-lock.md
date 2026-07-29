@@ -13,7 +13,7 @@
 <!-- ------------------------------------------------------------------------- -->
 
 format: 1
-exported declarations: 286
+exported declarations: 291
 supporting declarations: 30
 
 ## Exported
@@ -793,6 +793,15 @@ type MissingIngredient = {
 };
 ```
 
+### MovementIntent  `type`
+
+```ts
+type MovementIntent = {
+    readonly forward: number;
+    readonly strafe: number;
+};
+```
+
 ### NormaliseOutcome  `type`
 
 ```ts
@@ -1109,6 +1118,21 @@ type ShapelessRecipe = {
 ```ts
 type SimFrameState = {
     readonly resolvedFeetPosition: Ref.Ref<Option.Option<Position>>;
+    readonly movementIntent: Ref.Ref<MovementIntent>;
+    readonly jumpIntent: Ref.Ref<boolean>;
+    readonly velocity: Ref.Ref<Vec3>;
+    readonly isGrounded: Ref.Ref<boolean>;
+    readonly physicsConfig: Ref.Ref<Option.Option<SimPhysicsConfig>>;
+};
+```
+
+### SimPhysicsConfig  `type`
+
+```ts
+type SimPhysicsConfig = {
+    readonly resolve: ResolveOptions;
+    readonly walkSpeed: number;
+    readonly jumpSpeed: number;
 };
 ```
 
@@ -1794,6 +1818,15 @@ const keyBindingFor: (settings: Settings, action: string) => string | undefined;
 const levelForTotalExperience: (totalExperience: number) => number;
 ```
 
+### makeControllableSimStagesWithPhysics  `const`
+
+```ts
+const makeControllableSimStagesWithPhysics: (config: SimPhysicsConfig) => Effect.Effect<{
+    readonly state: SimFrameState;
+    readonly stages: ReadonlyArray<StageRegistration>;
+}, never, TimeService | PlayerService>;
+```
+
 ### makeEntityManager  `const`
 
 ```ts
@@ -1849,6 +1882,21 @@ const makeSimStagesForPreview: Effect.Effect<{
     readonly state: SimFrameState;
     readonly stages: ReadonlyArray<StageRegistration>;
 }, never, TimeService | PlayerService>;
+```
+
+### makeSimStagesForPreviewWithPhysics  `const`
+
+```ts
+const makeSimStagesForPreviewWithPhysics: (config: SimPhysicsConfig) => Effect.Effect<{
+    readonly state: SimFrameState;
+    readonly stages: ReadonlyArray<StageRegistration>;
+}, never, TimeService | PlayerService>;
+```
+
+### makeSimStagesWithPhysics  `const`
+
+```ts
+const makeSimStagesWithPhysics: (config: SimPhysicsConfig) => Effect.Effect<ReadonlyArray<StageRegistration>, never, TimeService | PlayerService>;
 ```
 
 ### makeStatisticsService  `const`
