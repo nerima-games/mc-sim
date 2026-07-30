@@ -18,6 +18,8 @@ import { describe, expect, it } from '@effect/vitest'
 import {
   PLAYER_HALF_HEIGHT,
   PLAYER_HALF_WIDTH,
+  SLAB_SHAPE,
+  TERMINAL_VELOCITY_Y,
   vec3,
 } from '@nerima-games/mc-physics'
 import { Effect, Layer, Option, Ref } from 'effect'
@@ -46,13 +48,16 @@ import {
   makeSimStagesForPreview,
   makeSimStagesForPreviewWithPhysics,
   makeSimStagesWithPhysics,
+  resetLandingImpact,
   simModule,
   simStages,
+  type LandingImpact,
   type MovementIntent,
   type SimPhysicsConfig,
 } from '../stages/registration'
 import * as PublicApi from '../index'
 import type {
+  LandingImpact as PublicLandingImpact,
   MovementIntent as PublicMovementIntent,
   SimPhysicsConfig as PublicSimPhysicsConfig,
 } from '../index'
@@ -228,6 +233,8 @@ describe('the stage works through the services, and keeps no copy of what they o
         'jumpIntent',
         'velocity',
         'isGrounded',
+        'accumulatedFallDistance',
+        'landingImpact',
         'physicsConfig',
       ])
       expect(yield* Ref.get(state.resolvedFeetPosition)).toStrictEqual(Option.none())
@@ -235,6 +242,8 @@ describe('the stage works through the services, and keeps no copy of what they o
       expect(yield* Ref.get(state.jumpIntent)).toBe(false)
       expect(yield* Ref.get(state.velocity)).toStrictEqual(vec3(0, 0, 0))
       expect(yield* Ref.get(state.isGrounded)).toBe(false)
+      expect(yield* Ref.get(state.accumulatedFallDistance)).toBe(0)
+      expect(yield* Ref.get(state.landingImpact)).toStrictEqual(Option.none())
       expect(yield* Ref.get(state.physicsConfig)).toStrictEqual(Option.none())
     }).pipe(Effect.provide(SimulationLayer)),
   )
@@ -300,6 +309,11 @@ describe('the stage works through the services, and keeps no copy of what they o
       yield* Ref.set(first.jumpIntent, true)
       yield* Ref.set(first.velocity, vec3(4, 5, 6))
       yield* Ref.set(first.isGrounded, true)
+      yield* Ref.set(first.accumulatedFallDistance, 7)
+      yield* Ref.set(
+        first.landingImpact,
+        Option.some({ fallDistance: 7, impactVelocityY: -8 }),
+      )
       yield* Ref.set(first.physicsConfig, Option.some(AirPhysicsConfig))
 
       expect(yield* Ref.get(second.resolvedFeetPosition)).toStrictEqual(Option.none())
@@ -307,6 +321,8 @@ describe('the stage works through the services, and keeps no copy of what they o
       expect(yield* Ref.get(second.jumpIntent)).toBe(false)
       expect(yield* Ref.get(second.velocity)).toStrictEqual(vec3(0, 0, 0))
       expect(yield* Ref.get(second.isGrounded)).toBe(false)
+      expect(yield* Ref.get(second.accumulatedFallDistance)).toBe(0)
+      expect(yield* Ref.get(second.landingImpact)).toStrictEqual(Option.none())
       expect(yield* Ref.get(second.physicsConfig)).toStrictEqual(Option.none())
     }),
   )
@@ -438,7 +454,96 @@ describe('the physical simulation path is opt-in and player pose remains authori
       expect((yield* player.pose).feetPosition.y).toBeCloseTo(0)
       expect((yield* Ref.get(state.velocity)).y).toBe(0)
       expect(yield* Ref.get(state.isGrounded)).toBe(true)
+      const impact = Option.getOrThrow(yield* Ref.get(state.landingImpact))
+      expect(impact.fallDistance).toBeCloseTo(0.2)
+      expect(impact.impactVelocityY).toBeCloseTo(-5.491)
+
+      yield* stages[0]?.run(DeltaTimeSecs(0.05)) ?? Effect.void
+      expect(yield* Ref.get(state.landingImpact)).toStrictEqual(Option.none())
     }).pipe(Effect.provide(SimulationLayer), Effect.provide(FrozenClockLayer)),
+  )
+
+  it.effect('keeps accumulating actual descent after terminal velocity is reached', () =>
+    Effect.gen(function* () {
+      const deepFloor = makePhysicsConfig((_bx, by) => by === -101)
+      const { state, stages } = yield* makeControllableSimStagesWithPhysics(deepFloor)
+      const physics = stages[0]
+
+      for (let frame = 0; frame < 80; frame += 1) {
+        yield* physics?.run(DeltaTimeSecs(0.05)) ?? Effect.void
+        if ((yield* Ref.get(state.velocity)).y === TERMINAL_VELOCITY_Y) break
+      }
+
+      expect((yield* Ref.get(state.velocity)).y).toBe(TERMINAL_VELOCITY_Y)
+      const before = yield* Ref.get(state.accumulatedFallDistance)
+      yield* physics?.run(DeltaTimeSecs(0.05)) ?? Effect.void
+      expect(yield* Ref.get(state.accumulatedFallDistance)).toBeGreaterThan(before)
+
+      for (let frame = 0; frame < 100 && !(yield* Ref.get(state.isGrounded)); frame += 1) {
+        yield* physics?.run(DeltaTimeSecs(0.05)) ?? Effect.void
+      }
+
+      const impact = Option.getOrThrow(yield* Ref.get(state.landingImpact))
+      expect(impact.fallDistance).toBeCloseTo(100)
+      expect(impact.impactVelocityY).toBe(TERMINAL_VELOCITY_Y)
+    }).pipe(Effect.provide(SimulationLayer), Effect.provide(FrozenClockLayer)),
+  )
+
+  it.effect('does not count upward movement as fall distance', () =>
+    Effect.gen(function* () {
+      const { state, stages } = yield* makeControllableSimStagesWithPhysics(AirPhysicsConfig)
+      yield* Ref.set(state.velocity, vec3(0, 3, 0))
+
+      yield* stages[0]?.run(DeltaTimeSecs(0.1)) ?? Effect.void
+
+      expect((yield* Ref.get(state.velocity)).y).toBeGreaterThan(0)
+      expect(yield* Ref.get(state.accumulatedFallDistance)).toBe(0)
+      expect(yield* Ref.get(state.landingImpact)).toStrictEqual(Option.none())
+    }).pipe(Effect.provide(SimulationLayer), Effect.provide(FrozenClockLayer)),
+  )
+
+  it.effect('does not report stationary contact or a step-up as a landing', () =>
+    Effect.gen(function* () {
+      const stationary = yield* makeControllableSimStagesWithPhysics(FloorPhysicsConfig)
+      yield* stationary.stages[0]?.run(DeltaTimeSecs(0.05)) ?? Effect.void
+      expect(yield* Ref.get(stationary.state.landingImpact)).toStrictEqual(Option.none())
+
+      const isSlab = (bx: number, by: number): boolean => bx === 1 && by === 0
+      const stepConfig: SimPhysicsConfig = {
+        ...makePhysicsConfig((_bx, by) => by === -1),
+        resolve: {
+          ...makePhysicsConfig((_bx, by) => by === -1).resolve,
+          blockShapeAt: (bx, by) => (isSlab(bx, by) ? SLAB_SHAPE : null),
+          stepHeight: 0.6,
+        },
+      }
+      const stepped = yield* makeControllableSimStagesWithPhysics(stepConfig)
+      const player = yield* PlayerService
+      yield* player.moveTo(position(0.85, 0, 0))
+      yield* Ref.set(stepped.state.isGrounded, true)
+      yield* Ref.set(stepped.state.movementIntent, { forward: 0, strafe: 1 })
+
+      yield* stepped.stages[0]?.run(DeltaTimeSecs(0.05)) ?? Effect.void
+
+      expect((yield* player.pose).feetPosition.y).toBeCloseTo(0.5)
+      expect(yield* Ref.get(stepped.state.landingImpact)).toStrictEqual(Option.none())
+    }).pipe(Effect.provide(SimulationLayer), Effect.provide(FrozenClockLayer)),
+  )
+
+  it.effect('explicitly resets accumulated fall state and the landing signal', () =>
+    Effect.gen(function* () {
+      const state = yield* makeSimFrameState
+      yield* Ref.set(state.accumulatedFallDistance, 12)
+      yield* Ref.set(
+        state.landingImpact,
+        Option.some({ fallDistance: 12, impactVelocityY: TERMINAL_VELOCITY_Y }),
+      )
+
+      yield* resetLandingImpact(state)
+
+      expect(yield* Ref.get(state.accumulatedFallDistance)).toBe(0)
+      expect(yield* Ref.get(state.landingImpact)).toStrictEqual(Option.none())
+    }),
   )
 
   it.effect('carries vertical velocity from one frame into the next', () =>
@@ -547,6 +652,8 @@ describe('mc-sim is a real GameModule', () => {
     const intent: PublicMovementIntent = { forward: 1, strafe: 0 }
     const config: PublicSimPhysicsConfig = AirPhysicsConfig
     const registrationIntent: MovementIntent = intent
+    const impact: PublicLandingImpact = { fallDistance: 3, impactVelocityY: -4 }
+    const registrationImpact: LandingImpact = impact
 
     expect(PublicApi.makeSimStagesWithPhysics).toBe(makeSimStagesWithPhysics)
     expect(PublicApi.makeSimStagesForPreviewWithPhysics).toBe(
@@ -555,8 +662,10 @@ describe('mc-sim is a real GameModule', () => {
     expect(PublicApi.makeControllableSimStagesWithPhysics).toBe(
       makeControllableSimStagesWithPhysics,
     )
+    expect(PublicApi.resetLandingImpact).toBe(resetLandingImpact)
     expect(config).toBe(AirPhysicsConfig)
     expect(registrationIntent).toStrictEqual(intent)
+    expect(registrationImpact).toStrictEqual(impact)
   })
 
   it.effect('simStages is callable directly with service handles, for a preview that owns them', () =>

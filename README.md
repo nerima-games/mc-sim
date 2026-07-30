@@ -13,7 +13,7 @@
 | 依存先 | 何をもらうか |
 | --- | --- |
 | `mc-kernel` | 共有語彙。どのリポジトリからも import 可（許可リストに書かずに import できる） |
-| `mc-physics` | `step(state, world, dt)`、AABB クエリ、voxel-DDA |
+| `mc-physics` | `integrateBody(state, dt)` / `resolveBody(state, dt, options)`、AABB クエリ、voxel-DDA |
 | `mc-save` | `defineFormat` / `StoragePort`。mc-sim は自分のフォーマットを定義する側 |
 | `mc-worldgen` | `generateChunk` / `BiomeService` / `ChunkStore`（ブロックの読み書きとダーティ購読） |
 
@@ -125,7 +125,7 @@ Nix を使わない場合は Node.js 24 以上と pnpm 11（`corepack` 推奨）
 | レシピ表とクラフトの原子性 | `domain/recipe.ts` / `domain/crafting.ts` | DN-07 / DN-11 |
 | 次元・ブロック座標ごとの作物状態 | `domain/crop.ts` / `application/crop-service.ts` | JSON-safe snapshot と deterministic tick |
 | **エンティティ台帳（`EntityManager`）** | `domain/entity.ts` / `application/entity-manager.ts` | DN-07 / DN-09 / DN-11。[公開API §7](./docs/public-api.md) |
-| **`sim:physics` の登録** | `stages/registration.ts` / `stages/stage-ids.ts` | [責務 §2.1](./docs/responsibility.md) |
+| **`sim:physics` の登録と着地衝撃通知** | `stages/registration.ts` / `stages/stage-ids.ts` | [責務 §2.1](./docs/responsibility.md) / [公開API §4.2](./docs/public-api.md) |
 
 `sim:physics` は**ロスターのリポジトリ間順序エッジ 4 本すべての宛先**であり、
 `stages/` が無かったあいだ 4 本とも dangling として捨てられていた。

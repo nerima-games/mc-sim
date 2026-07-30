@@ -603,6 +603,36 @@ shapeless（材料 1 個 / 同一材料 2 個 / **相異なる 3 材料**）、s
 `mc-sim:fire-charge` の材料多重集合は既存 2 件のどちらとも重ならない。
 `conflictsIn(STARTER_RECIPES)` は空のままで、それは**確認した結果**であって前提ではない。
 
+## 4.2 着地衝撃通知
+
+`sim:physics` は mc-physics の積分と衝突解決を順に呼び、その境界でのみ分かる
+「空中から接地へ遷移した瞬間」を 1 フレームの値として公開する。
+
+```typescript
+type LandingImpact = {
+  readonly fallDistance: number
+  readonly impactVelocityY: number
+}
+
+type SimFrameState = {
+  // 既存フィールドは省略
+  readonly accumulatedFallDistance: Ref.Ref<number>
+  readonly landingImpact: Ref.Ref<Option.Option<LandingImpact>>
+}
+
+const resetLandingImpact: (state: SimFrameState) => Effect.Effect<void>
+```
+
+- `fallDistance` は上昇終了後から接地までの**実際の下向き移動量**の合計である。
+  `velocity * dt` の推定値ではないため、終端速度に達した後も距離は増え続ける。
+- `impactVelocityY` は衝突解決前の積分済み Y 速度であり、通常の着地では負数である。
+- `landingImpact` が `Some` になるのは `!wasGrounded && isGrounded` の遷移フレームだけである。
+  次の `sim:physics` 開始時に `None` へ戻るため、消費者はこの stage より後で読む。
+- 静止接地、段差への乗り上げ、上昇中にはイベントを発行しない。上昇分も落下距離へ含めない。
+- `resetLandingImpact` は累積距離と通知を同時に消す。`PlayerService.moveTo` によるテレポートなど、
+  通常の物理 stage を経由しない位置変更を行う呼び手は、同じ処理境界でこれを呼ぶ。
+  stage 自身は mailbox の位置適用時と物理無効時に自動でリセットする。
+
 ## 5. まだ設計していない公開API
 
 plan.md §3.8 の責務のうち、界面をまだ書いていないもの。**着手前に本書へ追記すること。**

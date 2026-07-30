@@ -13,7 +13,7 @@
 <!-- ------------------------------------------------------------------------- -->
 
 format: 1
-exported declarations: 327
+exported declarations: 329
 supporting declarations: 31
 
 ## Exported
@@ -887,6 +887,15 @@ type ItemStack = {
 };
 ```
 
+### LandingImpact  `type`
+
+```ts
+type LandingImpact = {
+    readonly fallDistance: number;
+    readonly impactVelocityY: number;
+};
+```
+
 ### MAX_DAY_LENGTH_SECS  `const`
 
 ```ts
@@ -1333,6 +1342,8 @@ type SimFrameState = {
     readonly jumpIntent: Ref.Ref<boolean>;
     readonly velocity: Ref.Ref<Vec3>;
     readonly isGrounded: Ref.Ref<boolean>;
+    readonly accumulatedFallDistance: Ref.Ref<number>;
+    readonly landingImpact: Ref.Ref<Option.Option<LandingImpact>>;
     readonly physicsConfig: Ref.Ref<Option.Option<SimPhysicsConfig>>;
 };
 ```
@@ -2323,6 +2334,12 @@ const removeItem: (inventory: Inventory, item: ItemType, count: number) => Remov
 
 ```ts
 const removeItemAt: (inventory: Inventory, slotIndex: number, expectedItem: ItemType, count: number) => RemoveAtOutcome;
+```
+
+### resetLandingImpact  `const`
+
+```ts
+const resetLandingImpact: (state: SimFrameState) => Effect.Effect<void>;
 ```
 
 ### respawn  `const`

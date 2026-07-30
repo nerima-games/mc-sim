@@ -95,8 +95,8 @@ import {
   PLAYER_HALF_WIDTH,
   centreOfFoot,
   footOfCentre,
+  integrateBody,
   resolveBody,
-  stepBody,
   vec3,
   type Body,
   type ResolveOptions,
@@ -118,6 +118,11 @@ export type SimPhysicsConfig = {
   readonly resolve: ResolveOptions
   readonly walkSpeed: number
   readonly jumpSpeed: number
+}
+
+export type LandingImpact = {
+  readonly fallDistance: number
+  readonly impactVelocityY: number
 }
 
 /**
@@ -147,6 +152,8 @@ export type SimFrameState = {
   readonly jumpIntent: Ref.Ref<boolean>
   readonly velocity: Ref.Ref<Vec3>
   readonly isGrounded: Ref.Ref<boolean>
+  readonly accumulatedFallDistance: Ref.Ref<number>
+  readonly landingImpact: Ref.Ref<Option.Option<LandingImpact>>
   readonly physicsConfig: Ref.Ref<Option.Option<SimPhysicsConfig>>
 }
 
@@ -165,8 +172,24 @@ export const makeSimFrameState: Effect.Effect<SimFrameState> = Effect.all({
   jumpIntent: Ref.make(false),
   velocity: Ref.make<Vec3>(vec3(0, 0, 0)),
   isGrounded: Ref.make(false),
+  accumulatedFallDistance: Ref.make(0),
+  landingImpact: Ref.make(Option.none<LandingImpact>()),
   physicsConfig: Ref.make(Option.none<SimPhysicsConfig>()),
 })
+
+/**
+ * Clear fall tracking across an authored discontinuity such as teleport,
+ * restore or respawn. This prevents distance from two unrelated poses being
+ * combined into one landing event.
+ */
+export const resetLandingImpact = (state: SimFrameState): Effect.Effect<void> =>
+  Effect.all(
+    [
+      Ref.set(state.accumulatedFallDistance, 0),
+      Ref.set(state.landingImpact, Option.none<LandingImpact>()),
+    ],
+    { discard: true },
+  )
 
 /**
  * The one stage mc-sim registers.
@@ -192,6 +215,10 @@ export const simStages = (
     // server — is still a correct simulation.
     run: (dt) =>
       Effect.gen(function* () {
+        // Landing impact is a one-frame signal. Consumers must read it after
+        // this stage and before the next frame starts.
+        yield* Ref.set(state.landingImpact, Option.none<LandingImpact>())
+
         // The world clock, advanced exactly once per frame. `dt` is supplied by
         // the frame, never read from a clock: `application/game-loop.ts` has
         // already clamped it through `domain/frame-timing.ts`, so a tab that was
@@ -208,19 +235,23 @@ export const simStages = (
         // Draining the mailbox prevents a stale position from being re-applied.
         const resolved = yield* Ref.getAndSet(state.resolvedFeetPosition, Option.none<Position>())
         if (Option.isSome(resolved)) {
+          yield* resetLandingImpact(state)
           yield* player.moveTo(resolved.value)
           return
         }
 
         const physicsConfig = yield* Ref.get(state.physicsConfig)
-        if (Option.isNone(physicsConfig)) return
+        if (Option.isNone(physicsConfig)) {
+          yield* resetLandingImpact(state)
+          return
+        }
 
         const config = physicsConfig.value
         const pose = yield* player.pose
         const movementIntent = yield* Ref.get(state.movementIntent)
         const jumpIntent = yield* Ref.get(state.jumpIntent)
         const velocity = yield* Ref.get(state.velocity)
-        const isGrounded = yield* Ref.get(state.isGrounded)
+        const wasGrounded = yield* Ref.get(state.isGrounded)
         const intentMagnitude = Math.hypot(movementIntent.forward, movementIntent.strafe)
         const intentScale = intentMagnitude > 1 ? 1 / intentMagnitude : 1
         const forward = movementIntent.forward * intentScale
@@ -237,7 +268,7 @@ export const simStages = (
         const centreY = centreOfFoot(FootY(pose.feetPosition.y), PLAYER_HALF_HEIGHT)
         const supportedNow =
           jumpIntent &&
-          !isGrounded &&
+          !wasGrounded &&
           resolveBody(
             {
               kind: 'kinematic',
@@ -257,18 +288,38 @@ export const simStages = (
           y: centreY,
           z: pose.feetPosition.z,
           vx,
-          vy: jumpIntent && (isGrounded || supportedNow) ? config.jumpSpeed : velocity.y,
+          vy: jumpIntent && (wasGrounded || supportedNow) ? config.jumpSpeed : velocity.y,
           vz,
         }
-        const stepped = stepBody(body, dt, resolveOptions)
+        const integrated = integrateBody(body, dt)
+        const resolvedBody = resolveBody(integrated, dt, resolveOptions)
+        const downwardDistance = Math.max(0, body.y - resolvedBody.body.y)
+        const priorFallDistance = wasGrounded
+          ? 0
+          : yield* Ref.get(state.accumulatedFallDistance)
+        const fallDistance = integrated.vy < 0 ? priorFallDistance + downwardDistance : 0
 
-        yield* Ref.set(state.velocity, vec3(stepped.body.vx, stepped.body.vy, stepped.body.vz))
-        yield* Ref.set(state.isGrounded, stepped.isGrounded)
+        if (!wasGrounded && resolvedBody.isGrounded && fallDistance > 0 && integrated.vy < 0) {
+          yield* Ref.set(
+            state.landingImpact,
+            Option.some({ fallDistance, impactVelocityY: integrated.vy }),
+          )
+        }
+        yield* Ref.set(
+          state.accumulatedFallDistance,
+          resolvedBody.isGrounded || integrated.vy >= 0 ? 0 : fallDistance,
+        )
+
+        yield* Ref.set(
+          state.velocity,
+          vec3(resolvedBody.body.vx, resolvedBody.body.vy, resolvedBody.body.vz),
+        )
+        yield* Ref.set(state.isGrounded, resolvedBody.isGrounded)
         yield* player.moveTo(
           position(
-            stepped.body.x,
-            footOfCentre(CentreY(stepped.body.y), PLAYER_HALF_HEIGHT),
-            stepped.body.z,
+            resolvedBody.body.x,
+            footOfCentre(CentreY(resolvedBody.body.y), PLAYER_HALF_HEIGHT),
+            resolvedBody.body.z,
           ),
         )
       }),

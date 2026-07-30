@@ -77,7 +77,7 @@ plan.md §2.3-3 により mc-compose のもの、(2) mc-render は mc-sim に依
 | **実行時入力（キーボード/マウス/ポインタロック/タッチ/リマッピング）** | mc-render | plan.md §2.3-2 / §7。kit は devDependency 専用なので入力を kit に置けない |
 | **地形生成・バイオーム分類・カーバー・構造物** | mc-worldgen | plan.md §3.7 |
 | **ノイズ関数** | mc-noise（mc-sim からは **推移依存で import 禁止**） | plan.md §2.3-5 |
-| **物理積分・AABB 衝突解決・voxel-DDA** | mc-physics | plan.md §3.4。mc-sim は `step()` を**呼ぶ**だけ |
+| **物理積分・AABB 衝突解決・voxel-DDA** | mc-physics | plan.md §3.4。mc-sim は `integrateBody()` と `resolveBody()` を**呼ぶ**だけ |
 | **メッシュ生成** | mc-meshing | plan.md §3.3 |
 | **セーブフォーマットの実体（IndexedDB アダプタ・コーデック基盤）** | mc-save | plan.md §3.5。mc-sim は `defineFormat` で自分のフォーマットを**定義する側** |
 | **サウンド再生・字幕発行** | mc-audio | plan.md §3.6 |
@@ -359,7 +359,7 @@ kernel は `Dimension` を出さないからである（ミラーの住所は
 | リポジトリ | 使うもの | 未公開のため現状 |
 | --- | --- | --- |
 | `mc-kernel` | 語彙全般（ブランデッド型、座標、`CameraPoseSnapshot`、Clock Port、`GameModule`） | `domain/kernel-vocabulary.ts` に暫定ミラー |
-| `mc-physics` | `step(state, world, dt)`、AABB クエリ、voxel-DDA | 未使用 |
+| `mc-physics` | `integrateBody(state, dt)`、`resolveBody(state, dt, options)`、AABB クエリ、voxel-DDA | `sim:physics` から使用 |
 | `mc-save` | `defineFormat(name, version, schema, migrations)`、`StoragePort` | 未使用（`autosave.ts` は永続化 Effect を引数で受ける） |
 | `mc-worldgen` | `generateChunk`、`BiomeService`、`ChunkStore`（物理のためにブロックを読む）、**`Dimension`** | `domain/worldgen-vocabulary.ts` に暫定ミラー（`Dimension` のみ）。§3.7 |
 
