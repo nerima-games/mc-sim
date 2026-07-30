@@ -6,6 +6,7 @@ import {
   emptyInventory,
   INVENTORY_SLOT_COUNT,
   isEmpty,
+  maxStackCountForItem,
   normaliseInventory,
   removeItem,
   removeItemAt,
@@ -80,6 +81,21 @@ describe('addItem', () => {
       expect(slotAt(outcome.inventory, 2)).toStrictEqual({ item: 'cobblestone', count: 2 })
       expect(countOf(outcome.inventory, 'cobblestone')).toBe(130)
       expect(outcome.leftover).toBe(0)
+    }),
+  )
+
+  it.effect('stacks arrows to 64 while every bow occupies its own slot', () =>
+    Effect.sync(() => {
+      expect(maxStackCountForItem('arrow')).toBe(64)
+      expect(maxStackCountForItem('bow')).toBe(1)
+
+      const arrows = addItem(emptyInventory(), 'arrow', 65)
+      expect(slotAt(arrows.inventory, 0)).toStrictEqual({ item: 'arrow', count: 64 })
+      expect(slotAt(arrows.inventory, 1)).toStrictEqual({ item: 'arrow', count: 1 })
+
+      const bows = addItem(emptyInventory(), 'bow', 2)
+      expect(slotAt(bows.inventory, 0)).toStrictEqual({ item: 'bow', count: 1 })
+      expect(slotAt(bows.inventory, 1)).toStrictEqual({ item: 'bow', count: 1 })
     }),
   )
 

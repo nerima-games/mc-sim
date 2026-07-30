@@ -110,6 +110,136 @@ describe('player storage', () => {
     }),
   )
 
+  it.effect('consumes ammunition and damages the expected bow atomically', () =>
+    Effect.gen(function* () {
+      const service = yield* makeInventoryService()
+      yield* service.add('bow', 1)
+      yield* service.add('arrow', 2)
+
+      expect(yield* service.consumeAndDamageAt({
+        consume: { item: 'arrow', count: 1 },
+        damage: {
+          location: { _tag: 'Inventory', slotIndex: 0 },
+          expectedItem: 'bow',
+          amount: 1,
+        },
+      })).toMatchObject({
+        _tag: 'Applied',
+        consumed: 1,
+        damage: {
+          _tag: 'Damaged',
+          item: { item: 'bow', durability: { current: 383, max: 384 } },
+        },
+      })
+
+      const after = yield* service.storageSnapshot
+      expect(after.inventory.slots[0]).toStrictEqual({ item: 'bow', count: 1 })
+      expect(after.inventoryDurability[0]).toStrictEqual({ current: 383, max: 384 })
+      expect(after.inventory.slots[1]).toStrictEqual({ item: 'arrow', count: 1 })
+    }),
+  )
+
+  it.effect('does not damage the bow when ammunition is insufficient', () =>
+    Effect.gen(function* () {
+      const service = yield* makeInventoryService()
+      yield* service.add('bow', 1)
+      yield* service.add('arrow', 1)
+      const before = yield* service.storageSnapshot
+
+      expect(yield* service.consumeAndDamageAt({
+        consume: { item: 'arrow', count: 2 },
+        damage: {
+          location: { _tag: 'Inventory', slotIndex: 0 },
+          expectedItem: 'bow',
+          amount: 1,
+        },
+      })).toStrictEqual({ _tag: 'InsufficientConsumable', available: 1 })
+      expect(yield* service.storageSnapshot).toStrictEqual(before)
+    }),
+  )
+
+  it.effect('does not consume ammunition after the captured bow slot is replaced', () =>
+    Effect.gen(function* () {
+      const service = yield* makeInventoryService()
+      yield* service.add('stone', 1)
+      yield* service.add('arrow', 1)
+      const before = yield* service.storageSnapshot
+
+      expect(yield* service.consumeAndDamageAt({
+        consume: { item: 'arrow', count: 1 },
+        damage: {
+          location: { _tag: 'Inventory', slotIndex: 0 },
+          expectedItem: 'bow',
+          amount: 1,
+        },
+      })).toStrictEqual({ _tag: 'DamageTargetMismatch', actualItem: 'stone' })
+      expect(yield* service.storageSnapshot).toStrictEqual(before)
+    }),
+  )
+
+  it.effect('consumes ammunition and removes a bow exactly at its durability limit', () =>
+    Effect.gen(function* () {
+      const service = yield* makeInventoryService()
+      yield* service.add('bow', 1)
+      yield* service.add('arrow', 1)
+      yield* service.damageAt({ _tag: 'Inventory', slotIndex: 0 }, 383)
+
+      expect(yield* service.consumeAndDamageAt({
+        consume: { item: 'arrow', count: 1 },
+        damage: {
+          location: { _tag: 'Inventory', slotIndex: 0 },
+          expectedItem: 'bow',
+          amount: 1,
+        },
+      })).toMatchObject({
+        _tag: 'Applied',
+        consumed: 1,
+        damage: { _tag: 'Broken', applied: 1, item: { item: 'bow' } },
+      })
+      const after = yield* service.storageSnapshot
+      expect(after.inventory.slots[0]).toBeUndefined()
+      expect(after.inventory.slots[1]).toBeUndefined()
+    }),
+  )
+
+  it.effect('settles only one of two concurrent shots competing for the last arrow', () =>
+    Effect.gen(function* () {
+      const service = yield* makeInventoryService()
+      yield* service.add('bow', 1)
+      yield* service.add('arrow', 1)
+      const shot = service.consumeAndDamageAt({
+        consume: { item: 'arrow', count: 1 },
+        damage: {
+          location: { _tag: 'Inventory', slotIndex: 0 },
+          expectedItem: 'bow',
+          amount: 1,
+        },
+      })
+
+      const results = yield* Effect.all([shot, shot], { concurrency: 'unbounded' })
+      expect(results.map((result) => result._tag).sort()).toStrictEqual([
+        'Applied', 'InsufficientConsumable',
+      ])
+      const after = yield* service.storageSnapshot
+      expect(after.inventoryDurability[0]).toStrictEqual({ current: 383, max: 384 })
+      expect(after.inventory.slots[1]).toBeUndefined()
+    }),
+  )
+
+  it.effect('keeps bows out of equipment slots', () =>
+    Effect.gen(function* () {
+      const service = yield* makeInventoryService()
+      yield* service.add('bow', 1)
+
+      expect(yield* service.equipFromInventory(0, 'offhand')).toMatchObject({
+        _tag: 'Incompatible', item: { item: 'bow' },
+      })
+      expect((yield* service.storageSnapshot).inventoryDurability[0]).toStrictEqual({
+        current: 384, max: 384,
+      })
+    }),
+  )
+
   it.effect('initializes and damages wooden and stone pickaxes in inventory', () =>
     Effect.gen(function* () {
       const service = yield* makeInventoryService()

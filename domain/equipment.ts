@@ -7,33 +7,61 @@ export type EquipmentSlot = (typeof EQUIPMENT_SLOTS)[number]
 
 export type EquipmentDefinition = {
   readonly slot: EquipmentSlot
+}
+
+export type ItemDurabilityDefinition = {
   readonly maxDurability: number
 }
 
-/** The single source of truth for item/slot compatibility and durability. */
+/** The single source of truth for item/slot compatibility. */
 export const EQUIPMENT_CATALOG = {
-  iron_helmet: { slot: 'head', maxDurability: 165 },
-  iron_chestplate: { slot: 'chest', maxDurability: 240 },
-  iron_leggings: { slot: 'legs', maxDurability: 225 },
-  iron_boots: { slot: 'feet', maxDurability: 195 },
-  flint_and_steel: { slot: 'offhand', maxDurability: 64 },
-  wooden_pickaxe: { slot: 'offhand', maxDurability: 59 },
-  stone_pickaxe: { slot: 'offhand', maxDurability: 131 },
-  iron_pickaxe: { slot: 'offhand', maxDurability: 250 },
-  diamond_pickaxe: { slot: 'offhand', maxDurability: 1561 },
-  wooden_hoe: { slot: 'offhand', maxDurability: 59 },
-  stone_hoe: { slot: 'offhand', maxDurability: 131 },
-  iron_hoe: { slot: 'offhand', maxDurability: 250 },
-  diamond_hoe: { slot: 'offhand', maxDurability: 1561 },
+  iron_helmet: { slot: 'head' },
+  iron_chestplate: { slot: 'chest' },
+  iron_leggings: { slot: 'legs' },
+  iron_boots: { slot: 'feet' },
+  flint_and_steel: { slot: 'offhand' },
+  wooden_pickaxe: { slot: 'offhand' },
+  stone_pickaxe: { slot: 'offhand' },
+  iron_pickaxe: { slot: 'offhand' },
+  diamond_pickaxe: { slot: 'offhand' },
+  wooden_hoe: { slot: 'offhand' },
+  stone_hoe: { slot: 'offhand' },
+  iron_hoe: { slot: 'offhand' },
+  diamond_hoe: { slot: 'offhand' },
 } as const satisfies Partial<Record<ItemType, EquipmentDefinition>>
 
+/** The single source of truth for per-item durability, independent of equipment slots. */
+export const ITEM_DURABILITY_CATALOG = {
+  iron_helmet: { maxDurability: 165 },
+  iron_chestplate: { maxDurability: 240 },
+  iron_leggings: { maxDurability: 225 },
+  iron_boots: { maxDurability: 195 },
+  flint_and_steel: { maxDurability: 64 },
+  wooden_pickaxe: { maxDurability: 59 },
+  stone_pickaxe: { maxDurability: 131 },
+  iron_pickaxe: { maxDurability: 250 },
+  diamond_pickaxe: { maxDurability: 1561 },
+  wooden_hoe: { maxDurability: 59 },
+  stone_hoe: { maxDurability: 131 },
+  iron_hoe: { maxDurability: 250 },
+  diamond_hoe: { maxDurability: 1561 },
+  bow: { maxDurability: 384 },
+} as const satisfies Partial<Record<ItemType, ItemDurabilityDefinition>>
+
 export type EquippableItemType = keyof typeof EQUIPMENT_CATALOG
+export type DamageableItemType = keyof typeof ITEM_DURABILITY_CATALOG
 
 export const isEquippableItemType = (item: ItemType): item is EquippableItemType =>
   Object.hasOwn(EQUIPMENT_CATALOG, item)
 
 export const equipmentDefinitionFor = (item: ItemType): EquipmentDefinition | undefined =>
   isEquippableItemType(item) ? EQUIPMENT_CATALOG[item] : undefined
+
+export const isDamageableItemType = (item: ItemType): item is DamageableItemType =>
+  Object.hasOwn(ITEM_DURABILITY_CATALOG, item)
+
+export const itemDurabilityDefinitionFor = (item: ItemType): ItemDurabilityDefinition | undefined =>
+  isDamageableItemType(item) ? ITEM_DURABILITY_CATALOG[item] : undefined
 
 export type Durability = {
   readonly current: number
@@ -113,13 +141,13 @@ const isEquipmentItemShape = (value: unknown): value is EquipmentItem => {
 
 export const isEquipmentItem = (value: unknown): value is EquipmentItem => {
   if (!isEquipmentItemShape(value)) return false
-  const definition = equipmentDefinitionFor(value['item'])
-  return definition !== undefined && value['count'] === 1 &&
-    isDurability(value['durability']) && value['durability'].max === definition.maxDurability
+  const definition = itemDurabilityDefinitionFor(value['item'])
+  return definition !== undefined && value['count'] === 1 && isDurability(value['durability']) &&
+    value['durability'].max === definition.maxDurability
 }
 
 export const durabilityForItem = (item: ItemType): Durability | null => {
-  const definition = equipmentDefinitionFor(item)
+  const definition = itemDurabilityDefinitionFor(item)
   return definition === undefined
     ? null
     : { current: definition.maxDurability, max: definition.maxDurability }
@@ -129,7 +157,7 @@ export const isValidDurabilityForItem = (
   item: ItemType,
   value: unknown,
 ): value is Durability => {
-  const definition = equipmentDefinitionFor(item)
+  const definition = itemDurabilityDefinitionFor(item)
   return definition !== undefined && isDurability(value) && value.max === definition.maxDurability
 }
 

@@ -13,7 +13,7 @@
 <!-- ------------------------------------------------------------------------- -->
 
 format: 1
-exported declarations: 329
+exported declarations: 338
 supporting declarations: 29
 
 ## Exported
@@ -37,6 +37,14 @@ type AddOutcome = {
     readonly inventory: Inventory;
     readonly leftover: number;
 };
+```
+
+### AppliedDamageResult  `type`
+
+```ts
+type AppliedDamageResult = Extract<Eq.DamageEquipmentResult, {
+    readonly _tag: 'Damaged' | 'Broken';
+}>;
 ```
 
 ### AutoSaveStatus  `type`
@@ -77,6 +85,49 @@ const CROP_TYPES: readonly ["potato_crop"];
 
 ```ts
 type CameraOrientation = Pick<CameraPoseSnapshot, 'yawRadians' | 'pitchRadians'>;
+```
+
+### ConsumeAndDamageAtRequest  `type`
+
+```ts
+type ConsumeAndDamageAtRequest = {
+    readonly consume: {
+        readonly item: Inv.ItemStack['item'];
+        readonly count: number;
+    };
+    readonly damage: {
+        readonly location: StorageLocation;
+        readonly expectedItem: Inv.ItemStack['item'];
+        readonly amount: number;
+    };
+};
+```
+
+### ConsumeAndDamageAtResult  `type`
+
+```ts
+type ConsumeAndDamageAtResult = {
+    readonly _tag: 'Applied';
+    readonly consumed: number;
+    readonly damage: AppliedDamageResult;
+} | {
+    readonly _tag: 'InvalidConsumableCount';
+    readonly count: number;
+} | {
+    readonly _tag: 'InvalidDamageAmount';
+    readonly amount: number;
+} | {
+    readonly _tag: 'InvalidLocation';
+} | {
+    readonly _tag: 'DamageTargetMismatch';
+    readonly actualItem: Inv.ItemStack['item'] | null;
+} | {
+    readonly _tag: 'NotDamageable';
+    readonly item: Inv.ItemStack;
+} | {
+    readonly _tag: 'InsufficientConsumable';
+    readonly available: number;
+};
 ```
 
 ### CraftGrid  `type`
@@ -281,6 +332,12 @@ type DamageOutcome = {
 };
 ```
 
+### DamageableItemType  `type`
+
+```ts
+type DamageableItemType = keyof typeof ITEM_DURABILITY_CATALOG;
+```
+
 ### DespawnOutcome  `type`
 
 ```ts
@@ -323,55 +380,42 @@ const ENTITY_MANAGER_TAG_KEY = "@nerima-games/mc-sim/EntityManager";
 const EQUIPMENT_CATALOG: {
     readonly iron_helmet: {
         readonly slot: "head";
-        readonly maxDurability: 165;
     };
     readonly iron_chestplate: {
         readonly slot: "chest";
-        readonly maxDurability: 240;
     };
     readonly iron_leggings: {
         readonly slot: "legs";
-        readonly maxDurability: 225;
     };
     readonly iron_boots: {
         readonly slot: "feet";
-        readonly maxDurability: 195;
     };
     readonly flint_and_steel: {
         readonly slot: "offhand";
-        readonly maxDurability: 64;
     };
     readonly wooden_pickaxe: {
         readonly slot: "offhand";
-        readonly maxDurability: 59;
     };
     readonly stone_pickaxe: {
         readonly slot: "offhand";
-        readonly maxDurability: 131;
     };
     readonly iron_pickaxe: {
         readonly slot: "offhand";
-        readonly maxDurability: 250;
     };
     readonly diamond_pickaxe: {
         readonly slot: "offhand";
-        readonly maxDurability: 1561;
     };
     readonly wooden_hoe: {
         readonly slot: "offhand";
-        readonly maxDurability: 59;
     };
     readonly stone_hoe: {
         readonly slot: "offhand";
-        readonly maxDurability: 131;
     };
     readonly iron_hoe: {
         readonly slot: "offhand";
-        readonly maxDurability: 250;
     };
     readonly diamond_hoe: {
         readonly slot: "offhand";
-        readonly maxDurability: 1561;
     };
 };
 ```
@@ -545,7 +589,6 @@ type Equipment = {
 ```ts
 type EquipmentDefinition = {
     readonly slot: EquipmentSlot;
-    readonly maxDurability: number;
 };
 ```
 
@@ -769,6 +812,55 @@ const INITIAL_WEATHER_STATE: WeatherState;
 const INVENTORY_SLOT_COUNT = 36;
 ```
 
+### ITEM_DURABILITY_CATALOG  `const`
+
+```ts
+const ITEM_DURABILITY_CATALOG: {
+    readonly iron_helmet: {
+        readonly maxDurability: 165;
+    };
+    readonly iron_chestplate: {
+        readonly maxDurability: 240;
+    };
+    readonly iron_leggings: {
+        readonly maxDurability: 225;
+    };
+    readonly iron_boots: {
+        readonly maxDurability: 195;
+    };
+    readonly flint_and_steel: {
+        readonly maxDurability: 64;
+    };
+    readonly wooden_pickaxe: {
+        readonly maxDurability: 59;
+    };
+    readonly stone_pickaxe: {
+        readonly maxDurability: 131;
+    };
+    readonly iron_pickaxe: {
+        readonly maxDurability: 250;
+    };
+    readonly diamond_pickaxe: {
+        readonly maxDurability: 1561;
+    };
+    readonly wooden_hoe: {
+        readonly maxDurability: 59;
+    };
+    readonly stone_hoe: {
+        readonly maxDurability: 131;
+    };
+    readonly iron_hoe: {
+        readonly maxDurability: 250;
+    };
+    readonly diamond_hoe: {
+        readonly maxDurability: 1561;
+    };
+    readonly bow: {
+        readonly maxDurability: 384;
+    };
+};
+```
+
 ### Ingredient  `type`
 
 ```ts
@@ -864,6 +956,7 @@ type InventoryServiceApi = {
     readonly equipFromInventory: (inventorySlot: number, equipmentSlot: Eq.EquipmentSlot) => Effect.Effect<Storage.EquipFromInventoryResult>;
     readonly unequipToInventory: (equipmentSlot: Eq.EquipmentSlot, inventorySlot?: number) => Effect.Effect<Storage.UnequipToInventoryResult>;
     readonly damageAt: (location: Storage.StorageLocation, amount: number) => Effect.Effect<Storage.DamageAtResult>;
+    readonly consumeAndDamageAt: (request: Storage.ConsumeAndDamageAtRequest) => Effect.Effect<Storage.ConsumeAndDamageAtResult>;
     readonly restore: (inventory: Inv.Inventory) => Effect.Effect<number>;
     readonly reset: Effect.Effect<void>;
     readonly recipes: Effect.Effect<Recipe.RecipeTable>;
@@ -876,6 +969,14 @@ type InventoryServiceApi = {
 
 ```ts
 const InventoryServiceLayer: (initial?: Inv.Inventory, recipeTable?: Recipe.RecipeTable) => Layer.Layer<InventoryService>;
+```
+
+### ItemDurabilityDefinition  `type`
+
+```ts
+type ItemDurabilityDefinition = {
+    readonly maxDurability: number;
+};
 ```
 
 ### ItemStack  `type`
@@ -1757,6 +1858,12 @@ const clampPitch: (pitchRadians: number) => number;
 const conflictsIn: (table: RecipeTable) => ReadonlyArray<RecipeConflict>;
 ```
 
+### consumeAndDamageAt  `const`
+
+```ts
+const consumeAndDamageAt: (storage: PlayerStorage, request: ConsumeAndDamageAtRequest) => StorageOutcome<ConsumeAndDamageAtResult>;
+```
+
 ### countOf  `const`
 
 ```ts
@@ -1979,6 +2086,12 @@ const ingredientMatches: (ingredient: Ingredient, item: ItemType) => boolean;
 const isCropType: (value: unknown) => value is CropType;
 ```
 
+### isDamageableItemType  `const`
+
+```ts
+const isDamageableItemType: (item: ItemType) => item is DamageableItemType;
+```
+
 ### isDead  `const`
 
 ```ts
@@ -2097,6 +2210,12 @@ const isValidWeatherState: (value: unknown) => value is WeatherState;
 
 ```ts
 const isWeather: (value: unknown) => value is Weather;
+```
+
+### itemDurabilityDefinitionFor  `const`
+
+```ts
+const itemDurabilityDefinitionFor: (item: ItemType) => ItemDurabilityDefinition | undefined;
 ```
 
 ### itemStack  `const`

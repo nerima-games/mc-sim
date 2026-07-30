@@ -3,7 +3,7 @@ import * as Inv from './inventory'
 import { isItemType, StackCount } from './kernel-vocabulary'
 
 export const FLINT_AND_STEEL_MAX_DURABILITY =
-  Eq.EQUIPMENT_CATALOG.flint_and_steel.maxDurability
+  Eq.ITEM_DURABILITY_CATALOG.flint_and_steel.maxDurability
 
 export type PlayerStorage = {
   readonly inventory: Inv.Inventory
@@ -44,6 +44,39 @@ export type UnequipToInventoryResult =
 export type DamageAtResult =
   | Eq.DamageEquipmentResult
   | { readonly _tag: 'InvalidLocation' }
+
+export type ConsumeAndDamageAtRequest = {
+  readonly consume: {
+    readonly item: Inv.ItemStack['item']
+    readonly count: number
+  }
+  readonly damage: {
+    readonly location: StorageLocation
+    readonly expectedItem: Inv.ItemStack['item']
+    readonly amount: number
+  }
+}
+
+export type AppliedDamageResult = Extract<
+  Eq.DamageEquipmentResult,
+  { readonly _tag: 'Damaged' | 'Broken' }
+>
+
+export type ConsumeAndDamageAtResult =
+  | {
+      readonly _tag: 'Applied'
+      readonly consumed: number
+      readonly damage: AppliedDamageResult
+    }
+  | { readonly _tag: 'InvalidConsumableCount'; readonly count: number }
+  | { readonly _tag: 'InvalidDamageAmount'; readonly amount: number }
+  | { readonly _tag: 'InvalidLocation' }
+  | {
+      readonly _tag: 'DamageTargetMismatch'
+      readonly actualItem: Inv.ItemStack['item'] | null
+    }
+  | { readonly _tag: 'NotDamageable'; readonly item: Inv.ItemStack }
+  | { readonly _tag: 'InsufficientConsumable'; readonly available: number }
 
 export type StorageOutcome<A> = { readonly storage: PlayerStorage; readonly result: A }
 
@@ -197,6 +230,95 @@ export const damageAt = (
   }
 }
 
+const itemAtLocation = (
+  storage: PlayerStorage,
+  location: StorageLocation,
+): Inv.ItemStack | null | undefined => {
+  if (!isRecord(location)) return undefined
+  if (location._tag === 'Equipment') {
+    if (!Eq.isEquipmentSlot(location.slot)) return undefined
+    return storage.equipment.slots[location.slot]
+  }
+  if (location._tag !== 'Inventory' || !Number.isInteger(location.slotIndex) ||
+      location.slotIndex < 0 || location.slotIndex >= Inv.INVENTORY_SLOT_COUNT)
+    return undefined
+  return storage.inventory.slots[location.slotIndex] ?? null
+}
+
+/** Validate, consume, and damage as one all-or-nothing storage transition. */
+export const consumeAndDamageAt = (
+  storage: PlayerStorage,
+  request: ConsumeAndDamageAtRequest,
+): StorageOutcome<ConsumeAndDamageAtResult> => {
+  if (!Number.isSafeInteger(request.consume.count) || request.consume.count <= 0) {
+    return {
+      storage,
+      result: { _tag: 'InvalidConsumableCount', count: request.consume.count },
+    }
+  }
+  if (!Number.isSafeInteger(request.damage.amount) || request.damage.amount <= 0) {
+    return { storage, result: { _tag: 'InvalidDamageAmount', amount: request.damage.amount } }
+  }
+
+  const target = itemAtLocation(storage, request.damage.location)
+  if (target === undefined) return { storage, result: { _tag: 'InvalidLocation' } }
+  if (target?.item !== request.damage.expectedItem) {
+    return {
+      storage,
+      result: { _tag: 'DamageTargetMismatch', actualItem: target?.item ?? null },
+    }
+  }
+
+  const targetDurability = request.damage.location._tag === 'Inventory'
+    ? storage.inventoryDurability[request.damage.location.slotIndex]
+    : storage.equipment.slots[request.damage.location.slot]?.durability
+  if (targetDurability === null || targetDurability === undefined) {
+    return { storage, result: { _tag: 'NotDamageable', item: target } }
+  }
+
+  const excludedSlot = request.damage.location._tag === 'Inventory' &&
+      request.consume.item === request.damage.expectedItem
+    ? request.damage.location.slotIndex
+    : -1
+  const available = storage.inventory.slots.reduce(
+    (total, slot, index) => index !== excludedSlot && slot?.item === request.consume.item
+      ? total + slot.count
+      : total,
+    0,
+  )
+  if (available < request.consume.count) {
+    return { storage, result: { _tag: 'InsufficientConsumable', available } }
+  }
+
+  let inventory = storage.inventory
+  let remaining = request.consume.count
+  for (let index = 0; index < inventory.slots.length && remaining > 0; index += 1) {
+    const slot = inventory.slots[index]
+    if (index === excludedSlot || slot?.item !== request.consume.item) continue
+    const count = Math.min(slot.count, remaining)
+    const outcome = Inv.removeItemAt(inventory, index, request.consume.item, count)
+    inventory = outcome.inventory
+    remaining -= count
+  }
+
+  const damaged = damageAt(
+    withInventory(storage, inventory),
+    request.damage.location,
+    request.damage.amount,
+  )
+  if (damaged.result._tag !== 'Damaged' && damaged.result._tag !== 'Broken') {
+    return { storage, result: { _tag: 'NotDamageable', item: target } }
+  }
+  return {
+    storage: damaged.storage,
+    result: {
+      _tag: 'Applied',
+      consumed: request.consume.count,
+      damage: damaged.result,
+    },
+  }
+}
+
 const invalid = (path: string, reason: string): PlayerStorageValidationResult => ({
   _tag: 'Invalid', error: { _tag: 'PlayerStorageValidationError', path, reason },
 })
@@ -227,7 +349,7 @@ export const validatePlayerStorageSnapshot = (value: unknown): PlayerStorageVali
         !Number.isSafeInteger(slot['count']) || (slot['count'] as number) <= 0 ||
         (slot['count'] as number) > Inv.maxStackCountForItem(slot['item']))
       return invalid(`storage.inventory.slots.${index}`, 'expected a valid item stack')
-    if (Eq.isEquippableItemType(slot['item'])) {
+    if (Eq.isDamageableItemType(slot['item'])) {
       if (!Eq.isValidDurabilityForItem(slot['item'], durability))
         return invalid(
           `storage.inventoryDurability.${index}`,

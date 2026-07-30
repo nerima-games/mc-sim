@@ -9,6 +9,9 @@ import {
   equipmentDefinitionFor,
   equipmentItem,
   equippedAt,
+  isDamageableItemType,
+  isEquippableItemType,
+  itemDurabilityDefinitionFor,
   swapEquipment,
   unequip,
   validateEquipmentSnapshot,
@@ -31,21 +34,22 @@ describe('equipment domain', () => {
     }),
   )
 
-  it.effect('defines slot compatibility and default durability in one catalog', () =>
+  it.effect('defines slot compatibility separately from item durability', () =>
     Effect.sync(() => {
-      expect(equipmentDefinitionFor('iron_helmet')).toStrictEqual({ slot: 'head', maxDurability: 165 })
-      expect(equipmentDefinitionFor('iron_chestplate')).toStrictEqual({ slot: 'chest', maxDurability: 240 })
-      expect(equipmentDefinitionFor('iron_leggings')).toStrictEqual({ slot: 'legs', maxDurability: 225 })
-      expect(equipmentDefinitionFor('iron_boots')).toStrictEqual({ slot: 'feet', maxDurability: 195 })
-      expect(equipmentDefinitionFor('flint_and_steel')).toStrictEqual({ slot: 'offhand', maxDurability: 64 })
-      expect(equipmentDefinitionFor('wooden_pickaxe')).toStrictEqual({ slot: 'offhand', maxDurability: 59 })
-      expect(equipmentDefinitionFor('stone_pickaxe')).toStrictEqual({ slot: 'offhand', maxDurability: 131 })
-      expect(equipmentDefinitionFor('iron_pickaxe')).toStrictEqual({ slot: 'offhand', maxDurability: 250 })
-      expect(equipmentDefinitionFor('diamond_pickaxe')).toStrictEqual({ slot: 'offhand', maxDurability: 1561 })
-      expect(equipmentDefinitionFor('wooden_hoe')).toStrictEqual({ slot: 'offhand', maxDurability: 59 })
-      expect(equipmentDefinitionFor('stone_hoe')).toStrictEqual({ slot: 'offhand', maxDurability: 131 })
-      expect(equipmentDefinitionFor('iron_hoe')).toStrictEqual({ slot: 'offhand', maxDurability: 250 })
-      expect(equipmentDefinitionFor('diamond_hoe')).toStrictEqual({ slot: 'offhand', maxDurability: 1561 })
+      expect(equipmentDefinitionFor('iron_helmet')).toStrictEqual({ slot: 'head' })
+      expect(equipmentDefinitionFor('iron_chestplate')).toStrictEqual({ slot: 'chest' })
+      expect(equipmentDefinitionFor('iron_leggings')).toStrictEqual({ slot: 'legs' })
+      expect(equipmentDefinitionFor('iron_boots')).toStrictEqual({ slot: 'feet' })
+      expect(equipmentDefinitionFor('flint_and_steel')).toStrictEqual({ slot: 'offhand' })
+      expect(equipmentDefinitionFor('wooden_pickaxe')).toStrictEqual({ slot: 'offhand' })
+      expect(equipmentDefinitionFor('stone_pickaxe')).toStrictEqual({ slot: 'offhand' })
+      expect(equipmentDefinitionFor('iron_pickaxe')).toStrictEqual({ slot: 'offhand' })
+      expect(equipmentDefinitionFor('diamond_pickaxe')).toStrictEqual({ slot: 'offhand' })
+      expect(equipmentDefinitionFor('wooden_hoe')).toStrictEqual({ slot: 'offhand' })
+      expect(equipmentDefinitionFor('stone_hoe')).toStrictEqual({ slot: 'offhand' })
+      expect(equipmentDefinitionFor('iron_hoe')).toStrictEqual({ slot: 'offhand' })
+      expect(equipmentDefinitionFor('diamond_hoe')).toStrictEqual({ slot: 'offhand' })
+      expect(itemDurabilityDefinitionFor('iron_helmet')).toStrictEqual({ maxDurability: 165 })
       expect(durabilityForItem('wooden_pickaxe')).toStrictEqual({ current: 59, max: 59 })
       expect(durabilityForItem('stone_pickaxe')).toStrictEqual({ current: 131, max: 131 })
       expect(durabilityForItem('iron_pickaxe')).toStrictEqual({ current: 250, max: 250 })
@@ -55,6 +59,11 @@ describe('equipment domain', () => {
       expect(durabilityForItem('iron_hoe')).toStrictEqual({ current: 250, max: 250 })
       expect(durabilityForItem('diamond_hoe')).toStrictEqual({ current: 1561, max: 1561 })
       expect(durabilityForItem('iron_boots')).toStrictEqual({ current: 195, max: 195 })
+      expect(itemDurabilityDefinitionFor('bow')).toStrictEqual({ maxDurability: 384 })
+      expect(durabilityForItem('bow')).toStrictEqual({ current: 384, max: 384 })
+      expect(isDamageableItemType('bow')).toBe(true)
+      expect(isEquippableItemType('bow')).toBe(false)
+      expect(equipmentDefinitionFor('bow')).toBeUndefined()
       expect(durabilityForItem('stone')).toBeNull()
     }),
   )
@@ -65,6 +74,9 @@ describe('equipment domain', () => {
         item: 'iron_boots', count: 1, durability: { current: 195, max: 195 },
       })
       expect(() => equipmentItem(itemStack('stone', 1))).toThrow(RangeError)
+      expect(equipmentItem(itemStack('bow', 1))).toStrictEqual({
+        item: 'bow', count: 1, durability: { current: 384, max: 384 },
+      })
       expect(() => equipmentItem({ ...itemStack('stone', 2), item: 'iron_helmet' })).toThrow(RangeError)
       expect(() => equipmentItem(itemStack('iron_helmet', 1), null)).toThrow(RangeError)
       expect(() => equipmentItem(itemStack('iron_helmet', 1), durability(64, 64))).toThrow(RangeError)

@@ -51,7 +51,7 @@ const validCarried = (carried: InventoryCarriedSlot): boolean =>
   carried === undefined ||
   (Number.isInteger(carried.count) && carried.count > 0 &&
     carried.count <= Inv.maxStackCountForItem(carried.item) &&
-    (Eq.isEquippableItemType(carried.item)
+    (Eq.isDamageableItemType(carried.item)
       ? carried.durability === undefined ||
         Eq.isValidDurabilityForItem(carried.item, carried.durability)
       : carried.durability === undefined))
@@ -198,6 +198,10 @@ export type InventoryServiceApi = {
     location: Storage.StorageLocation,
     amount: number,
   ) => Effect.Effect<Storage.DamageAtResult>
+  /** Atomically consume inventory items and damage the expected item at a captured location. */
+  readonly consumeAndDamageAt: (
+    request: Storage.ConsumeAndDamageAtRequest,
+  ) => Effect.Effect<Storage.ConsumeAndDamageAtResult>
   /**
    * Install a saved inventory. THE WORLD-LOAD PATH. Resolves to the number of
    * items the repaired inventory had no room for — same currency as `add`.
@@ -315,14 +319,14 @@ export const makeInventoryService = (
         let next = Storage.withInventory(current, outcome.inventory)
         if ((outcome.result._tag === 'Placed' || outcome.result._tag === 'Swapped' ||
              outcome.result._tag === 'Merged') && click.carried !== undefined &&
-            Eq.isEquippableItemType(click.carried.item)) {
+            Eq.isDamageableItemType(click.carried.item)) {
           const durability = click.carried.durability ?? Eq.durabilityForItem(click.carried.item)
           const values = [...next.inventoryDurability]
           values[click.slotIndex] = durability === null ? null : { ...durability }
           next = { ...next, inventoryDurability: values }
         }
         const result = (outcome.result._tag === 'PickedUp' || outcome.result._tag === 'Swapped') &&
-          Eq.isEquippableItemType(outcome.result.carried.item) && beforeDurability !== null &&
+          Eq.isDamageableItemType(outcome.result.carried.item) && beforeDurability !== null &&
           beforeDurability !== undefined
           ? { ...outcome.result, carried: { ...outcome.result.carried, durability: beforeDurability } }
           : outcome.result
@@ -351,6 +355,11 @@ export const makeInventoryService = (
     damageAt: (location, amount) =>
       Ref.modify(state, (current) => {
         const outcome = Storage.damageAt(current, location, amount)
+        return [outcome.result, outcome.storage]
+      }),
+    consumeAndDamageAt: (request) =>
+      Ref.modify(state, (current) => {
+        const outcome = Storage.consumeAndDamageAt(current, request)
         return [outcome.result, outcome.storage]
       }),
     restore: (inventory) =>
