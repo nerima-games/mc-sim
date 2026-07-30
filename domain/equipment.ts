@@ -28,6 +28,10 @@ export const EQUIPMENT_CATALOG = {
   stone_hoe: { slot: 'offhand' },
   iron_hoe: { slot: 'offhand' },
   diamond_hoe: { slot: 'offhand' },
+  wooden_sword: { slot: 'offhand' },
+  stone_sword: { slot: 'offhand' },
+  iron_sword: { slot: 'offhand' },
+  diamond_sword: { slot: 'offhand' },
 } as const satisfies Partial<Record<ItemType, EquipmentDefinition>>
 
 /** The single source of truth for per-item durability, independent of equipment slots. */
@@ -45,6 +49,10 @@ export const ITEM_DURABILITY_CATALOG = {
   stone_hoe: { maxDurability: 131 },
   iron_hoe: { maxDurability: 250 },
   diamond_hoe: { maxDurability: 1561 },
+  wooden_sword: { maxDurability: 59 },
+  stone_sword: { maxDurability: 131 },
+  iron_sword: { maxDurability: 250 },
+  diamond_sword: { maxDurability: 1561 },
   bow: { maxDurability: 384 },
 } as const satisfies Partial<Record<ItemType, ItemDurabilityDefinition>>
 

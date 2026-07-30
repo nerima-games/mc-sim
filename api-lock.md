@@ -601,6 +601,18 @@ const EQUIPMENT_CATALOG: {
     readonly diamond_hoe: {
         readonly slot: "offhand";
     };
+    readonly wooden_sword: {
+        readonly slot: "offhand";
+    };
+    readonly stone_sword: {
+        readonly slot: "offhand";
+    };
+    readonly iron_sword: {
+        readonly slot: "offhand";
+    };
+    readonly diamond_sword: {
+        readonly slot: "offhand";
+    };
 };
 ```
 
@@ -1037,6 +1049,18 @@ const ITEM_DURABILITY_CATALOG: {
         readonly maxDurability: 250;
     };
     readonly diamond_hoe: {
+        readonly maxDurability: 1561;
+    };
+    readonly wooden_sword: {
+        readonly maxDurability: 59;
+    };
+    readonly stone_sword: {
+        readonly maxDurability: 131;
+    };
+    readonly iron_sword: {
+        readonly maxDurability: 250;
+    };
+    readonly diamond_sword: {
         readonly maxDurability: 1561;
     };
     readonly bow: {

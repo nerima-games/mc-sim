@@ -64,6 +64,33 @@ const IRON_ARMOR_CRAFTS = [
   { recipeId: 'mc-sim:iron-boots', output: 'iron_boots', ingots: 4, rows: ['I I', 'I I'] },
 ] as const
 
+const SWORD_CRAFTS = [
+  {
+    recipeId: 'mc-sim:wooden-sword',
+    output: 'wooden_sword',
+    material: 'oak_planks',
+    rows: ['P', 'P', 'S'],
+  },
+  {
+    recipeId: 'mc-sim:stone-sword',
+    output: 'stone_sword',
+    material: 'cobblestone',
+    rows: ['C', 'C', 'S'],
+  },
+  {
+    recipeId: 'mc-sim:iron-sword',
+    output: 'iron_sword',
+    material: 'iron_ingot',
+    rows: ['I', 'I', 'S'],
+  },
+  {
+    recipeId: 'mc-sim:diamond-sword',
+    output: 'diamond_sword',
+    material: 'diamond',
+    rows: ['M', 'M', 'S'],
+  },
+] as const
+
 describe('ingredientCost', () => {
   it.effect('charges one item per occupied cell, whatever the stack in it holds', () =>
     Effect.sync(() => {
@@ -313,6 +340,27 @@ describe('craftFromGrid', () => {
       expect(countOf(after.inventory, 'diamond')).toBe(MAX_STACK_COUNT)
       expect(countOf(after.inventory, 'stick')).toBe(MAX_STACK_COUNT)
       expect(countOf(after.inventory, 'diamond_pickaxe')).toBe(0)
+    }),
+  )
+
+  it.effect('crafts every sword tier from two materials and one stick', () =>
+    Effect.sync(() => {
+      for (const { recipeId, output, material, rows } of SWORD_CRAFTS) {
+        const before = stocked([
+          [material, 2],
+          ['stick', 1],
+        ])
+        const after = craftFromGrid(before, STARTER_RECIPES, gridOf(...rows))
+
+        expect(after.result).toStrictEqual({
+          _tag: 'Crafted',
+          recipeId,
+          output: { item: output, count: 1 },
+        })
+        expect(countOf(after.inventory, material)).toBe(0)
+        expect(countOf(after.inventory, 'stick')).toBe(0)
+        expect(countOf(after.inventory, output)).toBe(1)
+      }
     }),
   )
 
