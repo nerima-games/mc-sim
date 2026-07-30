@@ -205,6 +205,7 @@ export const ITEM_TYPES = [
   'stick',
   'glowstone_dust',
   'wooden_pickaxe',
+  'stone_pickaxe',
 
   // Granted to mc-sim's costed request, each with a kernel-side reason recorded
   // beside it in `mc-kernel/domain/item-type.ts`: `coal` / `iron_ingot` /

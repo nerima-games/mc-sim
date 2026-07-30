@@ -38,6 +38,8 @@ describe('equipment domain', () => {
       expect(equipmentDefinitionFor('iron_leggings')).toStrictEqual({ slot: 'legs', maxDurability: 225 })
       expect(equipmentDefinitionFor('iron_boots')).toStrictEqual({ slot: 'feet', maxDurability: 195 })
       expect(equipmentDefinitionFor('flint_and_steel')).toStrictEqual({ slot: 'offhand', maxDurability: 64 })
+      expect(equipmentDefinitionFor('stone_pickaxe')).toStrictEqual({ slot: 'offhand', maxDurability: 131 })
+      expect(durabilityForItem('stone_pickaxe')).toStrictEqual({ current: 131, max: 131 })
       expect(durabilityForItem('iron_boots')).toStrictEqual({ current: 195, max: 195 })
       expect(durabilityForItem('stone')).toBeNull()
     }),

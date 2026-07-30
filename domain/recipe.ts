@@ -692,4 +692,10 @@ export const STARTER_RECIPES: RecipeTable = [
     { P: 'oak_planks', S: 'stick' },
     itemStack('wooden_pickaxe', 1),
   ),
+  shapedRecipe(
+    'mc-sim:stone-pickaxe',
+    ['CCC', ' S ', ' S '],
+    { C: 'cobblestone', S: 'stick' },
+    itemStack('stone_pickaxe', 1),
+  ),
 ]

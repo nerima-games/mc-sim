@@ -223,6 +223,7 @@ describe('the mirrored item roster is kernel’s item roster', () => {
     'stick',
     'glowstone_dust',
     'wooden_pickaxe',
+    'stone_pickaxe',
     'coal',
     'iron_ingot',
     'flint',

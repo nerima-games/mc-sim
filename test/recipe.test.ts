@@ -52,6 +52,7 @@ const LEGEND: Readonly<Record<string, ItemType>> = {
   N: 'gunpowder',
   Z: 'blaze_powder',
   C: 'coal',
+  B: 'cobblestone',
 }
 
 /** A grid drawn as rows of legend characters; a space is an empty cell. */
@@ -213,6 +214,13 @@ describe('shaped matching translates', () => {
       expect(matchedId(gridOf('PPP', ' S ', ' S '))).toBe('mc-sim:wooden-pickaxe')
       // One plank in a cell the pickaxe requires to be empty.
       expect(matchedId(gridOf('PPP', 'PS ', ' S '))).toBe('NoMatch')
+    }),
+  )
+
+  it.effect('stone pickaxe requires a cobblestone head and centered handle', () =>
+    Effect.sync(() => {
+      expect(matchedId(gridOf('BBB', ' S ', ' S '))).toBe('mc-sim:stone-pickaxe')
+      expect(matchedId(gridOf('BBB', 'S  ', 'S  '))).toBe('NoMatch')
     }),
   )
 
@@ -508,6 +516,7 @@ describe('matching is total', () => {
         ['mc-sim:flint-and-steel', gridOf('I ', ' F')],
         ['mc-sim:fire-charge', gridOf('NZC')],
         ['mc-sim:wooden-pickaxe', gridOf('PPP', ' S ', ' S ')],
+        ['mc-sim:stone-pickaxe', gridOf('BBB', ' S ', ' S ')],
       ]
 
       // Every recipe is covered: a new entry with no canonical grid fails here,
