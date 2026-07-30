@@ -712,4 +712,28 @@ export const STARTER_RECIPES: RecipeTable = [
     { I: 'iron_ingot', S: 'stick' },
     itemStack('iron_pickaxe', 1),
   ),
+  shapedRecipe(
+    'mc-sim:iron-helmet',
+    ['III', 'I I'],
+    { I: 'iron_ingot' },
+    itemStack('iron_helmet', 1),
+  ),
+  shapedRecipe(
+    'mc-sim:iron-chestplate',
+    ['I I', 'III', 'III'],
+    { I: 'iron_ingot' },
+    itemStack('iron_chestplate', 1),
+  ),
+  shapedRecipe(
+    'mc-sim:iron-leggings',
+    ['III', 'I I', 'I I'],
+    { I: 'iron_ingot' },
+    itemStack('iron_leggings', 1),
+  ),
+  shapedRecipe(
+    'mc-sim:iron-boots',
+    ['I I', 'I I'],
+    { I: 'iron_ingot' },
+    itemStack('iron_boots', 1),
+  ),
 ]

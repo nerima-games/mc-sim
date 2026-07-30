@@ -46,6 +46,23 @@ const stocked = (entries: ReadonlyArray<readonly [ItemType, number]>): Inventory
 // The stick grid: two planks in a column. Costs 2 planks, yields 4 sticks.
 const STICK_GRID = gridOf('P', 'P')
 
+const IRON_ARMOR_CRAFTS = [
+  { recipeId: 'mc-sim:iron-helmet', output: 'iron_helmet', ingots: 5, rows: ['III', 'I I'] },
+  {
+    recipeId: 'mc-sim:iron-chestplate',
+    output: 'iron_chestplate',
+    ingots: 8,
+    rows: ['I I', 'III', 'III'],
+  },
+  {
+    recipeId: 'mc-sim:iron-leggings',
+    output: 'iron_leggings',
+    ingots: 7,
+    rows: ['III', 'I I', 'I I'],
+  },
+  { recipeId: 'mc-sim:iron-boots', output: 'iron_boots', ingots: 4, rows: ['I I', 'I I'] },
+] as const
+
 describe('ingredientCost', () => {
   it.effect('charges one item per occupied cell, whatever the stack in it holds', () =>
     Effect.sync(() => {
@@ -193,6 +210,56 @@ describe('craftFromGrid', () => {
       expect(countOf(after.inventory, 'iron_ingot')).toBe(MAX_STACK_COUNT)
       expect(countOf(after.inventory, 'stick')).toBe(MAX_STACK_COUNT)
       expect(countOf(after.inventory, 'iron_pickaxe')).toBe(0)
+    }),
+  )
+
+  it.effect('crafts each iron armor piece atomically', () =>
+    Effect.sync(() => {
+      for (const { recipeId, output, ingots, rows } of IRON_ARMOR_CRAFTS) {
+        const before = stocked([['iron_ingot', ingots]])
+        const after = craftFromGrid(before, STARTER_RECIPES, gridOf(...rows))
+
+        expect(after.result).toStrictEqual({
+          _tag: 'Crafted',
+          recipeId,
+          output: { item: output, count: 1 },
+        })
+        expect(countOf(after.inventory, 'iron_ingot')).toBe(0)
+        expect(countOf(after.inventory, output)).toBe(1)
+      }
+    }),
+  )
+
+  it.effect('iron armor crafts short by one ingot leave the inventory untouched', () =>
+    Effect.sync(() => {
+      for (const { output, ingots, rows } of IRON_ARMOR_CRAFTS) {
+        const before = stocked([['iron_ingot', ingots - 1]])
+        const after = craftFromGrid(before, STARTER_RECIPES, gridOf(...rows))
+
+        expect(after.result).toStrictEqual({
+          _tag: 'MissingIngredients',
+          missing: [{ item: 'iron_ingot', short: 1 }],
+        })
+        expect(after.inventory).toBe(before)
+        expect(countOf(after.inventory, output)).toBe(0)
+      }
+    }),
+  )
+
+  it.effect('iron armor crafts with a full output inventory consume nothing', () =>
+    Effect.sync(() => {
+      for (const { output, rows } of IRON_ARMOR_CRAFTS) {
+        const before = stocked([
+          ['dirt', (INVENTORY_SLOT_COUNT - 1) * MAX_STACK_COUNT],
+          ['iron_ingot', MAX_STACK_COUNT],
+        ])
+        const after = craftFromGrid(before, STARTER_RECIPES, gridOf(...rows))
+
+        expect(after.result).toStrictEqual({ _tag: 'NoRoom' })
+        expect(after.inventory).toBe(before)
+        expect(countOf(after.inventory, 'iron_ingot')).toBe(MAX_STACK_COUNT)
+        expect(countOf(after.inventory, output)).toBe(0)
+      }
     }),
   )
 

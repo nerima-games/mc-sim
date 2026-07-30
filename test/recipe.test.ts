@@ -238,6 +238,36 @@ describe('shaped matching translates', () => {
     }),
   )
 
+  it.effect('iron armor recipes match their canonical layouts', () =>
+    Effect.sync(() => {
+      const cases = [
+        { id: 'mc-sim:iron-helmet', rows: ['III', 'I I'] },
+        { id: 'mc-sim:iron-chestplate', rows: ['I I', 'III', 'III'] },
+        { id: 'mc-sim:iron-leggings', rows: ['III', 'I I', 'I I'] },
+        { id: 'mc-sim:iron-boots', rows: ['I I', 'I I'] },
+      ] as const
+
+      for (const { id, rows } of cases) {
+        expect(matchedId(gridOf(...rows))).toBe(id)
+      }
+    }),
+  )
+
+  it.effect('iron helmet and boots translate vertically in a 3x3 grid', () =>
+    Effect.sync(() => {
+      expect(matchedId(gridOf('   ', 'III', 'I I'))).toBe('mc-sim:iron-helmet')
+      expect(matchedId(gridOf('   ', 'I I', 'I I'))).toBe('mc-sim:iron-boots')
+    }),
+  )
+
+  it.effect('extra iron in an armor pattern empty cell prevents a match', () =>
+    Effect.sync(() => {
+      expect(matchedId(gridOf('III', 'I I', ' I '))).toBe('NoMatch')
+      // Filling the lower middle is invalid; filling the upper middle would be a helmet.
+      expect(matchedId(gridOf('I I', 'III'))).toBe('NoMatch')
+    }),
+  )
+
   it.effect('a 3x3 recipe cannot be reached from the player 2x2 grid', () =>
     Effect.sync(() => {
       // No rule says so: the occupied box of a 2x2 grid can never be 3x3.
@@ -533,6 +563,10 @@ describe('matching is total', () => {
         ['mc-sim:wooden-pickaxe', gridOf('PPP', ' S ', ' S ')],
         ['mc-sim:stone-pickaxe', gridOf('BBB', ' S ', ' S ')],
         ['mc-sim:iron-pickaxe', gridOf('III', ' S ', ' S ')],
+        ['mc-sim:iron-helmet', gridOf('III', 'I I')],
+        ['mc-sim:iron-chestplate', gridOf('I I', 'III', 'III')],
+        ['mc-sim:iron-leggings', gridOf('III', 'I I', 'I I')],
+        ['mc-sim:iron-boots', gridOf('I I', 'I I')],
       ]
 
       // Every recipe is covered: a new entry with no canonical grid fails here,
