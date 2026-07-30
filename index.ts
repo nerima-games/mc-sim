@@ -23,6 +23,7 @@
 // --- Domain: pure values and transitions -----------------------------------
 export * from './domain/camera-pose'
 export * from './domain/block-targeting'
+export * from './domain/container-storage'
 export * from './domain/crafting'
 export * from './domain/crop'
 export * from './domain/entity'

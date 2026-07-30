@@ -13,7 +13,7 @@
 <!-- ------------------------------------------------------------------------- -->
 
 format: 1
-exported declarations: 338
+exported declarations: 363
 supporting declarations: 29
 
 ## Exported
@@ -75,6 +75,18 @@ type BlockTarget = {
 };
 ```
 
+### CHEST_CONTAINER_CAPACITY  `const`
+
+```ts
+const CHEST_CONTAINER_CAPACITY = 27;
+```
+
+### CONTAINER_STORAGE_SNAPSHOT_VERSION  `const`
+
+```ts
+const CONTAINER_STORAGE_SNAPSHOT_VERSION: 1;
+```
+
 ### CROP_TYPES  `const`
 
 ```ts
@@ -85,6 +97,15 @@ const CROP_TYPES: readonly ["potato_crop"];
 
 ```ts
 type CameraOrientation = Pick<CameraPoseSnapshot, 'yawRadians' | 'pitchRadians'>;
+```
+
+### ChestContainer  `type`
+
+```ts
+type ChestContainer = {
+    readonly id: ContainerId;
+    readonly slots: ReadonlyArray<ContainerSlot>;
+};
 ```
 
 ### ConsumeAndDamageAtRequest  `type`
@@ -130,6 +151,123 @@ type ConsumeAndDamageAtResult = {
 };
 ```
 
+### ContainerId  `type`
+
+```ts
+type ContainerId = string;
+```
+
+### ContainerSlot  `type`
+
+```ts
+type ContainerSlot = ContainerStoredStack | null;
+```
+
+### ContainerStorage  `type`
+
+```ts
+type ContainerStorage = {
+    readonly containers: ReadonlyArray<ChestContainer>;
+};
+```
+
+### ContainerStorageSnapshot  `type`
+
+```ts
+type ContainerStorageSnapshot = {
+    readonly version: typeof CONTAINER_STORAGE_SNAPSHOT_VERSION;
+    readonly containers: ReadonlyArray<ChestContainer>;
+};
+```
+
+### ContainerStorageValidationError  `type`
+
+```ts
+type ContainerStorageValidationError = {
+    readonly _tag: 'ContainerStorageValidationError';
+    readonly path: string;
+    readonly reason: string;
+};
+```
+
+### ContainerStorageValidationResult  `type`
+
+```ts
+type ContainerStorageValidationResult = {
+    readonly _tag: 'Valid';
+    readonly storage: ContainerStorage;
+} | {
+    readonly _tag: 'Invalid';
+    readonly error: ContainerStorageValidationError;
+};
+```
+
+### ContainerStoredStack  `type`
+
+```ts
+type ContainerStoredStack = Inv.ItemStack & {
+    readonly durability: Eq.Durability | null;
+};
+```
+
+### ContainerTransferOutcome  `type`
+
+```ts
+type ContainerTransferOutcome = {
+    readonly playerStorage: Player.PlayerStorage;
+    readonly containerStorage: ContainerStorage;
+    readonly result: ContainerTransferResult;
+};
+```
+
+### ContainerTransferRequest  `type`
+
+```ts
+type ContainerTransferRequest = {
+    readonly direction: 'PlayerToContainer' | 'ContainerToPlayer';
+    readonly containerId: ContainerId;
+    readonly playerSlot: number;
+    readonly containerSlot: number;
+    readonly count: number;
+};
+```
+
+### ContainerTransferResult  `type`
+
+```ts
+type ContainerTransferResult = {
+    readonly _tag: 'Transferred';
+    readonly item: Inv.ItemStack['item'];
+    readonly count: number;
+    readonly direction: ContainerTransferRequest['direction'];
+} | {
+    readonly _tag: 'ContainerNotFound';
+} | {
+    readonly _tag: 'InvalidPlayerSlot';
+} | {
+    readonly _tag: 'InvalidContainerSlot';
+} | {
+    readonly _tag: 'InvalidCount';
+} | {
+    readonly _tag: 'EmptySource';
+} | {
+    readonly _tag: 'InsufficientSource';
+    readonly available: number;
+} | {
+    readonly _tag: 'DestinationMismatch';
+} | {
+    readonly _tag: 'DestinationFull';
+} | {
+    readonly _tag: 'InvalidDirection';
+} | {
+    readonly _tag: 'InvalidSourceStack';
+} | {
+    readonly _tag: 'InvalidDestinationStack';
+} | {
+    readonly _tag: 'InvalidSourceDurability';
+};
+```
+
 ### CraftGrid  `type`
 
 ```ts
@@ -163,6 +301,20 @@ type CraftResult = {
     readonly missing: ReadonlyArray<MissingIngredient>;
 } | {
     readonly _tag: 'NoRoom';
+};
+```
+
+### CreateContainerResult  `type`
+
+```ts
+type CreateContainerResult = {
+    readonly _tag: 'Created';
+    readonly container: ChestContainer;
+} | {
+    readonly _tag: 'AlreadyExists';
+    readonly container: ChestContainer;
+} | {
+    readonly _tag: 'InvalidContainerId';
 };
 ```
 
@@ -344,6 +496,26 @@ type DamageableItemType = keyof typeof ITEM_DURABILITY_CATALOG;
 type DespawnOutcome<S> = {
     readonly roster: EntityRoster<S>;
     readonly despawned: boolean;
+};
+```
+
+### DrainContainerOutcome  `type`
+
+```ts
+type DrainContainerOutcome = {
+    readonly storage: ContainerStorage;
+    readonly result: DrainContainerResult;
+};
+```
+
+### DrainContainerResult  `type`
+
+```ts
+type DrainContainerResult = {
+    readonly _tag: 'Drained';
+    readonly items: ReadonlyArray<ContainerStoredStack>;
+} | {
+    readonly _tag: 'ContainerNotFound';
 };
 ```
 
@@ -957,6 +1129,12 @@ type InventoryServiceApi = {
     readonly unequipToInventory: (equipmentSlot: Eq.EquipmentSlot, inventorySlot?: number) => Effect.Effect<Storage.UnequipToInventoryResult>;
     readonly damageAt: (location: Storage.StorageLocation, amount: number) => Effect.Effect<Storage.DamageAtResult>;
     readonly consumeAndDamageAt: (request: Storage.ConsumeAndDamageAtRequest) => Effect.Effect<Storage.ConsumeAndDamageAtResult>;
+    readonly createContainer: (id: Container.ContainerId) => Effect.Effect<Container.CreateContainerResult>;
+    readonly containerSnapshot: (id: Container.ContainerId) => Effect.Effect<Container.ChestContainer | null>;
+    readonly containerStorageSnapshot: Effect.Effect<Container.ContainerStorageSnapshot>;
+    readonly restoreContainerStorage: (snapshot: unknown) => Effect.Effect<void, Container.ContainerStorageValidationError>;
+    readonly transferContainerItem: (request: Container.ContainerTransferRequest) => Effect.Effect<Container.ContainerTransferResult>;
+    readonly drainContainer: (id: Container.ContainerId) => Effect.Effect<Container.DrainContainerResult>;
     readonly restore: (inventory: Inv.Inventory) => Effect.Effect<number>;
     readonly reset: Effect.Effect<void>;
     readonly recipes: Effect.Effect<Recipe.RecipeTable>;
@@ -1864,6 +2042,16 @@ const conflictsIn: (table: RecipeTable) => ReadonlyArray<RecipeConflict>;
 const consumeAndDamageAt: (storage: PlayerStorage, request: ConsumeAndDamageAtRequest) => StorageOutcome<ConsumeAndDamageAtResult>;
 ```
 
+### containerIdAt  `const`
+
+```ts
+const containerIdAt: (dimension: string, position: {
+    readonly x: number;
+    readonly y: number;
+    readonly z: number;
+}) => ContainerId;
+```
+
 ### countOf  `const`
 
 ```ts
@@ -1892,6 +2080,15 @@ const craftFromGrid: (inventory: Inventory, table: RecipeTable, grid: CraftGrid)
 
 ```ts
 const craftGrid: (width: number, height: number, items: ReadonlyArray<ItemType | undefined>) => CraftGrid;
+```
+
+### createContainer  `const`
+
+```ts
+const createContainer: (storage: ContainerStorage, id: ContainerId) => {
+    readonly storage: ContainerStorage;
+    readonly result: CreateContainerResult;
+};
 ```
 
 ### cropLocationKey  `const`
@@ -1924,6 +2121,12 @@ const dayLengthSecs: (state: TimeState) => number;
 const despawnEntity: <S>(roster: EntityRoster<S>, id: EntityId) => DespawnOutcome<S>;
 ```
 
+### drainContainer  `const`
+
+```ts
+const drainContainer: (storage: ContainerStorage, id: ContainerId) => DrainContainerOutcome;
+```
+
 ### durability  `const`
 
 ```ts
@@ -1940,6 +2143,18 @@ const durabilityForItem: (item: ItemType) => Durability | null;
 
 ```ts
 const eat: (vitals: Vitals, foodPoints: number, saturationModifier: number) => Vitals;
+```
+
+### emptyChestContainer  `const`
+
+```ts
+const emptyChestContainer: (id: ContainerId) => ChestContainer;
+```
+
+### emptyContainerStorage  `const`
+
+```ts
+const emptyContainerStorage: () => ContainerStorage;
 ```
 
 ### emptyEquipment  `const`
@@ -2030,6 +2245,12 @@ const experienceLevel: (vitals: Vitals) => number;
 
 ```ts
 const experienceProgress: (vitals: Vitals) => number;
+```
+
+### findContainer  `const`
+
+```ts
+const findContainer: (storage: ContainerStorage, id: ContainerId) => ChestContainer | undefined;
 ```
 
 ### findEntity  `const`
@@ -2527,6 +2748,12 @@ const slotAt: (inventory: Inventory, index: number) => Slot;
 const snapshotAgeSecs: (snapshot: CameraPoseSnapshot, now: MonotonicTimeSecs) => number;
 ```
 
+### snapshotContainerStorage  `const`
+
+```ts
+const snapshotContainerStorage: (storage: ContainerStorage) => ContainerStorageSnapshot;
+```
+
 ### spawnEntity  `const`
 
 ```ts
@@ -2581,6 +2808,12 @@ const timeOfDay: (state: TimeState) => number;
 const totalExperienceAtLevel: (level: number) => number;
 ```
 
+### transferContainerItem  `const`
+
+```ts
+const transferContainerItem: (playerStorage: Player.PlayerStorage, containerStorage: ContainerStorage, request: ContainerTransferRequest) => ContainerTransferOutcome;
+```
+
 ### unbindKey  `const`
 
 ```ts
@@ -2603,6 +2836,12 @@ const unequipToInventory: (storage: PlayerStorage, equipmentSlot: Eq.EquipmentSl
 
 ```ts
 const unlock: (statistics: Statistics, id: AchievementId) => Statistics;
+```
+
+### validateContainerStorageSnapshot  `const`
+
+```ts
+const validateContainerStorageSnapshot: (value: unknown) => ContainerStorageValidationResult;
 ```
 
 ### validateCropSnapshot  `const`

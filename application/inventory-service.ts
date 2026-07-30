@@ -9,6 +9,7 @@
  * exactly what `Ref.modify` wants.
  */
 import { Context, Effect, Layer, Ref } from 'effect'
+import * as Container from '../domain/container-storage'
 import * as Craft from '../domain/crafting'
 import * as Eq from '../domain/equipment'
 import * as Inv from '../domain/inventory'
@@ -202,6 +203,28 @@ export type InventoryServiceApi = {
   readonly consumeAndDamageAt: (
     request: Storage.ConsumeAndDamageAtRequest,
   ) => Effect.Effect<Storage.ConsumeAndDamageAtResult>
+  /** Create one fixed-capacity chest under a stable host-defined id. */
+  readonly createContainer: (
+    id: Container.ContainerId,
+  ) => Effect.Effect<Container.CreateContainerResult>
+  /** Read one chest without exposing the service's mutable state. */
+  readonly containerSnapshot: (
+    id: Container.ContainerId,
+  ) => Effect.Effect<Container.ChestContainer | null>
+  /** JSON-safe, versioned snapshot of all chest containers. */
+  readonly containerStorageSnapshot: Effect.Effect<Container.ContainerStorageSnapshot>
+  /** Strictly restore all chest containers, leaving current state intact on validation failure. */
+  readonly restoreContainerStorage: (
+    snapshot: unknown,
+  ) => Effect.Effect<void, Container.ContainerStorageValidationError>
+  /** Atomically move items between a player slot and a chest slot. */
+  readonly transferContainerItem: (
+    request: Container.ContainerTransferRequest,
+  ) => Effect.Effect<Container.ContainerTransferResult>
+  /** Remove a broken chest and return its contents exactly once. */
+  readonly drainContainer: (
+    id: Container.ContainerId,
+  ) => Effect.Effect<Container.DrainContainerResult>
   /**
    * Install a saved inventory. THE WORLD-LOAD PATH. Resolves to the number of
    * items the repaired inventory had no room for — same currency as `add`.
@@ -279,6 +302,11 @@ export class InventoryService extends Context.Tag('@nerima-games/mc-sim/Inventor
   InventoryServiceApi
 >() {}
 
+type InventoryServiceState = {
+  readonly player: Storage.PlayerStorage
+  readonly containers: Container.ContainerStorage
+}
+
 /**
  * Build an InventoryService over a fresh Ref.
  *
@@ -295,28 +323,40 @@ export const makeInventoryService = (
   recipeTable: Recipe.RecipeTable = Recipe.STARTER_RECIPES,
 ): Effect.Effect<InventoryServiceApi> =>
   Effect.map(
-    Ref.make(Storage.storageFromInventory(Inv.normaliseInventory(initial).inventory)),
+    Ref.make<InventoryServiceState>({
+      player: Storage.storageFromInventory(Inv.normaliseInventory(initial).inventory),
+      containers: Container.emptyContainerStorage(),
+    }),
     (state) => ({
     add: (item, count) =>
       Ref.modify(state, (current) => {
-        const outcome = Inv.addItem(current.inventory, item, count)
-        return [outcome.leftover, Storage.withInventory(current, outcome.inventory)]
+        const outcome = Inv.addItem(current.player.inventory, item, count)
+        return [outcome.leftover, {
+          ...current,
+          player: Storage.withInventory(current.player, outcome.inventory),
+        }]
       }),
     remove: (item, count) =>
       Ref.modify(state, (current) => {
-        const outcome = Inv.removeItem(current.inventory, item, count)
-        return [outcome.removed, Storage.withInventory(current, outcome.inventory)]
+        const outcome = Inv.removeItem(current.player.inventory, item, count)
+        return [outcome.removed, {
+          ...current,
+          player: Storage.withInventory(current.player, outcome.inventory),
+        }]
       }),
     removeAt: (slotIndex, expectedItem, count) =>
       Ref.modify(state, (current) => {
-        const outcome = Inv.removeItemAt(current.inventory, slotIndex, expectedItem, count)
-        return [outcome.result, Storage.withInventory(current, outcome.inventory)]
+        const outcome = Inv.removeItemAt(current.player.inventory, slotIndex, expectedItem, count)
+        return [outcome.result, {
+          ...current,
+          player: Storage.withInventory(current.player, outcome.inventory),
+        }]
       }),
     click: (click) =>
       Ref.modify(state, (current) => {
-        const beforeDurability = current.inventoryDurability[click.slotIndex]
-        const outcome = clickInventory(current.inventory, click)
-        let next = Storage.withInventory(current, outcome.inventory)
+        const beforeDurability = current.player.inventoryDurability[click.slotIndex]
+        const outcome = clickInventory(current.player.inventory, click)
+        let next = Storage.withInventory(current.player, outcome.inventory)
         if ((outcome.result._tag === 'Placed' || outcome.result._tag === 'Swapped' ||
              outcome.result._tag === 'Merged') && click.carried !== undefined &&
             Eq.isDamageableItemType(click.carried.item)) {
@@ -330,50 +370,107 @@ export const makeInventoryService = (
           beforeDurability !== undefined
           ? { ...outcome.result, carried: { ...outcome.result.carried, durability: beforeDurability } }
           : outcome.result
-        return [result, next]
+        return [result, { ...current, player: next }]
       }),
-    countOf: (item) => Ref.get(state).pipe(Effect.map((current) => Inv.countOf(current.inventory, item))),
-    snapshot: Ref.get(state).pipe(Effect.map((current) => current.inventory)),
-    equipmentSnapshot: Ref.get(state).pipe(Effect.map((current) => current.equipment)),
-    storageSnapshot: Ref.get(state),
+    countOf: (item) => Ref.get(state).pipe(
+      Effect.map((current) => Inv.countOf(current.player.inventory, item)),
+    ),
+    snapshot: Ref.get(state).pipe(Effect.map((current) => current.player.inventory)),
+    equipmentSnapshot: Ref.get(state).pipe(Effect.map((current) => current.player.equipment)),
+    storageSnapshot: Ref.get(state).pipe(Effect.map((current) => current.player)),
     restoreStorage: (snapshot) => {
       const validated = Storage.validatePlayerStorageSnapshot(snapshot)
       return validated._tag === 'Invalid'
         ? Effect.fail(validated.error)
-        : Ref.set(state, validated.storage)
+        : Ref.update(state, (current) => ({ ...current, player: validated.storage }))
     },
     equipFromInventory: (inventorySlot, equipmentSlot) =>
       Ref.modify(state, (current) => {
-        const outcome = Storage.equipFromInventory(current, inventorySlot, equipmentSlot)
-        return [outcome.result, outcome.storage]
+        const outcome = Storage.equipFromInventory(current.player, inventorySlot, equipmentSlot)
+        return [outcome.result, { ...current, player: outcome.storage }]
       }),
     unequipToInventory: (equipmentSlot, inventorySlot) =>
       Ref.modify(state, (current) => {
-        const outcome = Storage.unequipToInventory(current, equipmentSlot, inventorySlot)
-        return [outcome.result, outcome.storage]
+        const outcome = Storage.unequipToInventory(current.player, equipmentSlot, inventorySlot)
+        return [outcome.result, { ...current, player: outcome.storage }]
       }),
     damageAt: (location, amount) =>
       Ref.modify(state, (current) => {
-        const outcome = Storage.damageAt(current, location, amount)
-        return [outcome.result, outcome.storage]
+        const outcome = Storage.damageAt(current.player, location, amount)
+        return [outcome.result, { ...current, player: outcome.storage }]
       }),
     consumeAndDamageAt: (request) =>
       Ref.modify(state, (current) => {
-        const outcome = Storage.consumeAndDamageAt(current, request)
-        return [outcome.result, outcome.storage]
+        const outcome = Storage.consumeAndDamageAt(current.player, request)
+        return [outcome.result, { ...current, player: outcome.storage }]
+      }),
+    createContainer: (id) =>
+      Ref.modify(state, (current) => {
+        const outcome = Container.createContainer(current.containers, id)
+        return [outcome.result, { ...current, containers: outcome.storage }]
+      }),
+    containerSnapshot: (id) => Ref.get(state).pipe(
+      Effect.map((current) => {
+        const container = Container.findContainer(current.containers, id)
+        if (container === undefined) return null
+        return {
+          ...container,
+          slots: container.slots.map((slot) => slot === null
+            ? null
+            : {
+                ...slot,
+                durability: slot.durability === null ? null : { ...slot.durability },
+              }),
+        }
+      }),
+    ),
+    containerStorageSnapshot: Ref.get(state).pipe(
+      Effect.map((current) => Container.snapshotContainerStorage(current.containers)),
+    ),
+    restoreContainerStorage: (snapshot) => {
+      const validated = Container.validateContainerStorageSnapshot(snapshot)
+      return validated._tag === 'Invalid'
+        ? Effect.fail(validated.error)
+        : Ref.update(state, (current) => ({ ...current, containers: validated.storage }))
+    },
+    transferContainerItem: (request) =>
+      Ref.modify(state, (current) => {
+        const outcome = Container.transferContainerItem(
+          current.player,
+          current.containers,
+          request,
+        )
+        return [outcome.result, {
+          player: outcome.playerStorage,
+          containers: outcome.containerStorage,
+        }]
+      }),
+    drainContainer: (id) =>
+      Ref.modify(state, (current) => {
+        const outcome = Container.drainContainer(current.containers, id)
+        return [outcome.result, { ...current, containers: outcome.storage }]
       }),
     restore: (inventory) =>
       Ref.modify(state, (current) => {
         const outcome = Inv.normaliseInventory(inventory)
-        return [outcome.leftover, Storage.withInventory(current, outcome.inventory)]
+        return [outcome.leftover, {
+          ...current,
+          player: Storage.withInventory(current.player, outcome.inventory),
+        }]
       }),
-    reset: Ref.set(state, Storage.emptyPlayerStorage()),
+    reset: Ref.set(state, {
+      player: Storage.emptyPlayerStorage(),
+      containers: Container.emptyContainerStorage(),
+    }),
     recipes: Effect.succeed(recipeTable),
     previewCraft: (grid) => Effect.sync(() => Recipe.matchRecipe(recipeTable, grid)),
     craft: (grid) =>
       Ref.modify(state, (current) => {
-        const outcome = Craft.craftFromGrid(current.inventory, recipeTable, grid)
-        return [outcome.result, Storage.withInventory(current, outcome.inventory)]
+        const outcome = Craft.craftFromGrid(current.player.inventory, recipeTable, grid)
+        return [outcome.result, {
+          ...current,
+          player: Storage.withInventory(current.player, outcome.inventory),
+        }]
       }),
     }),
   )
