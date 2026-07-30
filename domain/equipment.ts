@@ -17,6 +17,7 @@ export const EQUIPMENT_CATALOG = {
   iron_leggings: { slot: 'legs', maxDurability: 225 },
   iron_boots: { slot: 'feet', maxDurability: 195 },
   flint_and_steel: { slot: 'offhand', maxDurability: 64 },
+  wooden_pickaxe: { slot: 'offhand', maxDurability: 59 },
   stone_pickaxe: { slot: 'offhand', maxDurability: 131 },
 } as const satisfies Partial<Record<ItemType, EquipmentDefinition>>
 

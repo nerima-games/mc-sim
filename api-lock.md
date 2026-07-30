@@ -253,6 +253,10 @@ const EQUIPMENT_CATALOG: {
         readonly slot: "offhand";
         readonly maxDurability: 64;
     };
+    readonly wooden_pickaxe: {
+        readonly slot: "offhand";
+        readonly maxDurability: 59;
+    };
     readonly stone_pickaxe: {
         readonly slot: "offhand";
         readonly maxDurability: 131;

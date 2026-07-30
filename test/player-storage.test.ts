@@ -110,6 +110,21 @@ describe('player storage', () => {
     }),
   )
 
+  it.effect('initializes and damages wooden and stone pickaxes in inventory', () =>
+    Effect.gen(function* () {
+      const service = yield* makeInventoryService()
+      yield* service.add('wooden_pickaxe', 1)
+      yield* service.add('stone_pickaxe', 1)
+
+      expect(yield* service.damageAt({ _tag: 'Inventory', slotIndex: 0 }, 1)).toMatchObject({
+        _tag: 'Damaged', item: { item: 'wooden_pickaxe', durability: { current: 58, max: 59 } },
+      })
+      expect(yield* service.damageAt({ _tag: 'Inventory', slotIndex: 1 }, 1)).toMatchObject({
+        _tag: 'Damaged', item: { item: 'stone_pickaxe', durability: { current: 130, max: 131 } },
+      })
+    }),
+  )
+
   it.effect('strict restore rejects malformed durability without changing state', () =>
     Effect.gen(function* () {
       const service = yield* makeInventoryService(emptyInventory())
