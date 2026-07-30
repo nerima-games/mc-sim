@@ -40,8 +40,10 @@ describe('equipment domain', () => {
       expect(equipmentDefinitionFor('flint_and_steel')).toStrictEqual({ slot: 'offhand', maxDurability: 64 })
       expect(equipmentDefinitionFor('wooden_pickaxe')).toStrictEqual({ slot: 'offhand', maxDurability: 59 })
       expect(equipmentDefinitionFor('stone_pickaxe')).toStrictEqual({ slot: 'offhand', maxDurability: 131 })
+      expect(equipmentDefinitionFor('iron_pickaxe')).toStrictEqual({ slot: 'offhand', maxDurability: 250 })
       expect(durabilityForItem('wooden_pickaxe')).toStrictEqual({ current: 59, max: 59 })
       expect(durabilityForItem('stone_pickaxe')).toStrictEqual({ current: 131, max: 131 })
+      expect(durabilityForItem('iron_pickaxe')).toStrictEqual({ current: 250, max: 250 })
       expect(durabilityForItem('iron_boots')).toStrictEqual({ current: 195, max: 195 })
       expect(durabilityForItem('stone')).toBeNull()
     }),

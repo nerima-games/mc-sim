@@ -19,6 +19,7 @@ export const EQUIPMENT_CATALOG = {
   flint_and_steel: { slot: 'offhand', maxDurability: 64 },
   wooden_pickaxe: { slot: 'offhand', maxDurability: 59 },
   stone_pickaxe: { slot: 'offhand', maxDurability: 131 },
+  iron_pickaxe: { slot: 'offhand', maxDurability: 250 },
 } as const satisfies Partial<Record<ItemType, EquipmentDefinition>>
 
 export type EquippableItemType = keyof typeof EQUIPMENT_CATALOG

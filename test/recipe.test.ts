@@ -231,6 +231,13 @@ describe('shaped matching translates', () => {
     }),
   )
 
+  it.effect('iron pickaxe requires an iron head and centered handle', () =>
+    Effect.sync(() => {
+      expect(matchedId(gridOf('III', ' S ', ' S '))).toBe('mc-sim:iron-pickaxe')
+      expect(matchedId(gridOf('III', 'S  ', 'S  '))).toBe('NoMatch')
+    }),
+  )
+
   it.effect('a 3x3 recipe cannot be reached from the player 2x2 grid', () =>
     Effect.sync(() => {
       // No rule says so: the occupied box of a 2x2 grid can never be 3x3.
@@ -525,6 +532,7 @@ describe('matching is total', () => {
         ['mc-sim:fire-charge', gridOf('NZC')],
         ['mc-sim:wooden-pickaxe', gridOf('PPP', ' S ', ' S ')],
         ['mc-sim:stone-pickaxe', gridOf('BBB', ' S ', ' S ')],
+        ['mc-sim:iron-pickaxe', gridOf('III', ' S ', ' S ')],
       ]
 
       // Every recipe is covered: a new entry with no canonical grid fails here,
