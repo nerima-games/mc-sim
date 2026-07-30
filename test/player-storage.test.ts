@@ -1,12 +1,110 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect } from 'effect'
 import { makeInventoryService } from '../application/inventory-service'
+import type { ContainerStoredStack } from '../domain/container-storage'
 import { emptyInventory, itemStack } from '../domain/inventory'
-import { FLINT_AND_STEEL_MAX_DURABILITY } from '../domain/player-storage'
+import {
+  addStoredStack,
+  emptyPlayerStorage,
+  FLINT_AND_STEEL_MAX_DURABILITY,
+  storageFromInventory,
+} from '../domain/player-storage'
 
 const bytes = (value: unknown): string => JSON.stringify(value)
 
 describe('player storage', () => {
+  it('adds a damaged tool with its exact durability and copies the input', () => {
+    const durability = { current: 17, max: FLINT_AND_STEEL_MAX_DURABILITY }
+    const outcome = addStoredStack(emptyPlayerStorage(), {
+      ...itemStack('flint_and_steel', 1),
+      durability,
+    })
+
+    expect(outcome.result).toStrictEqual({ _tag: 'Added', added: 1, leftover: null })
+    expect(outcome.storage.inventory.slots[0]).toStrictEqual({ item: 'flint_and_steel', count: 1 })
+    expect(outcome.storage.inventoryDurability[0]).toStrictEqual({
+      current: 17,
+      max: FLINT_AND_STEEL_MAX_DURABILITY,
+    })
+    durability.current = 1
+    expect(outcome.storage.inventoryDurability[0]).toStrictEqual({
+      current: 17,
+      max: FLINT_AND_STEEL_MAX_DURABILITY,
+    })
+  })
+
+  it('reports full, partial, and zero-capacity non-durable additions as Added', () => {
+    const full = addStoredStack(emptyPlayerStorage(), {
+      ...itemStack('stone', 10),
+      durability: null,
+    })
+    expect(full.result).toStrictEqual({ _tag: 'Added', added: 10, leftover: null })
+
+    const nearlyFull = storageFromInventory({
+      slots: [
+        itemStack('stone', 60),
+        ...Array.from({ length: 35 }, () => itemStack('dirt', 64)),
+      ],
+    })
+    const partial = addStoredStack(nearlyFull, { ...itemStack('stone', 10), durability: null })
+    expect(partial.result).toStrictEqual({
+      _tag: 'Added',
+      added: 4,
+      leftover: { item: 'stone', count: 6, durability: null },
+    })
+    expect(partial.storage.inventory.slots[0]).toStrictEqual({ item: 'stone', count: 64 })
+
+    const noCapacity = storageFromInventory({
+      slots: Array.from({ length: 36 }, () => itemStack('dirt', 64)),
+    })
+    const inventoryFull = addStoredStack(noCapacity, {
+      ...itemStack('stone', 10),
+      durability: null,
+    })
+    expect(inventoryFull.result).toStrictEqual({
+      _tag: 'Added',
+      added: 0,
+      leftover: { item: 'stone', count: 10, durability: null },
+    })
+    expect(inventoryFull.storage).toBe(noCapacity)
+  })
+
+  it('rejects malformed stored stacks atomically', () => {
+    const storage = emptyPlayerStorage()
+    const durability = { current: 17, max: FLINT_AND_STEEL_MAX_DURABILITY }
+    const malformed: ReadonlyArray<unknown> = [
+      { item: 'stone', count: 1, durability: null, extra: true },
+      { item: 'not_an_item', count: 1, durability: null },
+      { item: 'stone', count: 0, durability: null },
+      { item: 'stone', count: 65, durability: null },
+      { item: 'flint_and_steel', count: 2, durability },
+      { item: 'stone', count: 1, durability },
+      { item: 'flint_and_steel', count: 1, durability: null },
+      { item: 'flint_and_steel', count: 1, durability: { current: 17, max: 65 } },
+      { item: 'flint_and_steel', count: 1, durability: { ...durability, extra: true } },
+    ]
+
+    for (const stack of malformed) {
+      const outcome = addStoredStack(storage, stack as ContainerStoredStack)
+      expect(outcome.result).toStrictEqual({ _tag: 'InvalidStack' })
+      expect(outcome.storage).toBe(storage)
+    }
+  })
+
+  it.effect('exposes exact stored-stack insertion through InventoryService', () =>
+    Effect.gen(function* () {
+      const service = yield* makeInventoryService()
+      expect(yield* service.addStoredStack({
+        ...itemStack('flint_and_steel', 1),
+        durability: { current: 17, max: FLINT_AND_STEEL_MAX_DURABILITY },
+      })).toStrictEqual({ _tag: 'Added', added: 1, leftover: null })
+      expect((yield* service.storageSnapshot).inventoryDurability[0]).toStrictEqual({
+        current: 17,
+        max: FLINT_AND_STEEL_MAX_DURABILITY,
+      })
+    }),
+  )
+
   it.effect('stores durable tools as individual inventory slots', () =>
     Effect.gen(function* () {
       const service = yield* makeInventoryService()

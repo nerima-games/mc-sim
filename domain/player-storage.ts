@@ -1,6 +1,7 @@
 import * as Eq from './equipment'
 import * as Inv from './inventory'
 import { isItemType, StackCount } from './kernel-vocabulary'
+import type { ContainerStoredStack } from './container-storage'
 
 export const FLINT_AND_STEEL_MAX_DURABILITY =
   Eq.ITEM_DURABILITY_CATALOG.flint_and_steel.maxDurability
@@ -24,6 +25,16 @@ export type PlayerStorageValidationError = {
 export type PlayerStorageValidationResult =
   | { readonly _tag: 'Valid'; readonly storage: PlayerStorage }
   | { readonly _tag: 'Invalid'; readonly error: PlayerStorageValidationError }
+
+export type AddStoredStackResult =
+  | {
+      readonly _tag: 'Added'
+      /** Number inserted; zero means that the inventory had no compatible capacity. */
+      readonly added: number
+      /** Null after a full insert, otherwise the exact stack still available for pickup. */
+      readonly leftover: ContainerStoredStack | null
+    }
+  | { readonly _tag: 'InvalidStack' }
 
 export type EquipFromInventoryResult =
   | { readonly _tag: 'Equipped'; readonly item: Eq.EquipmentItem }
@@ -91,6 +102,23 @@ const hasExactKeys = (value: Record<string, unknown>, expected: ReadonlyArray<st
 const copyDurability = (value: Eq.Durability | null): Eq.Durability | null =>
   value === null ? null : { ...value }
 
+const sameDurability = (
+  left: Eq.Durability | null | undefined,
+  right: Eq.Durability | null,
+): boolean => left === null
+  ? right === null
+  : right !== null && left !== undefined && left.current === right.current && left.max === right.max
+
+const isValidStoredStack = (value: unknown): value is ContainerStoredStack => {
+  if (!isRecord(value) || !hasExactKeys(value, ['item', 'count', 'durability'])) return false
+  if (typeof value['item'] !== 'string' || !isItemType(value['item']) ||
+      !Number.isSafeInteger(value['count']) || (value['count'] as number) <= 0 ||
+      (value['count'] as number) > Inv.maxStackCountForItem(value['item'])) return false
+  return Eq.isDamageableItemType(value['item'])
+    ? (value['count'] as number) === 1 && Eq.isValidDurabilityForItem(value['item'], value['durability'])
+    : value['durability'] === null
+}
+
 export const emptyPlayerStorage = (): PlayerStorage => ({
   inventory: Inv.emptyInventory(),
   equipment: Eq.emptyEquipment(),
@@ -118,6 +146,49 @@ export const withInventory = (storage: PlayerStorage, inventory: Inv.Inventory):
       : Eq.durabilityForItem(slot.item)
   }),
 })
+
+/** Insert one validated stack while preserving its exact durability. */
+export const addStoredStack = (
+  storage: PlayerStorage,
+  stack: ContainerStoredStack,
+): StorageOutcome<AddStoredStackResult> => {
+  if (!isValidStoredStack(stack)) return { storage, result: { _tag: 'InvalidStack' } }
+
+  const slots = [...storage.inventory.slots]
+  const inventoryDurability = [...storage.inventoryDurability]
+  const maxStackCount = Inv.maxStackCountForItem(stack.item)
+  let remaining = stack.count as number
+
+  for (let index = 0; index < slots.length && remaining > 0; index += 1) {
+    const slot = slots[index]
+    if (slot === undefined || slot.item !== stack.item ||
+        !sameDurability(inventoryDurability[index], stack.durability) ||
+        !Number.isSafeInteger(slot.count) || slot.count <= 0 || slot.count >= maxStackCount) continue
+    const accepted = Math.min(maxStackCount - slot.count, remaining)
+    slots[index] = { item: stack.item, count: StackCount(slot.count + accepted) }
+    inventoryDurability[index] = copyDurability(stack.durability)
+    remaining -= accepted
+  }
+
+  for (let index = 0; index < slots.length && remaining > 0; index += 1) {
+    if (slots[index] !== undefined) continue
+    const accepted = Math.min(maxStackCount, remaining)
+    slots[index] = { item: stack.item, count: StackCount(accepted) }
+    inventoryDurability[index] = copyDurability(stack.durability)
+    remaining -= accepted
+  }
+
+  const added = stack.count - remaining
+  const leftover = remaining === 0
+    ? null
+    : { item: stack.item, count: StackCount(remaining), durability: copyDurability(stack.durability) }
+  return {
+    storage: added === 0
+      ? storage
+      : { ...storage, inventory: { slots }, inventoryDurability },
+    result: { _tag: 'Added', added, leftover },
+  }
+}
 
 export const equipFromInventory = (
   storage: PlayerStorage,

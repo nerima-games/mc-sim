@@ -13,7 +13,7 @@
 <!-- ------------------------------------------------------------------------- -->
 
 format: 1
-exported declarations: 363
+exported declarations: 365
 supporting declarations: 29
 
 ## Exported
@@ -36,6 +36,18 @@ type AchievementId = string;
 type AddOutcome = {
     readonly inventory: Inventory;
     readonly leftover: number;
+};
+```
+
+### AddStoredStackResult  `type`
+
+```ts
+type AddStoredStackResult = {
+    readonly _tag: 'Added';
+    readonly added: number;
+    readonly leftover: ContainerStoredStack | null;
+} | {
+    readonly _tag: 'InvalidStack';
 };
 ```
 
@@ -1117,6 +1129,7 @@ class InventoryService extends InventoryService_base {
 ```ts
 type InventoryServiceApi = {
     readonly add: (item: ItemType, count: number) => Effect.Effect<number>;
+    readonly addStoredStack: (stack: Container.ContainerStoredStack) => Effect.Effect<Storage.AddStoredStackResult>;
     readonly remove: (item: ItemType, count: number) => Effect.Effect<number>;
     readonly removeAt: (slotIndex: number, expectedItem: ItemType, count: number) => Effect.Effect<Inv.RemoveAtResult>;
     readonly click: (click: InventoryClick) => Effect.Effect<InventoryClickResult>;
@@ -1944,6 +1957,12 @@ const addExperience: (vitals: Vitals, amount: number) => Vitals;
 
 ```ts
 const addItem: (inventory: Inventory, item: ItemType, count: number) => AddOutcome;
+```
+
+### addStoredStack  `const`
+
+```ts
+const addStoredStack: (storage: PlayerStorage, stack: ContainerStoredStack) => StorageOutcome<AddStoredStackResult>;
 ```
 
 ### advance  `const`

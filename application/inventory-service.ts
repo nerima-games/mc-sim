@@ -170,6 +170,10 @@ export type InventoryServiceApi = {
    * them. mc-sim's part is to be told a number.
    */
   readonly add: (item: ItemType, count: number) => Effect.Effect<number>
+  /** Insert one exact item stack, preserving durability and returning anything that did not fit. */
+  readonly addStoredStack: (
+    stack: Container.ContainerStoredStack,
+  ) => Effect.Effect<Storage.AddStoredStackResult>
   /** Take items. Resolves to the number actually taken. */
   readonly remove: (item: ItemType, count: number) => Effect.Effect<number>
   /** Remove exactly `count` items from the selected slot when its item still matches. */
@@ -335,6 +339,11 @@ export const makeInventoryService = (
           ...current,
           player: Storage.withInventory(current.player, outcome.inventory),
         }]
+      }),
+    addStoredStack: (stack) =>
+      Ref.modify(state, (current) => {
+        const outcome = Storage.addStoredStack(current.player, stack)
+        return [outcome.result, { ...current, player: outcome.storage }]
       }),
     remove: (item, count) =>
       Ref.modify(state, (current) => {
