@@ -102,6 +102,52 @@ describe('craftFromGrid', () => {
     }),
   )
 
+  it.effect('crafts a chest atomically from eight oak planks', () =>
+    Effect.sync(() => {
+      const before = stocked([['oak_planks', 10]])
+      const grid = gridOf('PPP', 'P P', 'PPP')
+      const after = craftFromGrid(before, STARTER_RECIPES, grid)
+
+      expect(after.result).toStrictEqual({
+        _tag: 'Crafted',
+        recipeId: 'mc-sim:chest',
+        output: { item: 'chest', count: 1 },
+      })
+      expect(countOf(after.inventory, 'oak_planks')).toBe(2)
+      expect(countOf(after.inventory, 'chest')).toBe(1)
+    }),
+  )
+
+  it.effect('a chest craft short of planks leaves the inventory untouched', () =>
+    Effect.sync(() => {
+      const before = stocked([['oak_planks', 7]])
+      const after = craftFromGrid(before, STARTER_RECIPES, gridOf('PPP', 'P P', 'PPP'))
+
+      expect(after.result).toStrictEqual({
+        _tag: 'MissingIngredients',
+        missing: [{ item: 'oak_planks', short: 1 }],
+      })
+      expect(after.inventory).toBe(before)
+      expect(countOf(after.inventory, 'oak_planks')).toBe(7)
+      expect(countOf(after.inventory, 'chest')).toBe(0)
+    }),
+  )
+
+  it.effect('a chest craft with a full output inventory consumes nothing', () =>
+    Effect.sync(() => {
+      const before = stocked([
+        ['dirt', (INVENTORY_SLOT_COUNT - 1) * MAX_STACK_COUNT],
+        ['oak_planks', MAX_STACK_COUNT],
+      ])
+      const after = craftFromGrid(before, STARTER_RECIPES, gridOf('PPP', 'P P', 'PPP'))
+
+      expect(after.result).toStrictEqual({ _tag: 'NoRoom' })
+      expect(after.inventory).toBe(before)
+      expect(countOf(after.inventory, 'oak_planks')).toBe(MAX_STACK_COUNT)
+      expect(countOf(after.inventory, 'chest')).toBe(0)
+    }),
+  )
+
   it.effect('crafts a stone pickaxe atomically from cobblestone and sticks', () =>
     Effect.sync(() => {
       const before = stocked([
