@@ -7,22 +7,20 @@
  *
  * plan.md §6 Step 3 publishes the repositories bottom-up: a repository is
  * published to GitHub Packages only once its interface has held still, and only
- * then may its consumers pin it. Nothing is published yet, so mc-sim cannot
- * `import ... from '@nerima-games/mc-kernel'` — there is no package to resolve,
- * and `scripts/check-dependency-whitelist.ts` would in any case reject an
- * import of something absent from `package.json#dependencies`.
+ * then may its consumers pin it. Most declarations remain mirrored until their
+ * consumers are migrated. The item vocabulary is the first exception:
+ * mc-kernel is now a formal dependency, so its closed roster is re-exported
+ * directly instead of copied here.
  *
  * Rather than invent a different vocabulary that would have to be reconciled
  * later, this file mirrors the handful of kernel declarations mc-sim actually
  * uses, verbatim in shape and semantics, from
- * `mc-kernel/domain/{quantities,coordinates,clock,camera,identifiers,frame,item-type}.ts`.
+ * `mc-kernel/domain/{quantities,coordinates,clock,camera,identifiers,frame}.ts`.
  *
- * WHEN mc-kernel IS PUBLISHED:
- *   1. add `@nerima-games/mc-kernel` to `package.json#dependencies`;
- *   2. delete this file;
- *   3. repoint every `from './kernel-vocabulary'` at `'@nerima-games/mc-kernel'`.
- * Nothing else should need to change. If step 3 turns out not to typecheck,
- * this file has drifted and the drift is the bug.
+ * MIGRATION STATUS:
+ *   - Item vocabulary now imports directly from mc-kernel.
+ *   - The remaining declarations stay provisional until their consumers are
+ *     repointed, after which this compatibility module can be deleted.
  *
  * The mirror is deliberately MINIMAL — only what mc-sim uses. A larger mirror
  * would be a larger thing to keep honest.
@@ -45,7 +43,7 @@
  * the next divergence fails CI rather than a frame.
  *
  * ---------------------------------------------------------------------------
- * THE SECOND EXCEPTION: `ITEM_TYPES` is mirrored WHOLE
+ * ITEM VOCABULARY: NOW RE-EXPORTED FROM KERNEL
  * ---------------------------------------------------------------------------
  *
  * For every other declaration here, "minimal" means "the names mc-sim uses".
@@ -62,11 +60,9 @@
  * kernel's `ItemType` rejects, and the failure surfaces on the day the mirror is
  * deleted — which is the one day this file promised would be uneventful.
  *
- * So the roster is transcribed exactly, in kernel's order, and
- * `test/kernel-mirror.test.ts` pins it literally. ADDING AN ITEM HERE IS NOT A
- * DECISION THIS REPOSITORY CAN TAKE: kernel owns the roster (its
- * `docs/versioning.md` §6 classifies growing it MINOR), and mc-sim's part is to
- * ask for what it needs and to live inside the answer meanwhile.
+ * The roster is therefore imported from kernel rather than transcribed. Adding
+ * an item remains a decision for kernel; mc-sim consumes the resulting minor
+ * release without maintaining a second closed union.
  *
  * That is what happened, in both directions. mc-sim asked for eight literals
  * with the cost written down (`domain/recipe.ts`, `docs/public-api.md` §4.1-7),
@@ -161,199 +157,10 @@ export const StackCount = Brand.refined<StackCount>(
 )
 
 // ---------------------------------------------------------------------------
-// Item vocabulary — mirrors mc-kernel/domain/item-type.ts
+// Item vocabulary — re-exported from mc-kernel/domain/item-type.ts
 // ---------------------------------------------------------------------------
 
-/**
- * Every item that exists. Transcribed from `mc-kernel/domain/item-type.ts`,
- * in kernel's order, and NOT extensible from here — see the header.
- *
- * `lower_snake_case`, matching kernel's `BLOCK_TYPES`. mc-sim's provisional
- * strings were `UPPER_SNAKE` (`'OAK_PLANKS'`), so repointing was a re-casing as
- * well as a re-typing.
- *
- * The rosters OVERLAP rather than nest: an item that is also a block is spelled
- * identically to the block (`dirt`), which is what makes kernel's
- * `PlaceableItemType = ItemType & BlockType` a derivation instead of a third
- * hand-written list. `stick`, `glowstone_dust` and `wooden_pickaxe` are among
- * the entries that are not blocks and never will be; the drop-override items
- * further down (`raw_iron`, `diamond`, `string`, `snowball`, …) are the rest.
- *
- * THE LIST BELOW WAS NOT TYPED BY HAND. It was dumped from kernel's module by
- * importing `ITEM_TYPES` and emitting its members in index order, because the
- * failure this file has already had once is a transcription that drifted, and
- * re-transcribing 97 literals by eye is how it would have happened again.
- */
-export const ITEM_TYPES = [
-  // Items that are also blocks. Spelled identically to their `BlockType`.
-  'stone',
-  'cobblestone',
-  'dirt',
-  'grass_block',
-  'sand',
-  'gravel',
-  'oak_log',
-  'oak_planks',
-  'oak_leaves',
-  'glass',
-  'torch',
-  'glowstone',
-  'piston',
-
-  // Items that are not blocks, and never will be. These are the entries that
-  // make `ItemType` un-assignable to `BlockType`.
-  'stick',
-  'glowstone_dust',
-  'wooden_pickaxe',
-  'stone_pickaxe',
-  'iron_pickaxe',
-  'diamond_pickaxe',
-  'wooden_hoe',
-  'stone_hoe',
-  'iron_hoe',
-  'diamond_hoe',
-
-  // Granted to mc-sim's costed request, each with a kernel-side reason recorded
-  // beside it in `mc-kernel/domain/item-type.ts`: `coal` / `iron_ingot` /
-  // `flint` are what ore blocks and gravel drop (`BlockDropRule.item` is
-  // `ItemType | 'self'`), `gunpowder` / `blaze_powder` are mob drops, and
-  // `flint_and_steel` / `fire_charge` are the two ignition items the flammable
-  // capability names.
-  'coal',
-  'iron_ingot',
-  'flint',
-  'gunpowder',
-  'blaze_powder',
-  'flint_and_steel',
-  'fire_charge',
-  'iron_helmet',
-  'iron_chestplate',
-  'iron_leggings',
-  'iron_boots',
-
-  // Items that are also blocks (55), added when kernel's `BLOCK_TYPES` reached
-  // the reference's full roster. Kernel's rule, stated before it was applied: a
-  // block gets an item form if and only if its registry row's `drops` rule
-  // resolves to ITSELF and yields something. Without these the rows would be
-  // lies — a row saying a block drops itself, with no item of that name to drop.
-  //
-  // `crafting_table` is here. It was DECLINED on mc-sim's original request and
-  // this mirror recorded that; kernel later added it on its own block-side
-  // reason, which is the roster moving under the mirror exactly as the header
-  // says it may.
-  'granite',
-  'diorite',
-  'andesite',
-  'deepslate',
-  'obsidian',
-  'smooth_basalt',
-  'calcite',
-  'amethyst_block',
-  'sandstone',
-  'prismarine',
-  'soul_sand',
-  'coal_block',
-  'iron_block',
-  'gold_block',
-  'diamond_block',
-  'redstone_block',
-  'lapis_block',
-  'emerald_block',
-  'redstone_torch',
-  'lever',
-  'stone_button',
-  'repeater',
-  'redstone_lamp',
-  'observer',
-  'comparator',
-  'dispenser',
-  'hopper',
-  'end_stone',
-  'end_portal_frame',
-  'end_portal_frame_filled',
-  'chorus_flower',
-  'chorus_plant',
-  'dragon_egg',
-  'end_crystal',
-  'end_rod',
-  'end_stone_bricks',
-  'ender_chest',
-  'purpur_block',
-  'purpur_pillar',
-  'purpur_slab',
-  'purpur_stairs',
-  'shulker_box',
-  'crafting_table',
-  'furnace',
-  'chest',
-  'door',
-  'oak_stairs',
-  'anvil',
-  'cauldron',
-  'bed',
-  'enchanting_table',
-  'brewing_stand',
-  'tnt',
-  'nether_brick',
-  'netherrack',
-
-  // Items that are NOT blocks (10), each the right-hand side of a row in the
-  // reference's `INVENTORY_DROP_OVERRIDES`. `raw_iron` / `raw_gold` rather than
-  // ingots is the reference's answer and not a slip: the ore yields raw material
-  // and the furnace pays the XP. `iron_ingot` above is a different item.
-  'raw_iron',
-  'raw_gold',
-  'diamond',
-  'emerald',
-  'lapis_lazuli',
-  'redstone_dust',
-  'amethyst_shard',
-  'wheat_seeds',
-  'potato',
-  'nether_wart',
-
-  // Seven older registry rows that carried the default "yields itself" rule and
-  // had no item form, so breaking a ladder gave you nothing. Not guesses: the
-  // item a block drops when NOT overridden is its own name.
-  'ladder',
-  'kelp',
-  'seagrass',
-  'rail',
-  'powered_rail',
-  'pressure_plate',
-  'stone_slab',
-
-  // `cobweb` -> `string` and `snow` -> `snowball` are override rows. NOTE that
-  // `string` is an ITEM NAME — the thread a cobweb drops — and not a stray type
-  // name that wandered in. It is the entry most likely to be "tidied away".
-  'string',
-  'snowball',
-] as const
-
-/**
- * Item identity. A CLOSED literal union, so a misspelled item is a compile
- * error rather than a slot nobody can ever match a recipe against.
- *
- * This replaced `domain/inventory.ts`'s `export type ItemId = string`, which
- * kernel's `item-type.ts` header names as one of the three provisional aliases
- * the published type exists to retire. mc-sim does not re-alias it: there is one
- * name for it now, and it is kernel's.
- */
-export type ItemType = (typeof ITEM_TYPES)[number]
-
-const ITEM_TYPE_LOOKUP: ReadonlySet<string> = new Set<string>(ITEM_TYPES)
-
-/**
- * Narrowing guard for item names arriving from outside the type system.
- *
- * mc-sim has exactly one such boundary and it is the important one: a saved
- * inventory is item names in a file, written by a build whose roster may differ
- * from this one's. `normaliseInventory` (`./inventory`) runs this on the
- * world-load path, because a `Slot` typed `ItemType` holding `'diamond'` is a
- * value that disagrees with its own type and nothing downstream would ever
- * notice.
- */
-export const isItemType = (value: string): value is ItemType => ITEM_TYPE_LOOKUP.has(value)
+export { ITEM_TYPES, isItemType, type ItemType } from '@nerima-games/mc-kernel'
 
 // ---------------------------------------------------------------------------
 // Coordinates — mirrors mc-kernel/domain/coordinates.ts (the continuous part)

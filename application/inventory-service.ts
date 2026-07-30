@@ -12,7 +12,7 @@ import { Context, Effect, Layer, Ref } from 'effect'
 import * as Craft from '../domain/crafting'
 import * as Eq from '../domain/equipment'
 import * as Inv from '../domain/inventory'
-import type { ItemType } from '../domain/kernel-vocabulary'
+import type { ItemType } from '@nerima-games/mc-kernel'
 import * as Storage from '../domain/player-storage'
 import * as Recipe from '../domain/recipe'
 

@@ -26,6 +26,11 @@
  * widening of the mirror fails CI instead of a frame.
  */
 import { describe, expect, it } from '@effect/vitest'
+import {
+  ITEM_TYPES as KERNEL_ITEM_TYPES,
+  isItemType as kernelIsItemType,
+  type ItemType as KernelItemType,
+} from '@nerima-games/mc-kernel'
 import { Effect, Layer } from 'effect'
 import {
   ClockPort,
@@ -154,226 +159,47 @@ describe('the mirrored brands are kernel’s brands', () => {
   )
 })
 
-/**
- * The item roster, pinned literally.
- *
- * ---------------------------------------------------------------------------
- * Why a literal list is the right assertion here, and only here
- * ---------------------------------------------------------------------------
- *
- * docs/testing.md §4.6 refuses tests that read a constant on both sides,
- * because such a test asserts that a value equals itself. This block is the
- * inversion of that rule, not an exception to it: the constant IS the contract.
- * `ITEM_TYPES` is a transcription of another repository's array, and the failure
- * being defended against is a transcription that drifted — an item quietly
- * added because mc-sim found it convenient, or a `lower_snake` spelling
- * mistyped. Reading `ITEM_TYPES` on both sides would pass through every one of
- * those.
- *
- * mc-dev-meta's `pnpm check:mirrors` is the sibling check that can see BOTH
- * repositories, and it compares the mirror against kernel's real module. This
- * one runs where mc-kernel is not installed and cannot, so it pins the
- * transcription: the two together are "the mirror matches the source" and "the
- * mirror is what its author thought it was".
- *
- * WHEN KERNEL GROWS THE ROSTER (additive, MINOR): this list is updated in the
- * SAME commit as `domain/kernel-vocabulary.ts`, from kernel's `ITEM_TYPES`, and
- * never from what mc-sim would like to write a recipe for.
- *
- * That has now happened twice, and the second time is the one to read, because
- * the procedure did NOT work. Sixteen became twenty-three with drop rules and
- * mob drops behind each literal, and this list was re-transcribed in the same
- * commit — that is the procedure working. Then kernel went from twenty-three to
- * ninety-seven and NOTHING HERE MOVED, for as long as it took mc-dev-meta's
- * `pnpm check:repoint` to delete the mirror and typecheck against the real
- * module.
- *
- * Note what this test could and could not do about that. It pins mc-sim's
- * transcription against a SECOND hand-written copy of kernel's roster, so it
- * catches an author editing one and not the other — real drift, worth catching.
- * It cannot catch BOTH being stale together, which is exactly what happened,
- * because neither copy can see kernel. Only the cross-repository check can, and
- * the two are complementary rather than redundant: this one says "the mirror is
- * what its author thought it was", `check:repoint` says "what its author
- * thought was right".
- *
- * BOTH LISTS ARE NOW MACHINE-DUMPED from kernel's module rather than retyped,
- * which removes the transcription slip but not the staleness — the update still
- * has to be triggered by somebody, and `check:repoint` is what triggers it.
- */
-describe('the mirrored item roster is kernel’s item roster', () => {
-  /**
-   * Transcribed from `mc-kernel/domain/item-type.ts`, in kernel's order, which
-   * is also the order kernel's `api-lock.md` records at `### ITEM_TYPES`.
-   */
-  const KERNEL_ITEM_TYPES = [
-    'stone',
-    'cobblestone',
-    'dirt',
-    'grass_block',
-    'sand',
-    'gravel',
-    'oak_log',
-    'oak_planks',
-    'oak_leaves',
-    'glass',
-    'torch',
-    'glowstone',
-    'piston',
-    'stick',
-    'glowstone_dust',
-    'wooden_pickaxe',
-    'stone_pickaxe',
-    'iron_pickaxe',
-    'diamond_pickaxe',
-    'wooden_hoe',
-    'stone_hoe',
-    'iron_hoe',
-    'diamond_hoe',
-    'coal',
-    'iron_ingot',
-    'flint',
-    'gunpowder',
-    'blaze_powder',
-    'flint_and_steel',
-    'fire_charge',
-    'iron_helmet',
-    'iron_chestplate',
-    'iron_leggings',
-    'iron_boots',
-    'granite',
-    'diorite',
-    'andesite',
-    'deepslate',
-    'obsidian',
-    'smooth_basalt',
-    'calcite',
-    'amethyst_block',
-    'sandstone',
-    'prismarine',
-    'soul_sand',
-    'coal_block',
-    'iron_block',
-    'gold_block',
-    'diamond_block',
-    'redstone_block',
-    'lapis_block',
-    'emerald_block',
-    'redstone_torch',
-    'lever',
-    'stone_button',
-    'repeater',
-    'redstone_lamp',
-    'observer',
-    'comparator',
-    'dispenser',
-    'hopper',
-    'end_stone',
-    'end_portal_frame',
-    'end_portal_frame_filled',
-    'chorus_flower',
-    'chorus_plant',
-    'dragon_egg',
-    'end_crystal',
-    'end_rod',
-    'end_stone_bricks',
-    'ender_chest',
-    'purpur_block',
-    'purpur_pillar',
-    'purpur_slab',
-    'purpur_stairs',
-    'shulker_box',
-    'crafting_table',
-    'furnace',
-    'chest',
-    'door',
-    'oak_stairs',
-    'anvil',
-    'cauldron',
-    'bed',
-    'enchanting_table',
-    'brewing_stand',
-    'tnt',
-    'nether_brick',
-    'netherrack',
-    'raw_iron',
-    'raw_gold',
-    'diamond',
-    'emerald',
-    'lapis_lazuli',
-    'redstone_dust',
-    'amethyst_shard',
-    'wheat_seeds',
-    'potato',
-    'nether_wart',
-    'ladder',
-    'kelp',
-    'seagrass',
-    'rail',
-    'powered_rail',
-    'pressure_plate',
-    'stone_slab',
-    'string',
-    'snowball',
-  ] as const
-
-  it.effect('REGRESSION: the roster is kernel’s, member for member and in order', () =>
+describe('the item vocabulary is kernel’s item vocabulary', () => {
+  it.effect('re-exports kernel’s roster and narrowing guard without a local copy', () =>
     Effect.sync(() => {
-      // Order matters as well as membership: `PLACEABLE_ITEM_TYPES` in kernel is
-      // `ITEM_TYPES.filter(...)`, so a reordering here would be a reordering of
-      // a list kernel publishes, and mx-ui's hotbar reads that list.
-      expect(ITEM_TYPES).toHaveLength(108)
-      expect([...ITEM_TYPES]).toStrictEqual([...KERNEL_ITEM_TYPES])
-
-      // Compile-time half, both directions: neither union may be wider than the
-      // other. An item added to the mirror alone fails the first line; an item
-      // dropped from it fails the second.
-      const asKernel: (typeof KERNEL_ITEM_TYPES)[number] = 'stick' as ItemType
-      const asMirror: ItemType = 'stick' as (typeof KERNEL_ITEM_TYPES)[number]
-      expect([asKernel, asMirror]).toStrictEqual(['stick', 'stick'])
+      expect(ITEM_TYPES).toBe(KERNEL_ITEM_TYPES)
+      expect(isItemType).toBe(kernelIsItemType)
     }),
   )
 
-  it.effect('the spelling is lower_snake, which is what made the repoint a re-casing', () =>
+  it.effect('the local and kernel ItemType unions are mutually assignable', () =>
     Effect.sync(() => {
-      // mc-sim's provisional strings were UPPER_SNAKE. A save or a network frame
-      // written by that build says `OAK_PLANKS`, and this is the line that says
-      // the two are not the same name.
-      for (const item of ITEM_TYPES) {
-        expect({ item, ok: /^[a-z][a-z_]*$/u.test(item) }).toStrictEqual({ item, ok: true })
+      const asKernel = (item: ItemType): KernelItemType => item
+      const asLocal = (item: KernelItemType): ItemType => item
+
+      expect(asKernel('stick')).toBe('stick')
+      expect(asLocal('sapling')).toBe('sapling')
+    }),
+  )
+
+  it.effect('accepts kernel 0.2.5 additions and rejects non-items', () =>
+    Effect.sync(() => {
+      for (const item of [
+        'sapling',
+        'dandelion',
+        'poppy',
+        'brown_mushroom',
+        'red_mushroom',
+        'tall_grass',
+        'fern',
+        'sugar_cane',
+        'cactus',
+        'lily_pad',
+      ]) {
+        expect(isItemType(item)).toBe(true)
       }
+      expect(isItemType('air')).toBe(false)
       expect(isItemType('OAK_PLANKS')).toBe(false)
-      expect(isItemType('oak_planks')).toBe(true)
     }),
   )
 
-  it.effect('isItemType accepts exactly the roster and nothing else', () =>
+  it.effect('every item in the shipped recipe table belongs to kernel', () =>
     Effect.sync(() => {
-      for (const item of KERNEL_ITEM_TYPES) {
-        expect({ item, accepted: isItemType(item) }).toStrictEqual({ item, accepted: true })
-      }
-      // `crafting_table` USED TO BE ASSERTED HERE, as the item mc-sim asked for
-      // and kernel declined. Kernel has since added it on a block-side reason of
-      // its own, so this line was asserting a refusal that had expired — the
-      // mirror was 74 literals short and this probe was one of the things
-      // standing guard over the gap. It now lives in the roster above.
-      //
-      // `air`, `water` and `bedrock` are the durable ones: kernel's header calls
-      // `air` a sentinel meaning "no block here" and not a thing, and none of
-      // the three is an item in this build. `snow` is the interesting probe —
-      // `snowball` IS an item (it is what snow drops) and `snow` is not, so a
-      // transcription that reached for the block name would fail here.
-      for (const absent of ['air', 'water', 'bedrock', 'lava', 'snow', '']) {
-        expect({ absent, accepted: isItemType(absent) }).toStrictEqual({ absent, accepted: false })
-      }
-    }),
-  )
-
-  it.effect('REGRESSION: every item the shipped recipe table names is in kernel’s roster', () =>
-    Effect.sync(() => {
-      // `tsc` already proves this, and the proof evaporates the moment anyone
-      // reaches for a cast to get a recipe to compile. The table is small and
-      // this is cheap, so it is asserted rather than assumed.
       const named = STARTER_RECIPES.flatMap((recipe) => [
         recipe.output.item,
         ...(recipe._tag === 'Shaped'
