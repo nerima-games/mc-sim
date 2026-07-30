@@ -13,7 +13,7 @@
 <!-- ------------------------------------------------------------------------- -->
 
 format: 1
-exported declarations: 299
+exported declarations: 308
 supporting declarations: 30
 
 ## Exported
@@ -557,6 +557,37 @@ type FoodTickSignal = 'none' | 'regen' | 'starve';
 type FrameHandler = (dt: DeltaTimeSecs) => Effect.Effect<void>;
 ```
 
+### FuelRule  `type`
+
+```ts
+type FuelRule = {
+    readonly item: ItemType;
+    readonly burnDurationSecs: number;
+};
+```
+
+### FurnaceOutcome  `type`
+
+```ts
+type FurnaceOutcome = {
+    readonly state: FurnaceState;
+    readonly smelted: number;
+    readonly fuelConsumed: number;
+};
+```
+
+### FurnaceState  `type`
+
+```ts
+type FurnaceState = {
+    readonly input: ItemStack | null;
+    readonly fuel: ItemStack | null;
+    readonly output: ItemStack | null;
+    readonly cookElapsedSecs: number;
+    readonly burnRemainingSecs: number;
+};
+```
+
 ### GRAPHICS_QUALITIES  `const`
 
 ```ts
@@ -1093,10 +1124,22 @@ const SPAWN_SATURATION = 5;
 const SPAWN_VITALS: Vitals;
 ```
 
+### STARTER_FUEL_RULES  `const`
+
+```ts
+const STARTER_FUEL_RULES: ReadonlyArray<FuelRule>;
+```
+
 ### STARTER_RECIPES  `const`
 
 ```ts
 const STARTER_RECIPES: RecipeTable;
+```
+
+### STARTER_SMELTING_RECIPES  `const`
+
+```ts
+const STARTER_SMELTING_RECIPES: ReadonlyArray<SmeltingRecipe>;
 ```
 
 ### Settings  `type`
@@ -1190,6 +1233,17 @@ type SimPhysicsConfig = {
 
 ```ts
 type Slot = ItemStack | undefined;
+```
+
+### SmeltingRecipe  `type`
+
+```ts
+type SmeltingRecipe = {
+    readonly id: string;
+    readonly input: ItemType;
+    readonly output: ItemStack;
+    readonly cookDurationSecs: number;
+};
 ```
 
 ### SpawnOutcome  `type`
@@ -1496,6 +1550,12 @@ const advance: (state: TimeState, dt: DeltaTimeSecs) => TimeState;
 const advanceFoodTimer: (vitals: Vitals, dt: DeltaTimeSecs) => readonly [FoodTickSignal, Vitals];
 ```
 
+### advanceFurnace  `const`
+
+```ts
+const advanceFurnace: (state: FurnaceState, deltaTimeSecs: number, recipes?: ReadonlyArray<SmeltingRecipe>, fuelRules?: ReadonlyArray<FuelRule>) => FurnaceOutcome;
+```
+
 ### applyDamage  `const`
 
 ```ts
@@ -1638,6 +1698,12 @@ const eat: (vitals: Vitals, foodPoints: number, saturationModifier: number) => V
 
 ```ts
 const emptyEquipment: () => Equipment;
+```
+
+### emptyFurnaceState  `const`
+
+```ts
+const emptyFurnaceState: () => FurnaceState;
 ```
 
 ### emptyInventory  `const`
@@ -2007,6 +2073,12 @@ const makeWeatherService: (initial?: Weather.WeatherState) => Effect.Effect<Weat
 
 ```ts
 const matchRecipe: (table: RecipeTable, grid: CraftGrid) => RecipeMatch;
+```
+
+### matchSmeltingRecipe  `const`
+
+```ts
+const matchSmeltingRecipe: (recipes: ReadonlyArray<SmeltingRecipe>, input: ItemStack | null) => SmeltingRecipe | null;
 ```
 
 ### maxStackCountForItem  `const`

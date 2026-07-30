@@ -181,6 +181,13 @@ describe('shaped matching translates', () => {
     }),
   )
 
+  it.effect('the furnace requires a cobblestone ring with an empty centre', () =>
+    Effect.sync(() => {
+      expect(matchedId(gridOf('BBB', 'B B', 'BBB'))).toBe('mc-sim:furnace')
+      expect(matchedId(gridOf('BBB', 'BBB', 'BBB'))).toBe('NoMatch')
+    }),
+  )
+
   it.effect('a 1x2 shape is the SAME recipe at all six positions in a 3x3 grid', () =>
     Effect.sync(() => {
       const positions = [0, 1].flatMap((y) => [0, 1, 2].map((x) => [x, y] as const))
@@ -512,6 +519,7 @@ describe('matching is total', () => {
         ['mc-sim:stick', gridOf('P', 'P')],
         ['mc-sim:stick-from-loose-planks', gridOf('PP')],
         ['mc-sim:crafting-table', gridOf('PP', 'PP')],
+        ['mc-sim:furnace', gridOf('BBB', 'B B', 'BBB')],
         ['mc-sim:glowstone', gridOf('GG', 'GG')],
         ['mc-sim:flint-and-steel', gridOf('I ', ' F')],
         ['mc-sim:fire-charge', gridOf('NZC')],

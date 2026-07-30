@@ -656,6 +656,14 @@ export const STARTER_RECIPES: RecipeTable = [
     itemStack('crafting_table', 1),
   ),
 
+  // Vanilla furnace ring: every edge cell is cobblestone, the centre stays empty.
+  shapedRecipe(
+    'mc-sim:furnace',
+    ['CCC', 'C C', 'CCC'],
+    { C: 'cobblestone' },
+    itemStack('furnace', 1),
+  ),
+
   // Shaped 2x2, symmetric: the translation case. Four dust anywhere in a 3x3.
   shapedRecipe('mc-sim:glowstone', ['DD', 'DD'], { D: 'glowstone_dust' }, itemStack('glowstone', 1)),
 
