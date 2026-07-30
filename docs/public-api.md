@@ -217,6 +217,38 @@ setDayLength(Number(''))   // 設定欄を空にした
 `TICKS_PER_SECOND = 60`、`[MIN, MAX]_DAY_LENGTH_SECS = [120, 1200]`、
 `MAX_TIME_FRACTION = 0.9999`、`INITIAL_TIME_STATE = { ticks: 7200, dayLengthTicks: 24000 }`。
 
+## 2.4 CropService
+
+作物はセーブを跨ぐ可変なワールド状態なので mc-sim が唯一の正を持つ。位置キーは
+`dimension + BlockPosition` であり、同じ座標でも次元が違えば別の作物である。
+
+```typescript
+type CropLocation = { readonly dimension: Dimension; readonly position: BlockPosition }
+type CropState = CropLocation & {
+  readonly crop: 'potato_crop'
+  readonly growthSecs: number
+}
+type CropSnapshot = { readonly crops: ReadonlyArray<CropState> }
+
+type CropServiceApi = {
+  readonly plant: (location: CropLocation, crop?: CropType) => Effect.Effect<boolean>
+  readonly cropAt: (location: CropLocation) => Effect.Effect<CropState | null>
+  readonly matureYieldAt: (location: CropLocation) => Effect.Effect<ItemStack | null>
+  readonly remove: (location: CropLocation) => Effect.Effect<CropState | null>
+  readonly advance: (delta: DeltaTimeSecs) => Effect.Effect<void>
+  readonly snapshot: Effect.Effect<CropSnapshot>
+  readonly restore: (snapshot: unknown) => Effect.Effect<void, CropValidationError>
+  readonly reset: Effect.Effect<void>
+}
+```
+
+通常の `sim:physics` tick が `advance` をちょうど一度呼び、ジャガイモは 480 秒で成熟する。
+成熟時の保証収穫量はジャガイモ 2 個で、未成熟なら `null`。`plant` は占有済み位置を
+上書きせず `false` を返し、`remove` は破壊前の状態を返す。
+
+snapshot は位置キー順で決定論的に並び、JSON で往復できる。`restore` は未知キー、未知の次元・
+作物、非整数座標、非有限または範囲外の成長値、重複位置を拒否し、失敗時は既存状態を変更しない。
+
 ## 3. GameLoop
 
 ```typescript
@@ -402,7 +434,7 @@ const craftGrid:        (width, height, items: ReadonlyArray<ItemType | undefine
 const cellAt:           (grid: CraftGrid, x: number, y: number) => Slot
 const matchRecipe:      (table: RecipeTable, grid: CraftGrid) => RecipeMatch   // 全域・表順非依存
 const conflictsIn:      (table: RecipeTable) => ReadonlyArray<RecipeConflict>
-const STARTER_RECIPES:  RecipeTable                                            // 16 件（§4.1-7）
+const STARTER_RECIPES:  RecipeTable                                            // 20 件（§4.1-7）
 
 // domain/crafting.ts
 type CraftResult =
@@ -541,7 +573,7 @@ kernel は要求した 8 個のうち **7 個**を `ITEM_TYPES` に入れた（�
 
 #### 表がいま示すもの
 
-現在の `STARTER_RECIPES` は 16 件である。ダイヤモンドのツルハシと、鉄のヘルメット /
+現在の `STARTER_RECIPES` は 20 件である。4 素材のクワ、ダイヤモンドのツルハシと、鉄のヘルメット /
 チェストプレート / レギンス / ブーツの 4 種は、いずれも本家と同じ shaped の配置で加わった。
 
 shapeless（材料 1 個 / 同一材料 2 個 / **相異なる 3 材料**）、shaped の平行移動（1x2 が 6 通り、

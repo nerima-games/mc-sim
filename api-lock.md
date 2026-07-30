@@ -13,8 +13,8 @@
 <!-- ------------------------------------------------------------------------- -->
 
 format: 1
-exported declarations: 308
-supporting declarations: 30
+exported declarations: 327
+supporting declarations: 31
 
 ## Exported
 
@@ -67,6 +67,12 @@ type BlockTarget = {
 };
 ```
 
+### CROP_TYPES  `const`
+
+```ts
+const CROP_TYPES: readonly ["potato_crop"];
+```
+
 ### CameraOrientation  `type`
 
 ```ts
@@ -106,6 +112,88 @@ type CraftResult = {
     readonly missing: ReadonlyArray<MissingIngredient>;
 } | {
     readonly _tag: 'NoRoom';
+};
+```
+
+### CropLocation  `type`
+
+```ts
+type CropLocation = {
+    readonly dimension: Dimension;
+    readonly position: BlockPosition;
+};
+```
+
+### CropService  `class`
+
+```ts
+class CropService extends CropService_base {
+}
+```
+
+### CropServiceApi  `type`
+
+```ts
+type CropServiceApi = {
+    readonly plant: (location: Crop.CropLocation, crop?: Crop.CropType) => Effect.Effect<boolean>;
+    readonly cropAt: (location: Crop.CropLocation) => Effect.Effect<Crop.CropState | null>;
+    readonly matureYieldAt: (location: Crop.CropLocation) => Effect.Effect<ItemStack | null>;
+    readonly remove: (location: Crop.CropLocation) => Effect.Effect<Crop.CropState | null>;
+    readonly advance: (delta: DeltaTimeSecs) => Effect.Effect<void>;
+    readonly snapshot: Effect.Effect<Crop.CropSnapshot>;
+    readonly restore: (snapshot: unknown) => Effect.Effect<void, Crop.CropValidationError>;
+    readonly reset: Effect.Effect<void>;
+};
+```
+
+### CropServiceLayer  `const`
+
+```ts
+const CropServiceLayer: Layer.Layer<CropService>;
+```
+
+### CropSnapshot  `type`
+
+```ts
+type CropSnapshot = {
+    readonly crops: ReadonlyArray<CropState>;
+};
+```
+
+### CropState  `type`
+
+```ts
+type CropState = CropLocation & {
+    readonly crop: CropType;
+    readonly growthSecs: number;
+};
+```
+
+### CropType  `type`
+
+```ts
+type CropType = (typeof CROP_TYPES)[number];
+```
+
+### CropValidationError  `type`
+
+```ts
+type CropValidationError = {
+    readonly _tag: 'CropValidationError';
+    readonly path: string;
+    readonly reason: string;
+};
+```
+
+### CropValidationResult  `type`
+
+```ts
+type CropValidationResult = {
+    readonly _tag: 'Valid';
+    readonly snapshot: CropSnapshot;
+} | {
+    readonly _tag: 'Invalid';
+    readonly error: CropValidationError;
 };
 ```
 
@@ -266,6 +354,22 @@ const EQUIPMENT_CATALOG: {
         readonly maxDurability: 250;
     };
     readonly diamond_pickaxe: {
+        readonly slot: "offhand";
+        readonly maxDurability: 1561;
+    };
+    readonly wooden_hoe: {
+        readonly slot: "offhand";
+        readonly maxDurability: 59;
+    };
+    readonly stone_hoe: {
+        readonly slot: "offhand";
+        readonly maxDurability: 131;
+    };
+    readonly iron_hoe: {
+        readonly slot: "offhand";
+        readonly maxDurability: 250;
+    };
+    readonly diamond_hoe: {
         readonly slot: "offhand";
         readonly maxDurability: 1561;
     };
@@ -933,6 +1037,12 @@ const PITCH_MAX_RADIANS: number;
 const PITCH_MIN_RADIANS: number;
 ```
 
+### POTATO_MATURITY_SECS  `const`
+
+```ts
+const POTATO_MATURITY_SECS = 480;
+```
+
 ### PatternCell  `type`
 
 ```ts
@@ -1552,6 +1662,12 @@ const addItem: (inventory: Inventory, item: ItemType, count: number) => AddOutco
 const advance: (state: TimeState, dt: DeltaTimeSecs) => TimeState;
 ```
 
+### advanceCrop  `const`
+
+```ts
+const advanceCrop: (crop: CropState, deltaSecs: number) => CropState;
+```
+
 ### advanceFoodTimer  `const`
 
 ```ts
@@ -1658,6 +1774,12 @@ const craftFromGrid: (inventory: Inventory, table: RecipeTable, grid: CraftGrid)
 
 ```ts
 const craftGrid: (width: number, height: number, items: ReadonlyArray<ItemType | undefined>) => CraftGrid;
+```
+
+### cropLocationKey  `const`
+
+```ts
+const cropLocationKey: ({ dimension, position }: CropLocation) => string;
 ```
 
 ### damageAt  `const`
@@ -1840,6 +1962,12 @@ const ingredientCost: (grid: CraftGrid) => ReadonlyMap<ItemType, number>;
 const ingredientMatches: (ingredient: Ingredient, item: ItemType) => boolean;
 ```
 
+### isCropType  `const`
+
+```ts
+const isCropType: (value: unknown) => value is CropType;
+```
+
 ### isDead  `const`
 
 ```ts
@@ -1898,6 +2026,12 @@ const isEquippableItemType: (item: ItemType) => item is EquippableItemType;
 
 ```ts
 const isGraphicsQuality: (value: unknown) => value is GraphicsQuality;
+```
+
+### isMatureCrop  `const`
+
+```ts
+const isMatureCrop: (crop: CropState) => boolean;
 ```
 
 ### isNight  `const`
@@ -1978,7 +2112,13 @@ const levelForTotalExperience: (totalExperience: number) => number;
 const makeControllableSimStagesWithPhysics: (config: SimPhysicsConfig) => Effect.Effect<{
     readonly state: SimFrameState;
     readonly stages: ReadonlyArray<StageRegistration>;
-}, never, TimeService | PlayerService>;
+}, never, TimeService | PlayerService | CropService>;
+```
+
+### makeCropService  `const`
+
+```ts
+const makeCropService: () => Effect.Effect<CropServiceApi>;
 ```
 
 ### makeEntityManager  `const`
@@ -2026,7 +2166,7 @@ const makeSimFrameState: Effect.Effect<SimFrameState>;
 ### makeSimStages  `const`
 
 ```ts
-const makeSimStages: Effect.Effect<ReadonlyArray<StageRegistration>, never, TimeService | PlayerService>;
+const makeSimStages: Effect.Effect<ReadonlyArray<StageRegistration>, never, TimeService | PlayerService | CropService>;
 ```
 
 ### makeSimStagesForPreview  `const`
@@ -2035,7 +2175,7 @@ const makeSimStages: Effect.Effect<ReadonlyArray<StageRegistration>, never, Time
 const makeSimStagesForPreview: Effect.Effect<{
     readonly state: SimFrameState;
     readonly stages: ReadonlyArray<StageRegistration>;
-}, never, TimeService | PlayerService>;
+}, never, TimeService | PlayerService | CropService>;
 ```
 
 ### makeSimStagesForPreviewWithPhysics  `const`
@@ -2044,13 +2184,13 @@ const makeSimStagesForPreview: Effect.Effect<{
 const makeSimStagesForPreviewWithPhysics: (config: SimPhysicsConfig) => Effect.Effect<{
     readonly state: SimFrameState;
     readonly stages: ReadonlyArray<StageRegistration>;
-}, never, TimeService | PlayerService>;
+}, never, TimeService | PlayerService | CropService>;
 ```
 
 ### makeSimStagesWithPhysics  `const`
 
 ```ts
-const makeSimStagesWithPhysics: (config: SimPhysicsConfig) => Effect.Effect<ReadonlyArray<StageRegistration>, never, TimeService | PlayerService>;
+const makeSimStagesWithPhysics: (config: SimPhysicsConfig) => Effect.Effect<ReadonlyArray<StageRegistration>, never, TimeService | PlayerService | CropService>;
 ```
 
 ### makeStatisticsService  `const`
@@ -2087,6 +2227,18 @@ const matchRecipe: (table: RecipeTable, grid: CraftGrid) => RecipeMatch;
 
 ```ts
 const matchSmeltingRecipe: (recipes: ReadonlyArray<SmeltingRecipe>, input: ItemStack | null) => SmeltingRecipe | null;
+```
+
+### matureYieldFor  `const`
+
+```ts
+const matureYieldFor: (crop: CropState) => ItemStack | null;
+```
+
+### maturitySecsFor  `const`
+
+```ts
+const maturitySecsFor: (_crop: CropType) => number;
 ```
 
 ### maxStackCountForItem  `const`
@@ -2218,13 +2370,13 @@ const shapelessRecipe: (id: RecipeId, items: ReadonlyArray<ItemType>, output: It
 ### simModule  `const`
 
 ```ts
-const simModule: GameModule<InventoryService | PlayerService | TimeService, never, never, PlayerService | TimeService>;
+const simModule: GameModule<InventoryService | PlayerService | TimeService | CropService, never, never, PlayerService | TimeService | CropService>;
 ```
 
 ### simStages  `const`
 
 ```ts
-const simStages: (state: SimFrameState, time: TimeServiceApi, player: PlayerServiceApi) => ReadonlyArray<StageRegistration>;
+const simStages: (state: SimFrameState, time: TimeServiceApi, player: PlayerServiceApi, crops: CropServiceApi) => ReadonlyArray<StageRegistration>;
 ```
 
 ### slotAt  `const`
@@ -2317,6 +2469,12 @@ const unequipToInventory: (storage: PlayerStorage, equipmentSlot: Eq.EquipmentSl
 const unlock: (statistics: Statistics, id: AchievementId) => Statistics;
 ```
 
+### validateCropSnapshot  `const`
+
+```ts
+const validateCropSnapshot: (value: unknown) => CropValidationResult;
+```
+
 ### validateEquipmentSnapshot  `const`
 
 ```ts
@@ -2386,6 +2544,12 @@ type ClockService = {
 };
 ```
 
+### CropService_base  `const`
+
+```ts
+const CropService_base: Context.TagClass<CropService, "@nerima-games/mc-sim/CropService", CropServiceApi>;
+```
+
 ### DeltaTimeSecs  `const`
 
 ```ts
@@ -2446,7 +2610,7 @@ interface GameModule<ROut, E, RIn, RRegister = never> {
 ### ITEM_TYPES  `const`
 
 ```ts
-const ITEM_TYPES: readonly ["stone", "cobblestone", "dirt", "grass_block", "sand", "gravel", "oak_log", "oak_planks", "oak_leaves", "glass", "torch", "glowstone", "piston", "stick", "glowstone_dust", "wooden_pickaxe", "stone_pickaxe", "iron_pickaxe", "diamond_pickaxe", "coal", "iron_ingot", "flint", "gunpowder", "blaze_powder", "flint_and_steel", "fire_charge", "iron_helmet", "iron_chestplate", "iron_leggings", "iron_boots", "granite", "diorite", "andesite", "deepslate", "obsidian", "smooth_basalt", "calcite", "amethyst_block", "sandstone", "prismarine", "soul_sand", "coal_block", "iron_block", "gold_block", "diamond_block", "redstone_block", "lapis_block", "emerald_block", "redstone_torch", "lever", "stone_button", "repeater", "redstone_lamp", "observer", "comparator", "dispenser", "hopper", "end_stone", "end_portal_frame", "end_portal_frame_filled", "chorus_flower", "chorus_plant", "dragon_egg", "end_crystal", "end_rod", "end_stone_bricks", "ender_chest", "purpur_block", "purpur_pillar", "purpur_slab", "purpur_stairs", "shulker_box", "crafting_table", "furnace", "chest", "door", "oak_stairs", "anvil", "cauldron", "bed", "enchanting_table", "brewing_stand", "tnt", "nether_brick", "netherrack", "raw_iron", "raw_gold", "diamond", "emerald", "lapis_lazuli", "redstone_dust", "amethyst_shard", "wheat_seeds", "potato", "nether_wart", "ladder", "kelp", "seagrass", "rail", "powered_rail", "pressure_plate", "stone_slab", "string", "snowball"];
+const ITEM_TYPES: readonly ["stone", "cobblestone", "dirt", "grass_block", "sand", "gravel", "oak_log", "oak_planks", "oak_leaves", "glass", "torch", "glowstone", "piston", "stick", "glowstone_dust", "wooden_pickaxe", "stone_pickaxe", "iron_pickaxe", "diamond_pickaxe", "wooden_hoe", "stone_hoe", "iron_hoe", "diamond_hoe", "coal", "iron_ingot", "flint", "gunpowder", "blaze_powder", "flint_and_steel", "fire_charge", "iron_helmet", "iron_chestplate", "iron_leggings", "iron_boots", "granite", "diorite", "andesite", "deepslate", "obsidian", "smooth_basalt", "calcite", "amethyst_block", "sandstone", "prismarine", "soul_sand", "coal_block", "iron_block", "gold_block", "diamond_block", "redstone_block", "lapis_block", "emerald_block", "redstone_torch", "lever", "stone_button", "repeater", "redstone_lamp", "observer", "comparator", "dispenser", "hopper", "end_stone", "end_portal_frame", "end_portal_frame_filled", "chorus_flower", "chorus_plant", "dragon_egg", "end_crystal", "end_rod", "end_stone_bricks", "ender_chest", "purpur_block", "purpur_pillar", "purpur_slab", "purpur_stairs", "shulker_box", "crafting_table", "furnace", "chest", "door", "oak_stairs", "anvil", "cauldron", "bed", "enchanting_table", "brewing_stand", "tnt", "nether_brick", "netherrack", "raw_iron", "raw_gold", "diamond", "emerald", "lapis_lazuli", "redstone_dust", "amethyst_shard", "wheat_seeds", "potato", "nether_wart", "ladder", "kelp", "seagrass", "rail", "powered_rail", "pressure_plate", "stone_slab", "string", "snowball"];
 ```
 
 ### InventoryService_base  `const`

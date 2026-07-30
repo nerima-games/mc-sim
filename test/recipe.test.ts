@@ -232,6 +232,16 @@ describe('shaped matching translates', () => {
     }),
   )
 
+  it.effect('each hoe tier uses two materials and a two-stick handle', () =>
+    Effect.sync(() => {
+      expect(matchedId(gridOf('PP', ' S', ' S'))).toBe('mc-sim:wooden-hoe')
+      expect(matchedId(gridOf('BB', ' S', ' S'))).toBe('mc-sim:stone-hoe')
+      expect(matchedId(gridOf('II', ' S', ' S'))).toBe('mc-sim:iron-hoe')
+      expect(matchedId(gridOf('DD', ' S', ' S'))).toBe('mc-sim:diamond-hoe')
+      expect(matchedId(gridOf('PP', 'S ', 'S '))).toBe('mc-sim:wooden-hoe')
+    }),
+  )
+
   it.effect('iron pickaxe requires an iron head and centered handle', () =>
     Effect.sync(() => {
       expect(matchedId(gridOf('III', ' S ', ' S '))).toBe('mc-sim:iron-pickaxe')
@@ -373,7 +383,13 @@ describe('shaped matching mirrors horizontally, and only horizontally', () => {
       expect(shaped.length).toBeGreaterThan(0)
 
       const asymmetric = shaped.filter((recipe) => !isOwnMirror(recipe.pattern))
-      expect(asymmetric.map((recipe) => recipe.id)).toStrictEqual(['mc-sim:flint-and-steel'])
+      expect(asymmetric.map((recipe) => recipe.id)).toStrictEqual([
+        'mc-sim:flint-and-steel',
+        'mc-sim:wooden-hoe',
+        'mc-sim:stone-hoe',
+        'mc-sim:iron-hoe',
+        'mc-sim:diamond-hoe',
+      ])
 
       for (const recipe of asymmetric) {
         // Laid out as written, and laid out flipped. Both are the same recipe.
@@ -572,6 +588,10 @@ describe('matching is total', () => {
         ['mc-sim:stone-pickaxe', gridOf('BBB', ' S ', ' S ')],
         ['mc-sim:iron-pickaxe', gridOf('III', ' S ', ' S ')],
         ['mc-sim:diamond-pickaxe', gridOf('DDD', ' S ', ' S ')],
+        ['mc-sim:wooden-hoe', gridOf('PP', ' S', ' S')],
+        ['mc-sim:stone-hoe', gridOf('BB', ' S', ' S')],
+        ['mc-sim:iron-hoe', gridOf('II', ' S', ' S')],
+        ['mc-sim:diamond-hoe', gridOf('DD', ' S', ' S')],
         ['mc-sim:iron-helmet', gridOf('III', 'I I')],
         ['mc-sim:iron-chestplate', gridOf('I I', 'III', 'III')],
         ['mc-sim:iron-leggings', gridOf('III', 'I I', 'I I')],

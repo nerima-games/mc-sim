@@ -21,6 +21,7 @@ import {
   vec3,
 } from '@nerima-games/mc-physics'
 import { Effect, Layer, Option, Ref } from 'effect'
+import { CropService, CropServiceLayer } from '../application/crop-service'
 import {
   InventoryService,
   InventoryServiceLayer,
@@ -66,6 +67,7 @@ const SimulationLayer = Layer.mergeAll(
   InventoryServiceLayer(),
   PlayerServiceLayer(),
   TimeServiceLayer(),
+  CropServiceLayer,
 )
 
 /**
@@ -483,7 +485,7 @@ describe('mc-sim is a real GameModule', () => {
     }).pipe(Effect.provide(SimulationLayer)),
   )
 
-  it.effect('its layers build the three services mc-sim provides, in one place', () =>
+  it.effect('its layers build the four services mc-sim provides, in one place', () =>
     Effect.gen(function* () {
       // The point of a `GameModule` is that a host provides `layers` ONCE and
       // takes `frameStages` from inside that same provide. `InventoryService` is
@@ -491,22 +493,24 @@ describe('mc-sim is a real GameModule', () => {
       // docs/e2e-triage.md §4.3 measured what goes wrong when the writer
       // (mx-gameplay) and the reader (mx-ui) end up with two instances.
       const module: GameModule<
-        InventoryService | PlayerService | TimeService,
+        InventoryService | PlayerService | TimeService | CropService,
         never,
         never,
-        PlayerService | TimeService
+        PlayerService | TimeService | CropService
       > = simModule
 
       const seen = yield* Effect.all({
         inventory: InventoryService,
         player: PlayerService,
         time: TimeService,
+        crops: CropService,
         stages: module.frameStages,
       }).pipe(Effect.provide(module.layers))
 
       expect(seen.inventory).toBeDefined()
       expect(seen.player).toBeDefined()
       expect(seen.time).toBeDefined()
+      expect(seen.crops).toBeDefined()
       expect(seen.stages.map((stage) => stage.id)).toStrictEqual([SIM_STAGE_IDS.physics])
     }),
   )
@@ -519,17 +523,17 @@ describe('mc-sim is a real GameModule', () => {
       const needsBoth: Effect.Effect<
         ReadonlyArray<StageRegistration>,
         never,
-        PlayerService | TimeService
+        PlayerService | TimeService | CropService
       > = simModule.frameStages
       const physicsNeedsBoth: Effect.Effect<
         ReadonlyArray<StageRegistration>,
         never,
-        PlayerService | TimeService
+        PlayerService | TimeService | CropService
       > = makeSimStagesWithPhysics(AirPhysicsConfig)
       const controllableNeedsBoth: Effect.Effect<
         { readonly state: unknown; readonly stages: ReadonlyArray<StageRegistration> },
         never,
-        PlayerService | TimeService
+        PlayerService | TimeService | CropService
       > = makeSimStagesForPreviewWithPhysics(AirPhysicsConfig)
 
       const stages = yield* needsBoth.pipe(Effect.provide(SimulationLayer))
@@ -559,9 +563,10 @@ describe('mc-sim is a real GameModule', () => {
     Effect.gen(function* () {
       const time = yield* TimeService
       const player = yield* PlayerService
+      const crops = yield* CropService
       const state = yield* makeSimFrameState
 
-      expect(simStages(state, time, player).map((stage) => stage.id)).toStrictEqual([
+      expect(simStages(state, time, player, crops).map((stage) => stage.id)).toStrictEqual([
         SIM_STAGE_IDS.physics,
       ])
     }).pipe(Effect.provide(SimulationLayer)),

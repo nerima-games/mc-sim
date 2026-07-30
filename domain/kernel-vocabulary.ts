@@ -45,7 +45,7 @@
  * the next divergence fails CI rather than a frame.
  *
  * ---------------------------------------------------------------------------
- * THE SECOND EXCEPTION: `ITEM_TYPES` is mirrored WHOLE, all one hundred one literals
+ * THE SECOND EXCEPTION: `ITEM_TYPES` is mirrored WHOLE
  * ---------------------------------------------------------------------------
  *
  * For every other declaration here, "minimal" means "the names mc-sim uses".
@@ -208,6 +208,10 @@ export const ITEM_TYPES = [
   'stone_pickaxe',
   'iron_pickaxe',
   'diamond_pickaxe',
+  'wooden_hoe',
+  'stone_hoe',
+  'iron_hoe',
+  'diamond_hoe',
 
   // Granted to mc-sim's costed request, each with a kernel-side reason recorded
   // beside it in `mc-kernel/domain/item-type.ts`: `coal` / `iron_ingot` /

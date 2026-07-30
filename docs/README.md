@@ -56,7 +56,7 @@ mc-render / mc-playground-kit / mx-gameplay / mx-redstone / mx-ui / mx-multiplay
 まだ無いもの: EntityManager、体力/空腹/XP、実績/統計、設定状態、内蔵障害物コースプレビュー、
 かまど/醸造/金床/エンチャント、リポジトリ内 workspace 分割（entity / inventory / game）。
 APIロックファイルは**ある** —— `api-lock.md` と `pnpm api:check`（[public-api.md](./public-api.md) §6）。
-`domain/kernel-vocabulary.ts` は mc-kernel 公開までの暫定ミラーであり、公開後に削除する。
+`domain/kernel-vocabulary.ts` は公開済みの mc-kernel 0.2.4 へ段階移行するための互換ミラーであり、移行完了後に削除する。
 ミラーは最小だが Clock Port とアイテム語彙（`ITEM_TYPES` / `ItemType` / `isItemType`）だけは丸ごと写してある
 （前者は文字列キーで解決される `Context.Tag` なので狭いミラーが実行時ハザードになり、
 後者は閉じたリテラル union なのでメンバの集合そのものが型である）。

@@ -103,6 +103,7 @@ import {
   type Vec3,
 } from '@nerima-games/mc-physics'
 import { InventoryService, InventoryServiceLayer } from '../application/inventory-service'
+import { CropService, CropServiceLayer, type CropServiceApi } from '../application/crop-service'
 import { PlayerService, PlayerServiceLayer, type PlayerServiceApi } from '../application/player-service'
 import { TimeService, TimeServiceLayer, type TimeServiceApi } from '../application/time-service'
 import { position, type GameModule, type Position, type StageRegistration } from '../domain/kernel-vocabulary'
@@ -179,6 +180,7 @@ export const simStages = (
   state: SimFrameState,
   time: TimeServiceApi,
   player: PlayerServiceApi,
+  crops: CropServiceApi,
 ): ReadonlyArray<StageRegistration> => [
   {
     id: SIM_STAGE_IDS.physics,
@@ -200,6 +202,7 @@ export const simStages = (
         // scheduled twice inside one clock tick), and `Time.advance` handles it
         // by advancing nothing. Nothing here divides by `dt`.
         yield* time.advance(dt)
+        yield* crops.advance(dt)
 
         // Compatibility overrides win for exactly one frame and skip physics.
         // Draining the mailbox prevents a stale position from being re-applied.
@@ -286,23 +289,25 @@ export const simStages = (
 export const makeSimStages: Effect.Effect<
   ReadonlyArray<StageRegistration>,
   never,
-  TimeService | PlayerService
+  TimeService | PlayerService | CropService
 > = Effect.gen(function* () {
   const time = yield* TimeService
   const player = yield* PlayerService
+  const crops = yield* CropService
   const state = yield* makeSimFrameState
-  return simStages(state, time, player)
+  return simStages(state, time, player, crops)
 })
 
 export const makeSimStagesWithPhysics = (
   config: SimPhysicsConfig,
-): Effect.Effect<ReadonlyArray<StageRegistration>, never, TimeService | PlayerService> =>
+): Effect.Effect<ReadonlyArray<StageRegistration>, never, TimeService | PlayerService | CropService> =>
   Effect.gen(function* () {
     const time = yield* TimeService
     const player = yield* PlayerService
+    const crops = yield* CropService
     const state = yield* makeSimFrameState
     yield* Ref.set(state.physicsConfig, Option.some(config))
-    return simStages(state, time, player)
+    return simStages(state, time, player, crops)
   })
 
 /**
@@ -311,9 +316,9 @@ export const makeSimStagesWithPhysics = (
  * Read the type parameters as the argument for `RRegister` being separate from
  * `RIn`:
  *
- *   ROut      = InventoryService | PlayerService | TimeService — mc-sim provides them
+ *   ROut      = InventoryService | PlayerService | TimeService | CropService — mc-sim provides them
  *   RIn       = never  — nothing has to be given for those Layers to build
- *   RRegister = PlayerService | TimeService — but registering `sim:physics` needs two
+ *   RRegister = PlayerService | TimeService | CropService — registering `sim:physics` needs three
  *
  * Both registration services are in `ROut` and neither is in `RIn`. Collapsing
  * `RRegister` into `RIn` would demand that a host supply the very services this
@@ -343,12 +348,17 @@ export const makeSimStagesWithPhysics = (
  * contains.
  */
 export const simModule: GameModule<
-  InventoryService | PlayerService | TimeService,
+  InventoryService | PlayerService | TimeService | CropService,
   never,
   never,
-  PlayerService | TimeService
+  PlayerService | TimeService | CropService
 > = {
-  layers: Layer.mergeAll(InventoryServiceLayer(), PlayerServiceLayer(), TimeServiceLayer()),
+  layers: Layer.mergeAll(
+    InventoryServiceLayer(),
+    PlayerServiceLayer(),
+    TimeServiceLayer(),
+    CropServiceLayer,
+  ),
   frameStages: makeSimStages,
 }
 
@@ -363,19 +373,20 @@ export const simModule: GameModule<
  *
  * Like `makeSimStages` it runs IN a context and cannot bring its own — see
  * mc-render's note on why a standalone Layer constant is a trap, which applies
- * verbatim: `PlayerServiceLayer` and `TimeServiceLayer` are `Layer.effect`, so
+ * verbatim: the stateful service layers are `Layer.effect`, so
  * providing one twice is two services, and a stage closes over the instance it
  * was handed.
  */
 export const makeSimStagesForPreview: Effect.Effect<
   { readonly state: SimFrameState; readonly stages: ReadonlyArray<StageRegistration> },
   never,
-  TimeService | PlayerService
+  TimeService | PlayerService | CropService
 > = Effect.gen(function* () {
   const time = yield* TimeService
   const player = yield* PlayerService
+  const crops = yield* CropService
   const state = yield* makeSimFrameState
-  return { state, stages: simStages(state, time, player) }
+  return { state, stages: simStages(state, time, player, crops) }
 })
 
 /**
@@ -388,14 +399,15 @@ export const makeControllableSimStagesWithPhysics = (
 ): Effect.Effect<
   { readonly state: SimFrameState; readonly stages: ReadonlyArray<StageRegistration> },
   never,
-  TimeService | PlayerService
+  TimeService | PlayerService | CropService
 > =>
   Effect.gen(function* () {
     const time = yield* TimeService
     const player = yield* PlayerService
+    const crops = yield* CropService
     const state = yield* makeSimFrameState
     yield* Ref.set(state.physicsConfig, Option.some(config))
-    return { state, stages: simStages(state, time, player) }
+    return { state, stages: simStages(state, time, player, crops) }
   })
 
 /** Preview-compatible name retained alongside the production host API. */

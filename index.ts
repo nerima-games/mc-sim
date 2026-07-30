@@ -24,6 +24,7 @@
 export * from './domain/camera-pose'
 export * from './domain/block-targeting'
 export * from './domain/crafting'
+export * from './domain/crop'
 export * from './domain/entity'
 export * from './domain/equipment'
 export * from './domain/player-storage'
@@ -39,6 +40,7 @@ export * from './domain/weather'
 
 // --- Application: Effect services -------------------------------------------
 export * from './application/autosave'
+export * from './application/crop-service'
 export * from './application/entity-manager'
 export * from './application/equipment-service'
 export * from './application/game-loop'

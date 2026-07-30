@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@nerima-games/mc-kernel':
+        specifier: 0.2.4
+        version: 0.2.4
       '@nerima-games/mc-physics':
         specifier: 0.1.0
         version: 0.1.0
@@ -249,6 +252,10 @@ packages:
 
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
+
+  '@nerima-games/mc-kernel@0.2.4':
+    resolution: {integrity: sha512-xdesGaeQEGRBM0h4ECaxA/NNkLkRQAWc56KfV1VVyMyECCnOkLxYtmEzmy07hF9Cd1ErPnf27cDB3SPEWS40PQ==, tarball: https://npm.pkg.github.com/download/@nerima-games/mc-kernel/0.2.4/50824b1c9ff8715b72b4812cc31cf8b968f8e7db}
+    engines: {node: '>=24.0.0', pnpm: '>=11.0.0'}
 
   '@nerima-games/mc-physics@0.1.0':
     resolution: {integrity: sha512-5RFYGtej8TvBFGetTbitEicGyohv2ZQrstL3R151Do1bVheqjIBJUH7R2SbtjDgOKVcTMSZgT8HogfZJ8Na7Kw==, tarball: https://npm.pkg.github.com/download/@nerima-games/mc-physics/0.1.0/83c9b8fbef29cda6f5aa9db047cfa8b3b7708fd7}
@@ -1264,6 +1271,10 @@ snapshots:
     dependencies:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
+
+  '@nerima-games/mc-kernel@0.2.4':
+    dependencies:
+      effect: 3.22.0
 
   '@nerima-games/mc-physics@0.1.0':
     dependencies:

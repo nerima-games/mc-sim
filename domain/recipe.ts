@@ -719,6 +719,30 @@ export const STARTER_RECIPES: RecipeTable = [
     itemStack('diamond_pickaxe', 1),
   ),
   shapedRecipe(
+    'mc-sim:wooden-hoe',
+    ['PP', ' S', ' S'],
+    { P: 'oak_planks', S: 'stick' },
+    itemStack('wooden_hoe', 1),
+  ),
+  shapedRecipe(
+    'mc-sim:stone-hoe',
+    ['CC', ' S', ' S'],
+    { C: 'cobblestone', S: 'stick' },
+    itemStack('stone_hoe', 1),
+  ),
+  shapedRecipe(
+    'mc-sim:iron-hoe',
+    ['II', ' S', ' S'],
+    { I: 'iron_ingot', S: 'stick' },
+    itemStack('iron_hoe', 1),
+  ),
+  shapedRecipe(
+    'mc-sim:diamond-hoe',
+    ['DD', ' S', ' S'],
+    { D: 'diamond', S: 'stick' },
+    itemStack('diamond_hoe', 1),
+  ),
+  shapedRecipe(
     'mc-sim:iron-helmet',
     ['III', 'I I'],
     { I: 'iron_ingot' },
