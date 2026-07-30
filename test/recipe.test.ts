@@ -33,7 +33,7 @@ import {
  * to say `'FLINT'`, then was not allowed to say `'flint'` either, and now is —
  * because kernel granted the literal on a drop rule of its own.
  *
- * Every letter but `D` is an item some row of `STARTER_RECIPES` names. `D` is
+ * Every letter but `X` is an item some row of `STARTER_RECIPES` names. `X` is
  * deliberately an item NO recipe names — it is the intruder in "an extra item
  * defeats the match" and the filler in the ambiguity fixtures — and it is the
  * only entry here that is not part of a shipped recipe. There is no longer a
@@ -46,7 +46,8 @@ const LEGEND: Readonly<Record<string, ItemType>> = {
   S: 'stick',
   L: 'oak_log',
   G: 'glowstone_dust',
-  D: 'dirt',
+  D: 'diamond',
+  X: 'dirt',
   I: 'iron_ingot',
   F: 'flint',
   N: 'gunpowder',
@@ -238,6 +239,13 @@ describe('shaped matching translates', () => {
     }),
   )
 
+  it.effect('diamond pickaxe requires a diamond head and centered handle', () =>
+    Effect.sync(() => {
+      expect(matchedId(gridOf('DDD', ' S ', ' S '))).toBe('mc-sim:diamond-pickaxe')
+      expect(matchedId(gridOf('DDD', 'S  ', 'S  '))).toBe('NoMatch')
+    }),
+  )
+
   it.effect('iron armor recipes match their canonical layouts', () =>
     Effect.sync(() => {
       const cases = [
@@ -406,8 +414,8 @@ describe('shapeless matching permutes', () => {
   it.effect('an extra item defeats the match instead of being ignored', () =>
     Effect.sync(() => {
       expect(matchedId(gridOf('NZC'))).toBe('mc-sim:fire-charge')
-      // `D` is dirt, which no shipped recipe names at all.
-      expect(matchedId(gridOf('NZC', 'D  '))).toBe('NoMatch')
+      // `X` is dirt, which no shipped recipe names at all.
+      expect(matchedId(gridOf('NZC', 'X  '))).toBe('NoMatch')
       // A duplicate of a required item is an extra item too.
       expect(matchedId(gridOf('NZC', 'C  '))).toBe('NoMatch')
     }),
@@ -479,7 +487,7 @@ describe('the ambiguity rule', () => {
     Effect.sync(() => {
       const alpha = shapelessRecipe('test:alpha', ['dirt', 'dirt'], itemStack('gravel', 1))
       const beta = shapelessRecipe('test:beta', ['dirt', 'dirt'], itemStack('sand', 1))
-      const grid = gridOf('DD')
+      const grid = gridOf('XX')
 
       expect(matchedId(grid, [alpha, beta])).toBe('test:alpha')
       expect(matchedId(grid, [beta, alpha])).toBe('test:alpha')
@@ -563,6 +571,7 @@ describe('matching is total', () => {
         ['mc-sim:wooden-pickaxe', gridOf('PPP', ' S ', ' S ')],
         ['mc-sim:stone-pickaxe', gridOf('BBB', ' S ', ' S ')],
         ['mc-sim:iron-pickaxe', gridOf('III', ' S ', ' S ')],
+        ['mc-sim:diamond-pickaxe', gridOf('DDD', ' S ', ' S ')],
         ['mc-sim:iron-helmet', gridOf('III', 'I I')],
         ['mc-sim:iron-chestplate', gridOf('I I', 'III', 'III')],
         ['mc-sim:iron-leggings', gridOf('III', 'I I', 'I I')],

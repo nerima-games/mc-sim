@@ -402,7 +402,7 @@ const craftGrid:        (width, height, items: ReadonlyArray<ItemType | undefine
 const cellAt:           (grid: CraftGrid, x: number, y: number) => Slot
 const matchRecipe:      (table: RecipeTable, grid: CraftGrid) => RecipeMatch   // 全域・表順非依存
 const conflictsIn:      (table: RecipeTable) => ReadonlyArray<RecipeConflict>
-const STARTER_RECIPES:  RecipeTable                                            // 15 件（§4.1-7）
+const STARTER_RECIPES:  RecipeTable                                            // 16 件（§4.1-7）
 
 // domain/crafting.ts
 type CraftResult =
@@ -541,8 +541,8 @@ kernel は要求した 8 個のうち **7 個**を `ITEM_TYPES` に入れた（�
 
 #### 表がいま示すもの
 
-現在の `STARTER_RECIPES` は 15 件である。鉄のヘルメット / チェストプレート / レギンス /
-ブーツの 4 種は、いずれも本家と同じ shaped の配置で加わった。
+現在の `STARTER_RECIPES` は 16 件である。ダイヤモンドのツルハシと、鉄のヘルメット /
+チェストプレート / レギンス / ブーツの 4 種は、いずれも本家と同じ shaped の配置で加わった。
 
 shapeless（材料 1 個 / 同一材料 2 個 / **相異なる 3 材料**）、shaped の平行移動（1x2 が 6 通り、
 2x2 が 4 通り）、**shaped の左右鏡像**（非対称な対角）、穴のあるパターン

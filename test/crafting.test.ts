@@ -29,6 +29,7 @@ const LEGEND: Readonly<Record<string, ItemType>> = {
   D: 'dirt',
   C: 'cobblestone',
   I: 'iron_ingot',
+  M: 'diamond',
 }
 
 const gridOf = (...rows: ReadonlyArray<string>): CraftGrid => {
@@ -210,6 +211,62 @@ describe('craftFromGrid', () => {
       expect(countOf(after.inventory, 'iron_ingot')).toBe(MAX_STACK_COUNT)
       expect(countOf(after.inventory, 'stick')).toBe(MAX_STACK_COUNT)
       expect(countOf(after.inventory, 'iron_pickaxe')).toBe(0)
+    }),
+  )
+
+  it.effect('crafts a diamond pickaxe atomically from diamonds and sticks', () =>
+    Effect.sync(() => {
+      const before = stocked([
+        ['diamond', 3],
+        ['stick', 2],
+      ])
+      const after = craftFromGrid(before, STARTER_RECIPES, gridOf('MMM', ' S ', ' S '))
+
+      expect(after.result).toStrictEqual({
+        _tag: 'Crafted',
+        recipeId: 'mc-sim:diamond-pickaxe',
+        output: { item: 'diamond_pickaxe', count: 1 },
+      })
+      expect(countOf(after.inventory, 'diamond')).toBe(0)
+      expect(countOf(after.inventory, 'stick')).toBe(0)
+      expect(countOf(after.inventory, 'diamond_pickaxe')).toBe(1)
+    }),
+  )
+
+  it.effect('a diamond pickaxe craft short of materials leaves the inventory untouched', () =>
+    Effect.sync(() => {
+      const before = stocked([
+        ['diamond', 2],
+        ['stick', 1],
+      ])
+      const after = craftFromGrid(before, STARTER_RECIPES, gridOf('MMM', ' S ', ' S '))
+
+      expect(after.result).toStrictEqual({
+        _tag: 'MissingIngredients',
+        missing: [
+          { item: 'diamond', short: 1 },
+          { item: 'stick', short: 1 },
+        ],
+      })
+      expect(after.inventory).toBe(before)
+      expect(countOf(after.inventory, 'diamond_pickaxe')).toBe(0)
+    }),
+  )
+
+  it.effect('a diamond pickaxe craft with a full output inventory consumes nothing', () =>
+    Effect.sync(() => {
+      const before = stocked([
+        ['dirt', (INVENTORY_SLOT_COUNT - 2) * MAX_STACK_COUNT],
+        ['diamond', MAX_STACK_COUNT],
+        ['stick', MAX_STACK_COUNT],
+      ])
+      const after = craftFromGrid(before, STARTER_RECIPES, gridOf('MMM', ' S ', ' S '))
+
+      expect(after.result).toStrictEqual({ _tag: 'NoRoom' })
+      expect(after.inventory).toBe(before)
+      expect(countOf(after.inventory, 'diamond')).toBe(MAX_STACK_COUNT)
+      expect(countOf(after.inventory, 'stick')).toBe(MAX_STACK_COUNT)
+      expect(countOf(after.inventory, 'diamond_pickaxe')).toBe(0)
     }),
   )
 

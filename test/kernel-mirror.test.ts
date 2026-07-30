@@ -225,6 +225,7 @@ describe('the mirrored item roster is kernel’s item roster', () => {
     'wooden_pickaxe',
     'stone_pickaxe',
     'iron_pickaxe',
+    'diamond_pickaxe',
     'coal',
     'iron_ingot',
     'flint',
@@ -317,6 +318,7 @@ describe('the mirrored item roster is kernel’s item roster', () => {
       // Order matters as well as membership: `PLACEABLE_ITEM_TYPES` in kernel is
       // `ITEM_TYPES.filter(...)`, so a reordering here would be a reordering of
       // a list kernel publishes, and mx-ui's hotbar reads that list.
+      expect(ITEM_TYPES).toHaveLength(104)
       expect([...ITEM_TYPES]).toStrictEqual([...KERNEL_ITEM_TYPES])
 
       // Compile-time half, both directions: neither union may be wider than the

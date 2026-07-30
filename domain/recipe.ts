@@ -713,6 +713,12 @@ export const STARTER_RECIPES: RecipeTable = [
     itemStack('iron_pickaxe', 1),
   ),
   shapedRecipe(
+    'mc-sim:diamond-pickaxe',
+    ['DDD', ' S ', ' S '],
+    { D: 'diamond', S: 'stick' },
+    itemStack('diamond_pickaxe', 1),
+  ),
+  shapedRecipe(
     'mc-sim:iron-helmet',
     ['III', 'I I'],
     { I: 'iron_ingot' },
