@@ -1022,3 +1022,13 @@ declare const applyExplosionPlan: <E, R>(
 `commit` に **1 回だけ**渡し、`ChunkStore` や entity roster を個別には変更しない。
 したがって原子性とロールバックは具体的な保存先を所有するホスト transaction の責務であり、
 失敗と依存は `Effect` の `E` / `R` に型付きで残る。
+
+### 8.1 Primed TNT
+
+`domain/primed-tnt.ts` は host 所有の fuse snapshot を 1 要求あたり最大 10 秒だけ進める。
+`planPrimedTnt` は fuse が尽きた呼び出しでだけ既存の `planExplosion` を呼び、終端状態への
+再入力から二度目の爆発を生成しない。上限を超えた時間は `deferredSecs` として返す。
+
+`applyPrimedTntPlan` は `expected` snapshot、次の fuse 状態、任意の爆発 mutation を一つに束ね、
+host transaction を 1 回だけ呼ぶ。host は同じ transaction 内で `expected` を比較してから、
+TNT entity の更新または除去と block/entity effects を一括適用する。
