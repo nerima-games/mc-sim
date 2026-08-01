@@ -12,10 +12,10 @@ import {
   removeItemAt,
   slotAt,
   type Inventory,
-} from '../domain/inventory'
-import { MAX_STACK_COUNT, type ItemType, type StackCount } from '../domain/kernel-vocabulary'
-import { makeInventoryService } from '../application/inventory-service'
-import type { InventoryClick } from '../index'
+} from '../src/domain/inventory'
+import { MAX_STACK_COUNT, type ItemType, type StackCount } from '../src/domain/kernel-vocabulary'
+import { makeInventoryService } from '../src/application/inventory-service'
+import type { InventoryClick } from '../src/index'
 
 /**
  * A slot holding a count `StackCount` would reject, or an item `ItemType` does

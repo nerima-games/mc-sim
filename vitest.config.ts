@@ -28,28 +28,25 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       enabled: false,
-      include: ['index.ts', 'domain/**/*.ts', 'application/**/*.ts', 'stages/**/*.ts'],
+      include: ['src/index.ts', 'src/domain/**/*.ts', 'src/application/**/*.ts', 'src/stages/**/*.ts'],
       exclude: [
         '**/*.d.ts',
         '**/*.config.ts',
         '**/*.test.ts',
         '**/*.spec.ts',
+        // PURE_TYPE: declaration-only, zero executable statements. v8 reports
+        // this kind of file as 0% rather than 100%, which makes the headline
+        // numbers meaningless if included. The contract is verified by
+        // test/worldgen-mirror.test.ts (compile-time roster pinning in both
+        // directions) and by `pnpm typecheck`.
+        'src/domain/worldgen-vocabulary.ts',
       ],
       all: true,
       reporter: ['text', 'json', 'html', 'lcov'],
       reportsDirectory: './coverage',
-      // NO THRESHOLD YET — deliberate.
-      //
-      // The reference repository (takeokunn/ts-minecraft) enforces 99% on
-      // branches/functions/lines/statements. A threshold on a skeleton would be
-      // meaningless: it would be trivially satisfied by a handful of type-only
-      // modules and would say nothing about the real implementation.
-      //
-      // Coverage is collected and reported (`pnpm test:coverage`) so the number
-      // is always visible. The 99% gate is turned on — here and in the CI
-      // workflow — when this repository reaches its completion criteria.
-      //
-      //   thresholds: { branches: 99, functions: 99, lines: 99, statements: 99 },
+      // Org-wide decision (TEST_STANDARD.md §3): 99% on all 4 metrics,
+      // rolled out immediately and uniformly, no staged ramp-up.
+      thresholds: { branches: 99, functions: 99, lines: 99, statements: 99 },
     },
   },
   esbuild: {

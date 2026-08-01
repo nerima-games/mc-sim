@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect } from 'effect'
-import { DeltaTimeSecs } from '../domain/kernel-vocabulary'
+import { DeltaTimeSecs } from '../src/domain/kernel-vocabulary'
 import {
   addExhaustion,
   addExperience,
@@ -21,7 +21,7 @@ import {
   totalExperienceAtLevel,
   vitalsView,
   type Vitals,
-} from '../domain/vitals'
+} from '../src/domain/vitals'
 
 const withVitals = (patch: Partial<Vitals>): Vitals => ({ ...SPAWN_VITALS, ...patch })
 

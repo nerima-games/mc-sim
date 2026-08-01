@@ -1,9 +1,9 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect } from 'effect'
-import { INITIAL_PLAYER_DIMENSION, makePlayerService } from '../application/player-service'
-import { INITIAL_PLAYER_POSE } from '../domain/camera-pose'
-import { position } from '../domain/kernel-vocabulary'
-import type { Dimension } from '../domain/worldgen-vocabulary'
+import { INITIAL_PLAYER_DIMENSION, makePlayerService } from '../src/application/player-service'
+import { INITIAL_PLAYER_POSE } from '../src/domain/camera-pose'
+import { position } from '../src/domain/kernel-vocabulary'
+import type { Dimension } from '../src/domain/worldgen-vocabulary'
 
 /**
  * THE state this file was created for.

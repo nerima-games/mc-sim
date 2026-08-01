@@ -1,12 +1,12 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect } from 'effect'
-import { makeWeatherService } from '../application/weather-service'
+import { makeWeatherService } from '../src/application/weather-service'
 import {
   INITIAL_WEATHER_STATE,
   isValidWeatherState,
   normaliseWeatherState,
   type WeatherState,
-} from '../domain/weather'
+} from '../src/domain/weather'
 
 describe('weather state', () => {
   it('recognises all supported weather kinds and positive finite durations', () => {

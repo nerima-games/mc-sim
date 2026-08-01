@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect } from 'effect'
-import { makeInventoryService } from '../application/inventory-service'
+import { makeInventoryService } from '../src/application/inventory-service'
 import {
   CHEST_CONTAINER_CAPACITY,
   containerIdAt,
@@ -10,9 +10,9 @@ import {
   snapshotContainerStorage,
   transferContainerItem,
   validateContainerStorageSnapshot,
-} from '../domain/container-storage'
-import { itemStack } from '../domain/inventory'
-import { emptyPlayerStorage } from '../domain/player-storage'
+} from '../src/domain/container-storage'
+import { itemStack } from '../src/domain/inventory'
+import { emptyPlayerStorage } from '../src/domain/player-storage'
 
 const bytes = (value: unknown): string => JSON.stringify(value)
 

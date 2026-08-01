@@ -1,14 +1,14 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect } from 'effect'
-import { makeInventoryService } from '../application/inventory-service'
-import type { ContainerStoredStack } from '../domain/container-storage'
-import { emptyInventory, itemStack } from '../domain/inventory'
+import { makeInventoryService } from '../src/application/inventory-service'
+import type { ContainerStoredStack } from '../src/domain/container-storage'
+import { emptyInventory, itemStack } from '../src/domain/inventory'
 import {
   addStoredStack,
   emptyPlayerStorage,
   FLINT_AND_STEEL_MAX_DURABILITY,
   storageFromInventory,
-} from '../domain/player-storage'
+} from '../src/domain/player-storage'
 
 const bytes = (value: unknown): string => JSON.stringify(value)
 

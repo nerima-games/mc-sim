@@ -26,7 +26,7 @@
  * source rejects, and the rejection arrives at the seam rather than here.
  */
 import { describe, expect, it } from 'vitest'
-import type { Dimension } from '../domain/worldgen-vocabulary'
+import type { Dimension } from '../src/domain/worldgen-vocabulary'
 
 /**
  * mc-worldgen's roster, transcribed from `domain/nether-travel.ts`.
