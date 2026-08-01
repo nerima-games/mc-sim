@@ -4,7 +4,12 @@ import { Effect, Layer } from 'effect'
 import { CropService, CropServiceLayer } from '../src/application/crop-service'
 import { PlayerServiceLayer } from '../src/application/player-service'
 import { TimeServiceLayer } from '../src/application/time-service'
-import { POTATO_MATURITY_SECS, type CropLocation } from '../src/domain/crop'
+import {
+  CROP_REGISTRY,
+  CROP_TYPES,
+  POTATO_MATURITY_SECS,
+  type CropLocation,
+} from '../src/domain/crop'
 import {
   DeltaTimeSecs,
   EpochMillis,
@@ -40,6 +45,45 @@ describe('crop service', () => {
     }).pipe(Effect.provide(ServicesLayer)),
   )
 
+  it.effect('enforces the registry soil contract for every crop', () =>
+    Effect.gen(function* () {
+      const crops = yield* CropService
+
+      expect(yield* crops.plant(location(0, 64, 0), 'wheat_crop', 'farmland')).toBe(true)
+      expect(yield* crops.plant(location(1, 64, 0), 'wheat_crop', 'soul_sand')).toBe(false)
+      expect(yield* crops.plant(location(2, 64, 0), 'potato_crop', 'farmland')).toBe(true)
+      expect(yield* crops.plant(location(3, 64, 0), 'potato_crop', 'soul_sand')).toBe(false)
+      expect(yield* crops.plant(location(4, 64, 0, 'nether'), 'nether_wart_crop', 'soul_sand')).toBe(true)
+      expect(yield* crops.plant(location(5, 64, 0, 'nether'), 'nether_wart_crop', 'farmland')).toBe(false)
+    }).pipe(Effect.provide(CropServiceLayer)),
+  )
+
+  it.effect('plants, grows, and harvests every registered crop through simulation ticks', () =>
+    Effect.gen(function* () {
+      const crops = yield* CropService
+      const stages = yield* makeSimStages
+      const planted = CROP_TYPES.map((crop, index) => ({
+        crop,
+        location: location(index, 70, 0, CROP_REGISTRY[crop].dimensions[index % 3]),
+      }))
+
+      for (const entry of planted) {
+        const definition = CROP_REGISTRY[entry.crop]
+        expect(yield* crops.plant(entry.location, entry.crop, definition.soil)).toBe(true)
+      }
+
+      yield* stages[0]?.run(DeltaTimeSecs(POTATO_MATURITY_SECS - 1)) ?? Effect.void
+      for (const entry of planted) expect(yield* crops.matureYieldsAt(entry.location)).toBeNull()
+
+      yield* stages[0]?.run(DeltaTimeSecs(1)) ?? Effect.void
+      for (const entry of planted) {
+        expect(yield* crops.matureYieldsAt(entry.location)).toStrictEqual(
+          CROP_REGISTRY[entry.crop].guaranteedMatureYield,
+        )
+      }
+    }).pipe(Effect.provide(ServicesLayer), Effect.provide(FrozenClockLayer)),
+  )
+
   it.effect('matures potatoes deterministically through the normal simulation stage', () =>
     Effect.gen(function* () {
       const crops = yield* CropService
@@ -70,8 +114,9 @@ describe('crop service', () => {
   it.effect('round-trips JSON snapshots and rejects malformed restoration atomically', () =>
     Effect.gen(function* () {
       const crops = yield* CropService
-      yield* crops.plant(location(2, 64, 1))
-      yield* crops.plant(location(-1, 65, 9, 'end'))
+      yield* crops.plant(location(2, 64, 1), 'wheat_crop')
+      yield* crops.plant(location(-1, 65, 9, 'end'), 'potato_crop')
+      yield* crops.plant(location(4, 66, -3, 'nether'), 'nether_wart_crop')
       yield* crops.advance(DeltaTimeSecs(12))
       const snapshot = yield* crops.snapshot
       const jsonSnapshot: unknown = JSON.parse(JSON.stringify(snapshot))

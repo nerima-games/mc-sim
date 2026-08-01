@@ -225,15 +225,16 @@ setDayLength(Number(''))   // 設定欄を空にした
 ```typescript
 type CropLocation = { readonly dimension: Dimension; readonly position: BlockPosition }
 type CropState = CropLocation & {
-  readonly crop: 'potato_crop'
+  readonly crop: 'wheat_crop' | 'potato_crop' | 'nether_wart_crop'
   readonly growthSecs: number
 }
 type CropSnapshot = { readonly crops: ReadonlyArray<CropState> }
 
 type CropServiceApi = {
-  readonly plant: (location: CropLocation, crop?: CropType) => Effect.Effect<boolean>
+  readonly plant: (location: CropLocation, crop?: CropType, soil?: BlockType) => Effect.Effect<boolean>
   readonly cropAt: (location: CropLocation) => Effect.Effect<CropState | null>
   readonly matureYieldAt: (location: CropLocation) => Effect.Effect<ItemStack | null>
+  readonly matureYieldsAt: (location: CropLocation) => Effect.Effect<ReadonlyArray<ItemStack> | null>
   readonly remove: (location: CropLocation) => Effect.Effect<CropState | null>
   readonly advance: (delta: DeltaTimeSecs) => Effect.Effect<void>
   readonly snapshot: Effect.Effect<CropSnapshot>
@@ -242,9 +243,13 @@ type CropServiceApi = {
 }
 ```
 
-通常の `sim:physics` tick が `advance` をちょうど一度呼び、ジャガイモは 480 秒で成熟する。
-成熟時の保証収穫量はジャガイモ 2 個で、未成熟なら `null`。`plant` は占有済み位置を
-上書きせず `false` を返し、`remove` は破壊前の状態を返す。
+通常の `sim:physics` tick が `advance` をちょうど一度呼び、各作物は 480 秒で成熟する。
+`CROP_REGISTRY` が成熟時間、種、土壌、許可次元、成熟時の保証収穫量を一貫して定義する。
+wheat/potato は farmland、nether wart は soul sand を要求し、3 作物とも全次元で栽培できる。
+保証収穫量は mx-gameplay の乱数範囲の下限と一致し、wheat は wheat 1 + seeds 1、potato は 2、
+nether wart は 2。`matureYieldsAt` は全保証収穫物、互換APIの `matureYieldAt` は先頭の収穫物を返す。
+未成熟なら `null`。`plant` は土壌不一致または占有済み位置を上書きせず `false` を返し、
+`remove` は破壊前の状態を返す。
 
 snapshot は位置キー順で決定論的に並び、JSON で往復できる。`restore` は未知キー、未知の次元・
 作物、非整数座標、非有限または範囲外の成長値、重複位置を拒否し、失敗時は既存状態を変更しない。

@@ -1,12 +1,20 @@
 import { Context, Effect, Layer, Ref } from 'effect'
+import type { BlockType } from '@nerima-games/mc-kernel'
 import type { ItemStack } from '../domain/inventory'
 import type { DeltaTimeSecs } from '../domain/kernel-vocabulary'
 import * as Crop from '../domain/crop'
 
 export type CropServiceApi = {
-  readonly plant: (location: Crop.CropLocation, crop?: Crop.CropType) => Effect.Effect<boolean>
+  readonly plant: (
+    location: Crop.CropLocation,
+    crop?: Crop.CropType,
+    soil?: BlockType,
+  ) => Effect.Effect<boolean>
   readonly cropAt: (location: Crop.CropLocation) => Effect.Effect<Crop.CropState | null>
   readonly matureYieldAt: (location: Crop.CropLocation) => Effect.Effect<ItemStack | null>
+  readonly matureYieldsAt: (
+    location: Crop.CropLocation,
+  ) => Effect.Effect<ReadonlyArray<ItemStack> | null>
   readonly remove: (location: Crop.CropLocation) => Effect.Effect<Crop.CropState | null>
   readonly advance: (delta: DeltaTimeSecs) => Effect.Effect<void>
   readonly snapshot: Effect.Effect<Crop.CropSnapshot>
@@ -31,10 +39,12 @@ const sortedCrops = (crops: Iterable<Crop.CropState>): ReadonlyArray<Crop.CropSt
 
 export const makeCropService = (): Effect.Effect<CropServiceApi> =>
   Effect.map(Ref.make(new Map<string, Crop.CropState>()), (state) => ({
-    plant: (location, crop = 'potato_crop') =>
+    plant: (location, crop = 'potato_crop', soil = Crop.cropDefinitionFor(crop).soil) =>
       Ref.modify(state, (current) => {
         const key = Crop.cropLocationKey(location)
-        if (current.has(key)) return [false, current]
+        if (current.has(key) || !Crop.canPlantCrop(crop, soil, location.dimension)) {
+          return [false, current]
+        }
         const next = new Map(current)
         next.set(key, { ...location, position: { ...location.position }, crop, growthSecs: 0 })
         return [true, next]
@@ -48,6 +58,11 @@ export const makeCropService = (): Effect.Effect<CropServiceApi> =>
       Effect.map(Ref.get(state), (current) => {
         const crop = current.get(Crop.cropLocationKey(location))
         return crop === undefined ? null : Crop.matureYieldFor(crop)
+      }),
+    matureYieldsAt: (location) =>
+      Effect.map(Ref.get(state), (current) => {
+        const crop = current.get(Crop.cropLocationKey(location))
+        return crop === undefined ? null : Crop.matureYieldsFor(crop)
       }),
     remove: (location) =>
       Ref.modify(state, (current) => {

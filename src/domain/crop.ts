@@ -1,12 +1,52 @@
-import type { BlockPosition, BlockType } from '@nerima-games/mc-kernel'
+import type { BlockPosition, BlockType, ItemType } from '@nerima-games/mc-kernel'
 import { itemStack, type ItemStack } from './inventory'
 import type { Dimension } from './worldgen-vocabulary'
 
-export const CROP_TYPES = ['potato_crop'] as const satisfies ReadonlyArray<BlockType>
+export const CROP_TYPES = ['wheat_crop', 'potato_crop', 'nether_wart_crop'] as const satisfies ReadonlyArray<BlockType>
 
 export type CropType = (typeof CROP_TYPES)[number]
 
+export const WHEAT_MATURITY_SECS = 480
 export const POTATO_MATURITY_SECS = 480
+export const NETHER_WART_MATURITY_SECS = 480
+
+export type CropDefinition = {
+  readonly crop: CropType
+  readonly maturitySecs: number
+  readonly seed: ItemType
+  readonly soil: BlockType
+  readonly dimensions: ReadonlyArray<Dimension>
+  readonly guaranteedMatureYield: ReadonlyArray<ItemStack>
+}
+
+const ALL_DIMENSIONS = ['overworld', 'nether', 'end'] as const satisfies ReadonlyArray<Dimension>
+
+export const CROP_REGISTRY = {
+  wheat_crop: {
+    crop: 'wheat_crop',
+    maturitySecs: WHEAT_MATURITY_SECS,
+    seed: 'wheat_seeds',
+    soil: 'farmland',
+    dimensions: ALL_DIMENSIONS,
+    guaranteedMatureYield: [itemStack('wheat', 1), itemStack('wheat_seeds', 1)],
+  },
+  potato_crop: {
+    crop: 'potato_crop',
+    maturitySecs: POTATO_MATURITY_SECS,
+    seed: 'potato',
+    soil: 'farmland',
+    dimensions: ALL_DIMENSIONS,
+    guaranteedMatureYield: [itemStack('potato', 2)],
+  },
+  nether_wart_crop: {
+    crop: 'nether_wart_crop',
+    maturitySecs: NETHER_WART_MATURITY_SECS,
+    seed: 'nether_wart',
+    soil: 'soul_sand',
+    dimensions: ALL_DIMENSIONS,
+    guaranteedMatureYield: [itemStack('nether_wart', 2)],
+  },
+} as const satisfies Record<CropType, CropDefinition>
 
 export type CropLocation = {
   readonly dimension: Dimension
@@ -35,14 +75,27 @@ export type CropValidationResult =
 export const isCropType = (value: unknown): value is CropType =>
   typeof value === 'string' && CROP_TYPES.some((crop) => crop === value)
 
-export const maturitySecsFor = (_crop: CropType): number => POTATO_MATURITY_SECS
+export const cropDefinitionFor = (crop: CropType): CropDefinition => CROP_REGISTRY[crop]
+
+export const maturitySecsFor = (crop: CropType): number => cropDefinitionFor(crop).maturitySecs
+
+export const canPlantCrop = (crop: CropType, soil: BlockType, dimension: Dimension): boolean => {
+  const definition = cropDefinitionFor(crop)
+  return definition.soil === soil && definition.dimensions.includes(dimension)
+}
 
 export const isMatureCrop = (crop: CropState): boolean =>
   crop.growthSecs >= maturitySecsFor(crop.crop)
 
-/** The guaranteed mature drop. Experience rules may add bonus drops separately. */
+/** Guaranteed mature drops. mx-gameplay may add randomized bonus drops separately. */
+export const matureYieldsFor = (crop: CropState): ReadonlyArray<ItemStack> | null =>
+  isMatureCrop(crop)
+    ? cropDefinitionFor(crop.crop).guaranteedMatureYield.map((stack) => ({ ...stack }))
+    : null
+
+/** The primary guaranteed mature drop retained for backwards compatibility. */
 export const matureYieldFor = (crop: CropState): ItemStack | null =>
-  isMatureCrop(crop) ? itemStack('potato', 2) : null
+  matureYieldsFor(crop)?.[0] ?? null
 
 export const advanceCrop = (crop: CropState, deltaSecs: number): CropState => ({
   ...crop,
