@@ -84,10 +84,13 @@ describe('addItem', () => {
     }),
   )
 
-  it.effect('stacks arrows to 64 while every bow occupies its own slot', () =>
+  it.effect('uses kernel stack limits for ordinary, durable, and non-durable items', () =>
     Effect.sync(() => {
       expect(maxStackCountForItem('arrow')).toBe(64)
       expect(maxStackCountForItem('bow')).toBe(1)
+      expect(maxStackCountForItem('fishing_rod')).toBe(1)
+      expect(maxStackCountForItem('saddle')).toBe(1)
+      expect(maxStackCountForItem('bucket')).toBe(16)
 
       const arrows = addItem(emptyInventory(), 'arrow', 65)
       expect(slotAt(arrows.inventory, 0)).toStrictEqual({ item: 'arrow', count: 64 })
@@ -96,6 +99,14 @@ describe('addItem', () => {
       const bows = addItem(emptyInventory(), 'bow', 2)
       expect(slotAt(bows.inventory, 0)).toStrictEqual({ item: 'bow', count: 1 })
       expect(slotAt(bows.inventory, 1)).toStrictEqual({ item: 'bow', count: 1 })
+
+      const rods = addItem(emptyInventory(), 'fishing_rod', 2)
+      expect(slotAt(rods.inventory, 0)).toStrictEqual({ item: 'fishing_rod', count: 1 })
+      expect(slotAt(rods.inventory, 1)).toStrictEqual({ item: 'fishing_rod', count: 1 })
+
+      const buckets = addItem(emptyInventory(), 'bucket', 17)
+      expect(slotAt(buckets.inventory, 0)).toStrictEqual({ item: 'bucket', count: 16 })
+      expect(slotAt(buckets.inventory, 1)).toStrictEqual({ item: 'bucket', count: 1 })
     }),
   )
 

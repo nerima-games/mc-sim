@@ -29,6 +29,7 @@ import { describe, expect, it } from '@effect/vitest'
 import {
   ITEM_TYPES as KERNEL_ITEM_TYPES,
   isItemType as kernelIsItemType,
+  maxStackCountOfItem as kernelMaxStackCountOfItem,
   type ItemType as KernelItemType,
 } from '@nerima-games/mc-kernel'
 import { Effect, Layer } from 'effect'
@@ -40,6 +41,7 @@ import {
   fixedClock,
   isItemType,
   ITEM_TYPES,
+  maxStackCountOfItem,
   MonotonicTimeSecs,
   monotonicSecs,
   wallClockEpochMillis,
@@ -164,6 +166,7 @@ describe('the item vocabulary is kernel’s item vocabulary', () => {
     Effect.sync(() => {
       expect(ITEM_TYPES).toBe(KERNEL_ITEM_TYPES)
       expect(isItemType).toBe(kernelIsItemType)
+      expect(maxStackCountOfItem).toBe(kernelMaxStackCountOfItem)
     }),
   )
 

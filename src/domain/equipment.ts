@@ -54,6 +54,7 @@ export const ITEM_DURABILITY_CATALOG = {
   iron_sword: { maxDurability: 250 },
   diamond_sword: { maxDurability: 1561 },
   bow: { maxDurability: 384 },
+  fishing_rod: { maxDurability: 64 },
 } as const satisfies Partial<Record<ItemType, ItemDurabilityDefinition>>
 
 export type EquippableItemType = keyof typeof EQUIPMENT_CATALOG

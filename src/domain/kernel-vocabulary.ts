@@ -160,7 +160,12 @@ export const StackCount = Brand.refined<StackCount>(
 // Item vocabulary — re-exported from mc-kernel/domain/item-type.ts
 // ---------------------------------------------------------------------------
 
-export { ITEM_TYPES, isItemType, type ItemType } from '@nerima-games/mc-kernel'
+export {
+  ITEM_TYPES,
+  isItemType,
+  maxStackCountOfItem,
+  type ItemType,
+} from '@nerima-games/mc-kernel'
 
 // ---------------------------------------------------------------------------
 // Coordinates — mirrors mc-kernel/domain/coordinates.ts (the continuous part)

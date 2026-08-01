@@ -72,6 +72,10 @@ describe('equipment domain', () => {
       expect(isDamageableItemType('bow')).toBe(true)
       expect(isEquippableItemType('bow')).toBe(false)
       expect(equipmentDefinitionFor('bow')).toBeUndefined()
+      expect(itemDurabilityDefinitionFor('fishing_rod')).toStrictEqual({ maxDurability: 64 })
+      expect(durabilityForItem('fishing_rod')).toStrictEqual({ current: 64, max: 64 })
+      expect(isDamageableItemType('fishing_rod')).toBe(true)
+      expect(isEquippableItemType('fishing_rod')).toBe(false)
       expect(durabilityForItem('stone')).toBeNull()
     }),
   )

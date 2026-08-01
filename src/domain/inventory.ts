@@ -31,8 +31,13 @@
  * What is here is the part the mining scenario test needs, plus the stacking
  * rule, which is the part that is easy to get subtly wrong.
  */
-import { isItemType, ItemType, MAX_STACK_COUNT, StackCount } from './kernel-vocabulary'
-import { isDamageableItemType } from './equipment'
+import {
+  isItemType,
+  ItemType,
+  maxStackCountOfItem,
+  MAX_STACK_COUNT,
+  StackCount,
+} from './kernel-vocabulary'
 
 /*
  * THERE IS NO `ItemId` HERE ANY MORE.
@@ -68,9 +73,8 @@ export type ItemStack = {
  * flowing into a slot as a bare number. Contrast `addItem(count: number)`, which
  * deliberately does NOT brand: see DN-06 in docs/design-notes.md.
  */
-/** Per-item stack limit. Durable tools occupy one slot each. */
-export const maxStackCountForItem = (item: ItemType): number =>
-  isDamageableItemType(item) ? 1 : MAX_STACK_COUNT
+/** Per-item stack limit from kernel's canonical item registry. */
+export const maxStackCountForItem = (item: ItemType): number => maxStackCountOfItem(item)
 
 export const itemStack = (item: ItemType, count: number): ItemStack => {
   if (count > maxStackCountForItem(item)) {
