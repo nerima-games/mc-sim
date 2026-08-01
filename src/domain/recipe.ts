@@ -700,6 +700,13 @@ export const STARTER_RECIPES: RecipeTable = [
     itemStack('fire_charge', 3),
   ),
 
+  // Vanilla Eye of Ender: ingredient order is irrelevant.
+  shapelessRecipe(
+    'mc-sim:eye-of-ender',
+    ['ender_pearl', 'blaze_powder'],
+    itemStack('eye_of_ender', 1),
+  ),
+
   // Shaped 3x3 with holes: the pattern that fills the grid, so it translates
   // nowhere, and whose empty cells must stay empty.
   shapedRecipe(

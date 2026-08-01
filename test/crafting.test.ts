@@ -30,6 +30,8 @@ const LEGEND: Readonly<Record<string, ItemType>> = {
   C: 'cobblestone',
   I: 'iron_ingot',
   M: 'diamond',
+  E: 'ender_pearl',
+  Z: 'blaze_powder',
 }
 
 const gridOf = (...rows: ReadonlyArray<string>): CraftGrid => {
@@ -112,6 +114,40 @@ describe('ingredientCost', () => {
 })
 
 describe('craftFromGrid', () => {
+  it.effect('crafts an Eye of Ender atomically from an ender pearl and blaze powder', () =>
+    Effect.sync(() => {
+      const before = stocked([
+        ['ender_pearl', 1],
+        ['blaze_powder', 1],
+      ])
+      const after = craftFromGrid(before, STARTER_RECIPES, gridOf('EZ'))
+
+      expect(after.result).toStrictEqual({
+        _tag: 'Crafted',
+        recipeId: 'mc-sim:eye-of-ender',
+        output: { item: 'eye_of_ender', count: 1 },
+      })
+      expect(countOf(after.inventory, 'ender_pearl')).toBe(0)
+      expect(countOf(after.inventory, 'blaze_powder')).toBe(0)
+      expect(countOf(after.inventory, 'eye_of_ender')).toBe(1)
+    }),
+  )
+
+  it.effect('an Eye of Ender craft short of blaze powder leaves the inventory untouched', () =>
+    Effect.sync(() => {
+      const before = stocked([['ender_pearl', 1]])
+      const after = craftFromGrid(before, STARTER_RECIPES, gridOf('EZ'))
+
+      expect(after.result).toStrictEqual({
+        _tag: 'MissingIngredients',
+        missing: [{ item: 'blaze_powder', short: 1 }],
+      })
+      expect(after.inventory).toBe(before)
+      expect(countOf(after.inventory, 'ender_pearl')).toBe(1)
+      expect(countOf(after.inventory, 'eye_of_ender')).toBe(0)
+    }),
+  )
+
   it.effect('consumes exactly the ingredients and produces exactly the result', () =>
     Effect.sync(() => {
       const before = stocked([['oak_planks', 10]])

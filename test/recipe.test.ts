@@ -52,6 +52,7 @@ const LEGEND: Readonly<Record<string, ItemType>> = {
   F: 'flint',
   N: 'gunpowder',
   Z: 'blaze_powder',
+  E: 'ender_pearl',
   C: 'coal',
   B: 'cobblestone',
 }
@@ -410,6 +411,13 @@ describe('shaped matching mirrors horizontally, and only horizontally', () => {
 })
 
 describe('shapeless matching permutes', () => {
+  it.effect('the Eye of Ender recipe accepts either ingredient order', () =>
+    Effect.sync(() => {
+      expect(matchedId(gridOf('EZ'))).toBe('mc-sim:eye-of-ender')
+      expect(matchedId(gridOf('ZE'))).toBe('mc-sim:eye-of-ender')
+    }),
+  )
+
   it.effect('every permutation of the ingredients is the same recipe', () =>
     Effect.sync(() => {
       // Vanilla's fire charge: gunpowder, blaze powder and coal, all distinct,
@@ -592,6 +600,7 @@ describe('matching is total', () => {
         ['mc-sim:glowstone', gridOf('GG', 'GG')],
         ['mc-sim:flint-and-steel', gridOf('I ', ' F')],
         ['mc-sim:fire-charge', gridOf('NZC')],
+        ['mc-sim:eye-of-ender', gridOf('EZ')],
         ['mc-sim:wooden-pickaxe', gridOf('PPP', ' S ', ' S ')],
         ['mc-sim:stone-pickaxe', gridOf('BBB', ' S ', ' S ')],
         ['mc-sim:iron-pickaxe', gridOf('III', ' S ', ' S ')],
