@@ -39,6 +39,7 @@ export * from './domain/smelting'
 export * from './domain/statistics'
 export * from './domain/time-of-day'
 export * from './domain/vitals'
+export * from './domain/vehicle'
 export * from './domain/weather'
 
 // --- Application: Effect services -------------------------------------------
@@ -53,6 +54,7 @@ export * from './application/settings-service'
 export * from './application/statistics-service'
 export * from './application/time-service'
 export * from './application/vitals-service'
+export * from './application/vehicle-service'
 export * from './application/weather-service'
 
 // --- Stages: this repository's contribution to the frame ---------------------
