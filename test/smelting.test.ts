@@ -1,12 +1,23 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect } from 'effect'
-import { itemStack, type ItemStack } from '../src/domain/inventory'
+import {
+  addItem,
+  countOf,
+  emptyInventory,
+  INVENTORY_SLOT_COUNT,
+  itemStack,
+  type Inventory,
+  type ItemStack,
+} from '../src/domain/inventory'
 import {
   advanceFurnace,
+  collectFurnaceOutput,
   emptyFurnaceState,
   matchSmeltingRecipe,
   STARTER_FUEL_RULES,
   STARTER_SMELTING_RECIPES,
+  transferToFurnace,
+  validateFurnaceSnapshot,
   type FuelRule,
   type FurnaceState,
   type SmeltingRecipe,
@@ -286,6 +297,88 @@ describe('furnace progression', () => {
         expect(outcome.smelted).toBe(0)
         expect(outcome.fuelConsumed).toBe(0)
       }
+    }),
+  )
+})
+
+describe('inventory-backed furnace progression', () => {
+  it.effect('moves player-owned ore and fuel through smelting and collection', () =>
+    Effect.sync(() => {
+      let inventory = emptyInventory()
+      inventory = addItem(inventory, 'raw_iron', 3).inventory
+      inventory = addItem(inventory, 'coal', 1).inventory
+
+      const input = transferToFurnace(inventory, emptyFurnaceState(), 'input', 'raw_iron', 3)
+      expect(input.result).toStrictEqual({ _tag: 'Transferred', item: 'raw_iron', count: 3 })
+      expect(countOf(input.inventory, 'raw_iron')).toBe(0)
+
+      const fuel = transferToFurnace(input.inventory, input.furnace, 'fuel', 'coal', 1)
+      expect(countOf(fuel.inventory, 'coal')).toBe(0)
+
+      const smelted = advanceFurnace(fuel.furnace, 30)
+      expect(smelted.smelted).toBe(3)
+      expect(smelted.state.output).toStrictEqual(itemStack('iron_ingot', 3))
+
+      const collected = collectFurnaceOutput(fuel.inventory, smelted.state)
+      expect(collected.result).toStrictEqual({
+        _tag: 'Collected',
+        output: itemStack('iron_ingot', 3),
+      })
+      expect(countOf(collected.inventory, 'iron_ingot')).toBe(3)
+      expect(collected.furnace.output).toBeNull()
+    }),
+  )
+
+  it.effect('leaves both states unchanged when a transfer cannot complete', () =>
+    Effect.sync(() => {
+      const inventory = addItem(emptyInventory(), 'raw_iron', 1).inventory
+      const furnace = furnaceWith({ input: itemStack('cobblestone', 1) })
+
+      const insufficient = transferToFurnace(inventory, emptyFurnaceState(), 'input', 'raw_iron', 2)
+      expect(insufficient.result).toStrictEqual({ _tag: 'InsufficientItems', available: 1 })
+      expect(insufficient.inventory).toBe(inventory)
+
+      const wrongItem = transferToFurnace(inventory, furnace, 'input', 'raw_iron', 1)
+      expect(wrongItem.result).toStrictEqual({ _tag: 'WrongItem', expected: 'cobblestone' })
+      expect(wrongItem.inventory).toBe(inventory)
+      expect(wrongItem.furnace).toBe(furnace)
+    }),
+  )
+
+  it.effect('does not partially collect output when the inventory is full', () =>
+    Effect.sync(() => {
+      const inventory: Inventory = {
+        slots: Array.from({ length: INVENTORY_SLOT_COUNT }, () => itemStack('cobblestone', 64)),
+      }
+      const furnace = furnaceWith({ output: itemStack('iron_ingot', 3) })
+      const outcome = collectFurnaceOutput(inventory, furnace)
+
+      expect(outcome.result).toStrictEqual({ _tag: 'NoRoom' })
+      expect(outcome.inventory).toBe(inventory)
+      expect(outcome.furnace).toBe(furnace)
+    }),
+  )
+
+  it.effect('validates JSON round trips and rejects corrupt persisted state', () =>
+    Effect.sync(() => {
+      const state = furnaceWith({
+        input: itemStack('raw_iron', 2),
+        fuel: itemStack('coal', 1),
+        cookElapsedSecs: 4,
+        burnRemainingSecs: 76,
+      })
+      expect(validateFurnaceSnapshot(JSON.parse(JSON.stringify(state)))).toStrictEqual({
+        _tag: 'Valid',
+        state,
+      })
+      expect(validateFurnaceSnapshot({ ...state, burnRemainingSecs: -1 })).toMatchObject({
+        _tag: 'Invalid',
+        error: { path: 'burnRemainingSecs' },
+      })
+      expect(validateFurnaceSnapshot({ ...state, extra: true })).toMatchObject({
+        _tag: 'Invalid',
+        error: { path: 'snapshot' },
+      })
     }),
   )
 })
