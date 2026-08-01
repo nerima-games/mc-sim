@@ -225,7 +225,8 @@ union として広がった側だからである:
 | --- | --- | --- |
 | `effect` | `^3.20.0` | 16 リポジトリで**同一メジャーに揃える**。Context / Layer の型が跨るため、メジャーが混ざると合成できない |
 | `@nerima-games/*` | 未宣言 | publish 後は**厳密ピン**（`0.3.1` のように範囲なし）。plan.md の bottom-up publish-then-pin |
-| `typescript` / `vitest` / `oxlint` | `^` 付き | ツールチェーンは揃えるが厳密ピンはしない |
+| `typescript` / `vitest` | `^` 付き | ツールチェーンは揃えるが厳密ピンはしない |
+| `oxlint` | `flake.nix` の devShell（package.json の devDependency ではない） | 16 リポジトリで同一バージョンに固定し、npm 経由のバージョンドリフトを排除する |
 | `packageManager` | `pnpm@9.15.0` | 16 リポジトリで同一 |
 
 `engines.node` は `>=22.0.0`。`flake.nix` の devShell が `nodejs_22` を入れる。

@@ -49,11 +49,23 @@ jobs:
       - name: Type check
         run: pnpm typecheck
 
+      # oxlint is provided by the Nix devShell (flake.nix), not a package.json
+      # devDependency (PACKAGE_STANDARD.md) -- a single Nix-pinned version
+      # replaces every repo independently drifting on its own npm-resolved
+      # oxlint version. Copy templates/actions/nix-setup to
+      # <repo>/.github/actions/nix-setup/ verbatim; do not inline these steps
+      # here.
+      - name: Set up Nix
+        uses: ./.github/actions/nix-setup
+        with:
+          cachix-cache: ${{ vars.CACHIX_CACHE }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+
       - name: Lint
         # Cross-repository dependency boundaries (DEPENDENCY_POLICY.md) are
         # enforced here via .oxlintrc.json's no-restricted-imports, which absorbed
         # the role of the now-removed scripts/check-dependency-whitelist.ts.
-        run: pnpm lint
+        run: nix develop --command pnpm lint
 
       - name: Changeset status
         # A PR that touches user-facing surface (public API, behaviour,
