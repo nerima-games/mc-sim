@@ -23,6 +23,7 @@ plan.md §2.3-1 の分類でいう **名詞**。
 | 実績 / 統計 | **記録**（画面は mx-ui） | 実装済 `domain/statistics.ts` / `application/statistics-service.ts`。§3.5 |
 | 時間 | `TimeService`。tick カウンタ、昼夜、月齢 | 実装済 `application/time-service.ts` |
 | 作物 | `CropService`。次元 + `BlockPosition` ごとの植栽・成長・除去状態 | 実装済 `domain/crop.ts` / `application/crop-service.ts` |
+| 爆発計画 | seed・距離減衰・耐性・遮蔽から破壊対象と entity effect を純粋計算する。具体的な変更はホスト transaction が一括適用 | 実装済 `domain/explosion.ts`。公開 API §8 |
 | ゲームループ | フレーム駆動、開始/停止、再入可能な初期化 | 実装済 `application/game-loop.ts` |
 | 自動保存 | いつ保存するか（何を書くかは mc-save のフォーマット定義） | 実装済 `application/autosave.ts` |
 | **stage 登録** | `sim:physics` 1 本。`after` 制約は **0 本**（§2.1） | 実装済 `stages/registration.ts` |

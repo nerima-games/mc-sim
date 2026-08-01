@@ -963,8 +963,8 @@ const blasts = yield* roster.sweep<Explosion>((entity) => {
   }
 })
 
-// 3. 爆風を解決する（これも mx-gameplay。mc-sim は damage を数えるだけ）
-for (const blast of blasts) { /* explosionDamageAt(blast, ...) → roster.sweep / health */ }
+// 3. 爆発の発生条件は mx-gameplay。汎用爆風を計画し、ホストが一括適用する
+for (const blast of blasts) { /* planExplosion(...) → applyExplosionPlan(plan, commit) */ }
 
 // 4. スポーン: canHostileSpawnAt(candidate) が Spawn を返し、かつ
 //    (yield* roster.countOfKind(CREEPER_KIND)) < MAX_HOSTILE_COUNT のときだけ
@@ -988,3 +988,37 @@ mc-sim と一緒に到着する」と書いているものが `countOfKind` で�
 | `find` の索引 | 線形のまま（§7-3） |
 | ドロップアイテム / 経験値オーブのエンティティ | §5 の表に残っている。台帳自体は kind を選ばないので、`EntityKind('dropped_item')` として**今日でも入る** —— 入っていないのは「落ちたアイテムがどう振る舞うか」がルールだからである |
 | `simModule` への同梱 | §7-5 |
+
+## 8. 爆発計画
+
+`domain/explosion.ts` は、爆発の発生条件やブロック種別ごとのゲームルールを持たず、
+与えられた読み取り面から破壊対象・エンティティへのダメージ・ノックバックを計画する。
+
+```typescript
+type ExplosionBlockReader = (
+  position: ExplosionBlockPosition,
+) => ExplosionBlock | undefined
+
+declare const planExplosion: <S>(request: ExplosionRequest<S>) => ExplosionPlan
+
+type ExplosionCommit<E, R> = (
+  mutation: ExplosionMutation,
+) => Effect.Effect<void, E, R>
+
+declare const applyExplosionPlan: <E, R>(
+  plan: ExplosionPlan,
+  commit: ExplosionCommit<E, R>,
+) => Effect.Effect<void, E, R>
+```
+
+`planExplosion` は純粋関数である。同じ seed・snapshot・入力には同じ結果を返し、距離減衰、
+ブロック耐性、遮蔽を計算する。reader が `undefined` を返すセルは未ロード境界として扱い、
+その先へ ray を進めず、破壊対象にも含めない。
+
+計算量は `maxVisitedBlocks`・`maxRaySteps`・`maxAffectedEntities` で制限できる。
+上限に達した計画は `truncated: true` を返すため、ホストは適用・延期・破棄を明示的に選べる。
+
+計画と適用は分離されている。`applyExplosionPlan` は完成済みの `ExplosionMutation` を
+`commit` に **1 回だけ**渡し、`ChunkStore` や entity roster を個別には変更しない。
+したがって原子性とロールバックは具体的な保存先を所有するホスト transaction の責務であり、
+失敗と依存は `Effect` の `E` / `R` に型付きで残る。
