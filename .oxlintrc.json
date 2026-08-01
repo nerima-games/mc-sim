@@ -121,15 +121,23 @@
     "no-restricted-imports": [
       "warn",
       {
-        "name": "effect",
-        "message": "Please use named imports from 'effect' package",
-        "importNames": ["default"]
-      },
-      {
+        "paths": [
+          {
+            "name": "effect",
+            "message": "Please use named imports from 'effect' package",
+            "importNames": ["default"]
+          }
+        ],
+        // mc-sim is Tier2 (DEPENDENCY_POLICY.md §1) and may depend only on
+        // mc-physics, mc-save, mc-worldgen, and the universally-importable
+        // mc-kernel. This covers every other @nerima-games/* package in the
+        // org, including the Tier1 siblings (mc-noise, mc-meshing, mc-audio),
+        // the Tier2 siblings (mc-render, mc-playground-kit), and all of
+        // Tier3/Tier4 — Tier2 must not depend laterally or upward.
         "patterns": [
           {
             "regex": "^@nerima-games/(mc-noise|mc-meshing|mc-audio|mc-render|mc-playground-kit|mx-gameplay|mx-redstone|mx-ui|mx-multiplayer|mc-compose|mc-dev-meta)(/.*)?$",
-            "message": "mc-sim (Tier2, DEPENDENCY_POLICY.md) may depend only on mc-physics, mc-save, mc-worldgen, and mc-kernel (universally importable). Propose a DEPENDENCY_POLICY.md graph change before adding this import."
+            "message": "mc-sim (Tier2, DEPENDENCY_POLICY.md) may depend only on mc-physics, mc-save, mc-worldgen, and mc-kernel. Propose a graph change (DEPENDENCY_POLICY.md §6) before adding this import."
           }
         ]
       }
@@ -145,5 +153,5 @@
     "no-param-reassign": "off",
     "no-plusplus": "off"
   },
-  "ignore": ["node_modules/**", "coverage/**", "dist/**", ".git/**", "*.config.ts", "docs/**"]
+  "ignorePatterns": ["node_modules/**", "coverage/**", "dist/**", ".git/**", "*.config.ts", "docs/**"]
 }

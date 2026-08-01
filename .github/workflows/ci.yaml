@@ -51,7 +51,7 @@ jobs:
 
       - name: Lint
         # Cross-repository dependency boundaries (DEPENDENCY_POLICY.md) are
-        # enforced here via oxlint.json's no-restricted-imports, which absorbed
+        # enforced here via .oxlintrc.json's no-restricted-imports, which absorbed
         # the role of the now-removed scripts/check-dependency-whitelist.ts.
         run: pnpm lint
 
