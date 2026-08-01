@@ -672,6 +672,30 @@ export const STARTER_RECIPES: RecipeTable = [
     itemStack('chest', 1),
   ),
 
+  // A coal above a stick yields four placeable light sources.
+  shapedRecipe(
+    'mc-sim:torch',
+    ['C', 'S'],
+    { C: 'coal', S: 'stick' },
+    itemStack('torch', 4),
+  ),
+
+  // Three ingots form the reusable container used by fluid interactions.
+  shapedRecipe(
+    'mc-sim:bucket',
+    ['I I', ' I '],
+    { I: 'iron_ingot' },
+    itemStack('bucket', 1),
+  ),
+
+  // The asymmetric bow is accepted in either horizontal orientation.
+  shapedRecipe(
+    'mc-sim:bow',
+    [' ST', 'S T', ' ST'],
+    { S: 'stick', T: 'string' },
+    itemStack('bow', 1),
+  ),
+
   // Shaped 2x2, symmetric: the translation case. Four dust anywhere in a 3x3.
   shapedRecipe('mc-sim:glowstone', ['DD', 'DD'], { D: 'glowstone_dust' }, itemStack('glowstone', 1)),
 
@@ -706,6 +730,29 @@ export const STARTER_RECIPES: RecipeTable = [
     ['ender_pearl', 'blaze_powder'],
     itemStack('eye_of_ender', 1),
   ),
+
+  // Storage blocks retain a reversible path back to their crafting material.
+  shapedRecipe(
+    'mc-sim:coal-block',
+    ['CCC', 'CCC', 'CCC'],
+    { C: 'coal' },
+    itemStack('coal_block', 1),
+  ),
+  shapelessRecipe('mc-sim:coal-from-block', ['coal_block'], itemStack('coal', 9)),
+  shapedRecipe(
+    'mc-sim:iron-block',
+    ['III', 'III', 'III'],
+    { I: 'iron_ingot' },
+    itemStack('iron_block', 1),
+  ),
+  shapelessRecipe('mc-sim:iron-from-block', ['iron_block'], itemStack('iron_ingot', 9)),
+  shapedRecipe(
+    'mc-sim:diamond-block',
+    ['DDD', 'DDD', 'DDD'],
+    { D: 'diamond' },
+    itemStack('diamond_block', 1),
+  ),
+  shapelessRecipe('mc-sim:diamond-from-block', ['diamond_block'], itemStack('diamond', 9)),
 
   // Shaped 3x3 with holes: the pattern that fills the grid, so it translates
   // nowhere, and whose empty cells must stay empty.

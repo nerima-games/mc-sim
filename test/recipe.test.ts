@@ -55,6 +55,10 @@ const LEGEND: Readonly<Record<string, ItemType>> = {
   E: 'ender_pearl',
   C: 'coal',
   B: 'cobblestone',
+  T: 'string',
+  Q: 'coal_block',
+  R: 'iron_block',
+  A: 'diamond_block',
 }
 
 /** A grid drawn as rows of legend characters; a space is an empty cell. */
@@ -392,6 +396,7 @@ describe('shaped matching mirrors horizontally, and only horizontally', () => {
 
       const asymmetric = shaped.filter((recipe) => !isOwnMirror(recipe.pattern))
       expect(asymmetric.map((recipe) => recipe.id)).toStrictEqual([
+        'mc-sim:bow',
         'mc-sim:flint-and-steel',
         'mc-sim:wooden-hoe',
         'mc-sim:stone-hoe',
@@ -597,10 +602,19 @@ describe('matching is total', () => {
         ['mc-sim:crafting-table', gridOf('PP', 'PP')],
         ['mc-sim:furnace', gridOf('BBB', 'B B', 'BBB')],
         ['mc-sim:chest', gridOf('PPP', 'P P', 'PPP')],
+        ['mc-sim:torch', gridOf('C', 'S')],
+        ['mc-sim:bucket', gridOf('I I', ' I ')],
+        ['mc-sim:bow', gridOf(' ST', 'S T', ' ST')],
         ['mc-sim:glowstone', gridOf('GG', 'GG')],
         ['mc-sim:flint-and-steel', gridOf('I ', ' F')],
         ['mc-sim:fire-charge', gridOf('NZC')],
         ['mc-sim:eye-of-ender', gridOf('EZ')],
+        ['mc-sim:coal-block', gridOf('CCC', 'CCC', 'CCC')],
+        ['mc-sim:coal-from-block', gridOf('Q')],
+        ['mc-sim:iron-block', gridOf('III', 'III', 'III')],
+        ['mc-sim:iron-from-block', gridOf('R')],
+        ['mc-sim:diamond-block', gridOf('DDD', 'DDD', 'DDD')],
+        ['mc-sim:diamond-from-block', gridOf('A')],
         ['mc-sim:wooden-pickaxe', gridOf('PPP', ' S ', ' S ')],
         ['mc-sim:stone-pickaxe', gridOf('BBB', ' S ', ' S ')],
         ['mc-sim:iron-pickaxe', gridOf('III', ' S ', ' S ')],

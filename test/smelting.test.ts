@@ -5,6 +5,7 @@ import {
   advanceFurnace,
   emptyFurnaceState,
   matchSmeltingRecipe,
+  STARTER_FUEL_RULES,
   STARTER_SMELTING_RECIPES,
   type FuelRule,
   type FurnaceState,
@@ -20,16 +21,46 @@ const uncheckedStack = (item: ItemStack['item'], count: number): ItemStack =>
   ({ item, count }) as unknown as ItemStack
 
 describe('starter smelting data', () => {
-  it.effect('raw iron matches the ten-second iron ingot recipe', () =>
+  it.effect('each starter input has one ten-second output recipe', () =>
     Effect.sync(() => {
-      const recipe = matchSmeltingRecipe(STARTER_SMELTING_RECIPES, itemStack('raw_iron', 1))
-      expect(recipe).toStrictEqual({
-        id: 'mc-sim:iron-ingot',
-        input: 'raw_iron',
-        output: itemStack('iron_ingot', 1),
-        cookDurationSecs: 10,
-      })
+      const expected = [
+        ['raw_iron', 'iron_ingot'],
+        ['cobblestone', 'stone'],
+        ['sand', 'glass'],
+      ] as const
+
+      for (const [input, output] of expected) {
+        expect(matchSmeltingRecipe(STARTER_SMELTING_RECIPES, itemStack(input, 1))).toMatchObject({
+          input,
+          output: itemStack(output, 1),
+          cookDurationSecs: 10,
+        })
+      }
       expect(matchSmeltingRecipe(STARTER_SMELTING_RECIPES, itemStack('dirt', 1))).toBeNull()
+    }),
+  )
+
+  it.effect('starter recipe ids, inputs, and fuel items are unique', () =>
+    Effect.sync(() => {
+      const recipeIds = STARTER_SMELTING_RECIPES.map((recipe) => recipe.id)
+      const inputs = STARTER_SMELTING_RECIPES.map((recipe) => recipe.input)
+      const fuelItems = STARTER_FUEL_RULES.map((rule) => rule.item)
+
+      expect(new Set(recipeIds).size).toBe(recipeIds.length)
+      expect(new Set(inputs).size).toBe(inputs.length)
+      expect(new Set(fuelItems).size).toBe(fuelItems.length)
+    }),
+  )
+
+  it.effect('starter fuels expose the intended burn durations', () =>
+    Effect.sync(() => {
+      expect(STARTER_FUEL_RULES).toStrictEqual([
+        { item: 'coal', burnDurationSecs: 80 },
+        { item: 'coal_block', burnDurationSecs: 800 },
+        { item: 'oak_log', burnDurationSecs: 15 },
+        { item: 'oak_planks', burnDurationSecs: 15 },
+        { item: 'stick', burnDurationSecs: 5 },
+      ])
     }),
   )
 })

@@ -34,10 +34,26 @@ export const STARTER_SMELTING_RECIPES: ReadonlyArray<SmeltingRecipe> = [
     output: itemStack('iron_ingot', 1),
     cookDurationSecs: 10,
   },
+  {
+    id: 'mc-sim:stone',
+    input: 'cobblestone',
+    output: itemStack('stone', 1),
+    cookDurationSecs: 10,
+  },
+  {
+    id: 'mc-sim:glass',
+    input: 'sand',
+    output: itemStack('glass', 1),
+    cookDurationSecs: 10,
+  },
 ]
 
 export const STARTER_FUEL_RULES: ReadonlyArray<FuelRule> = [
   { item: 'coal', burnDurationSecs: 80 },
+  { item: 'coal_block', burnDurationSecs: 800 },
+  { item: 'oak_log', burnDurationSecs: 15 },
+  { item: 'oak_planks', burnDurationSecs: 15 },
+  { item: 'stick', burnDurationSecs: 5 },
 ]
 
 export const emptyFurnaceState = (): FurnaceState => ({
