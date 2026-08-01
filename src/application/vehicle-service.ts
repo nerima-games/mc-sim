@@ -27,12 +27,12 @@ const validDimension = (value: Dimension): boolean => value === 'overworld' || v
 
 export type VehicleServiceApi = Readonly<{
   vehicles: Effect.Effect<ReadonlyArray<Vehicle>>
-  spawn: (type: VehicleType, dimension: Dimension, position: Position, yaw?: number) => Effect.Effect<Vehicle, VehicleOperationError>
+  spawn: (type: VehicleType, dimension: Dimension, position: Position, yawRadians?: number) => Effect.Effect<Vehicle, VehicleOperationError>
   despawn: (id: VehicleId) => Effect.Effect<boolean>
   mount: (id: VehicleId, occupant: OccupantId) => Effect.Effect<void, VehicleOperationError>
   dismount: (id: VehicleId, occupant: OccupantId) => Effect.Effect<void, VehicleOperationError>
   updateVelocity: (id: VehicleId, velocity: VehicleVelocity) => Effect.Effect<void, VehicleOperationError>
-  updateTransform: (id: VehicleId, dimension: Dimension, position: Position, yaw: number) => Effect.Effect<void, VehicleOperationError>
+  updateTransform: (id: VehicleId, dimension: Dimension, position: Position, yawRadians: number) => Effect.Effect<void, VehicleOperationError>
   snapshot: Effect.Effect<VehicleSnapshot>
   restore: (snapshot: unknown) => Effect.Effect<void, VehicleValidationError>
 }>
@@ -50,12 +50,12 @@ export const makeVehicleService = (
       Ref.modify(state, f).pipe(Effect.flatten)
     return {
       vehicles: Ref.get(state).pipe(Effect.map((snapshot) => snapshot.vehicles)),
-      spawn: (type, dimension, position, yaw = 0) => modify((snapshot) => {
-        if ((type !== 'boat' && type !== 'minecart') || !validDimension(dimension) || !validVector(position) || !Number.isFinite(yaw))
+      spawn: (type, dimension, position, yawRadians = 0) => modify((snapshot) => {
+        if ((type !== 'boat' && type !== 'minecart') || !validDimension(dimension) || !validVector(position) || !Number.isFinite(yawRadians))
           return [Effect.fail(operationError('invalid-transform')), snapshot]
         const vehicle: Vehicle = {
           id: `v:${snapshot.nextSerial}` as VehicleId, type, dimension, position,
-          velocity: { x: 0, y: 0, z: 0 }, yaw,
+          velocity: { x: 0, y: 0, z: 0 }, yawRadians,
         }
         return [Effect.succeed(vehicle), { vehicles: [...snapshot.vehicles, vehicle], nextSerial: snapshot.nextSerial + 1 }]
       }),
@@ -82,8 +82,8 @@ export const makeVehicleService = (
         return [Effect.void, { ...snapshot, vehicles }]
       }),
       updateVelocity: (id, velocity) => modify((snapshot) => update(snapshot, id, validVector(velocity), (vehicle) => ({ ...vehicle, velocity }))),
-      updateTransform: (id, dimension, position, yaw) => modify((snapshot) =>
-        update(snapshot, id, validDimension(dimension) && validVector(position) && Number.isFinite(yaw), (vehicle) => ({ ...vehicle, dimension, position, yaw }))),
+      updateTransform: (id, dimension, position, yawRadians) => modify((snapshot) =>
+        update(snapshot, id, validDimension(dimension) && validVector(position) && Number.isFinite(yawRadians), (vehicle) => ({ ...vehicle, dimension, position, yawRadians }))),
       snapshot: Ref.get(state),
       restore: (candidate) => {
         const result = validateVehicleSnapshot(candidate)

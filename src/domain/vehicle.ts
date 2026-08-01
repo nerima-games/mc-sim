@@ -22,7 +22,7 @@ export type Vehicle = Readonly<{
   dimension: Dimension
   position: Position
   velocity: VehicleVelocity
-  yaw: number
+  yawRadians: number
   occupant?: OccupantId
 }>
 
@@ -78,7 +78,7 @@ export const validateVehicleSnapshot = (value: unknown): VehicleValidationResult
     if (!dimension(item['dimension'])) return invalid(`${path}.dimension`, 'must be a supported dimension')
     if (!vector(item['position'])) return invalid(`${path}.position`, 'must contain finite coordinates')
     if (!vector(item['velocity'])) return invalid(`${path}.velocity`, 'must contain finite coordinates')
-    if (!finite(item['yaw'])) return invalid(`${path}.yaw`, 'must be finite')
+    if (!finite(item['yawRadians'])) return invalid(`${path}.yawRadians`, 'must be finite')
     const occupant = item['occupant']
     if (occupant !== undefined) {
       if (typeof occupant !== 'string' || occupant.trim().length === 0)

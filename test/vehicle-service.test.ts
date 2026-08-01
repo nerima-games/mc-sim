@@ -8,12 +8,12 @@ describe('VehicleService lifecycle', () => {
   it('spawns, updates, mounts, dismounts, and despawns vehicles', async () => {
     await Effect.runPromise(Effect.gen(function* () {
       const service = yield* makeVehicleService()
-      const vehicle = yield* service.spawn('boat', 'overworld', position(1, 64, 2), 90)
+      const vehicle = yield* service.spawn('boat', 'overworld', position(1, 64, 2), Math.PI / 2)
       expect(vehicle.id).toBe('v:0')
       yield* service.updateVelocity(vehicle.id, { x: 1, y: 0, z: -1 })
-      yield* service.updateTransform(vehicle.id, 'nether', position(3, 70, 4), 180)
+      yield* service.updateTransform(vehicle.id, 'nether', position(3, 70, 4), Math.PI)
       yield* service.mount(vehicle.id, OccupantId('player:1'))
-      expect((yield* service.vehicles)[0]).toMatchObject({ dimension: 'nether', yaw: 180, occupant: 'player:1' })
+      expect((yield* service.vehicles)[0]).toMatchObject({ dimension: 'nether', yawRadians: Math.PI, occupant: 'player:1' })
       yield* service.dismount(vehicle.id, OccupantId('player:1'))
       expect((yield* service.vehicles)[0]?.occupant).toBeUndefined()
       expect(yield* service.despawn(vehicle.id)).toBe(true)
@@ -71,8 +71,8 @@ describe('VehicleService lifecycle', () => {
       const before = yield* service.snapshot
       const error = yield* Effect.flip(service.restore({
         vehicles: [
-          { id: 'v:0', type: 'boat', dimension: 'overworld', position: { x: 0, y: 0, z: 0 }, velocity: { x: 0, y: 0, z: 0 }, yaw: 0, occupant: 'same' },
-          { id: 'v:1', type: 'minecart', dimension: 'overworld', position: { x: 1, y: 0, z: 0 }, velocity: { x: 0, y: 0, z: 0 }, yaw: 0, occupant: 'same' },
+          { id: 'v:0', type: 'boat', dimension: 'overworld', position: { x: 0, y: 0, z: 0 }, velocity: { x: 0, y: 0, z: 0 }, yawRadians: 0, occupant: 'same' },
+          { id: 'v:1', type: 'minecart', dimension: 'overworld', position: { x: 1, y: 0, z: 0 }, velocity: { x: 0, y: 0, z: 0 }, yawRadians: 0, occupant: 'same' },
         ],
         nextSerial: 2,
       }))
@@ -99,7 +99,7 @@ describe('VehicleService lifecycle', () => {
 
   it('strictly rejects invalid initial snapshots and counters that can collide', async () => {
     const candidate = {
-      vehicles: [{ id: 'v:4', type: 'boat', dimension: 'overworld', position: { x: 0, y: 0, z: 0 }, velocity: { x: 0, y: 0, z: 0 }, yaw: 0 }],
+      vehicles: [{ id: 'v:4', type: 'boat', dimension: 'overworld', position: { x: 0, y: 0, z: 0 }, velocity: { x: 0, y: 0, z: 0 }, yawRadians: 0 }],
       nextSerial: 4,
     }
     const error = await Effect.runPromise(Effect.flip(makeVehicleService(candidate)))
