@@ -7,8 +7,8 @@
  */
 import { describe, expect, it } from '@effect/vitest'
 import { Effect } from 'effect'
-import { itemStack } from '../domain/inventory'
-import { ItemType } from '../domain/kernel-vocabulary'
+import { itemStack } from '../src/domain/inventory'
+import { ItemType } from '../src/domain/kernel-vocabulary'
 import {
   cellAt,
   conflictsIn,
@@ -20,7 +20,7 @@ import {
   shapedRecipe,
   shapelessRecipe,
   STARTER_RECIPES,
-} from '../domain/recipe'
+} from '../src/domain/recipe'
 
 // ---------------------------------------------------------------------------
 // Fixtures

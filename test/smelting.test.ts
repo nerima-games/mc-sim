@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect } from 'effect'
-import { itemStack, type ItemStack } from '../domain/inventory'
+import { itemStack, type ItemStack } from '../src/domain/inventory'
 import {
   advanceFurnace,
   emptyFurnaceState,
@@ -9,7 +9,7 @@ import {
   type FuelRule,
   type FurnaceState,
   type SmeltingRecipe,
-} from '../domain/smelting'
+} from '../src/domain/smelting'
 
 const furnaceWith = (overrides: Partial<FurnaceState> = {}): FurnaceState => ({
   ...emptyFurnaceState(),

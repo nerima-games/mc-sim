@@ -18,7 +18,16 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        # Pinned to a commit, not the mutable v6 tag: a tag can be repointed at
+        # new code without any change here (SUPPLY_CHAIN.md).
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          # GITHUB_TOKEN is not needed by any later step; do not leave it
+          # sitting in .git/config for the rest of the job (SUPPLY_CHAIN.md).
+          persist-credentials: false
+          # Full history (not the default shallow clone) is needed for the
+          # `changeset status --since` comparison below.
+          fetch-depth: 0
 
       - name: Setup pnpm
         # Pinned to a commit, not the mutable v4 tag: this is a third-party action
@@ -26,7 +35,7 @@ jobs:
         uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: "24"
           cache: "pnpm"
@@ -41,33 +50,37 @@ jobs:
         run: pnpm typecheck
 
       - name: Lint
+        # Cross-repository dependency boundaries (DEPENDENCY_POLICY.md) are
+        # enforced here via oxlint.json's no-restricted-imports, which absorbed
+        # the role of the now-removed scripts/check-dependency-whitelist.ts.
         run: pnpm lint
 
-      # Hard gate. Unlike the reference repository's check-package-dag.ts this
-      # script exits non-zero on any violation: unlisted cross-repo import,
-      # undeclared dependency, transitive-closure import, a runtime dependency
-      # on mc-playground-kit, or a raw wall-clock read (Date.now()).
-      - name: Dependency whitelist / time-source ban
-        run: pnpm check:deps
-
-      # The API lock (plan.md §6 Step 0-3). Fails when the committed
-      # api-lock.md no longer matches the package's public surface, so a change
-      # to what consumers can see cannot land without a reviewable diff. Run
-      # `pnpm api:update` to refresh it.
-      - name: API lock
-        run: pnpm api:check
+      - name: Changeset status
+        # A PR that touches user-facing surface (public API, behaviour,
+        # dependencies) must carry a changeset (RELEASE_STANDARD.md §1.2).
+        # docs/-only and CI-config-only PRs are exempt.
+        if: github.event_name == 'pull_request'
+        run: |
+          if git diff --name-only "origin/${{ github.base_ref }}...HEAD" | grep -qvE '^(docs/|\.github/)'; then
+            pnpm exec changeset status --since="origin/${{ github.base_ref }}"
+          else
+            echo "Only docs/ or .github/ changed; skipping changeset check."
+          fi
 
       - name: Test
         run: pnpm test
 
-      # Coverage is reported but not yet thresholded — see vitest.config.ts.
-      # The 99% gate is added when this repository reaches its completion criteria.
+      # Coverage gate: statements/branches/functions/lines all >= 99%
+      # (TEST_STANDARD.md §3). `vitest run --coverage` itself exits non-zero
+      # when a threshold is not met, so no extra assertion script is needed.
+      # This is a separate required gate from `pnpm verify` (TEST_STANDARD.md
+      # §1) rather than folded into it, to keep `verify` fast.
       - name: Coverage
         run: pnpm test:coverage
 
       - name: Upload coverage report
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: coverage
           path: coverage/

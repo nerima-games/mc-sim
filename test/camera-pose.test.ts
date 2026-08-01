@@ -24,8 +24,8 @@ import {
   PITCH_MIN_RADIANS,
   snapshotAgeSecs,
   withFeetPosition,
-} from '../domain/camera-pose'
-import { MonotonicTimeSecs, position } from '../domain/kernel-vocabulary'
+} from '../src/domain/camera-pose'
+import { MonotonicTimeSecs, position } from '../src/domain/kernel-vocabulary'
 
 const AT = MonotonicTimeSecs(500)
 

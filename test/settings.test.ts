@@ -4,7 +4,7 @@ import {
   makeSettingsService,
   SettingsService,
   SettingsServiceLayer,
-} from '../application/settings-service'
+} from '../src/application/settings-service'
 import {
   applySettings,
   bindKey,
@@ -15,7 +15,7 @@ import {
   normaliseSettings,
   unbindKey,
   type Settings,
-} from '../domain/settings'
+} from '../src/domain/settings'
 
 const withSettings = (patch: Partial<Settings>): Settings => ({ ...DEFAULT_SETTINGS, ...patch })
 

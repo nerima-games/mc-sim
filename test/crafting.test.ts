@@ -9,8 +9,8 @@
  */
 import { describe, expect, it } from '@effect/vitest'
 import { Effect, Fiber } from 'effect'
-import { makeInventoryService } from '../application/inventory-service'
-import { craftFromGrid, ingredientCost } from '../domain/crafting'
+import { makeInventoryService } from '../src/application/inventory-service'
+import { craftFromGrid, ingredientCost } from '../src/domain/crafting'
 import {
   addItem,
   countOf,
@@ -18,9 +18,9 @@ import {
   INVENTORY_SLOT_COUNT,
   Inventory,
   itemStack,
-} from '../domain/inventory'
-import { ItemType, MAX_STACK_COUNT } from '../domain/kernel-vocabulary'
-import { CraftGrid, craftGrid, shapelessRecipe, STARTER_RECIPES } from '../domain/recipe'
+} from '../src/domain/inventory'
+import { ItemType, MAX_STACK_COUNT } from '../src/domain/kernel-vocabulary'
+import { CraftGrid, craftGrid, shapelessRecipe, STARTER_RECIPES } from '../src/domain/recipe'
 
 const LEGEND: Readonly<Record<string, ItemType>> = {
   P: 'oak_planks',

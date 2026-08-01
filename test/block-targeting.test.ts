@@ -1,8 +1,8 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Option } from 'effect'
-import { targetBlockFromCamera, targetBlockFromPlayerPose } from '../domain/block-targeting'
-import { cameraPoseOf, INITIAL_PLAYER_POSE, withFeetPosition } from '../domain/camera-pose'
-import { MonotonicTimeSecs, position } from '../domain/kernel-vocabulary'
+import { targetBlockFromCamera, targetBlockFromPlayerPose } from '../src/domain/block-targeting'
+import { cameraPoseOf, INITIAL_PLAYER_POSE, withFeetPosition } from '../src/domain/camera-pose'
+import { MonotonicTimeSecs, position } from '../src/domain/kernel-vocabulary'
 
 const cameraAt = (x: number, y: number, z: number) =>
   cameraPoseOf(withFeetPosition(INITIAL_PLAYER_POSE, position(x, y, z)), MonotonicTimeSecs(0))

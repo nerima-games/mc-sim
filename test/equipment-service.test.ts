@@ -1,8 +1,8 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect } from 'effect'
-import { makeEquipmentService } from '../application/equipment-service'
-import { durability, equipmentItem, type EquipmentItem } from '../domain/equipment'
-import { itemStack } from '../domain/inventory'
+import { makeEquipmentService } from '../src/application/equipment-service'
+import { durability, equipmentItem, type EquipmentItem } from '../src/domain/equipment'
+import { itemStack } from '../src/domain/inventory'
 
 const helmet = (current = 165): EquipmentItem =>
   equipmentItem(itemStack('iron_helmet', 1), durability(current, 165))

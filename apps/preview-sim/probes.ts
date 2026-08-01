@@ -21,10 +21,10 @@
  * tell a boundary that was checked from one that was never looked at.
  */
 import { Duration, Effect, Fiber, Ref, Schedule, TestClock, TestContext, Layer } from 'effect'
-import { autoSaveSchedule, startAutoSaveDaemon } from '../../application/autosave'
-import { makeGameLoop } from '../../application/game-loop'
-import { makeInventoryService } from '../../application/inventory-service'
-import { makeTimeService } from '../../application/time-service'
+import { autoSaveSchedule, startAutoSaveDaemon } from '../../src/application/autosave'
+import { makeGameLoop } from '../../src/application/game-loop'
+import { makeInventoryService } from '../../src/application/inventory-service'
+import { makeTimeService } from '../../src/application/time-service'
 import {
   clampFrameDelta,
   FIRST_FRAME_DELTA_SECS,
@@ -32,16 +32,16 @@ import {
   frameDeltaLossSecs,
   MAX_FRAME_DELTA_SECS,
   MIN_FRAME_DELTA_SECS,
-} from '../../domain/frame-timing'
+} from '../../src/domain/frame-timing'
 import {
   emptyInventory,
   INVENTORY_SLOT_COUNT,
   normaliseInventory,
   removeItem,
   type Inventory,
-} from '../../domain/inventory'
-import { MAX_STACK_COUNT, MonotonicTimeSecs, type StackCount } from '../../domain/kernel-vocabulary'
-import * as Time from '../../domain/time-of-day'
+} from '../../src/domain/inventory'
+import { MAX_STACK_COUNT, MonotonicTimeSecs, type StackCount } from '../../src/domain/kernel-vocabulary'
+import * as Time from '../../src/domain/time-of-day'
 import { clockFace, fixed, padStart, pad } from './style'
 
 const line = (text = ''): string => text
