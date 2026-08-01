@@ -89,7 +89,17 @@ const hashUnit = (seed: number, x: number, y: number, z: number): number => {
 
 const keyOf = ({ x, y, z }: ExplosionBlockPosition): string => `${x},${y},${z}`
 
+// Preserve the established four-samples-per-block result for normal explosions.
+// Above this radius, sharing radial prefixes prevents a single large explosion
+// from tracing O(radius) samples independently for O(radius^3) target cells.
+const MAX_DIRECT_TRACE_RADIUS = 8
+
 type Trace = { readonly loaded: boolean; readonly attenuation: number; readonly steps: number }
+
+type RadialTrace = {
+  readonly attenuationTo: (target: ExplosionBlockPosition, distance: number) => Trace
+  readonly readBlock: ExplosionBlockReader
+}
 
 const trace = (
   center: Position,
@@ -128,6 +138,86 @@ const trace = (
   return { loaded: true, attenuation, steps: samples }
 }
 
+const radialTrace = (
+  center: Position,
+  blocks: ExplosionBlockReader,
+  maxSteps: number,
+): RadialTrace => {
+  const centerCell = {
+    x: Math.floor(center.x),
+    y: Math.floor(center.y),
+    z: Math.floor(center.z),
+  }
+  const centerKey = keyOf(centerCell)
+  const blockCache = new Map<string, ExplosionBlock | undefined>()
+  const pathCache = new Map<string, Trace>()
+
+  const readBlock = (position: ExplosionBlockPosition): ExplosionBlock | undefined => {
+    const key = keyOf(position)
+    if (blockCache.has(key)) return blockCache.get(key)
+    const block = blocks(position)
+    blockCache.set(key, block)
+    return block
+  }
+
+  const pathThrough = (cell: ExplosionBlockPosition): Trace => {
+    const key = keyOf(cell)
+    const cached = pathCache.get(key)
+    if (cached !== undefined) return cached
+
+    const block = readBlock(cell)
+    if (block === undefined) {
+      const result = { loaded: false, attenuation: 0, steps: 0 }
+      pathCache.set(key, result)
+      return result
+    }
+
+    if (key === centerKey) {
+      const result = {
+        loaded: true,
+        attenuation: Math.max(0, finite(block.resistance, 0)) + 0.3,
+        steps: 1,
+      }
+      pathCache.set(key, result)
+      return result
+    }
+
+    const parent = {
+      x: cell.x - Math.sign(cell.x - centerCell.x),
+      y: cell.y - Math.sign(cell.y - centerCell.y),
+      z: cell.z - Math.sign(cell.z - centerCell.z),
+    }
+    const prefix = pathThrough(parent)
+    const result = prefix.loaded
+      ? {
+          loaded: true,
+          attenuation: prefix.attenuation + Math.max(0, finite(block.resistance, 0)) + 0.3,
+          steps: prefix.steps + 1,
+        }
+      : prefix
+    pathCache.set(key, result)
+    return result
+  }
+
+  return {
+    readBlock,
+    attenuationTo: (target, distance) => {
+      if (keyOf(target) === centerKey) return { loaded: true, attenuation: 0, steps: 0 }
+      const required = Math.max(1, Math.ceil(distance * 4))
+      if (required > maxSteps) return { loaded: false, attenuation: 0, steps: maxSteps }
+      const parent = {
+        x: target.x - Math.sign(target.x - centerCell.x),
+        y: target.y - Math.sign(target.y - centerCell.y),
+        z: target.z - Math.sign(target.z - centerCell.z),
+      }
+      const prefix = pathThrough(parent)
+      return prefix.loaded
+        ? { loaded: true, attenuation: prefix.attenuation, steps: required }
+        : prefix
+    },
+  }
+}
+
 const entityExposure = <S>(
   center: Position,
   entity: Entity<S>,
@@ -164,6 +254,10 @@ export const planExplosion = <S>(request: ExplosionRequest<S>): ExplosionPlan =>
   const maximumY = Math.floor(center.y + radius)
   const minimumZ = Math.floor(center.z - radius)
   const maximumZ = Math.floor(center.z + radius)
+  const sharedTrace = radius > MAX_DIRECT_TRACE_RADIUS
+    ? radialTrace(center, request.blocks, limits.maxRaySteps)
+    : undefined
+  const readBlock = sharedTrace?.readBlock ?? request.blocks
 
   outer: for (let y = minimumY; y <= maximumY; y += 1) {
     for (let z = minimumZ; z <= maximumZ; z += 1) {
@@ -176,9 +270,11 @@ export const planExplosion = <S>(request: ExplosionRequest<S>): ExplosionPlan =>
           break outer
         }
         visitedBlocks += 1
-        const block = request.blocks(target)
+        const block = readBlock(target)
         if (block === undefined || !block.destructible) continue
-        const ray = trace(center, { x: x + 0.5, y: y + 0.5, z: z + 0.5 }, keyOf(target), request.blocks, limits.maxRaySteps)
+        const ray = sharedTrace === undefined
+          ? trace(center, { x: x + 0.5, y: y + 0.5, z: z + 0.5 }, keyOf(target), request.blocks, limits.maxRaySteps)
+          : sharedTrace.attenuationTo(target, distance)
         if (!ray.loaded) {
           if (ray.steps >= limits.maxRaySteps) truncated = true
           continue

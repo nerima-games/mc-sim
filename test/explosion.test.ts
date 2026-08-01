@@ -1,6 +1,11 @@
 import { Effect } from 'effect'
 import { describe, expect, it, vi } from '@effect/vitest'
-import { applyExplosionPlan, planExplosion, type ExplosionBlockPosition } from '../src/domain/explosion'
+import {
+  applyExplosionPlan,
+  DEFAULT_EXPLOSION_LIMITS,
+  planExplosion,
+  type ExplosionBlockPosition,
+} from '../src/domain/explosion'
 import { EntityId, EntityKind, type Entity } from '../src/domain/entity'
 import { position } from '../src/domain/kernel-vocabulary'
 
@@ -87,6 +92,32 @@ describe('planExplosion', () => {
     })
     expect(plan.entityEffects).toHaveLength(0)
     expect(plan.truncated).toBe(true)
+  })
+
+  it('shares block reads for a large explosion instead of tracing every target independently', () => {
+    let blockReads = 0
+    const plan = planExplosion({
+      center: position(0.5, 0.5, 0.5), radius: 16, seed: 7,
+      blocks: () => {
+        blockReads += 1
+        return { resistance: 0, destructible: true }
+      },
+      entities: [],
+    })
+    expect(plan.visitedBlocks).toBe(DEFAULT_EXPLOSION_LIMITS.maxVisitedBlocks)
+    expect(blockReads).toBeLessThanOrEqual(plan.visitedBlocks + 32)
+  })
+
+  it('keeps large explosions deterministic and respects radial shielding', () => {
+    const request = {
+      center: position(0.5, 0.5, 0.5), radius: 16, seed: 11,
+      blocks: world([['8,0,0', 0]]), entities: [],
+    }
+    const open = planExplosion(request)
+    const shielded = planExplosion({ ...request, blocks: world([['4,0,0', 20], ['8,0,0', 0]]) })
+    expect(open).toStrictEqual(planExplosion(request))
+    expect(open.destroyedBlocks).toContainEqual({ x: 8, y: 0, z: 0 })
+    expect(shielded.destroyedBlocks).not.toContainEqual({ x: 8, y: 0, z: 0 })
   })
 
   it.effect('hands one immutable mutation to the host transaction', () =>
