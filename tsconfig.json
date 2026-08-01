@@ -8,11 +8,10 @@
     "types": ["node"]
   },
   "include": [
-    "index.ts",
-    "domain/**/*.ts",
-    "application/**/*.ts",
+    "src/**/*.ts",
     "test/**/*.ts",
     "scripts/**/*.ts",
+    "apps/**/*.ts",
     "vitest.config.ts"
   ],
   "exclude": ["node_modules", "coverage", "dist"]

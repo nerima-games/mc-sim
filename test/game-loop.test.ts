@@ -13,9 +13,9 @@
  */
 import { describe, expect, it } from '@effect/vitest'
 import { Deferred, Effect, Ref } from 'effect'
-import { FIRST_FRAME_DELTA_SECS, MAX_FRAME_DELTA_SECS } from '../domain/frame-timing'
-import { DeltaTimeSecs, MonotonicTimeSecs } from '../domain/kernel-vocabulary'
-import { FRAME_QUEUE_CAPACITY, makeGameLoop } from '../application/game-loop'
+import { FIRST_FRAME_DELTA_SECS, MAX_FRAME_DELTA_SECS } from '../src/domain/frame-timing'
+import { DeltaTimeSecs, MonotonicTimeSecs } from '../src/domain/kernel-vocabulary'
+import { FRAME_QUEUE_CAPACITY, makeGameLoop } from '../src/application/game-loop'
 
 /** A handler that records deltas and signals once it has seen `target` frames. */
 const recordingHandler = (target: number) =>

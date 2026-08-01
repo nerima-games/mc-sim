@@ -1,17 +1,17 @@
 import { describe, expect, it } from '@effect/vitest'
 import type { BlockPosition } from '@nerima-games/mc-kernel'
 import { Effect, Layer } from 'effect'
-import { CropService, CropServiceLayer } from '../application/crop-service'
-import { PlayerServiceLayer } from '../application/player-service'
-import { TimeServiceLayer } from '../application/time-service'
-import { POTATO_MATURITY_SECS, type CropLocation } from '../domain/crop'
+import { CropService, CropServiceLayer } from '../src/application/crop-service'
+import { PlayerServiceLayer } from '../src/application/player-service'
+import { TimeServiceLayer } from '../src/application/time-service'
+import { POTATO_MATURITY_SECS, type CropLocation } from '../src/domain/crop'
 import {
   DeltaTimeSecs,
   EpochMillis,
   FixedClockLayer,
   MonotonicTimeSecs,
-} from '../domain/kernel-vocabulary'
-import { makeSimStages } from '../stages/registration'
+} from '../src/domain/kernel-vocabulary'
+import { makeSimStages } from '../src/stages/registration'
 
 const location = (
   x: number,

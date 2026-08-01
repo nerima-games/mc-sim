@@ -16,8 +16,8 @@ import {
   unequip,
   validateEquipmentSnapshot,
   type EquipmentItem,
-} from '../domain/equipment'
-import { itemStack } from '../domain/inventory'
+} from '../src/domain/equipment'
+import { itemStack } from '../src/domain/inventory'
 
 const helmet = (current = 165): EquipmentItem =>
   equipmentItem(itemStack('iron_helmet', 1), durability(current, 165))

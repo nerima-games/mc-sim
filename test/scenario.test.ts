@@ -16,17 +16,17 @@
  */
 import { describe, expect, it } from '@effect/vitest'
 import { Effect, Layer, Ref } from 'effect'
-import { forwardVector, snapshotAgeSecs } from '../domain/camera-pose'
-import { DeltaTimeSecs, EpochMillis, MonotonicTimeSecs, position } from '../domain/kernel-vocabulary'
-import { craftGrid } from '../domain/recipe'
-import { ClockPort, FixedClockLayer } from '../domain/kernel-vocabulary'
+import { forwardVector, snapshotAgeSecs } from '../src/domain/camera-pose'
+import { DeltaTimeSecs, EpochMillis, MonotonicTimeSecs, position } from '../src/domain/kernel-vocabulary'
+import { craftGrid } from '../src/domain/recipe'
+import { ClockPort, FixedClockLayer } from '../src/domain/kernel-vocabulary'
 import {
   InventoryService,
   InventoryServiceLayer,
   makeInventoryService,
-} from '../application/inventory-service'
-import { PlayerService, PlayerServiceLayer } from '../application/player-service'
-import { TimeService, TimeServiceLayer } from '../application/time-service'
+} from '../src/application/inventory-service'
+import { PlayerService, PlayerServiceLayer } from '../src/application/player-service'
+import { TimeService, TimeServiceLayer } from '../src/application/time-service'
 
 /**
  * A clock the test drives by hand.

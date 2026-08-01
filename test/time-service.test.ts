@@ -17,9 +17,9 @@
  */
 import { describe, expect, it } from '@effect/vitest'
 import { Effect } from 'effect'
-import { DeltaTimeSecs } from '../domain/kernel-vocabulary'
-import { INITIAL_TIME_STATE } from '../domain/time-of-day'
-import { makeTimeService } from '../application/time-service'
+import { DeltaTimeSecs } from '../src/domain/kernel-vocabulary'
+import { INITIAL_TIME_STATE } from '../src/domain/time-of-day'
+import { makeTimeService } from '../src/application/time-service'
 
 describe('REGRESSION: restore repairs a corrupt save instead of reporting permanent daylight', () => {
   it.effect('a zero day length no longer makes every reader NaN', () =>

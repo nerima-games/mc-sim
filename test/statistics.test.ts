@@ -4,7 +4,7 @@ import {
   makeStatisticsService,
   StatisticsService,
   StatisticsServiceLayer,
-} from '../application/statistics-service'
+} from '../src/application/statistics-service'
 import {
   counterOf,
   EMPTY_STATISTICS,
@@ -14,7 +14,7 @@ import {
   record,
   unlock,
   type Statistics,
-} from '../domain/statistics'
+} from '../src/domain/statistics'
 
 describe('counting', () => {
   it.effect('a counter starts at zero and is never undefined', () =>

@@ -23,13 +23,13 @@ import {
   vec3,
 } from '@nerima-games/mc-physics'
 import { Effect, Layer, Option, Ref } from 'effect'
-import { CropService, CropServiceLayer } from '../application/crop-service'
+import { CropService, CropServiceLayer } from '../src/application/crop-service'
 import {
   InventoryService,
   InventoryServiceLayer,
-} from '../application/inventory-service'
-import { PlayerService, PlayerServiceLayer } from '../application/player-service'
-import { TimeService, TimeServiceLayer } from '../application/time-service'
+} from '../src/application/inventory-service'
+import { PlayerService, PlayerServiceLayer } from '../src/application/player-service'
+import { TimeService, TimeServiceLayer } from '../src/application/time-service'
 import {
   DeltaTimeSecs,
   EpochMillis,
@@ -39,8 +39,8 @@ import {
   StageId,
   type GameModule,
   type StageRegistration,
-} from '../domain/kernel-vocabulary'
-import * as Time from '../domain/time-of-day'
+} from '../src/domain/kernel-vocabulary'
+import * as Time from '../src/domain/time-of-day'
 import {
   makeControllableSimStagesWithPhysics,
   makeSimFrameState,
@@ -54,19 +54,19 @@ import {
   type LandingImpact,
   type MovementIntent,
   type SimPhysicsConfig,
-} from '../stages/registration'
-import * as PublicApi from '../index'
+} from '../src/stages/registration'
+import * as PublicApi from '../src/index'
 import type {
   LandingImpact as PublicLandingImpact,
   MovementIntent as PublicMovementIntent,
   SimPhysicsConfig as PublicSimPhysicsConfig,
-} from '../index'
+} from '../src/index'
 import {
   EXPERIENCE_MODULE_STAGE_PREFIXES,
   OWN_STAGE_PREFIX,
   SIM_STAGE_IDS,
   UPSTREAM_STAGE_IDS,
-} from '../stages/stage-ids'
+} from '../src/stages/stage-ids'
 
 const SimulationLayer = Layer.mergeAll(
   InventoryServiceLayer(),

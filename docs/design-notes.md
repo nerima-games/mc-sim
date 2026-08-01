@@ -602,10 +602,10 @@ plan.md §4.3 / §5.1-3。時刻はすべて注入された Clock Port から取
 
 強制は `scripts/check-dependency-whitelist.ts` の `findBannedTimeSources`
 （`Date.now()` / `new Date()` / `performance.now()` の 3 つ）。
-**oxlint.json ではない** — oxlint 0.12 は `no-restricted-syntax` も
+**.oxlintrc.json ではない** — oxlint 0.12 は `no-restricted-syntax` も
 `no-restricted-properties` も実装しておらず、`no-restricted-globals` は一覧に出るが実装されていない
 （mc-kernel で 0.12.0 に対し実測確認済み。3 ルールすべて設定しても診断 0 件）。
-oxlint が該当ルールを実装したら oxlint.json へ移し、スクリプト側の time-source 節を消す。
+oxlint が該当ルールを実装したら .oxlintrc.json へ移し、スクリプト側の time-source 節を消す。
 
 Clock Port の実装アダプタだけは実クロックを読む必要があるため、
 その行に `mc-kernel-allow-time-source` コメントを付けると除外される。

@@ -45,8 +45,8 @@ import {
   wallClockEpochMillis,
   type ClockService,
   type ItemType,
-} from '../domain/kernel-vocabulary'
-import { STARTER_RECIPES } from '../domain/recipe'
+} from '../src/domain/kernel-vocabulary'
+import { STARTER_RECIPES } from '../src/domain/recipe'
 
 /**
  * Kernel's `ClockService`, restated from `mc-kernel/domain/clock.ts:43-48`.
