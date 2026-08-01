@@ -41,6 +41,7 @@ export * from './domain/time-of-day'
 export * from './domain/vitals'
 export * from './domain/vehicle'
 export * from './domain/weather'
+export * from './domain/wither'
 
 // --- Application: Effect services -------------------------------------------
 export * from './application/autosave'
