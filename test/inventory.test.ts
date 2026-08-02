@@ -531,6 +531,58 @@ describe('REGRESSION: InventoryService.restore is the guarded path, and reports 
   )
 })
 
+describe('InventoryService slot operations', () => {
+  it.effect('gets and sets a slot without losing tool durability', () =>
+    Effect.gen(function* () {
+      const service = yield* makeInventoryService()
+      const durability = { current: 3, max: 59 }
+
+      expect(yield* service.setSlot(0, { item: 'wooden_pickaxe', count: 1 as StackCount, durability })).toStrictEqual({
+        _tag: 'Updated', slot: { item: 'wooden_pickaxe', count: 1, durability },
+      })
+      expect(yield* service.getSlot(0)).toStrictEqual({ item: 'wooden_pickaxe', count: 1, durability })
+      expect(yield* service.setSlot(-1, undefined)).toStrictEqual({ _tag: 'InvalidSlot' })
+    }),
+  )
+
+  it.effect('moves, merges, and swaps complete stacks atomically', () =>
+    Effect.gen(function* () {
+      const service = yield* makeInventoryService()
+      yield* service.setSlot(0, { item: 'stone', count: 10 as StackCount })
+      yield* service.setSlot(1, { item: 'stone', count: 60 as StackCount })
+      expect(yield* service.moveStack(0, 1)).toStrictEqual({
+        _tag: 'Merged', moved: 4, source: { item: 'stone', count: 6 }, target: { item: 'stone', count: 64 },
+      })
+      expect(yield* service.moveStack(0, 2)).toStrictEqual({
+        _tag: 'Moved', moved: 6, source: undefined, target: { item: 'stone', count: 6 },
+      })
+      yield* service.setSlot(3, { item: 'dirt', count: 2 as StackCount })
+      expect(yield* service.moveStack(2, 3)).toStrictEqual({
+        _tag: 'Swapped', moved: 6, source: { item: 'dirt', count: 2 }, target: { item: 'stone', count: 6 },
+      })
+    }),
+  )
+
+  it.effect('quick-moves into the opposite inventory range and sorts deterministically', () =>
+    Effect.gen(function* () {
+      const service = yield* makeInventoryService()
+      yield* service.setSlot(0, { item: 'stone', count: 10 as StackCount })
+      yield* service.setSlot(27, { item: 'stone', count: 60 as StackCount })
+      expect(yield* service.quickMove(0)).toStrictEqual({
+        _tag: 'Moved', moved: 10, source: undefined,
+      })
+      expect(yield* service.getSlot(28)).toStrictEqual({ item: 'stone', count: 6 })
+
+      yield* service.setSlot(1, { item: 'dirt', count: 2 as StackCount })
+      expect(yield* service.sortInventory).toStrictEqual({ _tag: 'Sorted' })
+      expect(yield* service.getSlot(0)).toStrictEqual({ item: 'dirt', count: 2 })
+      expect(yield* service.getSlot(1)).toStrictEqual({ item: 'stone', count: 64 })
+      expect(yield* service.getSlot(2)).toStrictEqual({ item: 'stone', count: 6 })
+      expect(yield* service.sortInventory).toStrictEqual({ _tag: 'NoChange' })
+    }),
+  )
+})
+
 describe('InventoryService concurrency', () => {
   it.effect('left-click picks up, places, merges, and swaps whole stacks', () =>
     Effect.gen(function* () {

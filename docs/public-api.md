@@ -298,7 +298,7 @@ type GameLoopApi = {
 | 世代ごとの状態 | 長寿命の `Ref` を使い回す | **世代ごとに新規作成**。取り残しfiberが新世代を壊せない |
 | 再入 | 後付け（:141-148 のコメントが経緯） | 最初から |
 | 停止 | `Fiber.interruptFork`（:145, :198-201） | 同じ。加えて interrupt の**前**に detach |
-| メンテナンスループ | 別 daemon (:228) | 未実装。同じ規約で足す |
+| メンテナンスループ | 別 daemon (:228) | `startAutoSaveDaemon` が `Schedule.spaced` で定期保存し、停止時に fiber を interrupt |
 
 `FrameHandler` の中身（stage の並び）は mc-sim の関心事ではない（[architecture.md](./architecture.md) §4.3）。
 
@@ -338,14 +338,16 @@ type RemoveAtResult =
 `quickMove` / `addBlock` / `removeBlock` / `getHotbarSlots` / `getAllSlots` / `serialize` /
 `clear` / `deserialize`。
 
-現スケルトンはこのうち add / remove / 照会 / 直列化 / クリアに相当する 6 個だけを持つ。
-本実装で埋めるべき差分:
+現実装は add / remove / 照会 / 直列化 / クリアに加え、スロット操作を公開している。
+現時点の実装状況:
 
 - **スロット単位操作**: 選択スロットからの消費に必要な最小の原子的操作として
   `removeAt` は実装済み。`expectedItem` の照合と減算を単一の `Ref.modify` で行うため、
   UI が見た後にスロット内容が変わっても別アイテムを消費しない。失敗時は全スロット不変。
-  `getSlot` / `setSlot` / `moveStack` / `quickMove` / `sortInventory` は未実装で、
-  mx-ui のインベントリ画面には引き続き必要となる。
+  `getSlot` / `setSlot` / `moveStack` / `quickMove` / `sortInventory` は実装済み。
+  `moveStack` は空スロットへの移動、同種スタックの統合、異種スタックの交換を行い、
+  `quickMove` はプレイヤーインベントリとホットバー間を移動する。`sortInventory` はアイテム名、
+  数量の降順で並べ替える。すべての更新は `Ref.modify` で原子的に行い、耐久値もスタックと同期する。
 - **耐久 / メンディング**（`damageSlot` / `repairMendingItemsWithXP`）: XP サービスと結合する。
   「何をしたら耐久が減るか」は mx-gameplay、「減った値を保持する」が mc-sim。
 - **`addBlock` の失敗チャネル**: 参照実装は `Effect<void, InventoryError>`。

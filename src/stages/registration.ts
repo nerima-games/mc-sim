@@ -157,6 +157,23 @@ export type SimFrameState = {
   readonly physicsConfig: Ref.Ref<Option.Option<SimPhysicsConfig>>
 }
 
+export type SimInputPort = {
+  readonly setMovementIntent: (intent: MovementIntent) => Effect.Effect<void>
+  readonly setJumpIntent: (pressed: boolean) => Effect.Effect<void>
+}
+
+const boundedIntent = (value: number): number =>
+  Number.isFinite(value) ? Math.max(-1, Math.min(1, value)) : 0
+
+export const makeSimInputPort = (state: SimFrameState): SimInputPort => ({
+  setMovementIntent: (intent) =>
+    Ref.set(state.movementIntent, {
+      forward: boundedIntent(intent.forward),
+      strafe: boundedIntent(intent.strafe),
+    }),
+  setJumpIntent: (pressed) => Ref.set(state.jumpIntent, pressed),
+})
+
 /**
  * An Effect rather than a constant, so a test, each preview and the game can
  * hold their own.
@@ -448,7 +465,11 @@ export const makeSimStagesForPreview: Effect.Effect<
 export const makeControllableSimStagesWithPhysics = (
   config: SimPhysicsConfig,
 ): Effect.Effect<
-  { readonly state: SimFrameState; readonly stages: ReadonlyArray<StageRegistration> },
+  {
+    readonly state: SimFrameState
+    readonly stages: ReadonlyArray<StageRegistration>
+    readonly input: SimInputPort
+  },
   never,
   TimeService | PlayerService | CropService
 > =>
@@ -458,7 +479,7 @@ export const makeControllableSimStagesWithPhysics = (
     const crops = yield* CropService
     const state = yield* makeSimFrameState
     yield* Ref.set(state.physicsConfig, Option.some(config))
-    return { state, stages: simStages(state, time, player, crops) }
+    return { state, stages: simStages(state, time, player, crops), input: makeSimInputPort(state) }
   })
 
 /** Preview-compatible name retained alongside the production host API. */

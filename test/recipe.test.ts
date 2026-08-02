@@ -59,6 +59,7 @@ const LEGEND: Readonly<Record<string, ItemType>> = {
   Q: 'coal_block',
   R: 'iron_block',
   A: 'diamond_block',
+  M: 'bone',
 }
 
 /** A grid drawn as rows of legend characters; a space is an empty cell. */
@@ -596,6 +597,7 @@ describe('matching is total', () => {
   it.effect('every starter recipe matches its own canonical layout', () =>
     Effect.sync(() => {
       const canonical: ReadonlyArray<readonly [string, CraftGrid]> = [
+        ['mc-sim:bone-meal', gridOf('M')],
         ['mc-sim:oak-planks', gridOf('L')],
         ['mc-sim:stick', gridOf('P', 'P')],
         ['mc-sim:stick-from-loose-planks', gridOf('PP')],

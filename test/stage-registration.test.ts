@@ -329,6 +329,18 @@ describe('the stage works through the services, and keeps no copy of what they o
 })
 
 describe('the physical simulation path is opt-in and player pose remains authoritative', () => {
+  it.effect('exposes bounded movement and jump writes for the host input port', () =>
+    Effect.gen(function* () {
+      const { state, input } = yield* makeControllableSimStagesWithPhysics(AirPhysicsConfig)
+
+      yield* input.setMovementIntent({ forward: 4, strafe: Number.NaN })
+      yield* input.setJumpIntent(true)
+
+      expect(yield* Ref.get(state.movementIntent)).toStrictEqual({ forward: 1, strafe: 0 })
+      expect(yield* Ref.get(state.jumpIntent)).toBe(true)
+    }).pipe(Effect.provide(SimulationLayer), Effect.provide(FrozenClockLayer)),
+  )
+
   it.effect('legacy mode with physicsConfig none leaves the player pose unchanged', () =>
     Effect.gen(function* () {
       const player = yield* PlayerService

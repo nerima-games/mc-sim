@@ -43,6 +43,36 @@ export type InventoryClickResult =
   | { readonly _tag: 'InvalidSlot'; readonly carried: InventoryCarriedSlot }
   | { readonly _tag: 'InvalidCount'; readonly carried: InventoryCarriedSlot }
 
+export type InventorySetSlotResult =
+  | { readonly _tag: 'Updated'; readonly slot: InventoryCarriedSlot }
+  | { readonly _tag: 'InvalidSlot' }
+  | { readonly _tag: 'InvalidStack' }
+
+export type InventoryMoveResult =
+  | {
+      readonly _tag: 'Moved' | 'Merged' | 'Swapped'
+      readonly moved: number
+      readonly source: InventoryCarriedSlot
+      readonly target: InventoryCarriedSlot
+    }
+  | { readonly _tag: 'InvalidSlot' }
+  | { readonly _tag: 'EmptySlot' }
+  | { readonly _tag: 'NoChange' }
+
+export type InventoryQuickMoveResult =
+  | {
+      readonly _tag: 'Moved'
+      readonly moved: number
+      readonly source: InventoryCarriedSlot
+    }
+  | { readonly _tag: 'InvalidSlot' }
+  | { readonly _tag: 'EmptySlot' }
+  | { readonly _tag: 'NoChange' }
+
+export type InventorySortResult =
+  | { readonly _tag: 'Sorted' }
+  | { readonly _tag: 'NoChange' }
+
 type InventoryClickOutcome = {
   readonly inventory: Inv.Inventory
   readonly result: InventoryClickResult
@@ -56,6 +86,56 @@ const validCarried = (carried: InventoryCarriedSlot): boolean =>
       ? carried.durability === undefined ||
         Eq.isValidDurabilityForItem(carried.item, carried.durability)
       : carried.durability === undefined))
+
+const sameDurability = (
+  left: Eq.Durability | null | undefined,
+  right: Eq.Durability | null | undefined,
+): boolean => left === right || (left !== null && left !== undefined && right !== null && right !== undefined &&
+  left.current === right.current && left.max === right.max)
+
+const copyCarried = (carried: InventoryCarriedSlot): InventoryCarriedSlot => carried === undefined
+  ? undefined
+  : {
+      ...carried,
+      ...(carried.durability === undefined ? {} : { durability: { ...carried.durability } }),
+    }
+
+const carriedWithCount = (carried: InventoryCarriedStack, count: number): InventoryCarriedStack => ({
+  ...Inv.itemStack(carried.item, count),
+  ...(carried.durability === undefined ? {} : { durability: { ...carried.durability } }),
+})
+
+const carriedAt = (player: Storage.PlayerStorage, index: number): InventoryCarriedSlot => {
+  const slot = player.inventory.slots[index]
+  if (slot === undefined) return undefined
+  const durability = player.inventoryDurability[index]
+  return Eq.isDamageableItemType(slot.item) && Eq.isValidDurabilityForItem(slot.item, durability)
+    ? { ...slot, durability: durability === null ? undefined : { ...durability } }
+    : { ...slot }
+}
+
+const durabilityForCarried = (carried: InventoryCarriedSlot): Eq.Durability | null => {
+  if (carried === undefined || !Eq.isDamageableItemType(carried.item)) return null
+  return carried.durability === undefined
+    ? Eq.durabilityForItem(carried.item)
+    : { ...carried.durability }
+}
+
+const withCarriedSlots = (
+  player: Storage.PlayerStorage,
+  slots: ReadonlyArray<InventoryCarriedSlot>,
+): Storage.PlayerStorage => ({
+  ...player,
+  inventory: { slots: slots.map((slot) => slot === undefined ? undefined : { item: slot.item, count: slot.count }) },
+  inventoryDurability: slots.map(durabilityForCarried),
+})
+
+const isValidSlotIndex = (index: number): boolean =>
+  Number.isInteger(index) && index >= 0 && index < Inv.INVENTORY_SLOT_COUNT
+
+const sameCarried = (left: InventoryCarriedSlot, right: InventoryCarriedSlot): boolean =>
+  left?.item === right?.item && left?.count === right?.count &&
+  sameDurability(left?.durability, right?.durability)
 
 /** Apply one Minecraft-style slot click without exposing an intermediate inventory. */
 const clickInventory = (inventory: Inv.Inventory, click: InventoryClick): InventoryClickOutcome => {
@@ -184,6 +264,22 @@ export type InventoryServiceApi = {
   ) => Effect.Effect<Inv.RemoveAtResult>
   /** Atomically apply one left or right slot click and return the new carried stack. */
   readonly click: (click: InventoryClick) => Effect.Effect<InventoryClickResult>
+  /** Read one slot including tool durability without exposing mutable state. */
+  readonly getSlot: (slotIndex: number) => Effect.Effect<InventoryCarriedSlot>
+  /** Replace one slot atomically, validating the stack before mutation. */
+  readonly setSlot: (
+    slotIndex: number,
+    slot: InventoryCarriedSlot,
+  ) => Effect.Effect<InventorySetSlotResult>
+  /** Move, merge, or exchange two player inventory slots atomically. */
+  readonly moveStack: (
+    sourceIndex: number,
+    targetIndex: number,
+  ) => Effect.Effect<InventoryMoveResult>
+  /** Shift-click a stack between the main inventory and hotbar. */
+  readonly quickMove: (slotIndex: number) => Effect.Effect<InventoryQuickMoveResult>
+  /** Canonically sort inventory stacks while keeping durability attached. */
+  readonly sortInventory: Effect.Effect<InventorySortResult>
   readonly countOf: (item: ItemType) => Effect.Effect<number>
   readonly snapshot: Effect.Effect<Inv.Inventory>
   readonly equipmentSnapshot: Effect.Effect<Eq.Equipment>
@@ -381,6 +477,105 @@ export const makeInventoryService = (
           : outcome.result
         return [result, { ...current, player: next }]
       }),
+    getSlot: (slotIndex) => Ref.get(state).pipe(
+      Effect.map((current) => isValidSlotIndex(slotIndex) ? carriedAt(current.player, slotIndex) : undefined),
+    ),
+    setSlot: (slotIndex, slot) =>
+      Ref.modify(state, (current): readonly [InventorySetSlotResult, InventoryServiceState] => {
+        if (!isValidSlotIndex(slotIndex)) {
+          return [{ _tag: 'InvalidSlot' }, current]
+        }
+        if (!validCarried(slot)) {
+          return [{ _tag: 'InvalidStack' }, current]
+        }
+        const carriedSlots = current.player.inventory.slots.map((_, index) =>
+          index === slotIndex ? copyCarried(slot) : carriedAt(current.player, index))
+        return [{ _tag: 'Updated', slot: copyCarried(slot) }, {
+          ...current,
+          player: withCarriedSlots(current.player, carriedSlots),
+        }]
+      }),
+    moveStack: (sourceIndex, targetIndex) =>
+      Ref.modify(state, (current): readonly [InventoryMoveResult, InventoryServiceState] => {
+        if (!isValidSlotIndex(sourceIndex) || !isValidSlotIndex(targetIndex)) {
+          return [{ _tag: 'InvalidSlot' }, current]
+        }
+        if (sourceIndex === targetIndex) return [{ _tag: 'NoChange' }, current]
+        const carriedSlots = current.player.inventory.slots.map((_, index) => carriedAt(current.player, index))
+        const source = carriedSlots[sourceIndex]
+        const target = carriedSlots[targetIndex]
+        if (source === undefined) return [{ _tag: 'EmptySlot' }, current]
+
+        if (target === undefined) {
+          carriedSlots[targetIndex] = source
+          carriedSlots[sourceIndex] = undefined
+          return [{
+            _tag: 'Moved', moved: source.count,
+            source: undefined, target: copyCarried(source),
+          }, { ...current, player: withCarriedSlots(current.player, carriedSlots) }]
+        }
+
+        if (source.item === target.item &&
+            sameDurability(source.durability, target.durability) &&
+            target.count < Inv.maxStackCountForItem(target.item)) {
+          const moved = Math.min(source.count, Inv.maxStackCountForItem(target.item) - target.count)
+          const remaining = source.count - moved
+          carriedSlots[targetIndex] = carriedWithCount(target, target.count + moved)
+          carriedSlots[sourceIndex] = remaining === 0 ? undefined : carriedWithCount(source, remaining)
+          return [{
+            _tag: 'Merged', moved,
+            source: copyCarried(carriedSlots[sourceIndex]), target: copyCarried(carriedSlots[targetIndex]),
+          }, { ...current, player: withCarriedSlots(current.player, carriedSlots) }]
+        }
+
+        carriedSlots[sourceIndex] = target
+        carriedSlots[targetIndex] = source
+        return [{
+          _tag: 'Swapped', moved: source.count,
+          source: copyCarried(target), target: copyCarried(source),
+        }, { ...current, player: withCarriedSlots(current.player, carriedSlots) }]
+      }),
+    quickMove: (slotIndex) =>
+      Ref.modify(state, (current): readonly [InventoryQuickMoveResult, InventoryServiceState] => {
+        if (!isValidSlotIndex(slotIndex)) return [{ _tag: 'InvalidSlot' }, current]
+        const carriedSlots = current.player.inventory.slots.map((_, index) => carriedAt(current.player, index))
+        const source = carriedSlots[slotIndex]
+        if (source === undefined) return [{ _tag: 'EmptySlot' }, current]
+        const first = slotIndex < 27 ? 27 : 0
+        const last = slotIndex < 27 ? Inv.INVENTORY_SLOT_COUNT : 27
+        let remaining = Number(source.count)
+        for (let index = first; index < last && remaining > 0; index += 1) {
+          const target = carriedSlots[index]
+          if (target?.item !== source.item || !sameDurability(target.durability, source.durability)) continue
+          const accepted = Math.min(remaining, Inv.maxStackCountForItem(source.item) - target.count)
+          if (accepted <= 0) continue
+          carriedSlots[index] = carriedWithCount(target, target.count + accepted)
+          remaining -= accepted
+        }
+        for (let index = first; index < last && remaining > 0; index += 1) {
+          if (carriedSlots[index] !== undefined) continue
+          const accepted = Math.min(remaining, Inv.maxStackCountForItem(source.item))
+          carriedSlots[index] = carriedWithCount(source, accepted)
+          remaining -= accepted
+        }
+        const moved = source.count - remaining
+        if (moved === 0) return [{ _tag: 'NoChange' }, current]
+        carriedSlots[slotIndex] = remaining === 0 ? undefined : carriedWithCount(source, remaining)
+        return [{
+          _tag: 'Moved', moved, source: copyCarried(carriedSlots[slotIndex]),
+        }, { ...current, player: withCarriedSlots(current.player, carriedSlots) }]
+      }),
+    sortInventory: Ref.modify(state, (current): readonly [InventorySortResult, InventoryServiceState] => {
+      const carriedSlots = current.player.inventory.slots.map((_, index) => carriedAt(current.player, index))
+      const sorted = carriedSlots
+        .filter((slot): slot is InventoryCarriedStack => slot !== undefined)
+        .sort((left, right) => left.item < right.item ? -1 : left.item > right.item ? 1 : right.count - left.count)
+      const nextSlots = [...sorted, ...Array.from({ length: Inv.INVENTORY_SLOT_COUNT - sorted.length }, () => undefined)]
+      if (carriedSlots.every((slot, index) => sameCarried(slot, nextSlots[index]))) {
+        return [{ _tag: 'NoChange' }, current]
+      }
+      return [{ _tag: 'Sorted' }, { ...current, player: withCarriedSlots(current.player, nextSlots) }]
+    }),
     countOf: (item) => Ref.get(state).pipe(
       Effect.map((current) => Inv.countOf(current.player.inventory, item)),
     ),

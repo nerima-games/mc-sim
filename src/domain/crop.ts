@@ -9,6 +9,7 @@ export type CropType = (typeof CROP_TYPES)[number]
 export const WHEAT_MATURITY_SECS = 480
 export const POTATO_MATURITY_SECS = 480
 export const NETHER_WART_MATURITY_SECS = 480
+export const BONE_MEAL_GROWTH_SECS = 30
 
 export type CropDefinition = {
   readonly crop: CropType
@@ -101,6 +102,9 @@ export const advanceCrop = (crop: CropState, deltaSecs: number): CropState => ({
   ...crop,
   growthSecs: Math.min(maturitySecsFor(crop.crop), crop.growthSecs + deltaSecs),
 })
+
+export const advanceCropByBoneMeal = (crop: CropState): CropState =>
+  advanceCrop(crop, BONE_MEAL_GROWTH_SECS)
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)

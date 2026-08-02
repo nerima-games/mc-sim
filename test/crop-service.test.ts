@@ -98,6 +98,29 @@ describe('crop service', () => {
     }).pipe(Effect.provide(ServicesLayer), Effect.provide(FrozenClockLayer)),
   )
 
+  it.effect('advances an immature crop by one bone meal application', () =>
+    Effect.gen(function* () {
+      const crops = yield* CropService
+      const planted = location(3, 70, 3)
+      yield* crops.plant(planted, 'wheat_crop')
+
+      expect(yield* crops.advanceByBoneMeal(planted)).toBe(true)
+      expect((yield* crops.cropAt(planted))?.growthSecs).toBe(30)
+    }).pipe(Effect.provide(CropServiceLayer)),
+  )
+
+  it.effect('does not advance absent or mature crops with bone meal', () =>
+    Effect.gen(function* () {
+      const crops = yield* CropService
+      const planted = location(5, 70, 5)
+      yield* crops.plant(planted, 'potato_crop')
+      yield* crops.advance(DeltaTimeSecs(POTATO_MATURITY_SECS))
+
+      expect(yield* crops.advanceByBoneMeal(planted)).toBe(false)
+      expect(yield* crops.advanceByBoneMeal(location(6, 70, 6))).toBe(false)
+    }).pipe(Effect.provide(CropServiceLayer)),
+  )
+
   it.effect('removes harvested crops so the same location can be planted again', () =>
     Effect.gen(function* () {
       const crops = yield* CropService

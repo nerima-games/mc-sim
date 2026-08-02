@@ -17,6 +17,7 @@ export type CropServiceApi = {
   ) => Effect.Effect<ReadonlyArray<ItemStack> | null>
   readonly remove: (location: Crop.CropLocation) => Effect.Effect<Crop.CropState | null>
   readonly advance: (delta: DeltaTimeSecs) => Effect.Effect<void>
+  readonly advanceByBoneMeal: (location: Crop.CropLocation) => Effect.Effect<boolean>
   readonly snapshot: Effect.Effect<Crop.CropSnapshot>
   readonly restore: (snapshot: unknown) => Effect.Effect<void, Crop.CropValidationError>
   readonly reset: Effect.Effect<void>
@@ -77,6 +78,15 @@ export const makeCropService = (): Effect.Effect<CropServiceApi> =>
       Ref.update(state, (current) =>
         new Map(Array.from(current, ([key, crop]) => [key, Crop.advanceCrop(crop, delta)])),
       ),
+    advanceByBoneMeal: (location) =>
+      Ref.modify(state, (current) => {
+        const key = Crop.cropLocationKey(location)
+        const crop = current.get(key)
+        if (crop === undefined || Crop.isMatureCrop(crop)) return [false, current]
+        const next = new Map(current)
+        next.set(key, Crop.advanceCropByBoneMeal(crop))
+        return [true, next]
+      }),
     snapshot: Effect.map(Ref.get(state), (current) => ({ crops: sortedCrops(current.values()) })),
     restore: (snapshot) => {
       const validated = Crop.validateCropSnapshot(snapshot)

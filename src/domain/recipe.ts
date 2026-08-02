@@ -628,6 +628,7 @@ export const conflictsIn = (table: RecipeTable): ReadonlyArray<RecipeConflict> =
  * tie-break — is a property of this table and of nothing else.
  */
 export const STARTER_RECIPES: RecipeTable = [
+  shapelessRecipe('mc-sim:bone-meal', ['bone'], itemStack('bone_meal', 3)),
   // Shapeless, one ingredient: the log that becomes four planks.
   shapelessRecipe('mc-sim:oak-planks', ['oak_log'], itemStack('oak_planks', 4)),
 
