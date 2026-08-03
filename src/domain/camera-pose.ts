@@ -148,7 +148,9 @@ export const cameraPoseOf = (pose: PlayerPose, capturedAtSecs: MonotonicTimeSecs
  * Convention: yaw 0 looks down -Z, yaw increases towards -X (THREE's 'YXZ'
  * Euler order, matching ts-minecraft/packages/app/application/frame/stages/camera-stage.ts:67).
  */
-export const forwardVector = (snapshot: CameraPoseSnapshot): Position => {
+export type CameraOrientation = Pick<CameraPoseSnapshot, 'yawRadians' | 'pitchRadians'>
+
+export const forwardVector = (snapshot: CameraOrientation): Position => {
   const cosPitch = Math.cos(snapshot.pitchRadians)
   return position(
     -Math.sin(snapshot.yawRadians) * cosPitch,

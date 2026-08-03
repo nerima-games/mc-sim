@@ -1,6 +1,6 @@
 {
   "name": "@nerima-games/mc-sim",
-  "version": "0.1.24",
+  "version": "0.1.36",
   "type": "module",
   "description": "Game-state hub for the nerima-games Minecraft-clone rebuild: entities, inventory, time, the frame loop, and the authoritative CameraPoseSnapshot.",
   "homepage": "https://github.com/nerima-games/mc-sim#readme",
@@ -51,7 +51,7 @@
     "verify": "pnpm typecheck && pnpm lint && pnpm test"
   },
   "dependencies": {
-    "@nerima-games/mc-kernel": "0.2.8",
+    "@nerima-games/mc-kernel": "0.2.16",
     "@nerima-games/mc-physics": "0.1.0",
     "@nerima-games/mc-save": "0.1.0",
     "@nerima-games/mc-worldgen": "0.1.1",
@@ -64,6 +64,7 @@
     "@types/node": "^26.1.2",
     "@typescript/native": "npm:typescript@7.0.2",
     "@vitest/coverage-v8": "^3.2.7",
+    "oxlint": "^1.76.0",
     "tsx": "^4.23.1",
     "typescript": "npm:@typescript/typescript6@6.0.2",
     "vitest": "^3.2.7"

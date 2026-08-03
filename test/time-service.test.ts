@@ -17,7 +17,7 @@
  */
 import { describe, expect, it } from '@effect/vitest'
 import { Effect } from 'effect'
-import { DeltaTimeSecs } from "@nerima-games/mc-kernel"
+import { DeltaTimeSecs } from '../src/domain/kernel-vocabulary'
 import { INITIAL_TIME_STATE } from '../src/domain/time-of-day'
 import { makeTimeService } from '../src/application/time-service'
 

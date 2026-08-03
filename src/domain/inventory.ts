@@ -31,7 +31,13 @@
  * What is here is the part the mining scenario test needs, plus the stacking
  * rule, which is the part that is easy to get subtly wrong.
  */
-import { isItemType, ItemType, MAX_STACK_COUNT, StackCount } from "@nerima-games/mc-kernel"
+import {
+  isItemType,
+  ItemType,
+  maxStackCountOfItem,
+  MAX_STACK_COUNT,
+  StackCount,
+} from './kernel-vocabulary'
 
 /*
  * THERE IS NO `ItemId` HERE ANY MORE.
@@ -67,10 +73,15 @@ export type ItemStack = {
  * flowing into a slot as a bare number. Contrast `addItem(count: number)`, which
  * deliberately does NOT brand: see DN-06 in docs/design-notes.md.
  */
-export const itemStack = (item: ItemType, count: number): ItemStack => ({
-  item,
-  count: StackCount(count),
-})
+/** Per-item stack limit from kernel's canonical item registry. */
+export const maxStackCountForItem = (item: ItemType): number => maxStackCountOfItem(item)
+
+export const itemStack = (item: ItemType, count: number): ItemStack => {
+  if (count > maxStackCountForItem(item)) {
+    throw new RangeError(`Invalid stack count for ${item}: ${String(count)}`)
+  }
+  return { item, count: StackCount(count) }
+}
 
 /**
  * How many items a slot holds, as a plain number, for a slot that may itself be
@@ -171,10 +182,11 @@ export const addItem = (inventory: Inventory, item: ItemType, count: number): Ad
       continue
     }
     const held = heldCount(slot)
-    if (held >= MAX_STACK_COUNT) {
+    const maxStackCount = maxStackCountForItem(item)
+    if (held >= maxStackCount) {
       continue
     }
-    const accepted = Math.min(MAX_STACK_COUNT - held, remaining)
+    const accepted = Math.min(maxStackCount - held, remaining)
     slots[index] = { item, count: StackCount(held + accepted) }
     remaining -= accepted
   }
@@ -183,7 +195,7 @@ export const addItem = (inventory: Inventory, item: ItemType, count: number): Ad
     if (slots[index] !== undefined) {
       continue
     }
-    const accepted = Math.min(MAX_STACK_COUNT, remaining)
+    const accepted = Math.min(maxStackCountForItem(item), remaining)
     slots[index] = { item, count: StackCount(accepted) }
     remaining -= accepted
   }
@@ -195,6 +207,58 @@ export type RemoveOutcome = {
   readonly inventory: Inventory
   /** How many were actually taken. Less than requested when stock ran out. */
   readonly removed: number
+}
+
+export type RemoveAtResult =
+  | { readonly _tag: 'Removed'; readonly removed: number }
+  | { readonly _tag: 'InvalidSlot' }
+  | { readonly _tag: 'InvalidCount' }
+  | { readonly _tag: 'EmptySlot' }
+  | { readonly _tag: 'ItemMismatch'; readonly actualItem: ItemType }
+  | { readonly _tag: 'Insufficient'; readonly available: number }
+
+export type RemoveAtOutcome = {
+  readonly inventory: Inventory
+  readonly result: RemoveAtResult
+}
+
+/**
+ * Remove exactly `count` items from one selected slot.
+ *
+ * Validation and mutation are one pure transition so the Ref wrapper can keep
+ * the selection check and the removal inside the same atomic `Ref.modify`.
+ * Every failure returns the original inventory unchanged.
+ */
+export const removeItemAt = (
+  inventory: Inventory,
+  slotIndex: number,
+  expectedItem: ItemType,
+  count: number,
+): RemoveAtOutcome => {
+  if (!Number.isInteger(slotIndex) || slotIndex < 0 || slotIndex >= INVENTORY_SLOT_COUNT) {
+    return { inventory, result: { _tag: 'InvalidSlot' } }
+  }
+  if (!Number.isInteger(count) || count <= 0) {
+    return { inventory, result: { _tag: 'InvalidCount' } }
+  }
+
+  const slot = inventory.slots[slotIndex]
+  if (slot === undefined) {
+    return { inventory, result: { _tag: 'EmptySlot' } }
+  }
+  if (slot.item !== expectedItem) {
+    return { inventory, result: { _tag: 'ItemMismatch', actualItem: slot.item } }
+  }
+
+  const available = heldCount(slot)
+  if (available < count) {
+    return { inventory, result: { _tag: 'Insufficient', available } }
+  }
+
+  const remaining = available - count
+  const slots = [...inventory.slots]
+  slots[slotIndex] = remaining === 0 ? undefined : { item: expectedItem, count: derivedStackCount(remaining) }
+  return { inventory: { slots }, result: { _tag: 'Removed', removed: count } }
 }
 
 /**
@@ -333,9 +397,10 @@ export const normaliseInventory = (inventory: Inventory): NormaliseOutcome => {
       spilled.push({ item: slot.item, count: held })
       return
     }
-    slots[index] = { item: slot.item, count: derivedStackCount(held) }
-    if (held > MAX_STACK_COUNT) {
-      spilled.push({ item: slot.item, count: held - MAX_STACK_COUNT })
+    const maxStackCount = maxStackCountForItem(slot.item)
+    slots[index] = { item: slot.item, count: derivedStackCount(Math.min(held, maxStackCount)) }
+    if (held > maxStackCount) {
+      spilled.push({ item: slot.item, count: held - maxStackCount })
     }
   })
 

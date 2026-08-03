@@ -3,7 +3,7 @@
 ## 責務
 
 ゲーム状態の中枢。EntityManager・PlayerService・InventoryService・CropService・体力/空腹/XP・
-実績/統計の記録・時間（TimeService）・ゲームループ・設定状態。
+実績/統計の記録・時間（TimeService）・ゲームループ・設定状態・決定論的な爆発計画。
 **カメラ姿勢（`CameraPoseSnapshot`）の正はここが所有する。**
 
 詳細は [`docs/responsibility.md`](./docs/responsibility.md)（**非スコープの明示を含む**）。
@@ -126,6 +126,8 @@ Nix を使わない場合は Node.js 24 以上と pnpm 11（`corepack` 推奨）
 | レシピ表とクラフトの原子性 | `domain/recipe.ts` / `domain/crafting.ts` | DN-07 / DN-11 |
 | 次元・ブロック座標ごとの作物状態 | `domain/crop.ts` / `application/crop-service.ts` | JSON-safe snapshot と deterministic tick |
 | **エンティティ台帳（`EntityManager`）** | `domain/entity.ts` / `application/entity-manager.ts` | DN-07 / DN-09 / DN-11。[公開API §7](./docs/public-api.md) |
+| **爆発計画** | `domain/explosion.ts` | seed・遮蔽・耐性・距離減衰を純粋計算し、全変更をホストの単一 transaction へ渡す。[公開API §8](./docs/public-api.md) |
+| **TNT fuse 統合** | `domain/primed-tnt.ts` | fuse snapshot を最大 10 秒ずつ純粋に進め、detonation と爆発 mutation をホストの単一 transaction へ渡す。[公開API §8.1](./docs/public-api.md) |
 | **`sim:physics` の登録と着地衝撃通知** | `stages/registration.ts` / `stages/stage-ids.ts` | [責務 §2.1](./docs/responsibility.md) / [公開API §4.2](./docs/public-api.md) |
 
 `sim:physics` は**ロスターのリポジトリ間順序エッジ 4 本すべての宛先**であり、

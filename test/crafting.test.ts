@@ -19,7 +19,7 @@ import {
   Inventory,
   itemStack,
 } from '../src/domain/inventory'
-import { ItemType, MAX_STACK_COUNT } from "@nerima-games/mc-kernel"
+import { ItemType, MAX_STACK_COUNT } from '../src/domain/kernel-vocabulary'
 import { CraftGrid, craftGrid, shapelessRecipe, STARTER_RECIPES } from '../src/domain/recipe'
 
 const LEGEND: Readonly<Record<string, ItemType>> = {
@@ -27,6 +27,11 @@ const LEGEND: Readonly<Record<string, ItemType>> = {
   S: 'stick',
   L: 'oak_log',
   D: 'dirt',
+  C: 'cobblestone',
+  I: 'iron_ingot',
+  M: 'diamond',
+  E: 'ender_pearl',
+  Z: 'blaze_powder',
 }
 
 const gridOf = (...rows: ReadonlyArray<string>): CraftGrid => {
@@ -43,6 +48,50 @@ const stocked = (entries: ReadonlyArray<readonly [ItemType, number]>): Inventory
 
 // The stick grid: two planks in a column. Costs 2 planks, yields 4 sticks.
 const STICK_GRID = gridOf('P', 'P')
+
+const IRON_ARMOR_CRAFTS = [
+  { recipeId: 'mc-sim:iron-helmet', output: 'iron_helmet', ingots: 5, rows: ['III', 'I I'] },
+  {
+    recipeId: 'mc-sim:iron-chestplate',
+    output: 'iron_chestplate',
+    ingots: 8,
+    rows: ['I I', 'III', 'III'],
+  },
+  {
+    recipeId: 'mc-sim:iron-leggings',
+    output: 'iron_leggings',
+    ingots: 7,
+    rows: ['III', 'I I', 'I I'],
+  },
+  { recipeId: 'mc-sim:iron-boots', output: 'iron_boots', ingots: 4, rows: ['I I', 'I I'] },
+] as const
+
+const SWORD_CRAFTS = [
+  {
+    recipeId: 'mc-sim:wooden-sword',
+    output: 'wooden_sword',
+    material: 'oak_planks',
+    rows: ['P', 'P', 'S'],
+  },
+  {
+    recipeId: 'mc-sim:stone-sword',
+    output: 'stone_sword',
+    material: 'cobblestone',
+    rows: ['C', 'C', 'S'],
+  },
+  {
+    recipeId: 'mc-sim:iron-sword',
+    output: 'iron_sword',
+    material: 'iron_ingot',
+    rows: ['I', 'I', 'S'],
+  },
+  {
+    recipeId: 'mc-sim:diamond-sword',
+    output: 'diamond_sword',
+    material: 'diamond',
+    rows: ['M', 'M', 'S'],
+  },
+] as const
 
 describe('ingredientCost', () => {
   it.effect('charges one item per occupied cell, whatever the stack in it holds', () =>
@@ -65,6 +114,40 @@ describe('ingredientCost', () => {
 })
 
 describe('craftFromGrid', () => {
+  it.effect('crafts an Eye of Ender atomically from an ender pearl and blaze powder', () =>
+    Effect.sync(() => {
+      const before = stocked([
+        ['ender_pearl', 1],
+        ['blaze_powder', 1],
+      ])
+      const after = craftFromGrid(before, STARTER_RECIPES, gridOf('EZ'))
+
+      expect(after.result).toStrictEqual({
+        _tag: 'Crafted',
+        recipeId: 'mc-sim:eye-of-ender',
+        output: { item: 'eye_of_ender', count: 1 },
+      })
+      expect(countOf(after.inventory, 'ender_pearl')).toBe(0)
+      expect(countOf(after.inventory, 'blaze_powder')).toBe(0)
+      expect(countOf(after.inventory, 'eye_of_ender')).toBe(1)
+    }),
+  )
+
+  it.effect('an Eye of Ender craft short of blaze powder leaves the inventory untouched', () =>
+    Effect.sync(() => {
+      const before = stocked([['ender_pearl', 1]])
+      const after = craftFromGrid(before, STARTER_RECIPES, gridOf('EZ'))
+
+      expect(after.result).toStrictEqual({
+        _tag: 'MissingIngredients',
+        missing: [{ item: 'blaze_powder', short: 1 }],
+      })
+      expect(after.inventory).toBe(before)
+      expect(countOf(after.inventory, 'ender_pearl')).toBe(1)
+      expect(countOf(after.inventory, 'eye_of_ender')).toBe(0)
+    }),
+  )
+
   it.effect('consumes exactly the ingredients and produces exactly the result', () =>
     Effect.sync(() => {
       const before = stocked([['oak_planks', 10]])
@@ -79,6 +162,291 @@ describe('craftFromGrid', () => {
       expect(countOf(after.inventory, 'stick')).toBe(4)
       // Nothing else moved.
       expect(after.inventory.slots.filter((slot) => slot !== undefined)).toHaveLength(2)
+    }),
+  )
+
+  it.effect('crafts a chest atomically from eight oak planks', () =>
+    Effect.sync(() => {
+      const before = stocked([['oak_planks', 10]])
+      const grid = gridOf('PPP', 'P P', 'PPP')
+      const after = craftFromGrid(before, STARTER_RECIPES, grid)
+
+      expect(after.result).toStrictEqual({
+        _tag: 'Crafted',
+        recipeId: 'mc-sim:chest',
+        output: { item: 'chest', count: 1 },
+      })
+      expect(countOf(after.inventory, 'oak_planks')).toBe(2)
+      expect(countOf(after.inventory, 'chest')).toBe(1)
+    }),
+  )
+
+  it.effect('a chest craft short of planks leaves the inventory untouched', () =>
+    Effect.sync(() => {
+      const before = stocked([['oak_planks', 7]])
+      const after = craftFromGrid(before, STARTER_RECIPES, gridOf('PPP', 'P P', 'PPP'))
+
+      expect(after.result).toStrictEqual({
+        _tag: 'MissingIngredients',
+        missing: [{ item: 'oak_planks', short: 1 }],
+      })
+      expect(after.inventory).toBe(before)
+      expect(countOf(after.inventory, 'oak_planks')).toBe(7)
+      expect(countOf(after.inventory, 'chest')).toBe(0)
+    }),
+  )
+
+  it.effect('a chest craft with a full output inventory consumes nothing', () =>
+    Effect.sync(() => {
+      const before = stocked([
+        ['dirt', (INVENTORY_SLOT_COUNT - 1) * MAX_STACK_COUNT],
+        ['oak_planks', MAX_STACK_COUNT],
+      ])
+      const after = craftFromGrid(before, STARTER_RECIPES, gridOf('PPP', 'P P', 'PPP'))
+
+      expect(after.result).toStrictEqual({ _tag: 'NoRoom' })
+      expect(after.inventory).toBe(before)
+      expect(countOf(after.inventory, 'oak_planks')).toBe(MAX_STACK_COUNT)
+      expect(countOf(after.inventory, 'chest')).toBe(0)
+    }),
+  )
+
+  it.effect('crafts a stone pickaxe atomically from cobblestone and sticks', () =>
+    Effect.sync(() => {
+      const before = stocked([
+        ['cobblestone', 3],
+        ['stick', 2],
+      ])
+      const after = craftFromGrid(before, STARTER_RECIPES, gridOf('CCC', ' S ', ' S '))
+
+      expect(after.result).toStrictEqual({
+        _tag: 'Crafted',
+        recipeId: 'mc-sim:stone-pickaxe',
+        output: { item: 'stone_pickaxe', count: 1 },
+      })
+      expect(countOf(after.inventory, 'cobblestone')).toBe(0)
+      expect(countOf(after.inventory, 'stick')).toBe(0)
+      expect(countOf(after.inventory, 'stone_pickaxe')).toBe(1)
+    }),
+  )
+
+  it.effect('a stone pickaxe craft short of materials leaves the inventory untouched', () =>
+    Effect.sync(() => {
+      const before = stocked([
+        ['cobblestone', 2],
+        ['stick', 1],
+      ])
+      const after = craftFromGrid(before, STARTER_RECIPES, gridOf('CCC', ' S ', ' S '))
+
+      expect(after.result).toStrictEqual({
+        _tag: 'MissingIngredients',
+        missing: [
+          { item: 'cobblestone', short: 1 },
+          { item: 'stick', short: 1 },
+        ],
+      })
+      expect(after.inventory).toBe(before)
+      expect(countOf(after.inventory, 'stone_pickaxe')).toBe(0)
+    }),
+  )
+
+  it.effect('a stone pickaxe craft with a full output inventory consumes nothing', () =>
+    Effect.sync(() => {
+      const before = stocked([
+        ['dirt', (INVENTORY_SLOT_COUNT - 2) * MAX_STACK_COUNT],
+        ['cobblestone', MAX_STACK_COUNT],
+        ['stick', MAX_STACK_COUNT],
+      ])
+      const after = craftFromGrid(before, STARTER_RECIPES, gridOf('CCC', ' S ', ' S '))
+
+      expect(after.result).toStrictEqual({ _tag: 'NoRoom' })
+      expect(after.inventory).toBe(before)
+      expect(countOf(after.inventory, 'cobblestone')).toBe(MAX_STACK_COUNT)
+      expect(countOf(after.inventory, 'stick')).toBe(MAX_STACK_COUNT)
+      expect(countOf(after.inventory, 'stone_pickaxe')).toBe(0)
+    }),
+  )
+
+  it.effect('crafts an iron pickaxe atomically from iron ingots and sticks', () =>
+    Effect.sync(() => {
+      const before = stocked([
+        ['iron_ingot', 3],
+        ['stick', 2],
+      ])
+      const after = craftFromGrid(before, STARTER_RECIPES, gridOf('III', ' S ', ' S '))
+
+      expect(after.result).toStrictEqual({
+        _tag: 'Crafted',
+        recipeId: 'mc-sim:iron-pickaxe',
+        output: { item: 'iron_pickaxe', count: 1 },
+      })
+      expect(countOf(after.inventory, 'iron_ingot')).toBe(0)
+      expect(countOf(after.inventory, 'stick')).toBe(0)
+      expect(countOf(after.inventory, 'iron_pickaxe')).toBe(1)
+    }),
+  )
+
+  it.effect('an iron pickaxe craft short of materials leaves the inventory untouched', () =>
+    Effect.sync(() => {
+      const before = stocked([
+        ['iron_ingot', 2],
+        ['stick', 1],
+      ])
+      const after = craftFromGrid(before, STARTER_RECIPES, gridOf('III', ' S ', ' S '))
+
+      expect(after.result).toStrictEqual({
+        _tag: 'MissingIngredients',
+        missing: [
+          { item: 'iron_ingot', short: 1 },
+          { item: 'stick', short: 1 },
+        ],
+      })
+      expect(after.inventory).toBe(before)
+      expect(countOf(after.inventory, 'iron_pickaxe')).toBe(0)
+    }),
+  )
+
+  it.effect('an iron pickaxe craft with a full output inventory consumes nothing', () =>
+    Effect.sync(() => {
+      const before = stocked([
+        ['dirt', (INVENTORY_SLOT_COUNT - 2) * MAX_STACK_COUNT],
+        ['iron_ingot', MAX_STACK_COUNT],
+        ['stick', MAX_STACK_COUNT],
+      ])
+      const after = craftFromGrid(before, STARTER_RECIPES, gridOf('III', ' S ', ' S '))
+
+      expect(after.result).toStrictEqual({ _tag: 'NoRoom' })
+      expect(after.inventory).toBe(before)
+      expect(countOf(after.inventory, 'iron_ingot')).toBe(MAX_STACK_COUNT)
+      expect(countOf(after.inventory, 'stick')).toBe(MAX_STACK_COUNT)
+      expect(countOf(after.inventory, 'iron_pickaxe')).toBe(0)
+    }),
+  )
+
+  it.effect('crafts a diamond pickaxe atomically from diamonds and sticks', () =>
+    Effect.sync(() => {
+      const before = stocked([
+        ['diamond', 3],
+        ['stick', 2],
+      ])
+      const after = craftFromGrid(before, STARTER_RECIPES, gridOf('MMM', ' S ', ' S '))
+
+      expect(after.result).toStrictEqual({
+        _tag: 'Crafted',
+        recipeId: 'mc-sim:diamond-pickaxe',
+        output: { item: 'diamond_pickaxe', count: 1 },
+      })
+      expect(countOf(after.inventory, 'diamond')).toBe(0)
+      expect(countOf(after.inventory, 'stick')).toBe(0)
+      expect(countOf(after.inventory, 'diamond_pickaxe')).toBe(1)
+    }),
+  )
+
+  it.effect('a diamond pickaxe craft short of materials leaves the inventory untouched', () =>
+    Effect.sync(() => {
+      const before = stocked([
+        ['diamond', 2],
+        ['stick', 1],
+      ])
+      const after = craftFromGrid(before, STARTER_RECIPES, gridOf('MMM', ' S ', ' S '))
+
+      expect(after.result).toStrictEqual({
+        _tag: 'MissingIngredients',
+        missing: [
+          { item: 'diamond', short: 1 },
+          { item: 'stick', short: 1 },
+        ],
+      })
+      expect(after.inventory).toBe(before)
+      expect(countOf(after.inventory, 'diamond_pickaxe')).toBe(0)
+    }),
+  )
+
+  it.effect('a diamond pickaxe craft with a full output inventory consumes nothing', () =>
+    Effect.sync(() => {
+      const before = stocked([
+        ['dirt', (INVENTORY_SLOT_COUNT - 2) * MAX_STACK_COUNT],
+        ['diamond', MAX_STACK_COUNT],
+        ['stick', MAX_STACK_COUNT],
+      ])
+      const after = craftFromGrid(before, STARTER_RECIPES, gridOf('MMM', ' S ', ' S '))
+
+      expect(after.result).toStrictEqual({ _tag: 'NoRoom' })
+      expect(after.inventory).toBe(before)
+      expect(countOf(after.inventory, 'diamond')).toBe(MAX_STACK_COUNT)
+      expect(countOf(after.inventory, 'stick')).toBe(MAX_STACK_COUNT)
+      expect(countOf(after.inventory, 'diamond_pickaxe')).toBe(0)
+    }),
+  )
+
+  it.effect('crafts every sword tier from two materials and one stick', () =>
+    Effect.sync(() => {
+      for (const { recipeId, output, material, rows } of SWORD_CRAFTS) {
+        const before = stocked([
+          [material, 2],
+          ['stick', 1],
+        ])
+        const after = craftFromGrid(before, STARTER_RECIPES, gridOf(...rows))
+
+        expect(after.result).toStrictEqual({
+          _tag: 'Crafted',
+          recipeId,
+          output: { item: output, count: 1 },
+        })
+        expect(countOf(after.inventory, material)).toBe(0)
+        expect(countOf(after.inventory, 'stick')).toBe(0)
+        expect(countOf(after.inventory, output)).toBe(1)
+      }
+    }),
+  )
+
+  it.effect('crafts each iron armor piece atomically', () =>
+    Effect.sync(() => {
+      for (const { recipeId, output, ingots, rows } of IRON_ARMOR_CRAFTS) {
+        const before = stocked([['iron_ingot', ingots]])
+        const after = craftFromGrid(before, STARTER_RECIPES, gridOf(...rows))
+
+        expect(after.result).toStrictEqual({
+          _tag: 'Crafted',
+          recipeId,
+          output: { item: output, count: 1 },
+        })
+        expect(countOf(after.inventory, 'iron_ingot')).toBe(0)
+        expect(countOf(after.inventory, output)).toBe(1)
+      }
+    }),
+  )
+
+  it.effect('iron armor crafts short by one ingot leave the inventory untouched', () =>
+    Effect.sync(() => {
+      for (const { output, ingots, rows } of IRON_ARMOR_CRAFTS) {
+        const before = stocked([['iron_ingot', ingots - 1]])
+        const after = craftFromGrid(before, STARTER_RECIPES, gridOf(...rows))
+
+        expect(after.result).toStrictEqual({
+          _tag: 'MissingIngredients',
+          missing: [{ item: 'iron_ingot', short: 1 }],
+        })
+        expect(after.inventory).toBe(before)
+        expect(countOf(after.inventory, output)).toBe(0)
+      }
+    }),
+  )
+
+  it.effect('iron armor crafts with a full output inventory consume nothing', () =>
+    Effect.sync(() => {
+      for (const { output, rows } of IRON_ARMOR_CRAFTS) {
+        const before = stocked([
+          ['dirt', (INVENTORY_SLOT_COUNT - 1) * MAX_STACK_COUNT],
+          ['iron_ingot', MAX_STACK_COUNT],
+        ])
+        const after = craftFromGrid(before, STARTER_RECIPES, gridOf(...rows))
+
+        expect(after.result).toStrictEqual({ _tag: 'NoRoom' })
+        expect(after.inventory).toBe(before)
+        expect(countOf(after.inventory, 'iron_ingot')).toBe(MAX_STACK_COUNT)
+        expect(countOf(after.inventory, output)).toBe(0)
+      }
     }),
   )
 

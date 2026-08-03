@@ -8,7 +8,7 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect } from 'effect'
 import { itemStack } from '../src/domain/inventory'
-import { ItemType } from "@nerima-games/mc-kernel"
+import { ItemType } from '../src/domain/kernel-vocabulary'
 import {
   cellAt,
   conflictsIn,
@@ -33,7 +33,7 @@ import {
  * to say `'FLINT'`, then was not allowed to say `'flint'` either, and now is —
  * because kernel granted the literal on a drop rule of its own.
  *
- * Every letter but `D` is an item some row of `STARTER_RECIPES` names. `D` is
+ * Every letter but `X` is an item some row of `STARTER_RECIPES` names. `X` is
  * deliberately an item NO recipe names — it is the intruder in "an extra item
  * defeats the match" and the filler in the ambiguity fixtures — and it is the
  * only entry here that is not part of a shipped recipe. There is no longer a
@@ -46,12 +46,20 @@ const LEGEND: Readonly<Record<string, ItemType>> = {
   S: 'stick',
   L: 'oak_log',
   G: 'glowstone_dust',
-  D: 'dirt',
+  D: 'diamond',
+  X: 'dirt',
   I: 'iron_ingot',
   F: 'flint',
   N: 'gunpowder',
   Z: 'blaze_powder',
+  E: 'ender_pearl',
   C: 'coal',
+  B: 'cobblestone',
+  T: 'string',
+  Q: 'coal_block',
+  R: 'iron_block',
+  A: 'diamond_block',
+  M: 'bone',
 }
 
 /** A grid drawn as rows of legend characters; a space is an empty cell. */
@@ -159,6 +167,41 @@ describe('shaped matching translates', () => {
     }),
   )
 
+  it.effect('the crafting table works in a player 2x2 grid and at every 3x3 offset', () =>
+    Effect.sync(() => {
+      expect(matchedId(gridOf('PP', 'PP'))).toBe('mc-sim:crafting-table')
+
+      const positions = [0, 1].flatMap((y) => [0, 1].map((x) => [x, y] as const))
+      for (const [ox, oy] of positions) {
+        const grid = placeAt(3, 3, [
+          [ox, oy, 'oak_planks'],
+          [ox + 1, oy, 'oak_planks'],
+          [ox, oy + 1, 'oak_planks'],
+          [ox + 1, oy + 1, 'oak_planks'],
+        ])
+        expect({ ox, oy, id: matchedId(grid) }).toStrictEqual({
+          ox,
+          oy,
+          id: 'mc-sim:crafting-table',
+        })
+      }
+    }),
+  )
+
+  it.effect('the furnace requires a cobblestone ring with an empty centre', () =>
+    Effect.sync(() => {
+      expect(matchedId(gridOf('BBB', 'B B', 'BBB'))).toBe('mc-sim:furnace')
+      expect(matchedId(gridOf('BBB', 'BBB', 'BBB'))).toBe('NoMatch')
+    }),
+  )
+
+  it.effect('the chest requires an oak-plank ring with an empty centre', () =>
+    Effect.sync(() => {
+      expect(matchedId(gridOf('PPP', 'P P', 'PPP'))).toBe('mc-sim:chest')
+      expect(matchedId(gridOf('PPP', 'PPP', 'PPP'))).toBe('NoMatch')
+    }),
+  )
+
   it.effect('a 1x2 shape is the SAME recipe at all six positions in a 3x3 grid', () =>
     Effect.sync(() => {
       const positions = [0, 1].flatMap((y) => [0, 1, 2].map((x) => [x, y] as const))
@@ -192,6 +235,67 @@ describe('shaped matching translates', () => {
       expect(matchedId(gridOf('PPP', ' S ', ' S '))).toBe('mc-sim:wooden-pickaxe')
       // One plank in a cell the pickaxe requires to be empty.
       expect(matchedId(gridOf('PPP', 'PS ', ' S '))).toBe('NoMatch')
+    }),
+  )
+
+  it.effect('stone pickaxe requires a cobblestone head and centered handle', () =>
+    Effect.sync(() => {
+      expect(matchedId(gridOf('BBB', ' S ', ' S '))).toBe('mc-sim:stone-pickaxe')
+      expect(matchedId(gridOf('BBB', 'S  ', 'S  '))).toBe('NoMatch')
+    }),
+  )
+
+  it.effect('each hoe tier uses two materials and a two-stick handle', () =>
+    Effect.sync(() => {
+      expect(matchedId(gridOf('PP', ' S', ' S'))).toBe('mc-sim:wooden-hoe')
+      expect(matchedId(gridOf('BB', ' S', ' S'))).toBe('mc-sim:stone-hoe')
+      expect(matchedId(gridOf('II', ' S', ' S'))).toBe('mc-sim:iron-hoe')
+      expect(matchedId(gridOf('DD', ' S', ' S'))).toBe('mc-sim:diamond-hoe')
+      expect(matchedId(gridOf('PP', 'S ', 'S '))).toBe('mc-sim:wooden-hoe')
+    }),
+  )
+
+  it.effect('iron pickaxe requires an iron head and centered handle', () =>
+    Effect.sync(() => {
+      expect(matchedId(gridOf('III', ' S ', ' S '))).toBe('mc-sim:iron-pickaxe')
+      expect(matchedId(gridOf('III', 'S  ', 'S  '))).toBe('NoMatch')
+    }),
+  )
+
+  it.effect('diamond pickaxe requires a diamond head and centered handle', () =>
+    Effect.sync(() => {
+      expect(matchedId(gridOf('DDD', ' S ', ' S '))).toBe('mc-sim:diamond-pickaxe')
+      expect(matchedId(gridOf('DDD', 'S  ', 'S  '))).toBe('NoMatch')
+    }),
+  )
+
+  it.effect('iron armor recipes match their canonical layouts', () =>
+    Effect.sync(() => {
+      const cases = [
+        { id: 'mc-sim:iron-helmet', rows: ['III', 'I I'] },
+        { id: 'mc-sim:iron-chestplate', rows: ['I I', 'III', 'III'] },
+        { id: 'mc-sim:iron-leggings', rows: ['III', 'I I', 'I I'] },
+        { id: 'mc-sim:iron-boots', rows: ['I I', 'I I'] },
+      ] as const
+
+      for (const { id, rows } of cases) {
+        expect(matchedId(gridOf(...rows))).toBe(id)
+      }
+    }),
+  )
+
+  it.effect('iron helmet and boots translate vertically in a 3x3 grid', () =>
+    Effect.sync(() => {
+      expect(matchedId(gridOf('   ', 'III', 'I I'))).toBe('mc-sim:iron-helmet')
+      expect(matchedId(gridOf('   ', 'I I', 'I I'))).toBe('mc-sim:iron-boots')
+    }),
+  )
+
+  it.effect('extra iron in an armor pattern empty cell prevents a match', () =>
+    Effect.sync(() => {
+      expect(matchedId(gridOf('III', 'I I', ' I '))).toBe('NoMatch')
+      // Filling the lower middle is invalid; filling the upper middle would be a helmet.
+      expect(matchedId(gridOf('I I', 'III'))).toBe('NoMatch')
     }),
   )
 
@@ -292,7 +396,14 @@ describe('shaped matching mirrors horizontally, and only horizontally', () => {
       expect(shaped.length).toBeGreaterThan(0)
 
       const asymmetric = shaped.filter((recipe) => !isOwnMirror(recipe.pattern))
-      expect(asymmetric.map((recipe) => recipe.id)).toStrictEqual(['mc-sim:flint-and-steel'])
+      expect(asymmetric.map((recipe) => recipe.id)).toStrictEqual([
+        'mc-sim:bow',
+        'mc-sim:flint-and-steel',
+        'mc-sim:wooden-hoe',
+        'mc-sim:stone-hoe',
+        'mc-sim:iron-hoe',
+        'mc-sim:diamond-hoe',
+      ])
 
       for (const recipe of asymmetric) {
         // Laid out as written, and laid out flipped. Both are the same recipe.
@@ -306,6 +417,13 @@ describe('shaped matching mirrors horizontally, and only horizontally', () => {
 })
 
 describe('shapeless matching permutes', () => {
+  it.effect('the Eye of Ender recipe accepts either ingredient order', () =>
+    Effect.sync(() => {
+      expect(matchedId(gridOf('EZ'))).toBe('mc-sim:eye-of-ender')
+      expect(matchedId(gridOf('ZE'))).toBe('mc-sim:eye-of-ender')
+    }),
+  )
+
   it.effect('every permutation of the ingredients is the same recipe', () =>
     Effect.sync(() => {
       // Vanilla's fire charge: gunpowder, blaze powder and coal, all distinct,
@@ -333,8 +451,8 @@ describe('shapeless matching permutes', () => {
   it.effect('an extra item defeats the match instead of being ignored', () =>
     Effect.sync(() => {
       expect(matchedId(gridOf('NZC'))).toBe('mc-sim:fire-charge')
-      // `D` is dirt, which no shipped recipe names at all.
-      expect(matchedId(gridOf('NZC', 'D  '))).toBe('NoMatch')
+      // `X` is dirt, which no shipped recipe names at all.
+      expect(matchedId(gridOf('NZC', 'X  '))).toBe('NoMatch')
       // A duplicate of a required item is an extra item too.
       expect(matchedId(gridOf('NZC', 'C  '))).toBe('NoMatch')
     }),
@@ -406,7 +524,7 @@ describe('the ambiguity rule', () => {
     Effect.sync(() => {
       const alpha = shapelessRecipe('test:alpha', ['dirt', 'dirt'], itemStack('gravel', 1))
       const beta = shapelessRecipe('test:beta', ['dirt', 'dirt'], itemStack('sand', 1))
-      const grid = gridOf('DD')
+      const grid = gridOf('XX')
 
       expect(matchedId(grid, [alpha, beta])).toBe('test:alpha')
       expect(matchedId(grid, [beta, alpha])).toBe('test:alpha')
@@ -479,13 +597,42 @@ describe('matching is total', () => {
   it.effect('every starter recipe matches its own canonical layout', () =>
     Effect.sync(() => {
       const canonical: ReadonlyArray<readonly [string, CraftGrid]> = [
+        ['mc-sim:bone-meal', gridOf('M')],
         ['mc-sim:oak-planks', gridOf('L')],
         ['mc-sim:stick', gridOf('P', 'P')],
         ['mc-sim:stick-from-loose-planks', gridOf('PP')],
+        ['mc-sim:crafting-table', gridOf('PP', 'PP')],
+        ['mc-sim:furnace', gridOf('BBB', 'B B', 'BBB')],
+        ['mc-sim:chest', gridOf('PPP', 'P P', 'PPP')],
+        ['mc-sim:torch', gridOf('C', 'S')],
+        ['mc-sim:bucket', gridOf('I I', ' I ')],
+        ['mc-sim:bow', gridOf(' ST', 'S T', ' ST')],
         ['mc-sim:glowstone', gridOf('GG', 'GG')],
         ['mc-sim:flint-and-steel', gridOf('I ', ' F')],
         ['mc-sim:fire-charge', gridOf('NZC')],
+        ['mc-sim:eye-of-ender', gridOf('EZ')],
+        ['mc-sim:coal-block', gridOf('CCC', 'CCC', 'CCC')],
+        ['mc-sim:coal-from-block', gridOf('Q')],
+        ['mc-sim:iron-block', gridOf('III', 'III', 'III')],
+        ['mc-sim:iron-from-block', gridOf('R')],
+        ['mc-sim:diamond-block', gridOf('DDD', 'DDD', 'DDD')],
+        ['mc-sim:diamond-from-block', gridOf('A')],
         ['mc-sim:wooden-pickaxe', gridOf('PPP', ' S ', ' S ')],
+        ['mc-sim:stone-pickaxe', gridOf('BBB', ' S ', ' S ')],
+        ['mc-sim:iron-pickaxe', gridOf('III', ' S ', ' S ')],
+        ['mc-sim:diamond-pickaxe', gridOf('DDD', ' S ', ' S ')],
+        ['mc-sim:wooden-hoe', gridOf('PP', ' S', ' S')],
+        ['mc-sim:stone-hoe', gridOf('BB', ' S', ' S')],
+        ['mc-sim:iron-hoe', gridOf('II', ' S', ' S')],
+        ['mc-sim:diamond-hoe', gridOf('DD', ' S', ' S')],
+        ['mc-sim:wooden-sword', gridOf('P', 'P', 'S')],
+        ['mc-sim:stone-sword', gridOf('B', 'B', 'S')],
+        ['mc-sim:iron-sword', gridOf('I', 'I', 'S')],
+        ['mc-sim:diamond-sword', gridOf('D', 'D', 'S')],
+        ['mc-sim:iron-helmet', gridOf('III', 'I I')],
+        ['mc-sim:iron-chestplate', gridOf('I I', 'III', 'III')],
+        ['mc-sim:iron-leggings', gridOf('III', 'I I', 'I I')],
+        ['mc-sim:iron-boots', gridOf('I I', 'I I')],
       ]
 
       // Every recipe is covered: a new entry with no canonical grid fails here,

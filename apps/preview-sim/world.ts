@@ -7,7 +7,7 @@
  * There are TWO clocks here, and that is a finding, not a convenience
  * ---------------------------------------------------------------------------
  *
- * 1. `ClockPort` — mc-kernel's Port, mirrored in `@nerima-games/mc-kernel`.
+ * 1. `ClockPort` — mc-kernel's Port, mirrored in `domain/kernel-vocabulary.ts`.
  *    `PlayerService.cameraPose` is typed `Effect<…, never, ClockPort>` precisely
  *    so that the dependency is visible; application/player-service.ts:29-33 says
  *    the visible requirement is what stops someone "simplifying" it into a wall
@@ -76,7 +76,7 @@ import {
   StackCount,
   type CameraPoseSnapshot,
   type ClockService,
-} from "@nerima-games/mc-kernel"
+} from '../../src/domain/kernel-vocabulary'
 import * as Time from '../../src/domain/time-of-day'
 import { scenarioFor, stepsAt, type ScenarioName, type ScriptedAction } from './script'
 

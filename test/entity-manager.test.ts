@@ -16,7 +16,7 @@ import {
   type EntityId,
   type EntityRoster,
 } from '../src/domain/entity'
-import { position } from "@nerima-games/mc-kernel"
+import { position } from '../src/domain/kernel-vocabulary'
 
 /**
  * Stands in for mx-gameplay's `CreeperFuse`. Transcribed rather than imported —

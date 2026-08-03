@@ -22,19 +22,32 @@
 
 // --- Domain: pure values and transitions -----------------------------------
 export * from './domain/camera-pose'
+export * from './domain/block-targeting'
+export * from './domain/container-storage'
 export * from './domain/crafting'
+export * from './domain/crop'
 export * from './domain/entity'
+export * from './domain/equipment'
+export * from './domain/explosion'
+export * from './domain/primed-tnt'
+export * from './domain/player-storage'
 export * from './domain/frame-timing'
 export * from './domain/inventory'
 export * from './domain/recipe'
 export * from './domain/settings'
+export * from './domain/smelting'
 export * from './domain/statistics'
 export * from './domain/time-of-day'
 export * from './domain/vitals'
+export * from './domain/vehicle'
+export * from './domain/weather'
+export * from './domain/wither'
 
 // --- Application: Effect services -------------------------------------------
 export * from './application/autosave'
+export * from './application/crop-service'
 export * from './application/entity-manager'
+export * from './application/equipment-service'
 export * from './application/game-loop'
 export * from './application/inventory-service'
 export * from './application/player-service'
@@ -42,6 +55,8 @@ export * from './application/settings-service'
 export * from './application/statistics-service'
 export * from './application/time-service'
 export * from './application/vitals-service'
+export * from './application/vehicle-service'
+export * from './application/weather-service'
 
 // --- Stages: this repository's contribution to the frame ---------------------
 // `sim:physics` is named in an `after` edge by mx-gameplay, mx-redstone, mx-ui

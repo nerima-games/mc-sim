@@ -40,7 +40,7 @@ import {
   removeItem,
   type Inventory,
 } from '../../src/domain/inventory'
-import { MAX_STACK_COUNT, MonotonicTimeSecs, type StackCount } from "@nerima-games/mc-kernel"
+import { MAX_STACK_COUNT, MonotonicTimeSecs, type StackCount } from '../../src/domain/kernel-vocabulary'
 import * as Time from '../../src/domain/time-of-day'
 import { clockFace, fixed, padStart, pad } from './style'
 

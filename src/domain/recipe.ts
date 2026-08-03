@@ -604,48 +604,31 @@ export const conflictsIn = (table: RecipeTable): ReadonlyArray<RecipeConflict> =
  * is the trap DN-11 records.
  *
  * ---------------------------------------------------------------------------
- * The two rows the repoint took, and what asking got back
+ * Vocabulary-backed restoration
  * ---------------------------------------------------------------------------
  *
- * Repointing this table onto kernel's `ItemType` cost it three rows, because
- * they named items the roster did not have. One was replaced and two were
- * trimmed, and the two were not the same kind of loss:
+ * Repointing this table onto kernel's `ItemType` originally removed recipes
+ * whose ingredients or outputs were not yet in the shared vocabulary. Those
+ * gaps have since been resolved on kernel-side evidence: drops justify the
+ * flint-and-steel and fire-charge ingredients, while `crafting_table` is now a
+ * placeable block and item. The corresponding vanilla recipes therefore belong
+ * in this published starter table.
  *
- *   - `mc-sim:crafting-table` (2x2 symmetric, the translation case) cost
- *     NOTHING and stays replaced. Vanilla's glowstone block is the same shape
- *     over items kernel already had, so the demonstration survived with a
- *     different output. A row whose only distinction was its output was a row
- *     that was content, and `crafting_table` is therefore NOT in the roster: it
- *     was requested, declined, and the decline was right.
- *   - `mc-sim:flint-and-steel` (shaped, ASYMMETRIC) and `mc-sim:fire-charge`
- *     (shapeless, three DISTINCT ingredients) cost something real. They are the
- *     only vanilla recipes of either shape, nothing in the sixteen items then
- *     available was asymmetric or three-distinct, and both are rules
- *     `matchRecipe` implements. They lived in `test/recipe.test.ts` as local
- *     tables for as long as the literals did not exist.
+ * That ordering is the point and not a formality: a recipe table in a tier-2
+ * repository is not evidence about kernel's vocabulary; kernel capabilities
+ * must establish the item before mc-sim can make it craftable.
  *
- * Both are BACK, and on the right evidence. mc-sim asked kernel for the seven
- * literals with the cost written down; kernel granted all seven on kernel-side
- * reasons of its own — `coal` / `iron_ingot` / `flint` are what ore blocks and
- * gravel drop and belong in `BlockDropRule.item` before any recipe names them,
- * `gunpowder` / `blaze_powder` are mob drops, `flint_and_steel` / `fire_charge`
- * are the two ignition items the flammable capability names. That ordering is
- * the point and not a formality: a recipe table in a tier-2 repository is not
- * evidence about kernel's vocabulary, and a block that has to drop something is.
- *
- * The bar the trim set is the bar the restoration keeps. `STARTER_RECIPES` is
- * PUBLISHED — `InventoryService.recipes` hands it to mx-ui's recipe book — so a
- * row in it is a claim about what this game can make. Both rows below are
- * vanilla, which is exactly why they were worth asking for; inventing an
- * asymmetric recipe out of `torch` and `gravel` to keep a matcher property on
- * display would have been inventing content to test a function, and that option
- * was available the whole time and was correctly refused.
+ * `STARTER_RECIPES` is PUBLISHED — `InventoryService.recipes` hands it to
+ * mx-ui's recipe book — so every row is a claim about what this game can make.
+ * The restored rows are vanilla recipes backed by kernel vocabulary; inventing
+ * content merely to exhibit a matcher property remains out of scope.
  *
  * The one non-vanilla row remains for the reason it always had: the property it
  * shows — that the SHIPPED table resolves an ambiguity without leaning on the id
  * tie-break — is a property of this table and of nothing else.
  */
 export const STARTER_RECIPES: RecipeTable = [
+  shapelessRecipe('mc-sim:bone-meal', ['bone'], itemStack('bone_meal', 3)),
   // Shapeless, one ingredient: the log that becomes four planks.
   shapelessRecipe('mc-sim:oak-planks', ['oak_log'], itemStack('oak_planks', 4)),
 
@@ -666,8 +649,55 @@ export const STARTER_RECIPES: RecipeTable = [
    */
   shapelessRecipe('mc-sim:stick-from-loose-planks', ['oak_planks', 'oak_planks'], itemStack('stick', 2)),
 
+  // Vanilla 2x2 recipe, available directly in the player's inventory grid.
+  shapedRecipe(
+    'mc-sim:crafting-table',
+    ['PP', 'PP'],
+    { P: 'oak_planks' },
+    itemStack('crafting_table', 1),
+  ),
+
+  // Vanilla furnace ring: every edge cell is cobblestone, the centre stays empty.
+  shapedRecipe(
+    'mc-sim:furnace',
+    ['CCC', 'C C', 'CCC'],
+    { C: 'cobblestone' },
+    itemStack('furnace', 1),
+  ),
+
+  // Vanilla chest ring: eight planks around an empty centre.
+  shapedRecipe(
+    'mc-sim:chest',
+    ['PPP', 'P P', 'PPP'],
+    { P: 'oak_planks' },
+    itemStack('chest', 1),
+  ),
+
+  // A coal above a stick yields four placeable light sources.
+  shapedRecipe(
+    'mc-sim:torch',
+    ['C', 'S'],
+    { C: 'coal', S: 'stick' },
+    itemStack('torch', 4),
+  ),
+
+  // Three ingots form the reusable container used by fluid interactions.
+  shapedRecipe(
+    'mc-sim:bucket',
+    ['I I', ' I '],
+    { I: 'iron_ingot' },
+    itemStack('bucket', 1),
+  ),
+
+  // The asymmetric bow is accepted in either horizontal orientation.
+  shapedRecipe(
+    'mc-sim:bow',
+    [' ST', 'S T', ' ST'],
+    { S: 'stick', T: 'string' },
+    itemStack('bow', 1),
+  ),
+
   // Shaped 2x2, symmetric: the translation case. Four dust anywhere in a 3x3.
-  // Vanilla, and the replacement for the crafting table discussed above.
   shapedRecipe('mc-sim:glowstone', ['DD', 'DD'], { D: 'glowstone_dust' }, itemStack('glowstone', 1)),
 
   /*
@@ -695,6 +725,36 @@ export const STARTER_RECIPES: RecipeTable = [
     itemStack('fire_charge', 3),
   ),
 
+  // Vanilla Eye of Ender: ingredient order is irrelevant.
+  shapelessRecipe(
+    'mc-sim:eye-of-ender',
+    ['ender_pearl', 'blaze_powder'],
+    itemStack('eye_of_ender', 1),
+  ),
+
+  // Storage blocks retain a reversible path back to their crafting material.
+  shapedRecipe(
+    'mc-sim:coal-block',
+    ['CCC', 'CCC', 'CCC'],
+    { C: 'coal' },
+    itemStack('coal_block', 1),
+  ),
+  shapelessRecipe('mc-sim:coal-from-block', ['coal_block'], itemStack('coal', 9)),
+  shapedRecipe(
+    'mc-sim:iron-block',
+    ['III', 'III', 'III'],
+    { I: 'iron_ingot' },
+    itemStack('iron_block', 1),
+  ),
+  shapelessRecipe('mc-sim:iron-from-block', ['iron_block'], itemStack('iron_ingot', 9)),
+  shapedRecipe(
+    'mc-sim:diamond-block',
+    ['DDD', 'DDD', 'DDD'],
+    { D: 'diamond' },
+    itemStack('diamond_block', 1),
+  ),
+  shapelessRecipe('mc-sim:diamond-from-block', ['diamond_block'], itemStack('diamond', 9)),
+
   // Shaped 3x3 with holes: the pattern that fills the grid, so it translates
   // nowhere, and whose empty cells must stay empty.
   shapedRecipe(
@@ -702,5 +762,95 @@ export const STARTER_RECIPES: RecipeTable = [
     ['PPP', ' S ', ' S '],
     { P: 'oak_planks', S: 'stick' },
     itemStack('wooden_pickaxe', 1),
+  ),
+  shapedRecipe(
+    'mc-sim:stone-pickaxe',
+    ['CCC', ' S ', ' S '],
+    { C: 'cobblestone', S: 'stick' },
+    itemStack('stone_pickaxe', 1),
+  ),
+  shapedRecipe(
+    'mc-sim:iron-pickaxe',
+    ['III', ' S ', ' S '],
+    { I: 'iron_ingot', S: 'stick' },
+    itemStack('iron_pickaxe', 1),
+  ),
+  shapedRecipe(
+    'mc-sim:diamond-pickaxe',
+    ['DDD', ' S ', ' S '],
+    { D: 'diamond', S: 'stick' },
+    itemStack('diamond_pickaxe', 1),
+  ),
+  shapedRecipe(
+    'mc-sim:wooden-hoe',
+    ['PP', ' S', ' S'],
+    { P: 'oak_planks', S: 'stick' },
+    itemStack('wooden_hoe', 1),
+  ),
+  shapedRecipe(
+    'mc-sim:stone-hoe',
+    ['CC', ' S', ' S'],
+    { C: 'cobblestone', S: 'stick' },
+    itemStack('stone_hoe', 1),
+  ),
+  shapedRecipe(
+    'mc-sim:iron-hoe',
+    ['II', ' S', ' S'],
+    { I: 'iron_ingot', S: 'stick' },
+    itemStack('iron_hoe', 1),
+  ),
+  shapedRecipe(
+    'mc-sim:diamond-hoe',
+    ['DD', ' S', ' S'],
+    { D: 'diamond', S: 'stick' },
+    itemStack('diamond_hoe', 1),
+  ),
+  shapedRecipe(
+    'mc-sim:wooden-sword',
+    ['P', 'P', 'S'],
+    { P: 'oak_planks', S: 'stick' },
+    itemStack('wooden_sword', 1),
+  ),
+  shapedRecipe(
+    'mc-sim:stone-sword',
+    ['C', 'C', 'S'],
+    { C: 'cobblestone', S: 'stick' },
+    itemStack('stone_sword', 1),
+  ),
+  shapedRecipe(
+    'mc-sim:iron-sword',
+    ['I', 'I', 'S'],
+    { I: 'iron_ingot', S: 'stick' },
+    itemStack('iron_sword', 1),
+  ),
+  shapedRecipe(
+    'mc-sim:diamond-sword',
+    ['D', 'D', 'S'],
+    { D: 'diamond', S: 'stick' },
+    itemStack('diamond_sword', 1),
+  ),
+  shapedRecipe(
+    'mc-sim:iron-helmet',
+    ['III', 'I I'],
+    { I: 'iron_ingot' },
+    itemStack('iron_helmet', 1),
+  ),
+  shapedRecipe(
+    'mc-sim:iron-chestplate',
+    ['I I', 'III', 'III'],
+    { I: 'iron_ingot' },
+    itemStack('iron_chestplate', 1),
+  ),
+  shapedRecipe(
+    'mc-sim:iron-leggings',
+    ['III', 'I I', 'I I'],
+    { I: 'iron_ingot' },
+    itemStack('iron_leggings', 1),
+  ),
+  shapedRecipe(
+    'mc-sim:iron-boots',
+    ['I I', 'I I'],
+    { I: 'iron_ingot' },
+    itemStack('iron_boots', 1),
   ),
 ]

@@ -225,15 +225,16 @@ setDayLength(Number(''))   // 設定欄を空にした
 ```typescript
 type CropLocation = { readonly dimension: Dimension; readonly position: BlockPosition }
 type CropState = CropLocation & {
-  readonly crop: 'potato_crop'
+  readonly crop: 'wheat_crop' | 'potato_crop' | 'nether_wart_crop'
   readonly growthSecs: number
 }
 type CropSnapshot = { readonly crops: ReadonlyArray<CropState> }
 
 type CropServiceApi = {
-  readonly plant: (location: CropLocation, crop?: CropType) => Effect.Effect<boolean>
+  readonly plant: (location: CropLocation, crop?: CropType, soil?: BlockType) => Effect.Effect<boolean>
   readonly cropAt: (location: CropLocation) => Effect.Effect<CropState | null>
   readonly matureYieldAt: (location: CropLocation) => Effect.Effect<ItemStack | null>
+  readonly matureYieldsAt: (location: CropLocation) => Effect.Effect<ReadonlyArray<ItemStack> | null>
   readonly remove: (location: CropLocation) => Effect.Effect<CropState | null>
   readonly advance: (delta: DeltaTimeSecs) => Effect.Effect<void>
   readonly snapshot: Effect.Effect<CropSnapshot>
@@ -242,9 +243,13 @@ type CropServiceApi = {
 }
 ```
 
-通常の `sim:physics` tick が `advance` をちょうど一度呼び、ジャガイモは 480 秒で成熟する。
-成熟時の保証収穫量はジャガイモ 2 個で、未成熟なら `null`。`plant` は占有済み位置を
-上書きせず `false` を返し、`remove` は破壊前の状態を返す。
+通常の `sim:physics` tick が `advance` をちょうど一度呼び、各作物は 480 秒で成熟する。
+`CROP_REGISTRY` が成熟時間、種、土壌、許可次元、成熟時の保証収穫量を一貫して定義する。
+wheat/potato は farmland、nether wart は soul sand を要求し、3 作物とも全次元で栽培できる。
+保証収穫量は mx-gameplay の乱数範囲の下限と一致し、wheat は wheat 1 + seeds 1、potato は 2、
+nether wart は 2。`matureYieldsAt` は全保証収穫物、互換APIの `matureYieldAt` は先頭の収穫物を返す。
+未成熟なら `null`。`plant` は土壌不一致または占有済み位置を上書きせず `false` を返し、
+`remove` は破壊前の状態を返す。
 
 snapshot は位置キー順で決定論的に並び、JSON で往復できる。`restore` は未知キー、未知の次元・
 作物、非整数座標、非有限または範囲外の成長値、重複位置を拒否し、失敗時は既存状態を変更しない。
@@ -293,7 +298,7 @@ type GameLoopApi = {
 | 世代ごとの状態 | 長寿命の `Ref` を使い回す | **世代ごとに新規作成**。取り残しfiberが新世代を壊せない |
 | 再入 | 後付け（:141-148 のコメントが経緯） | 最初から |
 | 停止 | `Fiber.interruptFork`（:145, :198-201） | 同じ。加えて interrupt の**前**に detach |
-| メンテナンスループ | 別 daemon (:228) | 未実装。同じ規約で足す |
+| メンテナンスループ | 別 daemon (:228) | `startAutoSaveDaemon` が `Schedule.spaced` で定期保存し、停止時に fiber を interrupt |
 
 `FrameHandler` の中身（stage の並び）は mc-sim の関心事ではない（[architecture.md](./architecture.md) §4.3）。
 
@@ -333,14 +338,16 @@ type RemoveAtResult =
 `quickMove` / `addBlock` / `removeBlock` / `getHotbarSlots` / `getAllSlots` / `serialize` /
 `clear` / `deserialize`。
 
-現スケルトンはこのうち add / remove / 照会 / 直列化 / クリアに相当する 6 個だけを持つ。
-本実装で埋めるべき差分:
+現実装は add / remove / 照会 / 直列化 / クリアに加え、スロット操作を公開している。
+現時点の実装状況:
 
 - **スロット単位操作**: 選択スロットからの消費に必要な最小の原子的操作として
   `removeAt` は実装済み。`expectedItem` の照合と減算を単一の `Ref.modify` で行うため、
   UI が見た後にスロット内容が変わっても別アイテムを消費しない。失敗時は全スロット不変。
-  `getSlot` / `setSlot` / `moveStack` / `quickMove` / `sortInventory` は未実装で、
-  mx-ui のインベントリ画面には引き続き必要となる。
+  `getSlot` / `setSlot` / `moveStack` / `quickMove` / `sortInventory` は実装済み。
+  `moveStack` は空スロットへの移動、同種スタックの統合、異種スタックの交換を行い、
+  `quickMove` はプレイヤーインベントリとホットバー間を移動する。`sortInventory` はアイテム名、
+  数量の降順で並べ替える。すべての更新は `Ref.modify` で原子的に行い、耐久値もスタックと同期する。
 - **耐久 / メンディング**（`damageSlot` / `repairMendingItemsWithXP`）: XP サービスと結合する。
   「何をしたら耐久が減るか」は mx-gameplay、「減った値を保持する」が mc-sim。
 - **`addBlock` の失敗チャネル**: 参照実装は `Effect<void, InventoryError>`。
@@ -963,8 +970,8 @@ const blasts = yield* roster.sweep<Explosion>((entity) => {
   }
 })
 
-// 3. 爆風を解決する（これも mx-gameplay。mc-sim は damage を数えるだけ）
-for (const blast of blasts) { /* explosionDamageAt(blast, ...) → roster.sweep / health */ }
+// 3. 爆発の発生条件は mx-gameplay。汎用爆風を計画し、ホストが一括適用する
+for (const blast of blasts) { /* planExplosion(...) → applyExplosionPlan(plan, commit) */ }
 
 // 4. スポーン: canHostileSpawnAt(candidate) が Spawn を返し、かつ
 //    (yield* roster.countOfKind(CREEPER_KIND)) < MAX_HOSTILE_COUNT のときだけ
@@ -988,3 +995,47 @@ mc-sim と一緒に到着する」と書いているものが `countOfKind` で�
 | `find` の索引 | 線形のまま（§7-3） |
 | ドロップアイテム / 経験値オーブのエンティティ | §5 の表に残っている。台帳自体は kind を選ばないので、`EntityKind('dropped_item')` として**今日でも入る** —— 入っていないのは「落ちたアイテムがどう振る舞うか」がルールだからである |
 | `simModule` への同梱 | §7-5 |
+
+## 8. 爆発計画
+
+`domain/explosion.ts` は、爆発の発生条件やブロック種別ごとのゲームルールを持たず、
+与えられた読み取り面から破壊対象・エンティティへのダメージ・ノックバックを計画する。
+
+```typescript
+type ExplosionBlockReader = (
+  position: ExplosionBlockPosition,
+) => ExplosionBlock | undefined
+
+declare const planExplosion: <S>(request: ExplosionRequest<S>) => ExplosionPlan
+
+type ExplosionCommit<E, R> = (
+  mutation: ExplosionMutation,
+) => Effect.Effect<void, E, R>
+
+declare const applyExplosionPlan: <E, R>(
+  plan: ExplosionPlan,
+  commit: ExplosionCommit<E, R>,
+) => Effect.Effect<void, E, R>
+```
+
+`planExplosion` は純粋関数である。同じ seed・snapshot・入力には同じ結果を返し、距離減衰、
+ブロック耐性、遮蔽を計算する。reader が `undefined` を返すセルは未ロード境界として扱い、
+その先へ ray を進めず、破壊対象にも含めない。
+
+計算量は `maxVisitedBlocks`・`maxRaySteps`・`maxAffectedEntities` で制限できる。
+上限に達した計画は `truncated: true` を返すため、ホストは適用・延期・破棄を明示的に選べる。
+
+計画と適用は分離されている。`applyExplosionPlan` は完成済みの `ExplosionMutation` を
+`commit` に **1 回だけ**渡し、`ChunkStore` や entity roster を個別には変更しない。
+したがって原子性とロールバックは具体的な保存先を所有するホスト transaction の責務であり、
+失敗と依存は `Effect` の `E` / `R` に型付きで残る。
+
+### 8.1 Primed TNT
+
+`domain/primed-tnt.ts` は host 所有の fuse snapshot を 1 要求あたり最大 10 秒だけ進める。
+`planPrimedTnt` は fuse が尽きた呼び出しでだけ既存の `planExplosion` を呼び、終端状態への
+再入力から二度目の爆発を生成しない。上限を超えた時間は `deferredSecs` として返す。
+
+`applyPrimedTntPlan` は `expected` snapshot、次の fuse 状態、任意の爆発 mutation を一つに束ね、
+host transaction を 1 回だけ呼ぶ。host は同じ transaction 内で `expected` を比較してから、
+TNT entity の更新または除去と block/entity effects を一括適用する。
