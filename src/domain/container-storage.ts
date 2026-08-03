@@ -8,6 +8,12 @@ export const CONTAINER_STORAGE_SNAPSHOT_VERSION = 1 as const
 
 export type ContainerId = string
 
+export type ContainerPosition = {
+  readonly x: number
+  readonly y: number
+  readonly z: number
+}
+
 export type ContainerStoredStack = Inv.ItemStack & {
   readonly durability: Eq.Durability | null
 }
@@ -120,7 +126,7 @@ export const emptyChestContainer = (id: ContainerId): ChestContainer => ({
 /** Stable host-defined block key, including dimension when the host has more than one. */
 export const containerIdAt = (
   dimension: string,
-  position: { readonly x: number; readonly y: number; readonly z: number },
+  position: ContainerPosition,
 ): ContainerId => `${dimension}:${position.x},${position.y},${position.z}`
 
 export const findContainer = (

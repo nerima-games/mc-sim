@@ -311,6 +311,11 @@ export type InventoryServiceApi = {
   readonly containerSnapshot: (
     id: Container.ContainerId,
   ) => Effect.Effect<Container.ChestContainer | null>
+  /** Resolve a stable block id and read one chest without exposing service state. */
+  readonly containerSnapshotAt: (
+    dimension: string,
+    position: Container.ContainerPosition,
+  ) => Effect.Effect<Container.ChestContainer | null>
   /** JSON-safe, versioned snapshot of all chest containers. */
   readonly containerStorageSnapshot: Effect.Effect<Container.ContainerStorageSnapshot>
   /** Strictly restore all chest containers, leaving current state intact on validation failure. */
@@ -614,19 +619,13 @@ export const makeInventoryService = (
         return [outcome.result, { ...current, containers: outcome.storage }]
       }),
     containerSnapshot: (id) => Ref.get(state).pipe(
-      Effect.map((current) => {
-        const container = Container.findContainer(current.containers, id)
-        if (container === undefined) return null
-        return {
-          ...container,
-          slots: container.slots.map((slot) => slot === null
-            ? null
-            : {
-                ...slot,
-                durability: slot.durability === null ? null : { ...slot.durability },
-              }),
-        }
-      }),
+      Effect.map((current) => Container.findContainer(current.containers, id) ?? null),
+    ),
+    containerSnapshotAt: (dimension, position) => Ref.get(state).pipe(
+      Effect.map((current) => Container.findContainer(
+        current.containers,
+        Container.containerIdAt(dimension, position),
+      ) ?? null),
     ),
     containerStorageSnapshot: Ref.get(state).pipe(
       Effect.map((current) => Container.snapshotContainerStorage(current.containers)),

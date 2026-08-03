@@ -153,6 +153,25 @@ describe('container storage domain', () => {
 })
 
 describe('InventoryService chest integration', () => {
+  it.effect('resolves a chest by dimension and block position', () =>
+    Effect.gen(function* () {
+      const service = yield* makeInventoryService()
+      yield* service.createContainer(containerIdAt('overworld', { x: 12, y: 64, z: -4 }))
+      yield* service.add('stone', 3)
+      yield* service.transferContainerItem({
+        direction: 'PlayerToContainer',
+        containerId: containerIdAt('overworld', { x: 12, y: 64, z: -4 }),
+        playerSlot: 0,
+        containerSlot: 0,
+        count: 2,
+      })
+
+      expect((yield* service.containerSnapshotAt('overworld', { x: 12, y: 64, z: -4 }))?.slots[0])
+        .toStrictEqual({ item: 'stone', count: 2, durability: null })
+      expect(yield* service.containerSnapshotAt('nether', { x: 12, y: 64, z: -4 })).toBeNull()
+    }),
+  )
+
   it.effect('does not expose service container state through create results', () =>
     Effect.gen(function* () {
       const service = yield* makeInventoryService()
