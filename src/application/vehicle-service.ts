@@ -18,7 +18,9 @@ export type VehicleOperationError = Readonly<{
   reason: 'not-found' | 'duplicate-occupant' | 'occupied' | 'occupant-mismatch' | 'invalid-transform'
 }>
 
-export type VehicleStateUpdate = Readonly<Pick<Vehicle, 'dimension' | 'position' | 'velocity' | 'yawRadians'>>
+export type VehicleStateUpdate = Readonly<Pick<Vehicle, 'dimension' | 'position' | 'velocity' | 'yawRadians'> & {
+  occupant?: OccupantId | undefined
+}>
 
 const operationError = (reason: VehicleOperationError['reason']): VehicleOperationError => ({
   _tag: 'VehicleOperationError', reason,

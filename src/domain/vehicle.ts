@@ -23,7 +23,7 @@ export type Vehicle = Readonly<{
   position: Position
   velocity: VehicleVelocity
   yawRadians: number
-  occupant?: OccupantId
+  occupant?: OccupantId | undefined
 }>
 
 export type VehicleSnapshot = Readonly<{
