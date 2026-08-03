@@ -217,6 +217,38 @@ setDayLength(Number(''))   // 設定欄を空にした
 `TICKS_PER_SECOND = 60`、`[MIN, MAX]_DAY_LENGTH_SECS = [120, 1200]`、
 `MAX_TIME_FRACTION = 0.9999`、`INITIAL_TIME_STATE = { ticks: 7200, dayLengthTicks: 24000 }`。
 
+## 2.4 CropService
+
+作物はセーブを跨ぐ可変なワールド状態なので mc-sim が唯一の正を持つ。位置キーは
+`dimension + BlockPosition` であり、同じ座標でも次元が違えば別の作物である。
+
+```typescript
+type CropLocation = { readonly dimension: Dimension; readonly position: BlockPosition }
+type CropState = CropLocation & {
+  readonly crop: 'potato_crop'
+  readonly growthSecs: number
+}
+type CropSnapshot = { readonly crops: ReadonlyArray<CropState> }
+
+type CropServiceApi = {
+  readonly plant: (location: CropLocation, crop?: CropType) => Effect.Effect<boolean>
+  readonly cropAt: (location: CropLocation) => Effect.Effect<CropState | null>
+  readonly matureYieldAt: (location: CropLocation) => Effect.Effect<ItemStack | null>
+  readonly remove: (location: CropLocation) => Effect.Effect<CropState | null>
+  readonly advance: (delta: DeltaTimeSecs) => Effect.Effect<void>
+  readonly snapshot: Effect.Effect<CropSnapshot>
+  readonly restore: (snapshot: unknown) => Effect.Effect<void, CropValidationError>
+  readonly reset: Effect.Effect<void>
+}
+```
+
+通常の `sim:physics` tick が `advance` をちょうど一度呼び、ジャガイモは 480 秒で成熟する。
+成熟時の保証収穫量はジャガイモ 2 個で、未成熟なら `null`。`plant` は占有済み位置を
+上書きせず `false` を返し、`remove` は破壊前の状態を返す。
+
+snapshot は位置キー順で決定論的に並び、JSON で往復できる。`restore` は未知キー、未知の次元・
+作物、非整数座標、非有限または範囲外の成長値、重複位置を拒否し、失敗時は既存状態を変更しない。
+
 ## 3. GameLoop
 
 ```typescript
@@ -271,6 +303,11 @@ type GameLoopApi = {
 type InventoryServiceApi = {
   readonly add: (item: ItemType, count: number) => Effect.Effect<number>     // 戻り値 = 入らなかった数
   readonly remove: (item: ItemType, count: number) => Effect.Effect<number>  // 戻り値 = 実際に取れた数
+  readonly removeAt: (
+    slotIndex: number,
+    expectedItem: ItemType,
+    count: number,
+  ) => Effect.Effect<RemoveAtResult>
   readonly countOf: (item: ItemType) => Effect.Effect<number>
   readonly snapshot: Effect.Effect<Inventory>
   readonly restore: (inventory: Inventory) => Effect.Effect<number>  // 戻り値 = 入らなかった数。§4-1
@@ -281,6 +318,14 @@ type InventoryServiceApi = {
   readonly previewCraft: (grid: CraftGrid) => Effect.Effect<RecipeMatch>
   readonly craft: (grid: CraftGrid) => Effect.Effect<CraftResult>
 }
+
+type RemoveAtResult =
+  | { readonly _tag: 'Removed'; readonly removed: number }
+  | { readonly _tag: 'InvalidSlot' }
+  | { readonly _tag: 'InvalidCount' }
+  | { readonly _tag: 'EmptySlot' }
+  | { readonly _tag: 'ItemMismatch'; readonly actualItem: ItemType }
+  | { readonly _tag: 'Insufficient'; readonly available: number }
 ```
 
 参照実装 `packages/inventory/application/inventory-service.ts:22-101` は 14 メソッド:
@@ -291,8 +336,11 @@ type InventoryServiceApi = {
 現スケルトンはこのうち add / remove / 照会 / 直列化 / クリアに相当する 6 個だけを持つ。
 本実装で埋めるべき差分:
 
-- **スロット単位操作**（`getSlot` / `setSlot` / `moveStack` / `quickMove` / `sortInventory`）:
-  mx-ui のインベントリ画面が必要とする。
+- **スロット単位操作**: 選択スロットからの消費に必要な最小の原子的操作として
+  `removeAt` は実装済み。`expectedItem` の照合と減算を単一の `Ref.modify` で行うため、
+  UI が見た後にスロット内容が変わっても別アイテムを消費しない。失敗時は全スロット不変。
+  `getSlot` / `setSlot` / `moveStack` / `quickMove` / `sortInventory` は未実装で、
+  mx-ui のインベントリ画面には引き続き必要となる。
 - **耐久 / メンディング**（`damageSlot` / `repairMendingItemsWithXP`）: XP サービスと結合する。
   「何をしたら耐久が減るか」は mx-gameplay、「減った値を保持する」が mc-sim。
 - **`addBlock` の失敗チャネル**: 参照実装は `Effect<void, InventoryError>`。
@@ -386,7 +434,7 @@ const craftGrid:        (width, height, items: ReadonlyArray<ItemType | undefine
 const cellAt:           (grid: CraftGrid, x: number, y: number) => Slot
 const matchRecipe:      (table: RecipeTable, grid: CraftGrid) => RecipeMatch   // 全域・表順非依存
 const conflictsIn:      (table: RecipeTable) => ReadonlyArray<RecipeConflict>
-const STARTER_RECIPES:  RecipeTable                                            // 7 件（§4.1-7）
+const STARTER_RECIPES:  RecipeTable                                            // 20 件（§4.1-7）
 
 // domain/crafting.ts
 type CraftResult =
@@ -525,6 +573,9 @@ kernel は要求した 8 個のうち **7 個**を `ITEM_TYPES` に入れた（�
 
 #### 表がいま示すもの
 
+現在の `STARTER_RECIPES` は 20 件である。4 素材のクワ、ダイヤモンドのツルハシと、鉄のヘルメット /
+チェストプレート / レギンス / ブーツの 4 種は、いずれも本家と同じ shaped の配置で加わった。
+
 shapeless（材料 1 個 / 同一材料 2 個 / **相異なる 3 材料**）、shaped の平行移動（1x2 が 6 通り、
 2x2 が 4 通り）、**shaped の左右鏡像**（非対称な対角）、穴のあるパターン
 （3x3 の穴は「空であること」の要求）、「3x3 はプレイヤーの 2x2 グリッドから作れない」、
@@ -551,6 +602,36 @@ shapeless（材料 1 個 / 同一材料 2 個 / **相異なる 3 材料**）、s
 `mc-sim:glowstone` と 2x2 の箱を共有するがセルが（鏡像込みで）異なり、
 `mc-sim:fire-charge` の材料多重集合は既存 2 件のどちらとも重ならない。
 `conflictsIn(STARTER_RECIPES)` は空のままで、それは**確認した結果**であって前提ではない。
+
+## 4.2 着地衝撃通知
+
+`sim:physics` は mc-physics の積分と衝突解決を順に呼び、その境界でのみ分かる
+「空中から接地へ遷移した瞬間」を 1 フレームの値として公開する。
+
+```typescript
+type LandingImpact = {
+  readonly fallDistance: number
+  readonly impactVelocityY: number
+}
+
+type SimFrameState = {
+  // 既存フィールドは省略
+  readonly accumulatedFallDistance: Ref.Ref<number>
+  readonly landingImpact: Ref.Ref<Option.Option<LandingImpact>>
+}
+
+const resetLandingImpact: (state: SimFrameState) => Effect.Effect<void>
+```
+
+- `fallDistance` は上昇終了後から接地までの**実際の下向き移動量**の合計である。
+  `velocity * dt` の推定値ではないため、終端速度に達した後も距離は増え続ける。
+- `impactVelocityY` は衝突解決前の積分済み Y 速度であり、通常の着地では負数である。
+- `landingImpact` が `Some` になるのは `!wasGrounded && isGrounded` の遷移フレームだけである。
+  次の `sim:physics` 開始時に `None` へ戻るため、消費者はこの stage より後で読む。
+- 静止接地、段差への乗り上げ、上昇中にはイベントを発行しない。上昇分も落下距離へ含めない。
+- `resetLandingImpact` は累積距離と通知を同時に消す。`PlayerService.moveTo` によるテレポートなど、
+  通常の物理 stage を経由しない位置変更を行う呼び手は、同じ処理境界でこれを呼ぶ。
+  stage 自身は mailbox の位置適用時と物理無効時に自動でリセットする。
 
 ## 5. まだ設計していない公開API
 

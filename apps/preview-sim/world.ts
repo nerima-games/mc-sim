@@ -7,7 +7,7 @@
  * There are TWO clocks here, and that is a finding, not a convenience
  * ---------------------------------------------------------------------------
  *
- * 1. `ClockPort` — mc-kernel's Port, mirrored in `domain/kernel-vocabulary.ts`.
+ * 1. `ClockPort` — mc-kernel's Port, mirrored in `@nerima-games/mc-kernel`.
  *    `PlayerService.cameraPose` is typed `Effect<…, never, ClockPort>` precisely
  *    so that the dependency is visible; application/player-service.ts:29-33 says
  *    the visible requirement is what stops someone "simplifying" it into a wall
@@ -54,19 +54,19 @@ import {
   TestClock,
   TestContext,
 } from 'effect'
-import { startAutoSaveDaemon, type AutoSaveStatus } from '../../application/autosave'
-import { makeGameLoop, type FrameHandler } from '../../application/game-loop'
-import { makeInventoryService } from '../../application/inventory-service'
-import { makePlayerService } from '../../application/player-service'
-import { makeSettingsService } from '../../application/settings-service'
-import { makeStatisticsService } from '../../application/statistics-service'
-import { makeTimeService } from '../../application/time-service'
-import { makeVitalsService } from '../../application/vitals-service'
-import * as Camera from '../../domain/camera-pose'
-import { INVENTORY_SLOT_COUNT, type Inventory, type Slot } from '../../domain/inventory'
-import * as Settings from '../../domain/settings'
-import * as Statistics from '../../domain/statistics'
-import * as Vitals from '../../domain/vitals'
+import { startAutoSaveDaemon, type AutoSaveStatus } from '../../src/application/autosave'
+import { makeGameLoop, type FrameHandler } from '../../src/application/game-loop'
+import { makeInventoryService } from '../../src/application/inventory-service'
+import { makePlayerService } from '../../src/application/player-service'
+import { makeSettingsService } from '../../src/application/settings-service'
+import { makeStatisticsService } from '../../src/application/statistics-service'
+import { makeTimeService } from '../../src/application/time-service'
+import { makeVitalsService } from '../../src/application/vitals-service'
+import * as Camera from '../../src/domain/camera-pose'
+import { INVENTORY_SLOT_COUNT, type Inventory, type Slot } from '../../src/domain/inventory'
+import * as Settings from '../../src/domain/settings'
+import * as Statistics from '../../src/domain/statistics'
+import * as Vitals from '../../src/domain/vitals'
 import {
   ClockPort,
   EpochMillis,
@@ -76,8 +76,8 @@ import {
   StackCount,
   type CameraPoseSnapshot,
   type ClockService,
-} from '../../domain/kernel-vocabulary'
-import * as Time from '../../domain/time-of-day'
+} from "@nerima-games/mc-kernel"
+import * as Time from '../../src/domain/time-of-day'
 import { scenarioFor, stepsAt, type ScenarioName, type ScriptedAction } from './script'
 
 /**

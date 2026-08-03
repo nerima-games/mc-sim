@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect } from 'effect'
-import { DeltaTimeSecs } from '../domain/kernel-vocabulary'
+import { DeltaTimeSecs } from "@nerima-games/mc-kernel"
 import {
   advance,
   dayLengthSecs,
@@ -19,7 +19,7 @@ import {
   TICKS_PER_SECOND,
   timeOfDay,
   type TimeState,
-} from '../domain/time-of-day'
+} from '../src/domain/time-of-day'
 
 const stateOf = (dayLengthSeconds: number, fraction: number): TimeState =>
   setDayLengthThenTimeOfDay(INITIAL_TIME_STATE, dayLengthSeconds, fraction)

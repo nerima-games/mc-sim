@@ -38,9 +38,9 @@
  * scenarios drive.
  */
 
-import type { ItemType } from '../../domain/kernel-vocabulary'
-import type { Settings } from '../../domain/settings'
-import type { DamageCause, Vitals } from '../../domain/vitals'
+import type { ItemType } from "@nerima-games/mc-kernel"
+import type { Settings } from '../../src/domain/settings'
+import type { DamageCause, Vitals } from '../../src/domain/vitals'
 
 /** One scripted action, applied at the top of a frame, before the frame is submitted. */
 export type ScriptedAction =

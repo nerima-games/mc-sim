@@ -4,7 +4,7 @@
 
 ## 1. 責務（plan.md §3.8 原文）
 
-> ゲーム状態の中枢。EntityManager・PlayerService・InventoryService・体力/空腹/XP・
+> ゲーム状態の中枢。EntityManager・PlayerService・InventoryService・CropService・体力/空腹/XP・
 > 実績/統計の記録・時間(TimeService)・ゲームループ・設定状態。
 > **カメラ姿勢(`CameraPoseSnapshot`)の正はここが所有**
 
@@ -22,6 +22,7 @@ plan.md §2.3-1 の分類でいう **名詞**。
 | 体力 / 空腹 / XP | 数値状態と遷移（「何がダメージを与えるか」は持たない） | 実装済 `domain/vitals.ts` / `application/vitals-service.ts`。§3.4 |
 | 実績 / 統計 | **記録**（画面は mx-ui） | 実装済 `domain/statistics.ts` / `application/statistics-service.ts`。§3.5 |
 | 時間 | `TimeService`。tick カウンタ、昼夜、月齢 | 実装済 `application/time-service.ts` |
+| 作物 | `CropService`。次元 + `BlockPosition` ごとの植栽・成長・除去状態 | 実装済 `domain/crop.ts` / `application/crop-service.ts` |
 | ゲームループ | フレーム駆動、開始/停止、再入可能な初期化 | 実装済 `application/game-loop.ts` |
 | 自動保存 | いつ保存するか（何を書くかは mc-save のフォーマット定義） | 実装済 `application/autosave.ts` |
 | **stage 登録** | `sim:physics` 1 本。`after` 制約は **0 本**（§2.1） | 実装済 `stages/registration.ts` |
@@ -50,7 +51,7 @@ mx-gameplay・mx-redstone・mx-ui・mc-render の 4 者が `after: [StageId('sim
 | `application/autosave.ts` | stage では**ない** | `Schedule.spaced` の daemon。フレームではなく**時間**で動く。毎フレーム保存は別物であって小さい版ではない |
 | ワールドを 1 フレーム進める | **stage** | 「フレーム毎にちょうど 1 回」であり、それは stage の定義そのもの |
 
-**時刻の前進（`TimeService.advance(dt)`）はこの stage の中にある。**
+**時刻と作物成長の前進（`TimeService.advance(dt)` / `CropService.advance(dt)`）はこの stage の中にある。**
 mx-gameplay が `stages/registration.ts:276-284` で「時計を進めるのは mc-sim だ」と明記しているため、
 どこかの mc-sim の stage に置く必要がある。2 本目を作る案は 2 通りとも実測で悪い:
 `sim:time-weather` は `gameplay:time-weather` と**同じフェーズ**に入り、
@@ -76,7 +77,7 @@ plan.md §2.3-3 により mc-compose のもの、(2) mc-render は mc-sim に依
 | **実行時入力（キーボード/マウス/ポインタロック/タッチ/リマッピング）** | mc-render | plan.md §2.3-2 / §7。kit は devDependency 専用なので入力を kit に置けない |
 | **地形生成・バイオーム分類・カーバー・構造物** | mc-worldgen | plan.md §3.7 |
 | **ノイズ関数** | mc-noise（mc-sim からは **推移依存で import 禁止**） | plan.md §2.3-5 |
-| **物理積分・AABB 衝突解決・voxel-DDA** | mc-physics | plan.md §3.4。mc-sim は `step()` を**呼ぶ**だけ |
+| **物理積分・AABB 衝突解決・voxel-DDA** | mc-physics | plan.md §3.4。mc-sim は `integrateBody()` と `resolveBody()` を**呼ぶ**だけ |
 | **メッシュ生成** | mc-meshing | plan.md §3.3 |
 | **セーブフォーマットの実体（IndexedDB アダプタ・コーデック基盤）** | mc-save | plan.md §3.5。mc-sim は `defineFormat` で自分のフォーマットを**定義する側** |
 | **サウンド再生・字幕発行** | mc-audio | plan.md §3.6 |
@@ -123,8 +124,9 @@ plan.md §7「sim(状態) + gameplay(ルール)」。
 **クラフト。** レシピ表とクラフト結果の状態は mc-sim、画面は mx-ui（plan.md §7）。**実装済。**
 以下は「最初の実装時に決めて本文書に追記すること」への回答である。
 
-- **レシピ表は名詞なのでここ。** `STARTER_RECIPES` は **7 件**だけで、モデル（shaped / shapeless /
+- **レシピ表は名詞なのでここ。** `STARTER_RECIPES` は **20 件**だけで、モデル（shaped / shapeless /
   平行移動 / 鏡像 / 穴 / 順列 / 曖昧性）を動かすためにあり、コンテンツのデータベースではない。
+  鉄のヘルメット / チェストプレート / レギンス / ブーツの 4 種も、本家と同じ shaped の配置で含む。
   大きな捏造表は構造ではなくコンテンツであり、コンテンツは mc-kernel のブロック表の議論の隣にある
   （[design-notes.md](./design-notes.md) DN-11）。
   **鏡像と「相異なる 3 材料の順列」もこの表が動かしている。** 一時期は該当する本家レシピが
@@ -357,7 +359,7 @@ kernel は `Dimension` を出さないからである（ミラーの住所は
 | リポジトリ | 使うもの | 未公開のため現状 |
 | --- | --- | --- |
 | `mc-kernel` | 語彙全般（ブランデッド型、座標、`CameraPoseSnapshot`、Clock Port、`GameModule`） | `domain/kernel-vocabulary.ts` に暫定ミラー |
-| `mc-physics` | `step(state, world, dt)`、AABB クエリ、voxel-DDA | 未使用 |
+| `mc-physics` | `integrateBody(state, dt)`、`resolveBody(state, dt, options)`、AABB クエリ、voxel-DDA | `sim:physics` から使用 |
 | `mc-save` | `defineFormat(name, version, schema, migrations)`、`StoragePort` | 未使用（`autosave.ts` は永続化 Effect を引数で受ける） |
 | `mc-worldgen` | `generateChunk`、`BiomeService`、`ChunkStore`（物理のためにブロックを読む）、**`Dimension`** | `domain/worldgen-vocabulary.ts` に暫定ミラー（`Dimension` のみ）。§3.7 |
 

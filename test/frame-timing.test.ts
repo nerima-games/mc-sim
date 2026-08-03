@@ -22,7 +22,7 @@ import {
   frameDeltaLossSecs,
   MAX_FRAME_DELTA_SECS,
   MIN_FRAME_DELTA_SECS,
-} from '../domain/frame-timing'
+} from '../src/domain/frame-timing'
 
 describe('clampFrameDelta', () => {
   it.effect('the three constants are the reference implementation values, literally', () =>

@@ -2,7 +2,7 @@
 
 ## 責務
 
-ゲーム状態の中枢。EntityManager・PlayerService・InventoryService・体力/空腹/XP・
+ゲーム状態の中枢。EntityManager・PlayerService・InventoryService・CropService・体力/空腹/XP・
 実績/統計の記録・時間（TimeService）・ゲームループ・設定状態。
 **カメラ姿勢（`CameraPoseSnapshot`）の正はここが所有する。**
 
@@ -13,16 +13,17 @@
 | 依存先 | 何をもらうか |
 | --- | --- |
 | `mc-kernel` | 共有語彙。どのリポジトリからも import 可（許可リストに書かずに import できる） |
-| `mc-physics` | `step(state, world, dt)`、AABB クエリ、voxel-DDA |
+| `mc-physics` | `integrateBody(state, dt)` / `resolveBody(state, dt, options)`、AABB クエリ、voxel-DDA |
 | `mc-save` | `defineFormat` / `StoragePort`。mc-sim は自分のフォーマットを定義する側 |
 | `mc-worldgen` | `generateChunk` / `BiomeService` / `ChunkStore`（ブロックの読み書きとダーティ購読） |
 
 `mc-noise` は **import できない**（`mc-worldgen` 経由の推移依存に過ぎないため）。
 `mc-render` は下流なので当然依存しない。`mc-playground-kit` には実行時にも devDependency にも依存しない。
 
-**現在の `dependencies` は `effect` のみ。** 上記 4 つはまだどれも publish されていないため
-（plan.md §6 Step 3 の bottom-up publish-then-pin）、kernel の語彙は
-`domain/kernel-vocabulary.ts` に暫定ミラーしてある。kernel 公開時に削除する。
+現在は `@nerima-games/mc-kernel@0.2.4`、`@nerima-games/mc-physics@0.1.0`、`effect` を
+直接依存として固定している。既存コードの段階的移行のため
+`domain/kernel-vocabulary.ts` の互換ミラーは残るが、新しい crop 境界は kernel の
+`BlockPosition` / `BlockType` を直接 import する。
 
 ## このリポジトリの位置づけ
 
@@ -74,7 +75,7 @@ oxlint 0.12 は `no-restricted-syntax` も `no-restricted-properties` も実装�
 コメント・文字列リテラル・正規表現リテラルの中身はマスクされるので誤検知しない。
 Clock Port の実装アダプタだけは `mc-kernel-allow-time-source` コメントで除外できる。
 
-oxlint が該当ルールを実装したら oxlint.json 側へ移す。
+oxlint が該当ルールを実装したら .oxlintrc.json 側へ移す。
 
 ## 開発
 
@@ -96,7 +97,7 @@ Nix を使わない場合は Node.js 24 以上と pnpm 11（`corepack` 推奨）
 | コマンド | 内容 |
 | --- | --- |
 | `pnpm typecheck` | `tsconfig.build.json` / `tsconfig.test.json` / `tsconfig.preview.json` の 3 プロジェクトを型検査 |
-| `pnpm lint` | oxlint（このリポジトリ唯一の lint / format 設定。prettier も biome も .editorconfig も置かない）。**`--deny-warnings` 付きで走る**ため、`warn` のルールもビルドを落とす（`oxlint.json` は 5 カテゴリすべてと個別 67 ルールが `warn`、`error` は 4 つだけ。このフラグが無かった頃は実質その 4 つしかゲートになっていなかった） |
+| `pnpm lint` | oxlint（このリポジトリ唯一の lint / format 設定。prettier も biome も .editorconfig も置かない）。**`--deny-warnings` 付きで走る**ため、`warn` のルールもビルドを落とす（`.oxlintrc.json` は 5 カテゴリすべてと個別 67 ルールが `warn`、`error` は 4 つだけ。このフラグが無かった頃は実質その 4 つしかゲートになっていなかった） |
 | `pnpm lint:fix` | oxlint の自動修正 |
 | `pnpm preview` | 内蔵プレビュー（決定論シナリオステッパ）。**`pnpm verify` には入らない**。[`apps/preview-sim/README.md`](./apps/preview-sim/README.md) |
 | `pnpm test` | vitest（`@effect/vitest` の `it.effect` が主 API、`environment: 'node'`） |
@@ -121,9 +122,11 @@ Nix を使わない場合は Node.js 24 以上と pnpm 11（`corepack` 推奨）
 | `setDayLength → setTimeOfDay` 順序 | `domain/time-of-day.ts` / `application/time-service.ts` | DN-04 |
 | 自動保存の `Schedule.spaced` | `application/autosave.ts` | DN-05 |
 | `Ref.modify` による TOCTOU 回避 | `application/inventory-service.ts` | DN-07 |
+| 消費アイテムと耐久消費の原子的決済 | `InventoryService.consumeAndDamageAt` | 対象スロット・アイテムを再検証し、同一 `Ref.modify` 内で全成功または無変更 |
 | レシピ表とクラフトの原子性 | `domain/recipe.ts` / `domain/crafting.ts` | DN-07 / DN-11 |
+| 次元・ブロック座標ごとの作物状態 | `domain/crop.ts` / `application/crop-service.ts` | JSON-safe snapshot と deterministic tick |
 | **エンティティ台帳（`EntityManager`）** | `domain/entity.ts` / `application/entity-manager.ts` | DN-07 / DN-09 / DN-11。[公開API §7](./docs/public-api.md) |
-| **`sim:physics` の登録** | `stages/registration.ts` / `stages/stage-ids.ts` | [責務 §2.1](./docs/responsibility.md) |
+| **`sim:physics` の登録と着地衝撃通知** | `stages/registration.ts` / `stages/stage-ids.ts` | [責務 §2.1](./docs/responsibility.md) / [公開API §4.2](./docs/public-api.md) |
 
 `sim:physics` は**ロスターのリポジトリ間順序エッジ 4 本すべての宛先**であり、
 `stages/` が無かったあいだ 4 本とも dangling として捨てられていた。
@@ -171,7 +174,7 @@ Nix を使わない場合は Node.js 24 以上と pnpm 11（`corepack` 推奨）
   それまで `version` は `0.x` に留める（[`docs/versioning.md`](./docs/versioning.md)）。
 - **カバレッジ閾値は未設定。** 参照実装は 99% を強制しているが、スケルトンに閾値を課しても意味がない。
   計測とレポートは常に動かしており、99% ゲートは完了条件到達時に有効化する。
-- **`domain/kernel-vocabulary.ts` は暫定ミラー。** mc-kernel 公開時に削除する。
+- **`domain/kernel-vocabulary.ts` は段階移行中の互換ミラー。** 新規 API は公開済み mc-kernel を直接使う。
   `index.ts` から re-export していないのは、真実の出所を 2 つにしないため。
   ミラーは意図的に最小だが、**Clock Port だけは丸ごと**写してある —— `ClockPort` は
   文字列キーで解決される `Context.Tag` なので、狭いミラーは「語彙が少ない」ではなく

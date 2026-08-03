@@ -7,7 +7,7 @@ import {
   makeEntityManager,
   type EntityManager,
   type EntityManagerApi,
-} from '../application/entity-manager'
+} from '../src/application/entity-manager'
 import {
   changed,
   EntityKind,
@@ -15,8 +15,8 @@ import {
   type Entity,
   type EntityId,
   type EntityRoster,
-} from '../domain/entity'
-import { position } from '../domain/kernel-vocabulary'
+} from '../src/domain/entity'
+import { position } from "@nerima-games/mc-kernel"
 
 /**
  * Stands in for mx-gameplay's `CreeperFuse`. Transcribed rather than imported —

@@ -19,9 +19,9 @@ import { Effect, Layer, Option, Ref } from 'effect'
 import {
   InventoryService,
   InventoryServiceLayer,
-} from '../application/inventory-service'
-import { PlayerService, PlayerServiceLayer } from '../application/player-service'
-import { TimeService, TimeServiceLayer } from '../application/time-service'
+} from '../src/application/inventory-service'
+import { PlayerService, PlayerServiceLayer } from '../src/application/player-service'
+import { TimeService, TimeServiceLayer } from '../src/application/time-service'
 import {
   DeltaTimeSecs,
   EpochMillis,
@@ -31,21 +31,21 @@ import {
   StageId,
   type GameModule,
   type StageRegistration,
-} from '../domain/kernel-vocabulary'
-import * as Time from '../domain/time-of-day'
+} from "@nerima-games/mc-kernel"
+import * as Time from '../src/domain/time-of-day'
 import {
   makeSimFrameState,
   makeSimStages,
   makeSimStagesForPreview,
   simModule,
   simStages,
-} from '../stages/registration'
+} from '../src/stages/registration'
 import {
   EXPERIENCE_MODULE_STAGE_PREFIXES,
   OWN_STAGE_PREFIX,
   SIM_STAGE_IDS,
   UPSTREAM_STAGE_IDS,
-} from '../stages/stage-ids'
+} from '../src/stages/stage-ids'
 
 const SimulationLayer = Layer.mergeAll(
   InventoryServiceLayer(),
@@ -55,7 +55,7 @@ const SimulationLayer = Layer.mergeAll(
 
 /**
  * `FrameServices` is `ClockPort` (kernel's real alias — see
- * `domain/kernel-vocabulary.ts` on why this repository may not mirror it as
+ * `@nerima-games/mc-kernel` on why this repository may not mirror it as
  * `never`), so running a stage means discharging a clock even when the stage
  * does not read one. Frozen rather than moving: nothing below measures a
  * duration, and a clock that advanced by itself would make it impossible to

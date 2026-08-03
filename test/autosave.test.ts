@@ -16,7 +16,7 @@ import {
   performAutoSaveTick,
   startAutoSaveDaemon,
   type AutoSaveStatus,
-} from '../application/autosave'
+} from '../src/application/autosave'
 
 const collectStatuses = Effect.gen(function* () {
   const seen = yield* Ref.make<ReadonlyArray<AutoSaveStatus>>([])
