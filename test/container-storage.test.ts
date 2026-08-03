@@ -3,9 +3,12 @@ import { Effect } from 'effect'
 import { makeInventoryService } from '../src/application/inventory-service'
 import {
   CHEST_CONTAINER_CAPACITY,
+  CONTAINER_STORAGE_SNAPSHOT_VERSION,
+  DISPENSER_CONTAINER_CAPACITY,
   containerIdAt,
   createContainer,
   emptyContainerStorage,
+  HOPPER_CONTAINER_CAPACITY,
   extractContainerItem,
   findContainer,
   moveContainerItem,
@@ -36,7 +39,7 @@ describe('container storage domain', () => {
   it('strictly rejects duplicate ids, malformed slots, and unknown snapshot versions', () => {
     const created = createContainer(emptyContainerStorage(), 'chest-a').storage
     const snapshot = snapshotContainerStorage(created)
-    expect(validateContainerStorageSnapshot({ ...snapshot, version: 2 })._tag).toBe('Invalid')
+    expect(validateContainerStorageSnapshot({ ...snapshot, version: 3 })._tag).toBe('Invalid')
     expect(validateContainerStorageSnapshot({
       ...snapshot,
       containers: [...snapshot.containers, snapshot.containers[0]],
@@ -45,6 +48,24 @@ describe('container storage domain', () => {
       ...snapshot,
       containers: [{ id: 'chest-a', slots: [] }],
     })._tag).toBe('Invalid')
+  })
+
+  it('uses kind-specific capacities and migrates v1 chest snapshots', () => {
+    const dispenser = createContainer(emptyContainerStorage(), 'dispenser', 'dispenser')
+    const hopper = createContainer(dispenser.storage, 'hopper', 'hopper')
+
+    expect(dispenser.storage.containers[0]?.slots).toHaveLength(DISPENSER_CONTAINER_CAPACITY)
+    expect(hopper.storage.containers[1]?.slots).toHaveLength(HOPPER_CONTAINER_CAPACITY)
+
+    const legacy = {
+      version: 1,
+      containers: [{ id: 'legacy-chest', slots: Array.from({ length: CHEST_CONTAINER_CAPACITY }, () => null) }],
+    }
+    const restored = validateContainerStorageSnapshot(legacy)
+    expect(restored._tag).toBe('Valid')
+    if (restored._tag !== 'Valid') return
+    expect(restored.storage.containers[0]?.kind).toBe('chest')
+    expect(snapshotContainerStorage(restored.storage).version).toBe(CONTAINER_STORAGE_SNAPSHOT_VERSION)
   })
 
   it('does not expose stored slot or durability references through create and find results', () => {
@@ -83,6 +104,7 @@ describe('container storage domain', () => {
     const invalidStorage = {
       containers: [{
         id: 'invalid-chest',
+        kind: 'chest' as const,
         slots: container?.slots.map((slot, index) => index === 0
           ? { ...itemStack('stone', 1), durability: { current: 1, max: 1 } }
           : slot) ?? [],

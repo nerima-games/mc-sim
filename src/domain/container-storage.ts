@@ -3,8 +3,12 @@ import * as Inv from './inventory'
 import { isItemType, StackCount } from './kernel-vocabulary'
 import * as Player from './player-storage'
 
-export const CHEST_CONTAINER_CAPACITY = 27
-export const CONTAINER_STORAGE_SNAPSHOT_VERSION = 1 as const
+export type ContainerKind = 'chest' | 'shulker_box' | 'dispenser' | 'hopper'
+
+export const CHEST_CONTAINER_CAPACITY = 27 as const
+export const DISPENSER_CONTAINER_CAPACITY = 9 as const
+export const HOPPER_CONTAINER_CAPACITY = 5 as const
+export const CONTAINER_STORAGE_SNAPSHOT_VERSION = 2 as const
 
 export type ContainerId = string
 
@@ -20,18 +24,22 @@ export type ContainerStoredStack = Inv.ItemStack & {
 
 export type ContainerSlot = ContainerStoredStack | null
 
-export type ChestContainer = {
+export type Container = {
   readonly id: ContainerId
+  readonly kind: ContainerKind
   readonly slots: ReadonlyArray<ContainerSlot>
 }
 
+/** @deprecated Use Container. */
+export type ChestContainer = Container
+
 export type ContainerStorage = {
-  readonly containers: ReadonlyArray<ChestContainer>
+  readonly containers: ReadonlyArray<Container>
 }
 
 export type ContainerStorageSnapshot = {
   readonly version: typeof CONTAINER_STORAGE_SNAPSHOT_VERSION
-  readonly containers: ReadonlyArray<ChestContainer>
+  readonly containers: ReadonlyArray<Container>
 }
 
 export type ContainerStorageValidationError = {
@@ -160,17 +168,37 @@ const copyStack = (stack: ContainerStoredStack): ContainerStoredStack => ({
   durability: copyDurability(stack.durability),
 })
 
-const copyContainer = (container: ChestContainer): ChestContainer => ({
+export const containerCapacity = (kind: ContainerKind): number => {
+  switch (kind) {
+    case 'chest':
+    case 'shulker_box':
+      return CHEST_CONTAINER_CAPACITY
+    case 'dispenser':
+      return DISPENSER_CONTAINER_CAPACITY
+    case 'hopper':
+      return HOPPER_CONTAINER_CAPACITY
+  }
+}
+
+const copyContainer = (container: Container): Container => ({
   id: container.id,
+  kind: container.kind,
   slots: container.slots.map((slot) => slot === null ? null : copyStack(slot)),
 })
 
 export const emptyContainerStorage = (): ContainerStorage => ({ containers: [] })
 
-export const emptyChestContainer = (id: ContainerId): ChestContainer => ({
+export const emptyContainer = (
+  id: ContainerId,
+  kind: ContainerKind = 'chest',
+): Container => ({
   id,
-  slots: Array.from({ length: CHEST_CONTAINER_CAPACITY }, () => null),
+  kind,
+  slots: Array.from({ length: containerCapacity(kind) }, () => null),
 })
+
+export const emptyChestContainer = (id: ContainerId): ChestContainer =>
+  emptyContainer(id, 'chest')
 
 /** Stable host-defined block key, including dimension when the host has more than one. */
 export const containerIdAt = (
@@ -189,11 +217,12 @@ export const findContainer = (
 export const createContainer = (
   storage: ContainerStorage,
   id: ContainerId,
+  kind: ContainerKind = 'chest',
 ): { readonly storage: ContainerStorage; readonly result: CreateContainerResult } => {
   if (!validId(id)) return { storage, result: { _tag: 'InvalidContainerId' } }
   const existing = findContainer(storage, id)
   if (existing !== undefined) return { storage, result: { _tag: 'AlreadyExists', container: existing } }
-  const container = emptyChestContainer(id)
+  const container = emptyContainer(id, kind)
   return {
     storage: { containers: [...storage.containers, container] },
     result: { _tag: 'Created', container: copyContainer(container) },
@@ -218,26 +247,32 @@ export const validateContainerStorageSnapshot = (
 ): ContainerStorageValidationResult => {
   if (!isRecord(value) || !hasExactKeys(value, ['version', 'containers']))
     return invalid('containerStorage', 'expected exactly version and containers')
-  if (value['version'] !== CONTAINER_STORAGE_SNAPSHOT_VERSION)
-    return invalid('containerStorage.version', `expected ${CONTAINER_STORAGE_SNAPSHOT_VERSION}`)
+  const version = value['version']
+  if (version !== 1 && version !== CONTAINER_STORAGE_SNAPSHOT_VERSION)
+    return invalid('containerStorage.version', `expected 1 or ${CONTAINER_STORAGE_SNAPSHOT_VERSION}`)
   if (!Array.isArray(value['containers']))
     return invalid('containerStorage.containers', 'expected an array')
 
-  const containers: Array<ChestContainer> = []
+  const containers: Array<Container> = []
   const ids = new Set<string>()
   for (let containerIndex = 0; containerIndex < value['containers'].length; containerIndex += 1) {
     const candidate = value['containers'][containerIndex]
     const path = `containerStorage.containers.${containerIndex}`
-    if (!isRecord(candidate) || !hasExactKeys(candidate, ['id', 'slots']))
-      return invalid(path, 'expected exactly id and slots')
+    const legacy = version === 1
+    if (!isRecord(candidate) || !hasExactKeys(candidate, legacy ? ['id', 'slots'] : ['id', 'kind', 'slots']))
+      return invalid(path, legacy ? 'expected exactly id and slots' : 'expected exactly id, kind and slots')
     if (typeof candidate['id'] !== 'string' || !validId(candidate['id']))
       return invalid(`${path}.id`, 'expected a non-empty trimmed string')
     if (ids.has(candidate['id'])) return invalid(`${path}.id`, 'container id must be unique')
-    if (!Array.isArray(candidate['slots']) || candidate['slots'].length !== CHEST_CONTAINER_CAPACITY)
-      return invalid(`${path}.slots`, `expected exactly ${CHEST_CONTAINER_CAPACITY} slots`)
+    const kind = legacy ? 'chest' : candidate['kind']
+    if (kind !== 'chest' && kind !== 'shulker_box' && kind !== 'dispenser' && kind !== 'hopper')
+      return invalid(`${path}.kind`, 'expected a supported container kind')
+    const capacity = containerCapacity(kind)
+    if (!Array.isArray(candidate['slots']) || candidate['slots'].length !== capacity)
+      return invalid(`${path}.slots`, `expected exactly ${capacity} slots`)
 
     const slots: Array<ContainerSlot> = []
-    for (let slotIndex = 0; slotIndex < CHEST_CONTAINER_CAPACITY; slotIndex += 1) {
+    for (let slotIndex = 0; slotIndex < capacity; slotIndex += 1) {
       const slot = candidate['slots'][slotIndex]
       const slotPath = `${path}.slots.${slotIndex}`
       if (slot === null) {
@@ -265,7 +300,7 @@ export const validateContainerStorageSnapshot = (
       }
     }
     ids.add(candidate['id'])
-    containers.push({ id: candidate['id'], slots })
+    containers.push({ id: candidate['id'], kind, slots })
   }
   return { _tag: 'Valid', storage: { containers } }
 }
@@ -273,8 +308,8 @@ export const validateContainerStorageSnapshot = (
 const validPlayerSlot = (slot: number): boolean =>
   Number.isInteger(slot) && slot >= 0 && slot < Inv.INVENTORY_SLOT_COUNT
 
-const validContainerSlot = (slot: number): boolean =>
-  Number.isInteger(slot) && slot >= 0 && slot < CHEST_CONTAINER_CAPACITY
+const validContainerSlot = (container: Container, slot: number): boolean =>
+  Number.isInteger(slot) && slot >= 0 && slot < container.slots.length
 
 const hasValidStoredStackShape = (value: unknown): value is ContainerStoredStack =>
   isRecord(value) && hasExactKeys(value, ['item', 'count', 'durability']) &&
@@ -303,8 +338,6 @@ export const transferContainerItem = (
     return failure(playerStorage, containerStorage, { _tag: 'InvalidDirection' })
   if (!validPlayerSlot(request.playerSlot))
     return failure(playerStorage, containerStorage, { _tag: 'InvalidPlayerSlot' })
-  if (!validContainerSlot(request.containerSlot))
-    return failure(playerStorage, containerStorage, { _tag: 'InvalidContainerSlot' })
   if (!Number.isSafeInteger(request.count) || request.count <= 0)
     return failure(playerStorage, containerStorage, { _tag: 'InvalidCount' })
   const containerIndex = containerStorage.containers.findIndex(
@@ -315,6 +348,8 @@ export const transferContainerItem = (
   const container = containerStorage.containers[containerIndex]
   if (container === undefined)
     return failure(playerStorage, containerStorage, { _tag: 'ContainerNotFound' })
+  if (!validContainerSlot(container, request.containerSlot))
+    return failure(playerStorage, containerStorage, { _tag: 'InvalidContainerSlot' })
 
   const playerStack: unknown = playerStorage.inventory.slots[request.playerSlot]
   const playerStoredStack: unknown = playerStack === undefined
@@ -394,14 +429,14 @@ export const extractContainerItem = (
   storage: ContainerStorage,
   request: ContainerExtractRequest,
 ): ContainerExtractOutcome => {
-  if (!validContainerSlot(request.containerSlot))
-    return { storage, result: { _tag: 'InvalidContainerSlot' } }
-  if (!Number.isSafeInteger(request.count) || request.count <= 0)
-    return { storage, result: { _tag: 'InvalidCount' } }
   const containerIndex = storage.containers.findIndex((container) => container.id === request.containerId)
   if (containerIndex < 0) return { storage, result: { _tag: 'ContainerNotFound' } }
   const container = storage.containers[containerIndex]
   if (container === undefined) return { storage, result: { _tag: 'ContainerNotFound' } }
+  if (!validContainerSlot(container, request.containerSlot))
+    return { storage, result: { _tag: 'InvalidContainerSlot' } }
+  if (!Number.isSafeInteger(request.count) || request.count <= 0)
+    return { storage, result: { _tag: 'InvalidCount' } }
   const source: unknown = container.slots[request.containerSlot] ?? null
   if (source === null) return { storage, result: { _tag: 'EmptySource' } }
   if (!hasValidStoredStackShape(source))
@@ -432,12 +467,6 @@ export const moveContainerItem = (
   storage: ContainerStorage,
   request: ContainerMoveRequest,
 ): ContainerMoveOutcome => {
-  if (!validContainerSlot(request.sourceSlot))
-    return { storage, result: { _tag: 'InvalidSourceSlot' } }
-  if (!validContainerSlot(request.destinationSlot))
-    return { storage, result: { _tag: 'InvalidDestinationSlot' } }
-  if (!Number.isSafeInteger(request.count) || request.count <= 0)
-    return { storage, result: { _tag: 'InvalidCount' } }
   const sourceIndex = storage.containers.findIndex((container) => container.id === request.sourceContainerId)
   if (sourceIndex < 0) return { storage, result: { _tag: 'SourceContainerNotFound' } }
   const destinationIndex = storage.containers.findIndex(
@@ -449,6 +478,12 @@ export const moveContainerItem = (
   if (sourceContainer === undefined) return { storage, result: { _tag: 'SourceContainerNotFound' } }
   if (destinationContainer === undefined)
     return { storage, result: { _tag: 'DestinationContainerNotFound' } }
+  if (!validContainerSlot(sourceContainer, request.sourceSlot))
+    return { storage, result: { _tag: 'InvalidSourceSlot' } }
+  if (!validContainerSlot(destinationContainer, request.destinationSlot))
+    return { storage, result: { _tag: 'InvalidDestinationSlot' } }
+  if (!Number.isSafeInteger(request.count) || request.count <= 0)
+    return { storage, result: { _tag: 'InvalidCount' } }
   if (sourceIndex === destinationIndex && request.sourceSlot === request.destinationSlot)
     return { storage, result: { _tag: 'DestinationMismatch' } }
 

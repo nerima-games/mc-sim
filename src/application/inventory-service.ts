@@ -303,9 +303,10 @@ export type InventoryServiceApi = {
   readonly consumeAndDamageAt: (
     request: Storage.ConsumeAndDamageAtRequest,
   ) => Effect.Effect<Storage.ConsumeAndDamageAtResult>
-  /** Create one fixed-capacity chest under a stable host-defined id. */
+  /** Create one fixed-capacity container under a stable host-defined id. */
   readonly createContainer: (
     id: Container.ContainerId,
+    kind?: Container.ContainerKind,
   ) => Effect.Effect<Container.CreateContainerResult>
   /** Read one chest without exposing the service's mutable state. */
   readonly containerSnapshot: (
@@ -621,9 +622,9 @@ export const makeInventoryService = (
         const outcome = Storage.consumeAndDamageAt(current.player, request)
         return [outcome.result, { ...current, player: outcome.storage }]
       }),
-    createContainer: (id) =>
+    createContainer: (id, kind) =>
       Ref.modify(state, (current) => {
-        const outcome = Container.createContainer(current.containers, id)
+        const outcome = Container.createContainer(current.containers, id, kind)
         return [outcome.result, { ...current, containers: outcome.storage }]
       }),
     containerSnapshot: (id) => Ref.get(state).pipe(
