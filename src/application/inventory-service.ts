@@ -326,6 +326,14 @@ export type InventoryServiceApi = {
   readonly transferContainerItem: (
     request: Container.ContainerTransferRequest,
   ) => Effect.Effect<Container.ContainerTransferResult>
+  /** Atomically remove items for a machine action such as dispenser output. */
+  readonly extractContainerItem: (
+    request: Container.ContainerExtractRequest,
+  ) => Effect.Effect<Container.ContainerExtractResult>
+  /** Atomically move items between world containers for machine automation. */
+  readonly moveContainerItem: (
+    request: Container.ContainerMoveRequest,
+  ) => Effect.Effect<Container.ContainerMoveResult>
   /** Remove a broken chest and return its contents exactly once. */
   readonly drainContainer: (
     id: Container.ContainerId,
@@ -647,6 +655,16 @@ export const makeInventoryService = (
           player: outcome.playerStorage,
           containers: outcome.containerStorage,
         }]
+      }),
+    extractContainerItem: (request) =>
+      Ref.modify(state, (current) => {
+        const outcome = Container.extractContainerItem(current.containers, request)
+        return [outcome.result, { ...current, containers: outcome.storage }]
+      }),
+    moveContainerItem: (request) =>
+      Ref.modify(state, (current) => {
+        const outcome = Container.moveContainerItem(current.containers, request)
+        return [outcome.result, { ...current, containers: outcome.storage }]
       }),
     drainContainer: (id) =>
       Ref.modify(state, (current) => {

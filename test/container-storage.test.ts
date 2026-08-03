@@ -6,7 +6,9 @@ import {
   containerIdAt,
   createContainer,
   emptyContainerStorage,
+  extractContainerItem,
   findContainer,
+  moveContainerItem,
   snapshotContainerStorage,
   transferContainerItem,
   validateContainerStorageSnapshot,
@@ -333,6 +335,102 @@ describe('InventoryService chest integration', () => {
       expect(chest?.slots.filter((slot) => slot !== null)).toHaveLength(1)
     }),
   )
+
+  it.effect('extracts one machine output atomically and preserves durability', () =>
+    Effect.gen(function* () {
+      const service = yield* makeInventoryService()
+      yield* service.createContainer('dispenser')
+      yield* service.add('bow', 1)
+      yield* service.damageAt({ _tag: 'Inventory', slotIndex: 0 }, 19)
+      yield* service.transferContainerItem({
+        direction: 'PlayerToContainer',
+        containerId: 'dispenser',
+        playerSlot: 0,
+        containerSlot: 0,
+        count: 1,
+      })
+
+      expect(yield* service.extractContainerItem({
+        containerId: 'dispenser', containerSlot: 0, count: 1,
+      })).toStrictEqual({
+        _tag: 'Extracted',
+        stack: { item: 'bow', count: 1, durability: { current: 365, max: 384 } },
+      })
+      expect((yield* service.containerSnapshot('dispenser'))?.slots[0]).toBeNull()
+    }),
+  )
+
+  it.effect('moves one hopper item between containers without exposing an intermediate state', () =>
+    Effect.gen(function* () {
+      const service = yield* makeInventoryService()
+      yield* service.createContainer('source')
+      yield* service.createContainer('destination')
+      yield* service.add('stone', 3)
+      yield* service.transferContainerItem({
+        direction: 'PlayerToContainer',
+        containerId: 'source',
+        playerSlot: 0,
+        containerSlot: 0,
+        count: 3,
+      })
+
+      expect(yield* service.moveContainerItem({
+        sourceContainerId: 'source', sourceSlot: 0,
+        destinationContainerId: 'destination', destinationSlot: 0,
+        count: 1,
+      })).toStrictEqual({ _tag: 'Moved', item: 'stone', count: 1 })
+      expect((yield* service.containerSnapshot('source'))?.slots[0]).toStrictEqual({
+        item: 'stone', count: 2, durability: null,
+      })
+      expect((yield* service.containerSnapshot('destination'))?.slots[0]).toStrictEqual({
+        item: 'stone', count: 1, durability: null,
+      })
+    }),
+  )
+
+  it('keeps storage byte-identical when a container move cannot fit', () => {
+    let storage = emptyContainerStorage()
+    storage = createContainer(storage, 'source').storage
+    storage = createContainer(storage, 'destination').storage
+    const source = storage.containers[0]
+    const destination = storage.containers[1]
+    if (source === undefined || destination === undefined) throw new Error('test setup failed')
+    storage = {
+      containers: [
+        { ...source, slots: [{ ...itemStack('stone', 1), durability: null }, ...source.slots.slice(1)] },
+        {
+          ...destination,
+          slots: [{ ...itemStack('dirt', 64), durability: null }, ...destination.slots.slice(1)],
+        },
+      ],
+    }
+    const before = bytes(storage)
+
+    const outcome = moveContainerItem(storage, {
+      sourceContainerId: 'source', sourceSlot: 0,
+      destinationContainerId: 'destination', destinationSlot: 0,
+      count: 1,
+    })
+
+    expect(outcome.result).toStrictEqual({ _tag: 'DestinationMismatch' })
+    expect(bytes(outcome.storage)).toBe(before)
+  })
+
+  it('does not extract a partial stack when the requested count is unavailable', () => {
+    let storage = emptyContainerStorage()
+    storage = createContainer(storage, 'source').storage
+    const source = storage.containers[0]
+    if (source === undefined) throw new Error('test setup failed')
+    storage = {
+      containers: [{ ...source, slots: [{ ...itemStack('stone', 1), durability: null }, ...source.slots.slice(1)] }],
+    }
+    const before = bytes(storage)
+
+    const outcome = extractContainerItem(storage, { containerId: 'source', containerSlot: 0, count: 2 })
+
+    expect(outcome.result).toStrictEqual({ _tag: 'InsufficientSource', available: 1 })
+    expect(bytes(outcome.storage)).toBe(before)
+  })
 
   it.effect('rejects malformed restore without changing state', () =>
     Effect.gen(function* () {

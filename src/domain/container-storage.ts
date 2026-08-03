@@ -83,6 +83,55 @@ export type ContainerTransferOutcome = {
   readonly result: ContainerTransferResult
 }
 
+export type ContainerExtractRequest = {
+  readonly containerId: ContainerId
+  readonly containerSlot: number
+  readonly count: number
+}
+
+export type ContainerExtractResult =
+  | { readonly _tag: 'Extracted'; readonly stack: ContainerStoredStack }
+  | { readonly _tag: 'ContainerNotFound' }
+  | { readonly _tag: 'InvalidContainerSlot' }
+  | { readonly _tag: 'InvalidCount' }
+  | { readonly _tag: 'EmptySource' }
+  | { readonly _tag: 'InsufficientSource'; readonly available: number }
+  | { readonly _tag: 'InvalidSourceStack' }
+  | { readonly _tag: 'InvalidSourceDurability' }
+
+export type ContainerExtractOutcome = {
+  readonly storage: ContainerStorage
+  readonly result: ContainerExtractResult
+}
+
+export type ContainerMoveRequest = {
+  readonly sourceContainerId: ContainerId
+  readonly sourceSlot: number
+  readonly destinationContainerId: ContainerId
+  readonly destinationSlot: number
+  readonly count: number
+}
+
+export type ContainerMoveResult =
+  | { readonly _tag: 'Moved'; readonly item: Inv.ItemStack['item']; readonly count: number }
+  | { readonly _tag: 'SourceContainerNotFound' }
+  | { readonly _tag: 'DestinationContainerNotFound' }
+  | { readonly _tag: 'InvalidSourceSlot' }
+  | { readonly _tag: 'InvalidDestinationSlot' }
+  | { readonly _tag: 'InvalidCount' }
+  | { readonly _tag: 'EmptySource' }
+  | { readonly _tag: 'InsufficientSource'; readonly available: number }
+  | { readonly _tag: 'DestinationMismatch' }
+  | { readonly _tag: 'DestinationFull' }
+  | { readonly _tag: 'InvalidSourceStack' }
+  | { readonly _tag: 'InvalidDestinationStack' }
+  | { readonly _tag: 'InvalidSourceDurability' }
+
+export type ContainerMoveOutcome = {
+  readonly storage: ContainerStorage
+  readonly result: ContainerMoveResult
+}
+
 export type DrainContainerResult =
   | { readonly _tag: 'Drained'; readonly items: ReadonlyArray<ContainerStoredStack> }
   | { readonly _tag: 'ContainerNotFound' }
@@ -337,6 +386,107 @@ export const transferContainerItem = (
       count: request.count,
       direction: request.direction,
     },
+  }
+}
+
+/** Remove exactly `count` items from a container slot, or leave storage unchanged. */
+export const extractContainerItem = (
+  storage: ContainerStorage,
+  request: ContainerExtractRequest,
+): ContainerExtractOutcome => {
+  if (!validContainerSlot(request.containerSlot))
+    return { storage, result: { _tag: 'InvalidContainerSlot' } }
+  if (!Number.isSafeInteger(request.count) || request.count <= 0)
+    return { storage, result: { _tag: 'InvalidCount' } }
+  const containerIndex = storage.containers.findIndex((container) => container.id === request.containerId)
+  if (containerIndex < 0) return { storage, result: { _tag: 'ContainerNotFound' } }
+  const container = storage.containers[containerIndex]
+  if (container === undefined) return { storage, result: { _tag: 'ContainerNotFound' } }
+  const source: unknown = container.slots[request.containerSlot] ?? null
+  if (source === null) return { storage, result: { _tag: 'EmptySource' } }
+  if (!hasValidStoredStackShape(source))
+    return { storage, result: { _tag: 'InvalidSourceStack' } }
+  if (!hasValidStoredStackDurability(source))
+    return { storage, result: { _tag: 'InvalidSourceDurability' } }
+  if (request.count > source.count)
+    return { storage, result: { _tag: 'InsufficientSource', available: source.count } }
+
+  const slots = [...container.slots]
+  const remaining = source.count - request.count
+  slots[request.containerSlot] = remaining === 0
+    ? null
+    : { ...source, count: StackCount(remaining), durability: copyDurability(source.durability) }
+  const containers = [...storage.containers]
+  containers[containerIndex] = { ...container, slots }
+  return {
+    storage: { containers },
+    result: {
+      _tag: 'Extracted',
+      stack: { item: source.item, count: StackCount(request.count), durability: copyDurability(source.durability) },
+    },
+  }
+}
+
+/** Move exactly `count` items between two containers, changing both or neither. */
+export const moveContainerItem = (
+  storage: ContainerStorage,
+  request: ContainerMoveRequest,
+): ContainerMoveOutcome => {
+  if (!validContainerSlot(request.sourceSlot))
+    return { storage, result: { _tag: 'InvalidSourceSlot' } }
+  if (!validContainerSlot(request.destinationSlot))
+    return { storage, result: { _tag: 'InvalidDestinationSlot' } }
+  if (!Number.isSafeInteger(request.count) || request.count <= 0)
+    return { storage, result: { _tag: 'InvalidCount' } }
+  const sourceIndex = storage.containers.findIndex((container) => container.id === request.sourceContainerId)
+  if (sourceIndex < 0) return { storage, result: { _tag: 'SourceContainerNotFound' } }
+  const destinationIndex = storage.containers.findIndex(
+    (container) => container.id === request.destinationContainerId,
+  )
+  if (destinationIndex < 0) return { storage, result: { _tag: 'DestinationContainerNotFound' } }
+  const sourceContainer = storage.containers[sourceIndex]
+  const destinationContainer = storage.containers[destinationIndex]
+  if (sourceContainer === undefined) return { storage, result: { _tag: 'SourceContainerNotFound' } }
+  if (destinationContainer === undefined)
+    return { storage, result: { _tag: 'DestinationContainerNotFound' } }
+  if (sourceIndex === destinationIndex && request.sourceSlot === request.destinationSlot)
+    return { storage, result: { _tag: 'DestinationMismatch' } }
+
+  const source: unknown = sourceContainer.slots[request.sourceSlot] ?? null
+  const destination: unknown = destinationContainer.slots[request.destinationSlot] ?? null
+  if (source === null) return { storage, result: { _tag: 'EmptySource' } }
+  if (!hasValidStoredStackShape(source)) return { storage, result: { _tag: 'InvalidSourceStack' } }
+  if (!hasValidStoredStackDurability(source))
+    return { storage, result: { _tag: 'InvalidSourceDurability' } }
+  if (destination !== null &&
+      (!hasValidStoredStackShape(destination) || !hasValidStoredStackDurability(destination)))
+    return { storage, result: { _tag: 'InvalidDestinationStack' } }
+  if (request.count > source.count)
+    return { storage, result: { _tag: 'InsufficientSource', available: source.count } }
+  if (destination !== null &&
+      (destination.item !== source.item || destination.durability !== null || source.durability !== null))
+    return { storage, result: { _tag: 'DestinationMismatch' } }
+  if ((destination?.count ?? 0) + request.count > Inv.maxStackCountForItem(source.item))
+    return { storage, result: { _tag: 'DestinationFull' } }
+
+  const sourceSlots = [...sourceContainer.slots]
+  const destinationSlots = sourceIndex === destinationIndex ? sourceSlots : [...destinationContainer.slots]
+  const remaining = source.count - request.count
+  sourceSlots[request.sourceSlot] = remaining === 0
+    ? null
+    : { ...source, count: StackCount(remaining), durability: copyDurability(source.durability) }
+  destinationSlots[request.destinationSlot] = {
+    item: source.item,
+    count: StackCount((destination?.count ?? 0) + request.count),
+    durability: copyDurability(source.durability),
+  }
+  const containers = [...storage.containers]
+  containers[sourceIndex] = { ...sourceContainer, slots: sourceSlots }
+  if (sourceIndex !== destinationIndex)
+    containers[destinationIndex] = { ...destinationContainer, slots: destinationSlots }
+  return {
+    storage: { containers },
+    result: { _tag: 'Moved', item: source.item, count: request.count },
   }
 }
 
