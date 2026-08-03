@@ -52,9 +52,9 @@
   },
   "dependencies": {
     "@nerima-games/mc-kernel": "0.2.16",
-    "@nerima-games/mc-physics": "0.1.0",
-    "@nerima-games/mc-save": "0.1.0",
-    "@nerima-games/mc-worldgen": "0.1.1",
+    "@nerima-games/mc-physics": "0.1.6",
+    "@nerima-games/mc-save": "0.2.2",
+    "@nerima-games/mc-worldgen": "0.1.12",
     "effect": "^3.22.0"
   },
   "devDependencies": {
