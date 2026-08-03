@@ -12,8 +12,14 @@ describe('VehicleService lifecycle', () => {
       expect(vehicle.id).toBe('v:0')
       yield* service.updateVelocity(vehicle.id, { x: 1, y: 0, z: -1 })
       yield* service.updateTransform(vehicle.id, 'nether', position(3, 70, 4), Math.PI)
+      yield* service.updateState(vehicle.id, {
+        dimension: 'end',
+        position: position(5, 71, 6),
+        velocity: { x: 0, y: 0, z: 0.5 },
+        yawRadians: 0.25,
+      })
       yield* service.mount(vehicle.id, OccupantId('player:1'))
-      expect((yield* service.vehicles)[0]).toMatchObject({ dimension: 'nether', yawRadians: Math.PI, occupant: 'player:1' })
+      expect((yield* service.vehicles)[0]).toMatchObject({ dimension: 'end', position: position(5, 71, 6), yawRadians: 0.25, occupant: 'player:1' })
       yield* service.dismount(vehicle.id, OccupantId('player:1'))
       expect((yield* service.vehicles)[0]?.occupant).toBeUndefined()
       expect(yield* service.despawn(vehicle.id)).toBe(true)

@@ -18,6 +18,8 @@ export type VehicleOperationError = Readonly<{
   reason: 'not-found' | 'duplicate-occupant' | 'occupied' | 'occupant-mismatch' | 'invalid-transform'
 }>
 
+export type VehicleStateUpdate = Readonly<Pick<Vehicle, 'dimension' | 'position' | 'velocity' | 'yawRadians'>>
+
 const operationError = (reason: VehicleOperationError['reason']): VehicleOperationError => ({
   _tag: 'VehicleOperationError', reason,
 })
@@ -33,6 +35,7 @@ export type VehicleServiceApi = Readonly<{
   dismount: (id: VehicleId, occupant: OccupantId) => Effect.Effect<void, VehicleOperationError>
   updateVelocity: (id: VehicleId, velocity: VehicleVelocity) => Effect.Effect<void, VehicleOperationError>
   updateTransform: (id: VehicleId, dimension: Dimension, position: Position, yawRadians: number) => Effect.Effect<void, VehicleOperationError>
+  updateState: (id: VehicleId, state: VehicleStateUpdate) => Effect.Effect<void, VehicleOperationError>
   snapshot: Effect.Effect<VehicleSnapshot>
   restore: (snapshot: unknown) => Effect.Effect<void, VehicleValidationError>
 }>
@@ -84,6 +87,15 @@ export const makeVehicleService = (
       updateVelocity: (id, velocity) => modify((snapshot) => update(snapshot, id, validVector(velocity), (vehicle) => ({ ...vehicle, velocity }))),
       updateTransform: (id, dimension, position, yawRadians) => modify((snapshot) =>
         update(snapshot, id, validDimension(dimension) && validVector(position) && Number.isFinite(yawRadians), (vehicle) => ({ ...vehicle, dimension, position, yawRadians }))),
+      updateState: (id, next) => modify((snapshot) => update(
+        snapshot,
+        id,
+        validDimension(next.dimension)
+          && validVector(next.position)
+          && validVector(next.velocity)
+          && Number.isFinite(next.yawRadians),
+        (vehicle) => ({ ...vehicle, ...next }),
+      )),
       snapshot: Ref.get(state),
       restore: (candidate) => {
         const result = validateVehicleSnapshot(candidate)
