@@ -52,10 +52,12 @@ describe('container storage domain', () => {
 
   it('uses kind-specific capacities and migrates v1 chest snapshots', () => {
     const dispenser = createContainer(emptyContainerStorage(), 'dispenser', 'dispenser')
-    const hopper = createContainer(dispenser.storage, 'hopper', 'hopper')
+    const dropper = createContainer(dispenser.storage, 'dropper', 'dropper')
+    const hopper = createContainer(dropper.storage, 'hopper', 'hopper')
 
     expect(dispenser.storage.containers[0]?.slots).toHaveLength(DISPENSER_CONTAINER_CAPACITY)
-    expect(hopper.storage.containers[1]?.slots).toHaveLength(HOPPER_CONTAINER_CAPACITY)
+    expect(dropper.storage.containers[1]?.slots).toHaveLength(DISPENSER_CONTAINER_CAPACITY)
+    expect(hopper.storage.containers[2]?.slots).toHaveLength(HOPPER_CONTAINER_CAPACITY)
 
     const legacy = {
       version: 1,

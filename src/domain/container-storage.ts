@@ -3,7 +3,7 @@ import * as Inv from './inventory'
 import { isItemType, StackCount } from './kernel-vocabulary'
 import * as Player from './player-storage'
 
-export type ContainerKind = 'chest' | 'shulker_box' | 'dispenser' | 'hopper'
+export type ContainerKind = 'chest' | 'shulker_box' | 'dispenser' | 'dropper' | 'hopper'
 
 export const CHEST_CONTAINER_CAPACITY = 27 as const
 export const DISPENSER_CONTAINER_CAPACITY = 9 as const
@@ -174,6 +174,7 @@ export const containerCapacity = (kind: ContainerKind): number => {
     case 'shulker_box':
       return CHEST_CONTAINER_CAPACITY
     case 'dispenser':
+    case 'dropper':
       return DISPENSER_CONTAINER_CAPACITY
     case 'hopper':
       return HOPPER_CONTAINER_CAPACITY
@@ -265,7 +266,7 @@ export const validateContainerStorageSnapshot = (
       return invalid(`${path}.id`, 'expected a non-empty trimmed string')
     if (ids.has(candidate['id'])) return invalid(`${path}.id`, 'container id must be unique')
     const kind = legacy ? 'chest' : candidate['kind']
-    if (kind !== 'chest' && kind !== 'shulker_box' && kind !== 'dispenser' && kind !== 'hopper')
+    if (kind !== 'chest' && kind !== 'shulker_box' && kind !== 'dispenser' && kind !== 'dropper' && kind !== 'hopper')
       return invalid(`${path}.kind`, 'expected a supported container kind')
     const capacity = containerCapacity(kind)
     if (!Array.isArray(candidate['slots']) || candidate['slots'].length !== capacity)
