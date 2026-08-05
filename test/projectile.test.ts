@@ -1,6 +1,8 @@
 import { describe, expect, it } from '@effect/vitest'
+import { Option } from 'effect'
 import {
   launchArrow,
+  raycastArrowBlock,
   stepArrow,
   type Arrow,
   type ArrowLaunch,
@@ -31,5 +33,15 @@ describe('projectile facade', () => {
     expect(arrow.state).toBe('flying')
     expect(hit).toBeUndefined()
     expect(step.arrow.state).toBe('flying')
+  })
+
+  it('resolves the first blocking voxel on an arrow segment', () => {
+    const impact = raycastArrowBlock(
+      { x: 0.5, y: 0.5, z: 2.5 },
+      { x: 0.5, y: 0.5, z: -0.5 },
+      (x, y, z) => x === 0 && y === 0 && z === 0,
+    )
+
+    expect(Option.getOrThrow(impact)).toStrictEqual({ distance: 1.5, point: { x: 0.5, y: 0.5, z: 1 } })
   })
 })
