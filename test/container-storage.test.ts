@@ -179,6 +179,23 @@ describe('container storage domain', () => {
 })
 
 describe('InventoryService chest integration', () => {
+  it.effect('keeps containers isolated by their dimension-qualified positions', () =>
+    Effect.gen(function* () {
+      const service = yield* makeInventoryService()
+      const position = { x: 12, y: 64, z: -4 }
+
+      expect(yield* service.createContainerAt('overworld', position)).toMatchObject({
+        _tag: 'Created', container: { id: containerIdAt('overworld', position) },
+      })
+      expect(yield* service.createContainerAt('nether', position, 'hopper')).toMatchObject({
+        _tag: 'Created', container: { id: containerIdAt('nether', position) },
+      })
+      expect((yield* service.containerSnapshotAt('overworld', position))?.kind).toBe('chest')
+      expect((yield* service.containerSnapshotAt('nether', position))?.kind).toBe('hopper')
+      expect(yield* service.containerSnapshotAt('overworld', { ...position, x: 13 })).toBeNull()
+    }),
+  )
+
   it.effect('resolves a chest by dimension and block position', () =>
     Effect.gen(function* () {
       const service = yield* makeInventoryService()
@@ -409,6 +426,77 @@ describe('InventoryService chest integration', () => {
       expect((yield* service.containerSnapshot('destination'))?.slots[0]).toStrictEqual({
         item: 'stone', count: 1, durability: null,
       })
+    }),
+  )
+
+  it.effect('moves exactly one item between positioned containers atomically', () =>
+    Effect.gen(function* () {
+      const service = yield* makeInventoryService()
+      const source = { dimension: 'overworld', position: { x: 1, y: 64, z: 1 } }
+      const destination = { dimension: 'overworld', position: { x: 2, y: 64, z: 1 } }
+      yield* service.createContainerAt(source.dimension, source.position)
+      yield* service.createContainerAt(destination.dimension, destination.position)
+      yield* service.add('stone', 2)
+      yield* service.transferContainerItem({
+        direction: 'PlayerToContainer',
+        containerId: containerIdAt(source.dimension, source.position),
+        playerSlot: 0,
+        containerSlot: 0,
+        count: 2,
+      })
+
+      expect(yield* service.moveOneContainerItemAt({
+        source,
+        sourceSlot: 0,
+        destination,
+        destinationSlot: 0,
+      })).toStrictEqual({ _tag: 'Moved', item: 'stone', count: 1 })
+      expect((yield* service.containerSnapshotAt(source.dimension, source.position))?.slots[0])
+        .toStrictEqual({ item: 'stone', count: 1, durability: null })
+      expect((yield* service.containerSnapshotAt(destination.dimension, destination.position))?.slots[0])
+        .toStrictEqual({ item: 'stone', count: 1, durability: null })
+    }),
+  )
+
+  it.effect('leaves positioned container storage unchanged when destination is absent or full', () =>
+    Effect.gen(function* () {
+      const service = yield* makeInventoryService()
+      const source = { dimension: 'overworld', position: { x: 3, y: 64, z: 1 } }
+      const destination = { dimension: 'overworld', position: { x: 4, y: 64, z: 1 } }
+      yield* service.createContainerAt(source.dimension, source.position)
+      yield* service.createContainerAt(destination.dimension, destination.position)
+      yield* service.add('stone', 66)
+      yield* service.transferContainerItem({
+        direction: 'PlayerToContainer',
+        containerId: containerIdAt(destination.dimension, destination.position),
+        playerSlot: 0,
+        containerSlot: 0,
+        count: 64,
+      })
+      yield* service.transferContainerItem({
+        direction: 'PlayerToContainer',
+        containerId: containerIdAt(source.dimension, source.position),
+        playerSlot: 1,
+        containerSlot: 0,
+        count: 2,
+      })
+      const before = bytes(yield* service.containerStorageSnapshot)
+
+      expect(yield* service.moveOneContainerItemAt({
+        source,
+        sourceSlot: 0,
+        destination: { ...destination, position: { ...destination.position, x: 5 } },
+        destinationSlot: 0,
+      })).toStrictEqual({ _tag: 'DestinationContainerNotFound' })
+      expect(bytes(yield* service.containerStorageSnapshot)).toBe(before)
+
+      expect(yield* service.moveOneContainerItemAt({
+        source,
+        sourceSlot: 0,
+        destination,
+        destinationSlot: 0,
+      })).toStrictEqual({ _tag: 'DestinationFull' })
+      expect(bytes(yield* service.containerStorageSnapshot)).toBe(before)
     }),
   )
 
