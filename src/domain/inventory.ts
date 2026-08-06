@@ -37,7 +37,7 @@ import {
   maxStackCountOfItem,
   MAX_STACK_COUNT,
   StackCount,
-} from './kernel-vocabulary'
+} from '@nerima-games/mc-kernel'
 
 /*
  * THERE IS NO `ItemId` HERE ANY MORE.

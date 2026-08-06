@@ -70,7 +70,7 @@ camera-pose / frame-timing / time-of-day —— 8 つとも、注入されたク
 
 | | 何か | mc-sim での見え方 |
 | --- | --- | --- |
-| `ClockPort` | mc-kernel の Port（`domain/kernel-vocabulary.ts` にミラー） | `cameraPose: Effect<…, never, ClockPort>` —— **型に出る** |
+| `ClockPort` | mc-kernel の Port（公開済み package から直接 import） | `cameraPose: Effect<…, never, ClockPort>` —— **型に出る** |
 | Effect `Clock` | `Schedule.spaced` が sleep する先 | `startAutoSaveDaemon: Effect<Fiber.RuntimeFiber<…>>` —— **型に出ない** |
 
 `application/player-service.ts` は「クロック依存を型に見せることが、
@@ -78,9 +78,8 @@ camera-pose / frame-timing / time-of-day —— 8 つとも、注入されたク
 「いつ」を決めることだけが仕事のサービスが、それをしていない —— という指摘（SIM-6）は妥当だった。
 
 **結論は「移さない」で、理由は `application/autosave.ts` にある。** Port は**瞬間を読む**もので、
-スケジュールは**期間だけ眠る**もの。`ClockPort` に `sleep` は無く、mc-kernel のミラーなので
-足すこともできない（Tag は文字列キーで解決されるため、広いミラーは `test/kernel-mirror.test.ts` が
-潰している当のハザードそのものになる）。Port で駆動すると polling になり、
+スケジュールは**期間だけ眠る**もの。`ClockPort` に `sleep` は無く、公開済み mc-kernel の契約なので
+ここで足すこともできない。Port で駆動すると polling になり、
 `TestClock.adjust` では進まなくなって、オートセーブのテスト一式が手回しハーネスに変わる。
 
 Effect の `Clock` もサービスであり、`TestClock` が差し替えるのはそれである。

@@ -41,9 +41,9 @@
  * used deliberately here rather than tripped over.
  *
  * IT IS WORTH BEING PRECISE ABOUT WHAT THAT DOES AND DOES NOT RISK, because the
- * ClockPort hazard `test/kernel-mirror.test.ts` guards looks superficially the
- * same. That one is a SHAPE disagreement: a Layer built against a one-field
- * mirror satisfies a two-field Tag and the missing field reads `undefined`. Here
+ * The published ClockPort contract removes that shape disagreement. A Layer built
+ * against a one-field service would not satisfy the published two-field Tag without
+ * leaving a missing field as `undefined`. Here
  * every instantiation has an identical shape — same methods, same arities — and
  * the only thing that varies is the static type of a field mc-sim never reads.
  * A consumer that instantiates the wrong `S` therefore gets a value it

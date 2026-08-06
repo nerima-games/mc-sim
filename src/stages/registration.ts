@@ -106,7 +106,7 @@ import { InventoryService, InventoryServiceLayer } from '../application/inventor
 import { CropService, CropServiceLayer, type CropServiceApi } from '../application/crop-service'
 import { PlayerService, PlayerServiceLayer, type PlayerServiceApi } from '../application/player-service'
 import { TimeService, TimeServiceLayer, type TimeServiceApi } from '../application/time-service'
-import { position, type GameModule, type Position, type StageRegistration } from '../domain/kernel-vocabulary'
+import { position, type GameModule, type Position, type StageRegistration } from '@nerima-games/mc-kernel'
 import { SIM_STAGE_IDS } from './stage-ids'
 
 export type MovementIntent = {

@@ -114,7 +114,6 @@ org パッケージも新規 npm 依存も無い。
 | `test/recipe.test.ts` | 27 | レシピモデル（[public-api.md](./public-api.md) §4.1）。§3.2 |
 | `test/crafting.test.ts` | 13 | クラフトの原子性。DN-07 |
 | `test/autosave.test.ts` | 12 | DN-05 / DN-08。SIM-9 / SIM-6 |
-| `test/kernel-mirror.test.ts` | 11 | `domain/kernel-vocabulary.ts` が mc-kernel と同形であること（§4.4）。アイテムロスタを含む（§3.1） |
 | `test/stage-registration.test.ts` | 17 | `sim:physics` の id と `after` 0 本（[responsibility.md](./responsibility.md) §2.1） |
 | `test/check-dependency-whitelist.test.ts` | 27 | DN-12 + 依存ホワイトリスト本体 |
 | `test/api-lock.test.ts` | 26 | 生成器 `scripts/api-lock.ts` の機構そのもの（§7 末尾） |
@@ -178,35 +177,20 @@ SIM-11 に至ってはどのテストも捕まえられない —— テスト�
 3 件目は、`isNight` の doc コメントが「これは値が入る境界の側で直してある」と主張していたので、
 **その主張を真にするために必要**でもあった。ドキュメントに書いた保証は、テストと同じ強さで守る。
 
-### 3.1 `test/kernel-mirror.test.ts` が守っているもの
+### 3.1 公開済み `mc-kernel` の直接利用
 
-`domain/kernel-vocabulary.ts` は mc-kernel のローカルミラーであり、そのヘッダは
-「これを削除して import を publish 済みパッケージに向け直せば型検査が通る」と約束している。
-**その約束は何にも強制されておらず、実際に破られていた。**
+mc-sim は `@nerima-games/mc-kernel` を厳密な version で直接依存し、共有語彙と
+`ClockPort` を公開 package から import する。ローカルの `kernel-vocabulary.ts` と
+mirror-only test は削除済みである。
 
-本リポジトリの `ClockService` は 1 フィールド（`monotonicSecs`）で、
-kernel（`mc-kernel/domain/clock.ts:43-48`）は 2 フィールドだった。
-`FixedClockLayer` も、kernel がオブジェクトを取るところで裸の `MonotonicTimeSecs` を取っていた。
+この境界は、`ClockPort` の実行時キーとサービス形状を一つの公開定義に揃えるために必要である。
+以前のローカルミラーは `monotonicSecs` だけを持ち、kernel 側の
+`wallClockEpochMillis` を欠いていた。Effect は `Context.Tag` を文字列キーで解決するため、
+型検査をすり抜けた狭い `Layer` は実行時に不足フィールドを残す。
 
-`tsc` には見えず、実行時には致命的である。`ClockPort` は `Context.Tag` であり、
-Effect は Tag を**その文字列キー**で解決する。3 つのコピーすべてが
-`'@nerima-games/mc-kernel/ClockPort'` を使っているので、2 つが同居するバンドル
-（mc-playground-kit は mc-sim に依存する）では**狭いミラーの `Layer` が広いミラーの Tag を満たし**、
-`wallClockEpochMillis` は使用時に `undefined` になる。
-
-そこでこのファイルは、Tag キーを**文字列リテラルで**固定し、サービスの形を**両方向で**assert する
-（狭めても広げても落ちる）。同じ内容のテストが mc-render と mc-playground-kit にもある。
-
-**アイテムロスタも同じ理由で、リテラルのリストとして固定してある。**
-§4.6 は「両辺で同じ定数を読むテスト」を禁じているが、ここはその規則の**反転**であって例外ではない:
-`ITEM_TYPES` は他リポジトリの配列の**転記**であり、守るべき失敗は「転記がずれた」である。
-`ITEM_TYPES` を両辺で読めば、mc-sim の都合で 1 個足した転記も、`lower_snake` の打ち間違いも、
-すべて素通りする。閉じたリテラル union では**メンバの集合そのものが型**なので、
-狭いミラーは「語彙が少ない」ではなく*別の型*であり、広いミラーはローカルでだけ通って
-ミラー削除の日に壊れる。
-なお、両方のリポジトリを同時に見られるのは mc-dev-meta の `pnpm check:mirrors` だけである。
-こちらは mc-kernel が install されていない場所でも走り、**転記が作者の思っていたものであること**を
-固定する。2 つ合わせて「ミラーが源と一致する」と「ミラーが書いたつもりのものである」になる。
+現在は公開 package の `ClockPort` を直接利用するので、この二重定義は発生しない。変更時は
+`pnpm typecheck` と実行時テストで package 契約を検証し、同じ語彙を別のローカル定数から
+再生成しない。
 
 ### 3.2 レシピ / クラフトのテストが守っているもの
 
@@ -331,10 +315,9 @@ const controllableClock = Effect.gen(function* () {
 解決する。狭い Layer は広い Tag をそのまま満たし、`wallClockEpochMillis` は使用時に `undefined` になる。
 TypeScript には見えない（キーが同じ 2 つのクラスは、名前的には別型でありながら実行時には同じサービスである）。
 
-これは実際に起きていた欠陥である。本リポジトリの `ClockService` ミラーは 1 フィールドで、
-mc-kernel と mc-playground-kit は 2 フィールドだった。
-`test/kernel-mirror.test.ts` が現在、Tag キーの文字列とサービスの形を**両方向で**固定している
-（広すぎても狭すぎても落ちる）。
+これは実際に起きていた欠陥である。現在は公開済み mc-kernel の `ClockPort` を直接利用するため、
+本リポジトリ内に `ClockService` のローカルミラーや `test/kernel-mirror.test.ts` は存在しない。
+契約の形状は公開 package の型検査と実行時テストで固定する。
 
 これが fast-forward の仕組み。「次の夜明けまで待つ」が算術になり、20 分のテストが数マイクロ秒になる。
 `test/scenario.test.ts` を新しいシナリオの雛形として使うこと。

@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect } from 'effect'
-import { type ItemType } from '../src/domain/kernel-vocabulary'
+import { type ItemType } from '@nerima-games/mc-kernel'
 import { type Recipe, STARTER_RECIPES } from '../src/domain/recipe'
 import { STARTER_FUEL_RULES, STARTER_SMELTING_RECIPES } from '../src/domain/smelting'
 

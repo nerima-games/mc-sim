@@ -1,5 +1,5 @@
 import type { ItemStack } from './inventory'
-import { isItemType, MAX_STACK_COUNT, type ItemType } from './kernel-vocabulary'
+import { isItemType, MAX_STACK_COUNT, type ItemType } from '@nerima-games/mc-kernel'
 
 export const EQUIPMENT_SLOTS = ['head', 'chest', 'legs', 'feet', 'offhand'] as const
 
