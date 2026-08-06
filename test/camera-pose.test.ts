@@ -25,7 +25,7 @@ import {
   snapshotAgeSecs,
   withFeetPosition,
 } from '../src/domain/camera-pose'
-import { MonotonicTimeSecs, position } from '../src/domain/kernel-vocabulary'
+import { MonotonicTimeSecs, position } from '@nerima-games/mc-kernel'
 
 const AT = MonotonicTimeSecs(500)
 

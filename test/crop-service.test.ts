@@ -15,7 +15,7 @@ import {
   EpochMillis,
   FixedClockLayer,
   MonotonicTimeSecs,
-} from '../src/domain/kernel-vocabulary'
+} from '@nerima-games/mc-kernel'
 import { makeSimStages } from '../src/stages/registration'
 
 const location = (

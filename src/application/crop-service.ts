@@ -1,7 +1,7 @@
 import { Context, Effect, Layer, Ref } from 'effect'
 import type { BlockType } from '@nerima-games/mc-kernel'
 import type { ItemStack } from '../domain/inventory'
-import type { DeltaTimeSecs } from '../domain/kernel-vocabulary'
+import type { DeltaTimeSecs } from '@nerima-games/mc-kernel'
 import * as Crop from '../domain/crop'
 
 export type CropServiceApi = {

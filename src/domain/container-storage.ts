@@ -1,6 +1,6 @@
 import * as Eq from './equipment'
 import * as Inv from './inventory'
-import { isItemType, StackCount } from './kernel-vocabulary'
+import { isItemType, StackCount } from '@nerima-games/mc-kernel'
 import * as Player from './player-storage'
 
 export type ContainerKind = 'chest' | 'shulker_box' | 'dispenser' | 'dropper' | 'hopper'

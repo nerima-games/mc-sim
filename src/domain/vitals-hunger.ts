@@ -1,4 +1,4 @@
-import { type DeltaTimeSecs } from './kernel-vocabulary'
+import { type DeltaTimeSecs } from '@nerima-games/mc-kernel'
 import {
   EXHAUSTION_PER_POINT,
   EXHAUSTION_PER_REGEN,

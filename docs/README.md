@@ -56,12 +56,10 @@ mc-render / mc-playground-kit / mx-gameplay / mx-redstone / mx-ui / mx-multiplay
 まだ無いもの: EntityManager、体力/空腹/XP、実績/統計、設定状態、内蔵障害物コースプレビュー、
 かまど/醸造/金床/エンチャント、リポジトリ内 workspace 分割（entity / inventory / game）。
 APIロックファイルは**ある** —— `api-lock.md` と `pnpm api:check`（[public-api.md](./public-api.md) §6）。
-`domain/kernel-vocabulary.ts` は公開済みの mc-kernel 0.2.4 へ段階移行するための互換ミラーであり、移行完了後に削除する。
-ミラーは最小だが Clock Port とアイテム語彙（`ITEM_TYPES` / `ItemType` / `isItemType`）だけは丸ごと写してある
-（前者は文字列キーで解決される `Context.Tag` なので狭いミラーが実行時ハザードになり、
-後者は閉じたリテラル union なのでメンバの集合そのものが型である）。
-`test/kernel-mirror.test.ts` が形とロスタを固定している
-—— [versioning.md](./versioning.md) §5-1 / §5-2、[testing.md](./testing.md) §3.1。
+`@nerima-games/mc-kernel@0.2.18` は公開済みの直接依存であり、共有語彙と Clock Port は同 package
+から直接 import する。旧ローカルミラーとその専用テストは削除済みで、契約のずれは package の
+型検査、テスト、API lock によって検出する。詳細は [versioning.md](./versioning.md) §5 と
+[testing.md](./testing.md) §3.1 を参照。
 語彙の付け替えでレシピ表が 7 件から 5 件になり、kernel がロスタを 16 → 23 に広げて
 **7 件に戻った**経緯は [public-api.md](./public-api.md) §4.1-7、
 公開面への影響は [versioning.md](./versioning.md) §5-4。

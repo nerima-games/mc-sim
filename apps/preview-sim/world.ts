@@ -7,7 +7,7 @@
  * There are TWO clocks here, and that is a finding, not a convenience
  * ---------------------------------------------------------------------------
  *
- * 1. `ClockPort` — mc-kernel's Port, mirrored in `domain/kernel-vocabulary.ts`.
+ * 1. `ClockPort` — the published Port from `@nerima-games/mc-kernel`.
  *    `PlayerService.cameraPose` is typed `Effect<…, never, ClockPort>` precisely
  *    so that the dependency is visible; application/player-service.ts:29-33 says
  *    the visible requirement is what stops someone "simplifying" it into a wall
@@ -22,7 +22,7 @@
  *
  * That second clock is NOT an oversight, and `application/autosave.ts` now
  * carries the reasoning: a Port READS AN INSTANT, a schedule SLEEPS FOR A
- * DURATION, and `ClockPort` is mirrored from mc-kernel and may not grow a
+ * DURATION, and `ClockPort` is the published kernel Port and may not grow a
  * `sleep`. Both clocks here are injected and both are deterministic; they are
  * simply two mechanisms, and this app is the place that shows they can
  * disagree.
@@ -76,7 +76,7 @@ import {
   StackCount,
   type CameraPoseSnapshot,
   type ClockService,
-} from '../../src/domain/kernel-vocabulary'
+} from '@nerima-games/mc-kernel'
 import * as Time from '../../src/domain/time-of-day'
 import { scenarioFor, stepsAt, type ScenarioName, type ScriptedAction } from './script'
 

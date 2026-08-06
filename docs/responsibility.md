@@ -142,8 +142,8 @@ plan.md §7「sim(状態) + gameplay(ルール)」。
 - **`craft` は `InventoryService` に置いた。** 原子性は 1 つの Ref でしか成立せず、
   Ref を持っているのはインベントリだからである（§4.1-5、DN-07）。サービスは増えていない。
 - **アイテム語彙は増やしていない。いまは増やせない。** レシピ表の `'oak_planks'` 等は
-  mc-kernel の `ItemType`（閉じたリテラル union）のメンバで、`domain/kernel-vocabulary.ts` に
-  ミラーしてある。望ましい失敗は実際に起きた —— 表の 3 件が存在しないアイテムを名指していて
+  mc-kernel の `ItemType`（閉じたリテラル union）のメンバなので、公開済み package から直接
+  import する。望ましい失敗は実際に起きた —— 表の 3 件が存在しないアイテムを名指していて
   型検査に落ち、**kernel に 8 個足させるのではなく削った**（[public-api.md](./public-api.md) §4.1-7）。
   ロスタを決めるのは kernel であり、tier-2 のレシピ表を根拠に tier-1 の語彙を広げるのは
   本プロジェクトが 2 回退けた「推測されたロスタ」と同じ形である。
@@ -326,8 +326,8 @@ DN-09 が要求するので存在し、意味は設定画面の RESTORE DEFAULTS
 参照実装は `packages/world`（= mc-worldgen）に宣言しており、
 **その union を読むルールを既に所有しているのも mc-worldgen** である。
 mc-worldgen が barrel に出したので、ここは `domain/worldgen-vocabulary.ts` に
-**文字単位で転記**している。`domain/kernel-vocabulary.ts` に足していないのは、
-あのファイルを置き換えるのは `@nerima-games/mc-kernel` であり、
+**文字単位で転記**している。mc-kernel の語彙をここに足していないのは、
+その公開面を置き換えるのは `@nerima-games/mc-kernel` であり、
 kernel は `Dimension` を出さないからである（ミラーの住所は
 「どの barrel が置き換えるか」で決まる）。
 
@@ -359,7 +359,7 @@ kernel は `Dimension` を出さないからである（ミラーの住所は
 
 | リポジトリ | 使うもの | 未公開のため現状 |
 | --- | --- | --- |
-| `mc-kernel` | 語彙全般（ブランデッド型、座標、`CameraPoseSnapshot`、Clock Port、`GameModule`） | `domain/kernel-vocabulary.ts` に暫定ミラー |
+| `mc-kernel` | 語彙全般（ブランデッド型、座標、`CameraPoseSnapshot`、Clock Port、`GameModule`） | 公開済み package から直接 import |
 | `mc-physics` | `integrateBody(state, dt)`、`resolveBody(state, dt, options)`、AABB クエリ、voxel-DDA | `sim:physics` から使用 |
 | `mc-save` | `defineFormat(name, version, schema, migrations)`、`StoragePort` | 未使用（`autosave.ts` は永続化 Effect を引数で受ける） |
 | `mc-worldgen` | `generateChunk`、`BiomeService`、`ChunkStore`（物理のためにブロックを読む）、**`Dimension`** | `domain/worldgen-vocabulary.ts` に暫定ミラー（`Dimension` のみ）。§3.7 |

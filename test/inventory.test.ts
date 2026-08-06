@@ -13,7 +13,7 @@ import {
   slotAt,
   type Inventory,
 } from '../src/domain/inventory'
-import { MAX_STACK_COUNT, type ItemType, type StackCount } from '../src/domain/kernel-vocabulary'
+import { MAX_STACK_COUNT, type ItemType, type StackCount } from '@nerima-games/mc-kernel'
 import { makeInventoryService } from '../src/application/inventory-service'
 import type { InventoryClick } from '../src/index'
 

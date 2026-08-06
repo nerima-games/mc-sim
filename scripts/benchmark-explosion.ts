@@ -1,6 +1,6 @@
 import { performance } from 'node:perf_hooks'
 import { planExplosion, type ExplosionBlockReader } from '../src/domain/explosion'
-import { position } from '../src/domain/kernel-vocabulary'
+import { position } from '@nerima-games/mc-kernel'
 
 const radii = [4, 8, 16] as const
 const iterations = 9

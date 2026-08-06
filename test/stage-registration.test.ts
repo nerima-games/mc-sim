@@ -39,7 +39,7 @@ import {
   StageId,
   type GameModule,
   type StageRegistration,
-} from '../src/domain/kernel-vocabulary'
+} from '@nerima-games/mc-kernel'
 import * as Time from '../src/domain/time-of-day'
 import {
   makeControllableSimStagesWithPhysics,
@@ -76,8 +76,8 @@ const SimulationLayer = Layer.mergeAll(
 )
 
 /**
- * `FrameServices` is `ClockPort` (kernel's real alias — see
- * `domain/kernel-vocabulary.ts` on why this repository may not mirror it as
+ * `FrameServices` is `ClockPort` (the published kernel alias — see
+ * `@nerima-games/mc-kernel` on why this repository uses the contract rather than
  * `never`), so running a stage means discharging a clock even when the stage
  * does not read one. Frozen rather than moving: nothing below measures a
  * duration, and a clock that advanced by itself would make it impossible to

@@ -55,8 +55,8 @@ maintainer(take)による裁量判断のみで行う**（[RELEASE_STANDARD.md §
    それは §3.11 の O(chunks × blocks) の失敗そのものになる。チャンネルはフラグと同じ
    場所 —— `mc-worldgen` の `ChunkStore.subscribeDirty` —— に置かれた。
    根拠は `mc-worldgen/docs/public-api.md` §6-2。
-4. `domain/kernel-vocabulary.ts` が削除され、`@nerima-games/mc-kernel` を
-   `dependencies` から参照している（§5 参照）。
+4. `@nerima-games/mc-kernel` を `dependencies` から参照し、共有語彙と `ClockPort` を
+   直接 import している（§5 参照）。
 
 mc-sim は依存ハブなので、**このプロジェクトで最後に `1.0.0` になるリポジトリのひとつ**になる想定。
 早く 1.0.0 を出すことに価値はない。
@@ -88,64 +88,24 @@ mc-dev-meta workspace で開発している間は問題にならないが、publ
   `//npm.pkg.github.com/:_authToken=...` が要る。**現在の `.npmrc` にはまだ書いていない**
   （公開物が無いため）。最初の publish と同時に 16 リポジトリ分を揃える。
 
-## 5. `domain/kernel-vocabulary.ts` の削除
+## 5. `mc-kernel` 直接依存への移行（完了）
 
-**publish 運用より前に片付ける負債。**
+mc-kernel は公開済みなので、mc-sim は `@nerima-games/mc-kernel@0.2.18` を
+`dependencies` から直接参照する。共有語彙、`ClockPort`、時間値は公開 package から
+import し、ローカルの `domain/kernel-vocabulary.ts` と mirror-only test は削除済みである。
 
-nothing-is-published のブートストラップ問題を回避するため、mc-kernel の語彙のうち
-mc-sim が使う分だけを `domain/kernel-vocabulary.ts` にミラーしてある。
-mc-kernel が publish されたら:
+以前のミラーは `ClockPort` のサービス形状を狭める実行時ハザードを隠していた。
+Effect は `Context.Tag` を文字列キーで解決するため、型だけが通る狭い `Layer` は
+実行時に不足フィールドを残す。公開 package を直接利用することで、語彙と Port の定義は
+一つの出所に揃う。
 
-1. `@nerima-games/mc-kernel` を `package.json#dependencies` に追加
-2. `domain/kernel-vocabulary.ts` を削除
-3. `from './kernel-vocabulary'` を `from '@nerima-games/mc-kernel'` に置換
+移行時に確認した条件:
 
-**これで型検査が通らなければ、ミラーが drift しており、その drift 自体がバグである。**
-ミラーは意図的に最小（mc-sim が実際に使う分だけ）にしてあり、これは「正直に保つ対象を小さくする」ため。
+1. source と test の kernel 語彙 import が `@nerima-games/mc-kernel` を指す
+2. ローカルミラーとミラー専用テストが存在しない
+3. `pnpm typecheck` と実行時テストが公開 package の契約を検証する
 
-### 5-1. 「最小」の唯一の例外 — Clock Port は**丸ごと**ミラーする
-
-`ClockPort` は `Context.Tag` であり、Effect は Tag を**その文字列キー**
-（`'@nerima-games/mc-kernel/ClockPort'`）で解決する。
-同じキーから作られた 2 つのクラスは、TypeScript にとっては無関係な名前的別型でありながら、
-**実行時には同じサービス**である。
-
-したがって `ClockService` の**狭い**ミラーは「語彙が少ない」ではなく**サイレントな実行時ハザード**である。
-1 フィールドのミラーに対して組んだ `Layer` が 2 フィールドの Tag を満たしてしまい、
-足りないフィールドは、このファイルを見たことのないリポジトリで `undefined` として読まれる。
-
-**これは実際に起きていた。** mc-sim のミラーは `monotonicSecs` の 1 フィールドで、
-mc-kernel と mc-playground-kit は 2 フィールドだった。
-mc-playground-kit は mc-sim に依存するので、両者は同じバンドルに同居する。
-
-そのため、mc-sim が壁時計を 1 度も読まないにもかかわらず、
-`EpochMillis` / `fixedClock` / `wallClockEpochMillis` とオブジェクト引数の `FixedClockLayer` まで
-ミラーしてある。`test/kernel-mirror.test.ts` が Tag キーと形を**両方向で**固定しているので、
-次の drift はフレームではなく CI で落ちる（[testing.md](./testing.md) §3.1）。
-
-ミラーの drift が「削除して import に置き換えれば通る」という約束を破る唯一の経路であり、
-その約束はこの節の 3 手順そのものである。
-
-### 5-2. 2 つ目の例外 — `ITEM_TYPES` は**23 件すべて**ミラーする
-
-閉じたリテラル union では、**メンバの集合そのものが型**である。
-mc-sim のレシピ表が使う 6 個だけを写したミラーは「語彙が少ない」ではなく*狭い別の型*で、
-`isItemType('sand')` がここでは `false`、kernel では `true` になる。
-逆向き（mc-sim の都合でロスタに 1 個足す）はもっと悪い: ローカルでは通り、
-kernel の `ItemType` が拒否するレシピ表を出荷し、**壊れるのはミラーを削除する日**である
-—— この節が「何も起きない日」だと約束している、まさにその日である。
-
-したがってロスタを増減させるのは mc-kernel の決定であって本リポジトリの決定ではない。
-kernel 側では additive・MINOR、mc-sim 側では**ミラーとテストを同じコミットで更新する**だけの作業になる。
-
-**この手順は 1 度回った。** 足りなかった 8 個の要求を値段つきで出し
-（[public-api.md](./public-api.md) §4.1-7）、kernel が 7 個を —— それぞれ kernel 側の理由
-（鉱石 / 砂利のドロップ、mob ドロップ、flammable 能力の着火アイテム）を伴って —— 承認し、
-ロスタは **16 → 23** になった。8 個目の `crafting_table` は却下され、ミラーにも入っていない。
-mc-sim 側の作業は宣言通りで、`domain/kernel-vocabulary.ts` の転記、
-`test/kernel-mirror.test.ts` の `KERNEL_ITEM_TYPES` の再転記、
-そしてレシピ 2 行の復帰が**同じコミット**に入る。順序が逆になった瞬間
-（ミラーが先に進む）に壊れる約束が §5 の 3 手順である。
+以下の §5-3 と §5-4 は、移行前の API-lock 運用と語彙拡張を記録した歴史節である。
 
 ### 5-3. この付け替えは mc-sim の公開面を**壊した**（歴史的記録。ウィンドウ機構自体は撤去済み）
 
