@@ -78,38 +78,25 @@
     "no-sync": "warn",
 
     // Style
-    "array-bracket-spacing": "warn",
-    "block-spacing": "warn",
-    "brace-style": ["warn", "1tbs", { "allowSingleLine": true }],
-    "camelcase": "warn",
-    "comma-dangle": ["warn", "always-multiline"],
-    "comma-spacing": "warn",
-    "comma-style": "warn",
-    "computed-property-spacing": "warn",
-    "eol-last": "warn",
-    "func-call-spacing": "warn",
-    "indent": "off",
-    "key-spacing": "warn",
-    "keyword-spacing": "warn",
-    "linebreak-style": ["warn", "unix"],
-    "lines-between-class-members": "warn",
+    // NOTE on formatting rules: this block previously also carried
+    // array-bracket-spacing, block-spacing, brace-style, camelcase,
+    // comma-dangle, comma-spacing, comma-style, computed-property-spacing,
+    // eol-last, func-call-spacing, indent, key-spacing, keyword-spacing,
+    // linebreak-style, lines-between-class-members, no-mixed-spaces-and-tabs,
+    // no-new-object, no-tabs, no-trailing-spaces, no-whitespace-before-property,
+    // object-curly-spacing, one-var, operator-linebreak, padded-blocks,
+    // quote-props, semi-spacing, space-before-blocks, space-infix-ops,
+    // space-unary-ops and spaced-comment. Those were written for oxlint 0.12
+    // (see the `Date.now()` NOTE above) but this repo's `.oxlintrc.json` was
+    // never actually loaded by oxlint until the filename bug was fixed.
+    // Loading it for real against oxlint 1.76.0 fails `--print-config` with
+    // `Rule '<name>' not found in plugin 'eslint'` for every rule in the list
+    // above: oxc removed these pure-formatting rules from oxlint (they are
+    // now the domain of the separate `oxfmt` formatter, not in scope here).
+    // Left out rather than re-added; re-introduce only if/when oxlint
+    // reinstates an equivalent rule.
     "no-array-method-this-argument": "warn",
     "no-bitwise": "warn",
-    "no-mixed-spaces-and-tabs": "error",
-    "no-new-object": "warn",
-    "no-tabs": "error",
-    "no-trailing-spaces": "warn",
-    "no-whitespace-before-property": "warn",
-    "object-curly-spacing": ["warn", "always"],
-    "one-var": ["warn", "never"],
-    "operator-linebreak": "warn",
-    "padded-blocks": ["warn", "never"],
-    "quote-props": ["warn", "as-needed"],
-    "semi-spacing": "warn",
-    "space-before-blocks": "warn",
-    "space-infix-ops": "warn",
-    "space-unary-ops": "warn",
-    "spaced-comment": "warn",
 
     // Restriction
     "default-case": "warn",
