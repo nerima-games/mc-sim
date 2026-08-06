@@ -73,6 +73,20 @@ export type InventorySortResult =
   | { readonly _tag: 'Sorted' }
   | { readonly _tag: 'NoChange' }
 
+/** A world-container address owned by the host's dimension and block coordinates. */
+export type ContainerPositionAddress = {
+  readonly dimension: string
+  readonly position: Container.ContainerPosition
+}
+
+/** One fixed-count hopper-style transfer between two world-container positions. */
+export type MoveOneContainerItemAtRequest = {
+  readonly source: ContainerPositionAddress
+  readonly sourceSlot: number
+  readonly destination: ContainerPositionAddress
+  readonly destinationSlot: number
+}
+
 type InventoryClickOutcome = {
   readonly inventory: Inv.Inventory
   readonly result: InventoryClickResult
@@ -303,9 +317,16 @@ export type InventoryServiceApi = {
   readonly consumeAndDamageAt: (
     request: Storage.ConsumeAndDamageAtRequest,
   ) => Effect.Effect<Storage.ConsumeAndDamageAtResult>
-  /** Create one fixed-capacity chest under a stable host-defined id. */
+  /** Create one fixed-capacity container under a stable host-defined id. */
   readonly createContainer: (
     id: Container.ContainerId,
+    kind?: Container.ContainerKind,
+  ) => Effect.Effect<Container.CreateContainerResult>
+  /** Create one fixed-capacity container at a dimension-qualified block position. */
+  readonly createContainerAt: (
+    dimension: string,
+    position: Container.ContainerPosition,
+    kind?: Container.ContainerKind,
   ) => Effect.Effect<Container.CreateContainerResult>
   /** Read one chest without exposing the service's mutable state. */
   readonly containerSnapshot: (
@@ -330,9 +351,19 @@ export type InventoryServiceApi = {
   readonly extractContainerItem: (
     request: Container.ContainerExtractRequest,
   ) => Effect.Effect<Container.ContainerExtractResult>
+  /** Atomically remove exactly one item at a dimension-qualified block position. */
+  readonly extractOneContainerItemAt: (
+    dimension: string,
+    position: Container.ContainerPosition,
+    containerSlot: number,
+  ) => Effect.Effect<Container.ContainerExtractResult>
   /** Atomically move items between world containers for machine automation. */
   readonly moveContainerItem: (
     request: Container.ContainerMoveRequest,
+  ) => Effect.Effect<Container.ContainerMoveResult>
+  /** Atomically move exactly one item between dimension-qualified block positions. */
+  readonly moveOneContainerItemAt: (
+    request: MoveOneContainerItemAtRequest,
   ) => Effect.Effect<Container.ContainerMoveResult>
   /** Remove a broken chest and return its contents exactly once. */
   readonly drainContainer: (
@@ -621,9 +652,18 @@ export const makeInventoryService = (
         const outcome = Storage.consumeAndDamageAt(current.player, request)
         return [outcome.result, { ...current, player: outcome.storage }]
       }),
-    createContainer: (id) =>
+    createContainer: (id, kind) =>
       Ref.modify(state, (current) => {
-        const outcome = Container.createContainer(current.containers, id)
+        const outcome = Container.createContainer(current.containers, id, kind)
+        return [outcome.result, { ...current, containers: outcome.storage }]
+      }),
+    createContainerAt: (dimension, position, kind) =>
+      Ref.modify(state, (current) => {
+        const outcome = Container.createContainer(
+          current.containers,
+          Container.containerIdAt(dimension, position),
+          kind,
+        )
         return [outcome.result, { ...current, containers: outcome.storage }]
       }),
     containerSnapshot: (id) => Ref.get(state).pipe(
@@ -661,9 +701,35 @@ export const makeInventoryService = (
         const outcome = Container.extractContainerItem(current.containers, request)
         return [outcome.result, { ...current, containers: outcome.storage }]
       }),
+    extractOneContainerItemAt: (dimension, position, containerSlot) =>
+      Ref.modify(state, (current) => {
+        const outcome = Container.extractContainerItem(current.containers, {
+          containerId: Container.containerIdAt(dimension, position),
+          containerSlot,
+          count: 1,
+        })
+        return [outcome.result, { ...current, containers: outcome.storage }]
+      }),
     moveContainerItem: (request) =>
       Ref.modify(state, (current) => {
         const outcome = Container.moveContainerItem(current.containers, request)
+        return [outcome.result, { ...current, containers: outcome.storage }]
+      }),
+    moveOneContainerItemAt: (request) =>
+      Ref.modify(state, (current) => {
+        const outcome = Container.moveContainerItem(current.containers, {
+          sourceContainerId: Container.containerIdAt(
+            request.source.dimension,
+            request.source.position,
+          ),
+          sourceSlot: request.sourceSlot,
+          destinationContainerId: Container.containerIdAt(
+            request.destination.dimension,
+            request.destination.position,
+          ),
+          destinationSlot: request.destinationSlot,
+          count: 1,
+        })
         return [outcome.result, { ...current, containers: outcome.storage }]
       }),
     drainContainer: (id) =>

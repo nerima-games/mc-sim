@@ -3,9 +3,12 @@ import { Effect } from 'effect'
 import { makeInventoryService } from '../src/application/inventory-service'
 import {
   CHEST_CONTAINER_CAPACITY,
+  CONTAINER_STORAGE_SNAPSHOT_VERSION,
+  DISPENSER_CONTAINER_CAPACITY,
   containerIdAt,
   createContainer,
   emptyContainerStorage,
+  HOPPER_CONTAINER_CAPACITY,
   extractContainerItem,
   findContainer,
   moveContainerItem,
@@ -36,7 +39,7 @@ describe('container storage domain', () => {
   it('strictly rejects duplicate ids, malformed slots, and unknown snapshot versions', () => {
     const created = createContainer(emptyContainerStorage(), 'chest-a').storage
     const snapshot = snapshotContainerStorage(created)
-    expect(validateContainerStorageSnapshot({ ...snapshot, version: 2 })._tag).toBe('Invalid')
+    expect(validateContainerStorageSnapshot({ ...snapshot, version: 3 })._tag).toBe('Invalid')
     expect(validateContainerStorageSnapshot({
       ...snapshot,
       containers: [...snapshot.containers, snapshot.containers[0]],
@@ -45,6 +48,26 @@ describe('container storage domain', () => {
       ...snapshot,
       containers: [{ id: 'chest-a', slots: [] }],
     })._tag).toBe('Invalid')
+  })
+
+  it('uses kind-specific capacities and migrates v1 chest snapshots', () => {
+    const dispenser = createContainer(emptyContainerStorage(), 'dispenser', 'dispenser')
+    const dropper = createContainer(dispenser.storage, 'dropper', 'dropper')
+    const hopper = createContainer(dropper.storage, 'hopper', 'hopper')
+
+    expect(dispenser.storage.containers[0]?.slots).toHaveLength(DISPENSER_CONTAINER_CAPACITY)
+    expect(dropper.storage.containers[1]?.slots).toHaveLength(DISPENSER_CONTAINER_CAPACITY)
+    expect(hopper.storage.containers[2]?.slots).toHaveLength(HOPPER_CONTAINER_CAPACITY)
+
+    const legacy = {
+      version: 1,
+      containers: [{ id: 'legacy-chest', slots: Array.from({ length: CHEST_CONTAINER_CAPACITY }, () => null) }],
+    }
+    const restored = validateContainerStorageSnapshot(legacy)
+    expect(restored._tag).toBe('Valid')
+    if (restored._tag !== 'Valid') return
+    expect(restored.storage.containers[0]?.kind).toBe('chest')
+    expect(snapshotContainerStorage(restored.storage).version).toBe(CONTAINER_STORAGE_SNAPSHOT_VERSION)
   })
 
   it('does not expose stored slot or durability references through create and find results', () => {
@@ -83,6 +106,7 @@ describe('container storage domain', () => {
     const invalidStorage = {
       containers: [{
         id: 'invalid-chest',
+        kind: 'chest' as const,
         slots: container?.slots.map((slot, index) => index === 0
           ? { ...itemStack('stone', 1), durability: { current: 1, max: 1 } }
           : slot) ?? [],
@@ -155,6 +179,23 @@ describe('container storage domain', () => {
 })
 
 describe('InventoryService chest integration', () => {
+  it.effect('keeps containers isolated by their dimension-qualified positions', () =>
+    Effect.gen(function* () {
+      const service = yield* makeInventoryService()
+      const position = { x: 12, y: 64, z: -4 }
+
+      expect(yield* service.createContainerAt('overworld', position)).toMatchObject({
+        _tag: 'Created', container: { id: containerIdAt('overworld', position) },
+      })
+      expect(yield* service.createContainerAt('nether', position, 'hopper')).toMatchObject({
+        _tag: 'Created', container: { id: containerIdAt('nether', position) },
+      })
+      expect((yield* service.containerSnapshotAt('overworld', position))?.kind).toBe('chest')
+      expect((yield* service.containerSnapshotAt('nether', position))?.kind).toBe('hopper')
+      expect(yield* service.containerSnapshotAt('overworld', { ...position, x: 13 })).toBeNull()
+    }),
+  )
+
   it.effect('resolves a chest by dimension and block position', () =>
     Effect.gen(function* () {
       const service = yield* makeInventoryService()
@@ -385,6 +426,77 @@ describe('InventoryService chest integration', () => {
       expect((yield* service.containerSnapshot('destination'))?.slots[0]).toStrictEqual({
         item: 'stone', count: 1, durability: null,
       })
+    }),
+  )
+
+  it.effect('moves exactly one item between positioned containers atomically', () =>
+    Effect.gen(function* () {
+      const service = yield* makeInventoryService()
+      const source = { dimension: 'overworld', position: { x: 1, y: 64, z: 1 } }
+      const destination = { dimension: 'overworld', position: { x: 2, y: 64, z: 1 } }
+      yield* service.createContainerAt(source.dimension, source.position)
+      yield* service.createContainerAt(destination.dimension, destination.position)
+      yield* service.add('stone', 2)
+      yield* service.transferContainerItem({
+        direction: 'PlayerToContainer',
+        containerId: containerIdAt(source.dimension, source.position),
+        playerSlot: 0,
+        containerSlot: 0,
+        count: 2,
+      })
+
+      expect(yield* service.moveOneContainerItemAt({
+        source,
+        sourceSlot: 0,
+        destination,
+        destinationSlot: 0,
+      })).toStrictEqual({ _tag: 'Moved', item: 'stone', count: 1 })
+      expect((yield* service.containerSnapshotAt(source.dimension, source.position))?.slots[0])
+        .toStrictEqual({ item: 'stone', count: 1, durability: null })
+      expect((yield* service.containerSnapshotAt(destination.dimension, destination.position))?.slots[0])
+        .toStrictEqual({ item: 'stone', count: 1, durability: null })
+    }),
+  )
+
+  it.effect('leaves positioned container storage unchanged when destination is absent or full', () =>
+    Effect.gen(function* () {
+      const service = yield* makeInventoryService()
+      const source = { dimension: 'overworld', position: { x: 3, y: 64, z: 1 } }
+      const destination = { dimension: 'overworld', position: { x: 4, y: 64, z: 1 } }
+      yield* service.createContainerAt(source.dimension, source.position)
+      yield* service.createContainerAt(destination.dimension, destination.position)
+      yield* service.add('stone', 66)
+      yield* service.transferContainerItem({
+        direction: 'PlayerToContainer',
+        containerId: containerIdAt(destination.dimension, destination.position),
+        playerSlot: 0,
+        containerSlot: 0,
+        count: 64,
+      })
+      yield* service.transferContainerItem({
+        direction: 'PlayerToContainer',
+        containerId: containerIdAt(source.dimension, source.position),
+        playerSlot: 1,
+        containerSlot: 0,
+        count: 2,
+      })
+      const before = bytes(yield* service.containerStorageSnapshot)
+
+      expect(yield* service.moveOneContainerItemAt({
+        source,
+        sourceSlot: 0,
+        destination: { ...destination, position: { ...destination.position, x: 5 } },
+        destinationSlot: 0,
+      })).toStrictEqual({ _tag: 'DestinationContainerNotFound' })
+      expect(bytes(yield* service.containerStorageSnapshot)).toBe(before)
+
+      expect(yield* service.moveOneContainerItemAt({
+        source,
+        sourceSlot: 0,
+        destination,
+        destinationSlot: 0,
+      })).toStrictEqual({ _tag: 'DestinationFull' })
+      expect(bytes(yield* service.containerStorageSnapshot)).toBe(before)
     }),
   )
 

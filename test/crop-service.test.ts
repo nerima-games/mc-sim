@@ -121,6 +121,28 @@ describe('crop service', () => {
     }).pipe(Effect.provide(CropServiceLayer)),
   )
 
+  it.effect('advances a large crop set without mutating an earlier snapshot', () =>
+    Effect.gen(function* () {
+      const crops = yield* CropService
+      const cropCount = 512
+
+      for (let index = 0; index < cropCount; index += 1) {
+        expect(yield* crops.plant(location(index, 70, index))).toBe(true)
+      }
+
+      const beforeAdvance = yield* crops.snapshot
+      yield* crops.advance(DeltaTimeSecs(1))
+      const afterAdvance = yield* crops.snapshot
+
+      expect(beforeAdvance.crops).toHaveLength(cropCount)
+      expect(beforeAdvance.crops.every((crop) => crop.growthSecs === 0)).toBe(true)
+      expect(afterAdvance.crops).toHaveLength(cropCount)
+      expect(afterAdvance.crops.every((crop) => crop.growthSecs === 1)).toBe(true)
+      expect(afterAdvance.crops).not.toBe(beforeAdvance.crops)
+      expect(afterAdvance.crops[0]).not.toBe(beforeAdvance.crops[0])
+    }).pipe(Effect.provide(CropServiceLayer)),
+  )
+
   it.effect('removes harvested crops so the same location can be planted again', () =>
     Effect.gen(function* () {
       const crops = yield* CropService
