@@ -1,5 +1,38 @@
 {
   "$schema": "https://oxc-project.github.io/oxc/schema/linter.json",
+  // *** FOLLOW-UP FIX: a block of `eslint`-plugin style/formatting rules this
+  // file used to set (`indent`, `comma-dangle`, `array-bracket-spacing`,
+  // `no-tabs`, etc.) no longer exist in oxlint 1.76.0 (oxlint moved formatting
+  // out of the linter into a separate, still-experimental formatter) and
+  // caused a hard config-parse failure — with them present, oxlint refused to
+  // parse this file at all and `pnpm lint` never actually ran any custom rule,
+  // including the `no-restricted-imports` Tier2 dependency-boundary check
+  // below. They have been removed.
+  //
+  // Once the config actually parsed, `"style": "warn"` (previously inert)
+  // turned out to enable far more than formatting: oxlint's `style` category
+  // also bundles opinionated shape rules — `no-magic-numbers`, `sort-keys`,
+  // `id-length`, `capitalized-comments`, `no-ternary`, `no-undefined`,
+  // `func-names`, `curly`, `new-cap`, `sort-imports`, `max-statements`,
+  // `no-underscore-dangle`, and more. Verified empirically: with `style`
+  // left at `warn`, `pnpm lint` reports 6374 lines of diagnostics across
+  // virtually every file in src/test/apps; setting `"style": "off"` alone
+  // drops that to 405. oxlint's own stance is that formatting is a
+  // formatter's job (Oxfmt), not the linter's, and there is deliberately no
+  // formatter configured in this repository (see below) — so `style: off`
+  // is not a loosened gate but the setting that matches oxlint's intended
+  // scope. This matches the already-green precedent in `@nerima-games/mc-kernel`
+  // and `@nerima-games/mc-save`, both of which set `"style": "off"` for the
+  // same reason; mc-noise, cited elsewhere as a reference, still has
+  // `"style": "warn"` and is itself currently red under `pnpm lint` for this
+  // same cause.
+  //
+  // The Tier2 boundary rule below was also silently inert for a second,
+  // independent reason: `no-restricted-imports`'s `patterns` entries must use
+  // `group` (glob, with `!` negation), not `regex` — verified empirically
+  // against oxlint 1.76.0, `regex`-only patterns produce zero diagnostics for
+  // a matching import.
+  //
   // oxlint is the ONLY lint/format configuration in this repository.
   // There is deliberately no prettier, no biome and no .editorconfig.
   //
@@ -29,7 +62,7 @@
     "correctness": "warn",
     "suspicious": "warn",
     "perf": "warn",
-    "style": "warn",
+    "style": "off",
     "restriction": "warn"
   },
   "rules": {
@@ -64,6 +97,12 @@
     "no-debugger": "warn",
     "no-empty-function": "warn",
     "no-empty-pattern": "warn",
+    // `_tag` is the Effect-TS tagged-union discriminator (Schema.TaggedClass /
+    // Data.TaggedEnum); this is a framework convention, not a naming choice,
+    // so it is exempted from the blanket `suspicious` category's
+    // no-underscore-dangle rule. Matches @nerima-games/mc-save's
+    // `.oxlintrc.json` (same exemption, same rationale).
+    "no-underscore-dangle": ["warn", { "allow": ["_tag"] }],
     "no-eval": "error",
     "no-implied-eval": "error",
     "no-redeclare": "warn",
@@ -78,38 +117,29 @@
     "no-sync": "warn",
 
     // Style
-    "array-bracket-spacing": "warn",
-    "block-spacing": "warn",
-    "brace-style": ["warn", "1tbs", { "allowSingleLine": true }],
-    "camelcase": "warn",
-    "comma-dangle": ["warn", "always-multiline"],
-    "comma-spacing": "warn",
-    "comma-style": "warn",
-    "computed-property-spacing": "warn",
-    "eol-last": "warn",
-    "func-call-spacing": "warn",
-    "indent": "off",
-    "key-spacing": "warn",
-    "keyword-spacing": "warn",
-    "linebreak-style": ["warn", "unix"],
-    "lines-between-class-members": "warn",
+    // NOTE: this block used to also set ~30 `eslint`-plugin formatting rules
+    // (`array-bracket-spacing`, `block-spacing`, `brace-style`, `camelcase`,
+    // `comma-dangle`, `comma-spacing`, `comma-style`, `computed-property-spacing`,
+    // `eol-last`, `func-call-spacing`, `indent`, `key-spacing`, `keyword-spacing`,
+    // `linebreak-style`, `lines-between-class-members`, `no-mixed-spaces-and-tabs`,
+    // `no-new-object`, `no-tabs`, `no-trailing-spaces`, `no-whitespace-before-property`,
+    // `object-curly-spacing`, `one-var`, `operator-linebreak`, `padded-blocks`,
+    // `quote-props`, `semi-spacing`, `space-before-blocks`, `space-infix-ops`,
+    // `space-unary-ops`, `spaced-comment`). None of these exist as rule names
+    // in oxlint 1.76.0 (see the top-of-file note). Formatting is no longer
+    // this repository's concern via oxlint; the `style` category is `off`
+    // (see the top-of-file note), so these two rules are enabled by their
+    // explicit entry here, not by the category default.
     "no-array-method-this-argument": "warn",
-    "no-bitwise": "warn",
-    "no-mixed-spaces-and-tabs": "error",
-    "no-new-object": "warn",
-    "no-tabs": "error",
-    "no-trailing-spaces": "warn",
-    "no-whitespace-before-property": "warn",
-    "object-curly-spacing": ["warn", "always"],
-    "one-var": ["warn", "never"],
-    "operator-linebreak": "warn",
-    "padded-blocks": ["warn", "never"],
-    "quote-props": ["warn", "as-needed"],
-    "semi-spacing": "warn",
-    "space-before-blocks": "warn",
-    "space-infix-ops": "warn",
-    "space-unary-ops": "warn",
-    "spaced-comment": "warn",
+    // PERFORMANCE / CORRECTNESS EXCEPTION — src/domain/explosion.ts's
+    // `hashUnit` is a deterministic uint32-wrapping hash (xorshift-style
+    // finalizer): `^`, `Math.imul`, `>>>`, `| 0`. Those are not a
+    // micro-optimisation, they are the specification of the function.
+    // Rewriting them with arithmetic operators would change the values the
+    // hash produces, and the seed -> value mapping is a frozen contract.
+    // Matches @nerima-games/mc-noise's `.oxlintrc.json` (same exception,
+    // same rationale, for its seed-hash and permutation-table code).
+    "no-bitwise": "off",
 
     // Restriction
     "default-case": "warn",
@@ -119,7 +149,7 @@
     // (see the `Date.now()` NOTE at the top of this file for enforcement status).
     "no-restricted-globals": ["warn", "name", "open", "close", "event"],
     "no-restricted-imports": [
-      "warn",
+      "error",
       {
         "paths": [
           {
@@ -134,9 +164,19 @@
         // org, including the Tier1 siblings (mc-noise, mc-meshing, mc-audio),
         // the Tier2 siblings (mc-render, mc-playground-kit), and all of
         // Tier3/Tier4 — Tier2 must not depend laterally or upward.
+        //
+        // Use `group` (glob, with `!` negation), not `regex` — verified
+        // empirically against oxlint 1.76.0, a `regex`-only pattern produces
+        // zero diagnostics for a matching import (see top-of-file note).
         "patterns": [
           {
-            "regex": "^@nerima-games/(mc-noise|mc-meshing|mc-audio|mc-render|mc-playground-kit|mx-gameplay|mx-redstone|mx-ui|mx-multiplayer|mc-compose|mc-dev-meta)(/.*)?$",
+            "group": [
+              "@nerima-games/*",
+              "!@nerima-games/mc-kernel",
+              "!@nerima-games/mc-physics",
+              "!@nerima-games/mc-save",
+              "!@nerima-games/mc-worldgen"
+            ],
             "message": "mc-sim (Tier2, DEPENDENCY_POLICY.md) may depend only on mc-physics, mc-save, mc-worldgen, and mc-kernel. Propose a graph change (DEPENDENCY_POLICY.md §6) before adding this import."
           }
         ]
@@ -151,7 +191,19 @@
     "no-case-declarations": "off",
     "no-constant-condition": "off",
     "no-param-reassign": "off",
-    "no-plusplus": "off"
+    "no-plusplus": "off",
+    // mc-sim's tsconfig.base.json deliberately types absence structurally
+    // (`noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`): `X | undefined`
+    // is the codebase's normal way of expressing "no value", not a sentinel to
+    // avoid. Banning the literal `undefined` token fights that convention.
+    // Matches @nerima-games/mc-kernel's `.oxlintrc.json` (same disable, same
+    // category-default-only origin — not from this file's explicit `rules`).
+    "no-undefined": "off",
+    // Conflicts with this file's own `@typescript-eslint/no-floating-promises:
+    // warn` above: `void somePromise.then(...)` is the standard, explicit way
+    // to mark a promise as an intentional fire-and-forget, and apps/preview-sim
+    // (a terminal UI driven by callbacks) relies on it.
+    "no-void": "off"
   },
   "ignorePatterns": ["node_modules/**", "coverage/**", "dist/**", ".git/**", "*.config.ts", "docs/**"]
 }
