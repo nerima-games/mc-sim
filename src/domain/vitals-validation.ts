@@ -7,12 +7,14 @@ import {
 } from './vitals-model'
 import { clamp, settle } from './vitals-number'
 
-export const isValidVitals = (vitals: Vitals): boolean =>
+const isValidHealth = (vitals: Vitals): boolean =>
   Number.isFinite(vitals.maxHealthPoints) &&
   vitals.maxHealthPoints > 0 &&
   Number.isFinite(vitals.healthPoints) &&
   vitals.healthPoints >= 0 &&
-  vitals.healthPoints <= vitals.maxHealthPoints &&
+  vitals.healthPoints <= vitals.maxHealthPoints
+
+const isValidHungerAndSaturation = (vitals: Vitals): boolean =>
   Number.isFinite(vitals.maxHungerPoints) &&
   vitals.maxHungerPoints >= 0 &&
   Number.isFinite(vitals.hungerPoints) &&
@@ -20,15 +22,24 @@ export const isValidVitals = (vitals: Vitals): boolean =>
   vitals.hungerPoints <= vitals.maxHungerPoints &&
   Number.isFinite(vitals.saturation) &&
   vitals.saturation >= 0 &&
-  vitals.saturation <= vitals.hungerPoints &&
+  vitals.saturation <= vitals.hungerPoints
+
+const isValidExhaustionAndFoodTimer = (vitals: Vitals): boolean =>
   Number.isFinite(vitals.exhaustion) &&
   vitals.exhaustion >= 0 &&
   vitals.exhaustion < EXHAUSTION_PER_POINT &&
   Number.isFinite(vitals.foodTimerSecs) &&
   vitals.foodTimerSecs >= 0 &&
-  vitals.foodTimerSecs < FOOD_TICK_SECS &&
-  Number.isFinite(vitals.totalExperience) &&
-  vitals.totalExperience >= 0
+  vitals.foodTimerSecs < FOOD_TICK_SECS
+
+const isValidExperience = (vitals: Vitals): boolean =>
+  Number.isFinite(vitals.totalExperience) && vitals.totalExperience >= 0
+
+export const isValidVitals = (vitals: Vitals): boolean =>
+  isValidHealth(vitals) &&
+  isValidHungerAndSaturation(vitals) &&
+  isValidExhaustionAndFoodTimer(vitals) &&
+  isValidExperience(vitals)
 
 export const normaliseVitals = (vitals: Vitals): Vitals => {
   const maxHealthPoints = Number.isFinite(vitals.maxHealthPoints)

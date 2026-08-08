@@ -316,6 +316,50 @@ const itemAtLocation = (
   return storage.inventory.slots[location.slotIndex] ?? null
 }
 
+const targetDurabilityAt = (
+  storage: PlayerStorage, location: StorageLocation,
+): Eq.Durability | null | undefined =>
+  location._tag === 'Inventory'
+    ? storage.inventoryDurability[location.slotIndex]
+    : storage.equipment.slots[location.slot]?.durability
+
+type ConsumablePlan = { readonly available: number; readonly excludedSlot: number }
+
+/**
+ * The slot excluded from the consumable count is the damage target itself,
+ * when it is also the item being consumed — damaging a tool must not also
+ * count it against its own consumption requirement.
+ */
+const planConsumable = (storage: PlayerStorage, request: ConsumeAndDamageAtRequest): ConsumablePlan => {
+  const excludedSlot = request.damage.location._tag === 'Inventory' &&
+      request.consume.item === request.damage.expectedItem
+    ? request.damage.location.slotIndex
+    : -1
+  const available = storage.inventory.slots.reduce(
+    (total, slot, index) => index !== excludedSlot && slot?.item === request.consume.item
+      ? total + slot.count
+      : total,
+    0,
+  )
+  return { available, excludedSlot }
+}
+
+const consumeItems = (
+  inventory: Inv.Inventory, item: Inv.ItemStack['item'], count: number, excludedSlot: number,
+): Inv.Inventory => {
+  let result = inventory
+  let remaining = count
+  for (let index = 0; index < result.slots.length && remaining > 0; index += 1) {
+    const slot = result.slots[index]
+    if (index === excludedSlot || slot?.item !== item) continue
+    const removeCount = Math.min(slot.count, remaining)
+    const outcome = Inv.removeItemAt(result, index, item, removeCount)
+    result = outcome.inventory
+    remaining -= removeCount
+  }
+  return result
+}
+
 /** Validate, consume, and damage as one all-or-nothing storage transition. */
 export const consumeAndDamageAt = (
   storage: PlayerStorage,
@@ -340,37 +384,17 @@ export const consumeAndDamageAt = (
     }
   }
 
-  const targetDurability = request.damage.location._tag === 'Inventory'
-    ? storage.inventoryDurability[request.damage.location.slotIndex]
-    : storage.equipment.slots[request.damage.location.slot]?.durability
+  const targetDurability = targetDurabilityAt(storage, request.damage.location)
   if (targetDurability === null || targetDurability === undefined) {
     return { storage, result: { _tag: 'NotDamageable', item: target } }
   }
 
-  const excludedSlot = request.damage.location._tag === 'Inventory' &&
-      request.consume.item === request.damage.expectedItem
-    ? request.damage.location.slotIndex
-    : -1
-  const available = storage.inventory.slots.reduce(
-    (total, slot, index) => index !== excludedSlot && slot?.item === request.consume.item
-      ? total + slot.count
-      : total,
-    0,
-  )
+  const { available, excludedSlot } = planConsumable(storage, request)
   if (available < request.consume.count) {
     return { storage, result: { _tag: 'InsufficientConsumable', available } }
   }
 
-  let inventory = storage.inventory
-  let remaining = request.consume.count
-  for (let index = 0; index < inventory.slots.length && remaining > 0; index += 1) {
-    const slot = inventory.slots[index]
-    if (index === excludedSlot || slot?.item !== request.consume.item) continue
-    const count = Math.min(slot.count, remaining)
-    const outcome = Inv.removeItemAt(inventory, index, request.consume.item, count)
-    inventory = outcome.inventory
-    remaining -= count
-  }
+  const inventory = consumeItems(storage.inventory, request.consume.item, request.consume.count, excludedSlot)
 
   const damaged = damageAt(
     withInventory(storage, inventory),
@@ -390,9 +414,49 @@ export const consumeAndDamageAt = (
   }
 }
 
-const invalid = (path: string, reason: string): PlayerStorageValidationResult => ({
-  _tag: 'Invalid', error: { _tag: 'PlayerStorageValidationError', path, reason },
+const invalidError = (path: string, reason: string): PlayerStorageValidationError => ({
+  _tag: 'PlayerStorageValidationError', path, reason,
 })
+const invalid = (path: string, reason: string): PlayerStorageValidationResult => ({
+  _tag: 'Invalid', error: invalidError(path, reason),
+})
+
+type InventorySlotEntryValidation =
+  | { readonly _tag: 'Invalid'; readonly error: PlayerStorageValidationError }
+  | { readonly _tag: 'Slot'; readonly slot: Inv.Slot; readonly durability: Eq.Durability | null }
+
+const validateInventorySlotEntry = (
+  slot: unknown, durability: unknown, index: number,
+): InventorySlotEntryValidation => {
+  if (slot === null || slot === undefined) {
+    if (durability !== null)
+      return { _tag: 'Invalid', error: invalidError(`storage.inventoryDurability.${index}`, 'empty slot requires null') }
+    return { _tag: 'Slot', slot: undefined, durability: null }
+  }
+  if (!isRecord(slot) || !hasExactKeys(slot, ['item', 'count']) ||
+      typeof slot['item'] !== 'string' || !isItemType(slot['item']) ||
+      !Number.isSafeInteger(slot['count']) || (slot['count'] as number) <= 0 ||
+      (slot['count'] as number) > Inv.maxStackCountForItem(slot['item']))
+    return { _tag: 'Invalid', error: invalidError(`storage.inventory.slots.${index}`, 'expected a valid item stack') }
+  if (Eq.isDamageableItemType(slot['item'])) {
+    if (!Eq.isValidDurabilityForItem(slot['item'], durability))
+      return {
+        _tag: 'Invalid',
+        error: invalidError(
+          `storage.inventoryDurability.${index}`,
+          `${slot['item']} requires its exact durability range`,
+        ),
+      }
+    return {
+      _tag: 'Slot',
+      slot: { item: slot['item'], count: StackCount(slot['count'] as number) },
+      durability: { ...durability },
+    }
+  }
+  if (durability !== null)
+    return { _tag: 'Invalid', error: invalidError(`storage.inventoryDurability.${index}`, 'non-durable item requires null') }
+  return { _tag: 'Slot', slot: { item: slot['item'], count: StackCount(slot['count'] as number) }, durability: null }
+}
 
 /** Strictly validate persistence data, including item/slot compatibility. */
 export const validatePlayerStorageSnapshot = (value: unknown): PlayerStorageValidationResult => {
@@ -409,29 +473,10 @@ export const validatePlayerStorageSnapshot = (value: unknown): PlayerStorageVali
   const slots: Array<Inv.Slot> = []
   const inventoryDurability: Array<Eq.Durability | null> = []
   for (let index = 0; index < Inv.INVENTORY_SLOT_COUNT; index += 1) {
-    const slot = inventory['slots'][index]
-    const durability = durabilityValues[index]
-    if (slot === null || slot === undefined) {
-      if (durability !== null) return invalid(`storage.inventoryDurability.${index}`, 'empty slot requires null')
-      slots.push(undefined); inventoryDurability.push(null); continue
-    }
-    if (!isRecord(slot) || !hasExactKeys(slot, ['item', 'count']) ||
-        typeof slot['item'] !== 'string' || !isItemType(slot['item']) ||
-        !Number.isSafeInteger(slot['count']) || (slot['count'] as number) <= 0 ||
-        (slot['count'] as number) > Inv.maxStackCountForItem(slot['item']))
-      return invalid(`storage.inventory.slots.${index}`, 'expected a valid item stack')
-    if (Eq.isDamageableItemType(slot['item'])) {
-      if (!Eq.isValidDurabilityForItem(slot['item'], durability))
-        return invalid(
-          `storage.inventoryDurability.${index}`,
-          `${slot['item']} requires its exact durability range`,
-        )
-      inventoryDurability.push({ ...durability })
-    } else {
-      if (durability !== null) return invalid(`storage.inventoryDurability.${index}`, 'non-durable item requires null')
-      inventoryDurability.push(null)
-    }
-    slots.push({ item: slot['item'], count: StackCount(slot['count'] as number) })
+    const validated = validateInventorySlotEntry(inventory['slots'][index], durabilityValues[index], index)
+    if (validated._tag === 'Invalid') return { _tag: 'Invalid', error: validated.error }
+    slots.push(validated.slot)
+    inventoryDurability.push(validated.durability)
   }
 
   const validatedEquipment = Eq.validateEquipmentSnapshot(value['equipment'])

@@ -51,16 +51,16 @@ type WorldgenDimension = (typeof WORLDGEN_DIMENSIONS)[number]
 type MissingFromMirror = Exclude<WorldgenDimension, Dimension>
 type ExtraInMirror = Exclude<Dimension, WorldgenDimension>
 
-const _noMemberIsMissing: MissingFromMirror extends never ? true : false = true
-const _noMemberIsInvented: ExtraInMirror extends never ? true : false = true
+const noMemberIsMissing: MissingFromMirror extends never ? true : false = true
+const noMemberIsInvented: ExtraInMirror extends never ? true : false = true
 
 describe('the mc-worldgen mirror has not drifted', () => {
   it('pins the compile-time assertions so they are not dead code', () => {
     // The two constants above are the real test and a reader could mistake them
     // for unused declarations; naming them here is what stops someone deleting
     // them as lint noise, which is how a compile-time assertion usually dies.
-    expect(_noMemberIsMissing).toBe(true)
-    expect(_noMemberIsInvented).toBe(true)
+    expect(noMemberIsMissing).toBe(true)
+    expect(noMemberIsInvented).toBe(true)
   })
 
   it('carries three dimensions, and the third is the unreachable one', () => {

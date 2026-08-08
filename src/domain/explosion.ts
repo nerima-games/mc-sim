@@ -235,15 +235,15 @@ const entityExposure = <S>(
 }
 
 /** Build a deterministic, bounded explosion without mutating either owner. */
-export const planExplosion = <S>(request: ExplosionRequest<S>): ExplosionPlan => {
-  const center = {
-    x: finite(request.center.x, 0),
-    y: finite(request.center.y, 0),
-    z: finite(request.center.z, 0),
-  }
-  const radius = Math.max(0, finite(request.radius, 0))
-  const seed = Math.trunc(finite(request.seed, 0))
-  const limits = normaliseLimits(request.limits)
+type BlockDestructionResult = {
+  readonly destroyedBlocks: ReadonlyArray<ExplosionBlockPosition>
+  readonly visitedBlocks: number
+  readonly truncated: boolean
+}
+
+const planDestroyedBlocks = (
+  center: Position, radius: number, seed: number, limits: ExplosionLimits, blocks: ExplosionBlockReader,
+): BlockDestructionResult => {
   const destroyedBlocks: ExplosionBlockPosition[] = []
   let visitedBlocks = 0
   let truncated = false
@@ -254,10 +254,8 @@ export const planExplosion = <S>(request: ExplosionRequest<S>): ExplosionPlan =>
   const maximumY = Math.floor(center.y + radius)
   const minimumZ = Math.floor(center.z - radius)
   const maximumZ = Math.floor(center.z + radius)
-  const sharedTrace = radius > MAX_DIRECT_TRACE_RADIUS
-    ? radialTrace(center, request.blocks, limits.maxRaySteps)
-    : undefined
-  const readBlock = sharedTrace?.readBlock ?? request.blocks
+  const sharedTrace = radius > MAX_DIRECT_TRACE_RADIUS ? radialTrace(center, blocks, limits.maxRaySteps) : undefined
+  const readBlock = sharedTrace?.readBlock ?? blocks
 
   outer: for (let y = minimumY; y <= maximumY; y += 1) {
     for (let z = minimumZ; z <= maximumZ; z += 1) {
@@ -273,7 +271,7 @@ export const planExplosion = <S>(request: ExplosionRequest<S>): ExplosionPlan =>
         const block = readBlock(target)
         if (block === undefined || !block.destructible) continue
         const ray = sharedTrace === undefined
-          ? trace(center, { x: x + 0.5, y: y + 0.5, z: z + 0.5 }, keyOf(target), request.blocks, limits.maxRaySteps)
+          ? trace(center, { x: x + 0.5, y: y + 0.5, z: z + 0.5 }, keyOf(target), blocks, limits.maxRaySteps)
           : sharedTrace.attenuationTo(target, distance)
         if (!ray.loaded) {
           if (ray.steps >= limits.maxRaySteps) truncated = true
@@ -285,18 +283,30 @@ export const planExplosion = <S>(request: ExplosionRequest<S>): ExplosionPlan =>
     }
   }
 
+  return { destroyedBlocks, visitedBlocks, truncated }
+}
+
+type EntityEffectsResult = {
+  readonly entityEffects: ReadonlyArray<ExplosionEntityEffect>
+  readonly truncated: boolean
+}
+
+const planEntityEffects = <S>(
+  center: Position, radius: number, limits: ExplosionLimits, blocks: ExplosionBlockReader,
+  entities: ReadonlyArray<Entity<S>>,
+): EntityEffectsResult => {
   const entityEffects: ExplosionEntityEffect[] = []
-  const entityCount = Math.min(request.entities.length, limits.maxAffectedEntities)
-  if (entityCount < request.entities.length) truncated = true
+  const entityCount = Math.min(entities.length, limits.maxAffectedEntities)
+  const truncated = entityCount < entities.length
   for (let index = 0; index < entityCount; index += 1) {
-    const entity = request.entities[index]
+    const entity = entities[index]
     if (entity === undefined) continue
     const dx = entity.feetPosition.x - center.x
     const dy = entity.feetPosition.y + 0.9 - center.y
     const dz = entity.feetPosition.z - center.z
     const distance = Math.hypot(dx, dy, dz)
     if (distance > radius || radius === 0) continue
-    const exposure = entityExposure(center, entity, request.blocks, limits.maxRaySteps)
+    const exposure = entityExposure(center, entity, blocks, limits.maxRaySteps)
     const impact = Math.max(0, (1 - distance / radius) * exposure)
     if (impact === 0) continue
     const damage = ((impact * impact + impact) / 2) * 7 * radius + 1
@@ -312,8 +322,32 @@ export const planExplosion = <S>(request: ExplosionRequest<S>): ExplosionPlan =>
       },
     })
   }
+  return { entityEffects, truncated }
+}
 
-  return { center, radius, seed, destroyedBlocks, entityEffects, visitedBlocks, limits, truncated }
+export const planExplosion = <S>(request: ExplosionRequest<S>): ExplosionPlan => {
+  const center = {
+    x: finite(request.center.x, 0),
+    y: finite(request.center.y, 0),
+    z: finite(request.center.z, 0),
+  }
+  const radius = Math.max(0, finite(request.radius, 0))
+  const seed = Math.trunc(finite(request.seed, 0))
+  const limits = normaliseLimits(request.limits)
+
+  const blockPlan = planDestroyedBlocks(center, radius, seed, limits, request.blocks)
+  const entityPlan = planEntityEffects(center, radius, limits, request.blocks, request.entities)
+
+  return {
+    center,
+    radius,
+    seed,
+    destroyedBlocks: blockPlan.destroyedBlocks,
+    entityEffects: entityPlan.entityEffects,
+    visitedBlocks: blockPlan.visitedBlocks,
+    limits,
+    truncated: blockPlan.truncated || entityPlan.truncated,
+  }
 }
 
 /** Delegate the entire planned mutation to one host-owned atomic transaction. */

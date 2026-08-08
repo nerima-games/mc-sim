@@ -28,6 +28,16 @@ const operationError = (reason: VehicleOperationError['reason']): VehicleOperati
 const validVector = (value: Position | VehicleVelocity): boolean =>
   Number.isFinite(value.x) && Number.isFinite(value.y) && Number.isFinite(value.z)
 const validDimension = (value: Dimension): boolean => value === 'overworld' || value === 'nether' || value === 'end'
+const update = (
+  snapshot: VehicleSnapshot, id: VehicleId, valid: boolean, transform: (vehicle: Vehicle) => Vehicle,
+): readonly [Effect.Effect<void, VehicleOperationError>, VehicleSnapshot] => {
+  if (!valid) return [Effect.fail(operationError('invalid-transform')), snapshot]
+  const index = snapshot.vehicles.findIndex((vehicle) => vehicle.id === id)
+  if (index < 0) return [Effect.fail(operationError('not-found')), snapshot]
+  const vehicles = snapshot.vehicles.slice()
+  vehicles[index] = transform(vehicles[index]!)
+  return [Effect.void, { ...snapshot, vehicles }]
+}
 
 export type VehicleServiceApi = Readonly<{
   vehicles: Effect.Effect<ReadonlyArray<Vehicle>>
@@ -105,17 +115,6 @@ export const makeVehicleService = (
       },
     }
   })
-
-const update = (
-  snapshot: VehicleSnapshot, id: VehicleId, valid: boolean, transform: (vehicle: Vehicle) => Vehicle,
-): readonly [Effect.Effect<void, VehicleOperationError>, VehicleSnapshot] => {
-  if (!valid) return [Effect.fail(operationError('invalid-transform')), snapshot]
-  const index = snapshot.vehicles.findIndex((vehicle) => vehicle.id === id)
-  if (index < 0) return [Effect.fail(operationError('not-found')), snapshot]
-  const vehicles = snapshot.vehicles.slice()
-  vehicles[index] = transform(vehicles[index]!)
-  return [Effect.void, { ...snapshot, vehicles }]
-}
 
 export const VehicleServiceLayer = (initial?: VehicleSnapshot): Layer.Layer<VehicleService, VehicleValidationError> =>
   Layer.effect(VehicleService, makeVehicleService(initial))

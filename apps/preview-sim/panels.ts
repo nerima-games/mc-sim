@@ -114,8 +114,7 @@ export const framePanel = (view: WorldView, style: Style, width: number): Readon
     row(
       style,
       'delta',
-      `raw ${style.paint(padStart(rawText, 32), clamped ? WARN : VALUE)}  ->  applied ${style.paint(appliedText, clamped ? WARN : VALUE)}` +
-        (clamped ? style.paint('   CLAMPED', WARN) : ''),
+      `raw ${style.paint(padStart(rawText, 32), clamped ? WARN : VALUE)}  ->  applied ${style.paint(appliedText, clamped ? WARN : VALUE)}${clamped ? style.paint('   CLAMPED', WARN) : ''}`,
     ),
     row(
       style,
@@ -127,8 +126,8 @@ export const framePanel = (view: WorldView, style: Style, width: number): Readon
     row(
       style,
       'lost',
-      `${style.paint(`${fixed(view.secondsLostToClamp, 3)} s`, view.secondsLostToClamp > 0 ? WARN : VALUE)}  ` +
-        style.dim('simulated time the clamp discarded — GameLoopApi.secondsLostToClamp'),
+      `${style.paint(`${fixed(view.secondsLostToClamp, 3)} s`, view.secondsLostToClamp > 0 ? WARN : VALUE)}  ${ 
+        style.dim('simulated time the clamp discarded — GameLoopApi.secondsLostToClamp')}`,
     ),
     row(
       style,
@@ -136,8 +135,8 @@ export const framePanel = (view: WorldView, style: Style, width: number): Readon
       `${view.loopRunning ? style.paint('running', GOOD) : style.paint('STOPPED', BAD)}   ` +
         `submitted ${style.paint(String(view.framesSubmitted), VALUE)}   ` +
         `processed ${style.paint(String(view.framesProcessed), VALUE)}   ` +
-        `dropped ${style.paint(String(view.framesDropped), view.framesDropped === 0 ? VALUE : BAD)}   ` +
-        style.dim(`unaccounted ${String(unaccounted)}`),
+        `dropped ${style.paint(String(view.framesDropped), view.framesDropped === 0 ? VALUE : BAD)}   ${ 
+        style.dim(`unaccounted ${String(unaccounted)}`)}`,
     ),
   ]
 }
@@ -158,8 +157,8 @@ export const posePanel = (view: WorldView, style: Style, width: number): Readonl
     row(
       style,
       'yaw / pitch',
-      `${style.paint(padStart(degrees(view.pose.yawRadians), 10), VALUE)} ${style.paint(padStart(degrees(view.pose.pitchRadians), 10), VALUE)}   ` +
-        style.dim('pitch clamps at +-(PI/2 - 0.01); yaw is NOT wrapped'),
+      `${style.paint(padStart(degrees(view.pose.yawRadians), 10), VALUE)} ${style.paint(padStart(degrees(view.pose.pitchRadians), 10), VALUE)}   ${ 
+        style.dim('pitch clamps at +-(PI/2 - 0.01); yaw is NOT wrapped')}`,
     ),
     row(style, 'forward', style.paint(xyz(view.forward), VALUE)),
     row(
@@ -183,24 +182,22 @@ export const timePanel = (view: WorldView, style: Style, width: number): Readonl
     row(
       style,
       'now',
-      `${style.paint(pad(face, 7), phaseColour)}${style.paint(pad(fixed(view.timeOfDay, 4), 9), broken ? BAD : VALUE)}` +
-        `${style.paint(pad(view.isNight ? 'night' : 'day', 7), phaseColour)}` +
-        style.dim('0 = MIDNIGHT, 0.25 = dawn, 0.5 = noon, 0.75 = dusk'),
+      `${style.paint(pad(face, 7), phaseColour)}${style.paint(pad(fixed(view.timeOfDay, 4), 9), broken ? BAD : VALUE)}${style.paint(pad(view.isNight ? 'night' : 'day', 7), phaseColour)}${style.dim('0 = MIDNIGHT, 0.25 = dawn, 0.5 = noon, 0.75 = dusk')}`,
     ),
     row(style, 'dial', `${style.paint(dayDial(view.timeOfDay, 48), phaseColour)}  ${style.dim('n = night half')}`),
     row(
       style,
       'state',
       `ticks ${style.paint(padStart(fixed(view.timeState.ticks, 1), 12), VALUE)}   ` +
-        `dayLengthTicks ${style.paint(String(view.timeState.dayLengthTicks), broken ? BAD : VALUE)}   ` +
-        style.dim(`(${String(TICKS_PER_SECOND)} ticks/s)`),
+        `dayLengthTicks ${style.paint(String(view.timeState.dayLengthTicks), broken ? BAD : VALUE)}   ${ 
+        style.dim(`(${String(TICKS_PER_SECOND)} ticks/s)`)}`,
     ),
     row(
       style,
       'day',
       `length ${style.paint(`${fixed(view.dayLengthSecs, 1)} s`, VALUE)}   ` +
-        `moon phase ${style.paint(`${fixed(view.moonPhase, 0)}/${String(MOON_PHASE_COUNT)}`, broken ? BAD : VALUE)}   ` +
-        style.dim('moonPhase needs the ABSOLUTE tick counter — setTimeOfDay resets it'),
+        `moon phase ${style.paint(`${fixed(view.moonPhase, 0)}/${String(MOON_PHASE_COUNT)}`, broken ? BAD : VALUE)}   ${ 
+        style.dim('moonPhase needs the ABSOLUTE tick counter — setTimeOfDay resets it')}`,
     ),
     ...(broken
       ? [
@@ -227,10 +224,8 @@ export const inventoryPanel = (view: WorldView, style: Style, width: number): Re
     return row(
       style,
       '',
-      `${style.dim(`[${padStart(String(slot.index), 2)}]`)} ${style.paint(pad(slot.item, 14), colour)}` +
-        `${style.paint(padStart(String(slot.count), 4), colour)}${style.dim(`/${String(MAX_STACK_COUNT)}`)} ` +
-        style.paint(bar(slot.count, MAX_STACK_COUNT, 16), colour) +
-        (slot.overfull ? style.paint('  OVER MAX_STACK_COUNT', BAD) : ''),
+      `${style.dim(`[${padStart(String(slot.index), 2)}]`)} ${style.paint(pad(slot.item, 14), colour)}${style.paint(padStart(String(slot.count), 4), colour)}${style.dim(`/${String(MAX_STACK_COUNT)}`)} ${style.paint(bar(slot.count, MAX_STACK_COUNT, 16), colour) 
+        }${slot.overfull ? style.paint('  OVER MAX_STACK_COUNT', BAD) : ''}`,
     )
   })
 
@@ -239,10 +234,8 @@ export const inventoryPanel = (view: WorldView, style: Style, width: number): Re
     row(
       style,
       'slots',
-      `${style.paint(String(view.slots.length), VALUE)} used of ` +
-        `${style.paint(String(view.slotCount), shrunk ? BAD : VALUE)}` +
-        (shrunk ? style.paint(`   NOT ${String(INVENTORY_SLOT_COUNT)} — restore() never checked`, BAD) : '') +
-        (view.inventoryUsable ? '' : style.paint('   remove() now THROWS on this item', BAD)),
+      `${style.paint(String(view.slots.length), VALUE)} used of ${style.paint(String(view.slotCount), shrunk ? BAD : VALUE)}${shrunk ? style.paint(`   NOT ${String(INVENTORY_SLOT_COUNT)} — restore() never checked`, BAD) : '' 
+        }${view.inventoryUsable ? '' : style.paint('   remove() now THROWS on this item', BAD)}`,
     ),
     ...(lines.length === 0 ? [row(style, '', style.dim('(empty)'))] : lines),
     ...(view.slots.length > 6
@@ -276,47 +269,38 @@ export const vitalsPanel = (view: WorldView, style: Style, width: number): Reado
     row(
       style,
       'health',
-      `${style.paint(padStart(fixed(projected.healthPoints, 1), 6), healthStyle)}${style.dim(`/${fixed(projected.maxHealthPoints, 0)}`)} ` +
-        `${style.paint(bar(projected.healthPoints, projected.maxHealthPoints, 20), healthStyle)}  ` +
-        (dead
+      `${style.paint(padStart(fixed(projected.healthPoints, 1), 6), healthStyle)}${style.dim(`/${fixed(projected.maxHealthPoints, 0)}`)} ${style.paint(bar(projected.healthPoints, projected.maxHealthPoints, 20), healthStyle)}  ${dead
           ? style.paint(`DEAD — cause ${vitals.lastDamageCause ?? '(none recorded)'}`, BAD)
-          : style.dim(`deaths ${String(view.deaths)}; the cause is carried, never interpreted`)),
+          : style.dim(`deaths ${String(view.deaths)}; the cause is carried, never interpreted`)}`,
     ),
     row(
       style,
       'hunger',
-      `${style.paint(padStart(fixed(vitals.hungerPoints, 1), 6), VALUE)}${style.dim(`/${fixed(vitals.maxHungerPoints, 0)}`)} ` +
-        `${style.paint(bar(vitals.hungerPoints, vitals.maxHungerPoints, 20), VALUE)}  ` +
-        style.dim('the visible bar — the only half mx-ui draws'),
+      `${style.paint(padStart(fixed(vitals.hungerPoints, 1), 6), VALUE)}${style.dim(`/${fixed(vitals.maxHungerPoints, 0)}`)} ${style.paint(bar(vitals.hungerPoints, vitals.maxHungerPoints, 20), VALUE)}  ${style.dim('the visible bar — the only half mx-ui draws')}`,
     ),
     row(
       style,
       'saturation',
-      `${style.paint(padStart(fixed(vitals.saturation, 2), 6), NOTE)}${style.dim(`/${fixed(vitals.hungerPoints, 0)}`)} ` +
-        `${style.paint(bar(vitals.saturation, Math.max(1, vitals.hungerPoints), 20), NOTE)}  ` +
-        style.dim('HIDDEN reserve, spent before the bar; capped at it'),
+      `${style.paint(padStart(fixed(vitals.saturation, 2), 6), NOTE)}${style.dim(`/${fixed(vitals.hungerPoints, 0)}`)} ${style.paint(bar(vitals.saturation, Math.max(1, vitals.hungerPoints), 20), NOTE)}  ${style.dim('HIDDEN reserve, spent before the bar; capped at it')}`,
     ),
     row(
       style,
       'exhaustion',
-      `${style.paint(padStart(fixed(vitals.exhaustion, 3), 6), VALUE)}${style.dim(`/${String(EXHAUSTION_PER_POINT)}`)}  ` +
-        style.dim('four spends one reserve point. The COST of an action is mx-gameplay’s'),
+      `${style.paint(padStart(fixed(vitals.exhaustion, 3), 6), VALUE)}${style.dim(`/${String(EXHAUSTION_PER_POINT)}`)}  ${ 
+        style.dim('four spends one reserve point. The COST of an action is mx-gameplay’s')}`,
     ),
     row(
       style,
       'food tick',
       `${style.paint(`${fixed(vitals.foodTimerSecs, 3)} s`, VALUE)}${style.dim(`/${String(FOOD_TICK_SECS)} s`)}   ` +
         `regen ${style.paint(String(view.foodSignals.regen), VALUE)}   ` +
-        `starve ${style.paint(String(view.foodSignals.starve), view.foodSignals.starve > 0 ? WARN : VALUE)}   ` +
-        style.dim('signals EMITTED; mc-sim applies neither, because both are amounts'),
+        `starve ${style.paint(String(view.foodSignals.starve), view.foodSignals.starve > 0 ? WARN : VALUE)}   ${ 
+        style.dim('signals EMITTED; mc-sim applies neither, because both are amounts')}`,
     ),
     row(
       style,
       'experience',
-      `level ${style.paint(padStart(String(projected.experienceLevel), 4), VALUE)}   ` +
-        `${style.paint(bar(projected.experienceProgress, 1, 20), VALUE)} ` +
-        `${style.paint(`${String(Math.floor(projected.experienceProgress * 100))}%`, VALUE)}   ` +
-        style.dim(`total ${fixed(vitals.totalExperience, 0)} — the level is DERIVED from it`),
+      `level ${style.paint(padStart(String(projected.experienceLevel), 4), VALUE)}   ${style.paint(bar(projected.experienceProgress, 1, 20), VALUE)} ${style.paint(`${String(Math.floor(projected.experienceProgress * 100))}%`, VALUE)}   ${style.dim(`total ${fixed(vitals.totalExperience, 0)} — the level is DERIVED from it`)}`,
     ),
   ]
 }
@@ -340,8 +324,8 @@ export const heldStatePanel = (view: WorldView, style: Style, width: number): Re
       'graphics',
       `renderDistance ${style.paint(String(view.settings.renderDistance), VALUE)}${style.dim(`/${String(MAX_RENDER_DISTANCE)}`)}   ` +
         `fov ${style.paint(fixed(view.settings.fovDegrees, 0), VALUE)}   ` +
-        `quality ${style.paint(view.settings.graphicsQuality, VALUE)}   ` +
-        style.dim('applied by mc-render, which mc-sim cannot see'),
+        `quality ${style.paint(view.settings.graphicsQuality, VALUE)}   ${ 
+        style.dim('applied by mc-render, which mc-sim cannot see')}`,
     ),
     row(
       style,
@@ -355,8 +339,8 @@ export const heldStatePanel = (view: WorldView, style: Style, width: number): Re
       style,
       'controls',
       `sensitivity ${style.paint(fixed(view.settings.mouseSensitivity, 2), VALUE)}   ` +
-        `rebinds ${style.paint(String(Object.keys(view.settings.keyBindings).length), VALUE)}   ` +
-        style.dim('the roster of ACTIONS is mc-render’s; this map is overrides only'),
+        `rebinds ${style.paint(String(Object.keys(view.settings.keyBindings).length), VALUE)}   ${ 
+        style.dim('the roster of ACTIONS is mc-render’s; this map is overrides only')}`,
     ),
     row(
       style,
@@ -373,8 +357,8 @@ export const heldStatePanel = (view: WorldView, style: Style, width: number): Re
       'achievements',
       view.statistics.unlocked.length === 0
         ? style.dim('(none — the registry and its predicates are mx-gameplay’s)')
-        : `${style.paint(view.statistics.unlocked.join(', '), VALUE)}   ` +
-          style.dim('recorded here, decided elsewhere'),
+        : `${style.paint(view.statistics.unlocked.join(', '), VALUE)}   ${ 
+          style.dim('recorded here, decided elsewhere')}`,
     ),
   ]
 }
@@ -393,8 +377,8 @@ export const autoSavePanel = (view: WorldView, style: Style, width: number): Rea
     'fired',
     `${style.paint(String(view.autoSaveFired), VALUE)}   ` +
       `status ${style.paint(view.autoSaveStatus ?? '—', view.autoSaveStatus === 'error' ? BAD : GOOD)}   ` +
-      `last at ${style.paint(view.autoSaveLastAtMillis === undefined ? '—' : `${String(view.autoSaveLastAtMillis)} ms`, VALUE)}   ` +
-      style.dim('on the EFFECT clock, not ClockPort'),
+      `last at ${style.paint(view.autoSaveLastAtMillis === undefined ? '—' : `${String(view.autoSaveLastAtMillis)} ms`, VALUE)}   ${ 
+      style.dim('on the EFFECT clock, not ClockPort')}`,
   ),
 ]
 
@@ -416,9 +400,7 @@ export const timelinePanel = (
       row(
         style,
         '',
-        `${style.paint(padStart(`f${String(scripted.frame)}`, 7), scripted.frame === frame ? WARN : LABEL)} ` +
-          `${style.paint(pad(scripted.action.kind, 18), scripted.frame === frame ? VALUE : LABEL)}` +
-          style.dim(scripted.why),
+        `${style.paint(padStart(`f${String(scripted.frame)}`, 7), scripted.frame === frame ? WARN : LABEL)} ${style.paint(pad(scripted.action.kind, 18), scripted.frame === frame ? VALUE : LABEL)}${style.dim(scripted.why)}`,
       ),
     )
 
@@ -428,7 +410,7 @@ export const timelinePanel = (
       style,
       'now',
       here.length === 0
-        ? style.dim(`nothing scripted at f${String(frame)}` + (next === undefined ? ' — script exhausted' : `; next at f${String(next)}`))
+        ? style.dim(`nothing scripted at f${String(frame)}${next === undefined ? ' — script exhausted' : `; next at f${String(next)}`}`)
         : style.paint(here.map((scripted) => scripted.action.kind).join(', '), WARN),
     ),
     ...upcoming,
@@ -540,9 +522,7 @@ export const findingsPanel = (view: WorldView, style: Style, width: number): Rea
       row(
         style,
         '',
-        `${style.paint(pad(finding.id, 7), finding.hit ? BAD : LABEL)}` +
-          `${style.paint(pad(finding.hit ? 'HIT' : '·', 5), finding.hit ? BAD : LABEL)}` +
-          (finding.hit ? style.paint(finding.text, BAD) : style.dim(finding.text)),
+        `${style.paint(pad(finding.id, 7), finding.hit ? BAD : LABEL)}${style.paint(pad(finding.hit ? 'HIT' : '·', 5), finding.hit ? BAD : LABEL)}${finding.hit ? style.paint(finding.text, BAD) : style.dim(finding.text)}`,
       ),
     ),
   ]
@@ -558,8 +538,8 @@ export const logPanel = (view: WorldView, style: Style, width: number): Readonly
       row(
         style,
         '',
-        `${style.paint(padStart(`f${String(line.frame)}`, 7), LABEL)} ` +
-          style.paint(line.text, line.severity === 'fault' ? BAD : line.severity === 'note' ? NOTE : VALUE),
+        `${style.paint(padStart(`f${String(line.frame)}`, 7), LABEL)} ${ 
+          style.paint(line.text, line.severity === 'fault' ? BAD : line.severity === 'note' ? NOTE : VALUE)}`,
       ),
     ),
 ]
@@ -586,8 +566,8 @@ export const renderFrame = (
     row(
       style,
       'frame',
-      `${style.paint(padStart(String(view.frame), 6), VALUE)}   ` +
-        style.dim('every number below is a function of this frame and nothing else'),
+      `${style.paint(padStart(String(view.frame), 6), VALUE)}   ${ 
+        style.dim('every number below is a function of this frame and nothing else')}`,
     ),
     '',
     ...clockPanel(view, style, width),
