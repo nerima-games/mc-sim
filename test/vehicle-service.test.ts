@@ -1,8 +1,17 @@
 import { Effect } from 'effect'
 import { describe, expect, it } from 'vitest'
-import { makeVehicleService } from '../src/application/vehicle-service'
+import { makeVehicleService, VehicleService, VehicleServiceLayer } from '../src/application/vehicle-service'
 import { position } from '../src/domain/kernel-vocabulary'
-import { OccupantId, VehicleId } from '../src/domain/vehicle'
+import { OccupantId, validateVehicleSnapshot, VehicleId } from '../src/domain/vehicle'
+
+const baseVehicleItem = {
+  id: 'v:0',
+  type: 'boat' as const,
+  dimension: 'overworld' as const,
+  position: { x: 0, y: 0, z: 0 },
+  velocity: { x: 0, y: 0, z: 0 },
+  yawRadians: 0,
+}
 
 describe('VehicleService lifecycle', () => {
   it('spawns, updates, mounts, dismounts, and despawns vehicles', async () => {
@@ -110,5 +119,151 @@ describe('VehicleService lifecycle', () => {
     }
     const error = await Effect.runPromise(Effect.flip(makeVehicleService(candidate)))
     expect(error.path).toBe('snapshot.nextSerial')
+  })
+
+  it('atomically rejects invalid spawn parameters', async () => {
+    await Effect.runPromise(Effect.gen(function* () {
+      const service = yield* makeVehicleService()
+      const before = yield* service.snapshot
+      const error = yield* Effect.flip(service.spawn('boat', 'invalid' as 'overworld', position(0, 0, 0)))
+      expect(error.reason).toBe('invalid-transform')
+      expect(yield* service.snapshot).toBe(before)
+    }))
+  })
+
+  it('rejects updateVelocity, updateTransform, and updateState for a vehicle that does not exist', async () => {
+    await Effect.runPromise(Effect.gen(function* () {
+      const service = yield* makeVehicleService()
+      const missing = VehicleId('missing')
+      const velocityError = yield* Effect.flip(service.updateVelocity(missing, { x: 0, y: 0, z: 0 }))
+      expect(velocityError.reason).toBe('not-found')
+      const transformError = yield* Effect.flip(service.updateTransform(missing, 'overworld', position(0, 0, 0), 0))
+      expect(transformError.reason).toBe('not-found')
+      const stateError = yield* Effect.flip(service.updateState(missing, {
+        dimension: 'overworld', position: position(0, 0, 0), velocity: { x: 0, y: 0, z: 0 }, yawRadians: 0,
+      }))
+      expect(stateError.reason).toBe('not-found')
+    }))
+  })
+
+  it('rejects dismount for a missing vehicle or a mismatched occupant', async () => {
+    await Effect.runPromise(Effect.gen(function* () {
+      const service = yield* makeVehicleService()
+      const vehicle = yield* service.spawn('boat', 'overworld', position(0, 0, 0))
+      yield* service.mount(vehicle.id, OccupantId('rider'))
+      const missing = yield* Effect.flip(service.dismount(VehicleId('missing'), OccupantId('rider')))
+      expect(missing.reason).toBe('not-found')
+      const mismatch = yield* Effect.flip(service.dismount(vehicle.id, OccupantId('someone-else')))
+      expect(mismatch.reason).toBe('occupant-mismatch')
+      expect((yield* service.snapshot).vehicles[0]?.occupant).toBe('rider')
+    }))
+  })
+
+  it('constructs a working service through VehicleServiceLayer, the Layer entry point', async () => {
+    const vehicle = await Effect.runPromise(
+      Effect.gen(function* () {
+        const service = yield* VehicleService
+        return yield* service.spawn('minecart', 'overworld', position(0, 0, 0))
+      }).pipe(Effect.provide(VehicleServiceLayer())),
+    )
+    expect(vehicle.id).toBe('v:0')
+  })
+})
+
+describe('validateVehicleSnapshot rejects each malformed field', () => {
+  it('rejects a snapshot whose vehicles field is missing or not an array', () => {
+    expect(validateVehicleSnapshot({ nextSerial: 0 })).toStrictEqual({
+      _tag: 'Invalid',
+      error: { _tag: 'VehicleValidationError', path: 'snapshot.vehicles', reason: 'must be an array' },
+    })
+  })
+
+  it('rejects a nextSerial that is not a non-negative safe integer', () => {
+    expect(validateVehicleSnapshot({ vehicles: [], nextSerial: -1 })).toStrictEqual({
+      _tag: 'Invalid',
+      error: { _tag: 'VehicleValidationError', path: 'snapshot.nextSerial', reason: 'must be a non-negative safe integer' },
+    })
+  })
+
+  it('rejects a vehicle item that is not an object', () => {
+    expect(validateVehicleSnapshot({ vehicles: [42], nextSerial: 1 })).toStrictEqual({
+      _tag: 'Invalid',
+      error: { _tag: 'VehicleValidationError', path: 'snapshot.vehicles[0]', reason: 'must be an object' },
+    })
+  })
+
+  it('rejects a vehicle id that is blank', () => {
+    expect(validateVehicleSnapshot({ vehicles: [{ ...baseVehicleItem, id: '  ' }], nextSerial: 1 })).toStrictEqual({
+      _tag: 'Invalid',
+      error: { _tag: 'VehicleValidationError', path: 'snapshot.vehicles[0].id', reason: 'must be non-blank' },
+    })
+  })
+
+  it('rejects a duplicate vehicle id', () => {
+    expect(validateVehicleSnapshot({ vehicles: [baseVehicleItem, baseVehicleItem], nextSerial: 1 })).toStrictEqual({
+      _tag: 'Invalid',
+      error: { _tag: 'VehicleValidationError', path: 'snapshot.vehicles[1].id', reason: 'must be unique' },
+    })
+  })
+
+  it('rejects a vehicle type that is neither boat nor minecart', () => {
+    expect(validateVehicleSnapshot({ vehicles: [{ ...baseVehicleItem, type: 'car' }], nextSerial: 1 })).toStrictEqual({
+      _tag: 'Invalid',
+      error: { _tag: 'VehicleValidationError', path: 'snapshot.vehicles[0].type', reason: 'must be boat or minecart' },
+    })
+  })
+
+  it('rejects an unsupported dimension', () => {
+    expect(validateVehicleSnapshot({ vehicles: [{ ...baseVehicleItem, dimension: 'space' }], nextSerial: 1 })).toStrictEqual({
+      _tag: 'Invalid',
+      error: { _tag: 'VehicleValidationError', path: 'snapshot.vehicles[0].dimension', reason: 'must be a supported dimension' },
+    })
+  })
+
+  it('rejects a non-finite position', () => {
+    expect(validateVehicleSnapshot({
+      vehicles: [{ ...baseVehicleItem, position: { x: Number.NaN, y: 0, z: 0 } }],
+      nextSerial: 1,
+    })).toStrictEqual({
+      _tag: 'Invalid',
+      error: { _tag: 'VehicleValidationError', path: 'snapshot.vehicles[0].position', reason: 'must contain finite coordinates' },
+    })
+  })
+
+  it('rejects a non-finite velocity', () => {
+    expect(validateVehicleSnapshot({
+      vehicles: [{ ...baseVehicleItem, velocity: { x: 0, y: Number.POSITIVE_INFINITY, z: 0 } }],
+      nextSerial: 1,
+    })).toStrictEqual({
+      _tag: 'Invalid',
+      error: { _tag: 'VehicleValidationError', path: 'snapshot.vehicles[0].velocity', reason: 'must contain finite coordinates' },
+    })
+  })
+
+  it('rejects a non-finite yawRadians', () => {
+    expect(validateVehicleSnapshot({ vehicles: [{ ...baseVehicleItem, yawRadians: Number.NaN }], nextSerial: 1 })).toStrictEqual({
+      _tag: 'Invalid',
+      error: { _tag: 'VehicleValidationError', path: 'snapshot.vehicles[0].yawRadians', reason: 'must be finite' },
+    })
+  })
+
+  it('rejects a blank occupant', () => {
+    expect(validateVehicleSnapshot({ vehicles: [{ ...baseVehicleItem, occupant: '  ' }], nextSerial: 1 })).toStrictEqual({
+      _tag: 'Invalid',
+      error: { _tag: 'VehicleValidationError', path: 'snapshot.vehicles[0].occupant', reason: 'must be non-blank' },
+    })
+  })
+
+  it('rejects an occupant riding more than one vehicle', () => {
+    expect(validateVehicleSnapshot({
+      vehicles: [
+        { ...baseVehicleItem, occupant: 'p' },
+        { ...baseVehicleItem, id: 'v:1', position: { x: 1, y: 0, z: 0 }, occupant: 'p' },
+      ],
+      nextSerial: 2,
+    })).toStrictEqual({
+      _tag: 'Invalid',
+      error: { _tag: 'VehicleValidationError', path: 'snapshot.vehicles[1].occupant', reason: 'must occupy at most one vehicle' },
+    })
   })
 })

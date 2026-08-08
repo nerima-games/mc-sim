@@ -65,6 +65,10 @@ describe('primed TNT', () => {
     expect(plan.explosion?.destroyedBlocks).not.toContainEqual({ x: 2, y: 0, z: 0 })
   })
 
+  it('clamps a non-finite fuse duration to zero', () => {
+    expect(primeTnt(NaN)).toStrictEqual({ _tag: 'Primed', remainingFuseSecs: 0 })
+  })
+
   it('caps oversized frame work and reports time that must be retried', () => {
     const plan = planPrimedTnt(request(primeTnt(30), 25))
 
@@ -90,6 +94,22 @@ describe('primed TNT', () => {
           destroyedBlocks: plan.explosion?.destroyedBlocks,
           entityEffects: plan.explosion?.entityEffects,
         },
+      })
+    }),
+  )
+
+  it.effect('commits an undefined explosion payload while the fuse is still counting down', () =>
+    Effect.gen(function* () {
+      const plan = planPrimedTnt(request(primeTnt(4), 1))
+      const commit = vi.fn(() => Effect.void)
+
+      yield* applyPrimedTntPlan(plan, commit)
+
+      expect(plan.explosion).toBeUndefined()
+      expect(commit).toHaveBeenCalledWith({
+        expected: plan.before,
+        next: plan.after,
+        explosion: undefined,
       })
     }),
   )

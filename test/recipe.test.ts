@@ -14,7 +14,9 @@ import {
   conflictsIn,
   CraftGrid,
   craftGrid,
+  exactly,
   matchRecipe,
+  Recipe,
   RecipePattern,
   RecipeTable,
   shapedRecipe,
@@ -328,6 +330,48 @@ describe('shaped matching translates', () => {
       ])
     }),
   )
+
+  it.effect('a row MISSING from the array — not merely blank — reads as an empty row too', () =>
+    Effect.sync(() => {
+      // `trimPattern` reads `rows[y] ?? ''` because `noUncheckedIndexedAccess`
+      // types every array read as possibly-undefined. That is not paranoia about
+      // something that cannot happen: `rows.length` is a plain writable number
+      // property, so extending it past the last pushed element leaves a genuine
+      // gap — a real `undefined`, with no cast and no `any` — which is exactly
+      // what a sparse array is. This constructs one without escaping the type.
+      const rows: Array<string> = ['PPP', ' S ']
+      rows.length = 3
+
+      const withGap = shapedRecipe(
+        'test:gap-row',
+        rows,
+        { P: 'oak_planks', S: 'stick' },
+        itemStack('stick', 1),
+      )
+
+      // The missing row occupies nothing, so it cannot widen the trimmed box —
+      // the result is identical to never having written a third row at all.
+      expect(withGap.pattern).toStrictEqual({
+        width: 3,
+        height: 2,
+        cells: [exactly('oak_planks'), exactly('oak_planks'), exactly('oak_planks'), undefined, exactly('stick'), undefined],
+      })
+    }),
+  )
+
+  it.effect('a pattern with no legend hit anywhere trims to the canonical empty pattern', () =>
+    Effect.sync(() => {
+      // Every character in every row is either a space or, here, absent from
+      // the (empty) legend — so `trimPattern` never finds an occupied cell and
+      // takes the `maxX < 0` early return instead of computing a box.
+      const blank = shapedRecipe('test:blank', ['   ', '   '], {}, itemStack('stick', 1))
+      expect(blank.pattern).toStrictEqual({ width: 0, height: 0, cells: [] })
+
+      // A zero-size pattern cannot equal any grid's occupied box, so it is
+      // unmatchable rather than a silent universal match.
+      expect(matchedId(gridOf('GG', 'GG'), [blank])).toBe('NoMatch')
+    }),
+  )
 })
 
 /*
@@ -464,6 +508,17 @@ describe('shapeless matching permutes', () => {
     }),
   )
 
+  it.effect('two identical ingredients are not satisfied by one matching item plus an unrelated one', () =>
+    Effect.sync(() => {
+      // mc-sim:stick-from-loose-planks needs two planks. Against a plank next to
+      // dirt, the backtracking assignment greedily takes the plank for the
+      // first ingredient slot, finds nothing left for the second, and must
+      // release (not merely abandon) that choice before it can conclude the
+      // recipe does not apply.
+      expect(matchedId(gridOf('PX'))).toBe('NoMatch')
+    }),
+  )
+
   it.effect('an identical ingredient pair permutes too, which is the degenerate case', () =>
     Effect.sync(() => {
       // Weaker than the three-distinct case above and kept because it is a
@@ -571,6 +626,35 @@ describe('the ambiguity rule', () => {
 
       expect(conflictsIn([...shipped, flipped])).toStrictEqual([
         { reason: 'same-shape', recipeIds: ['mc-sim:flint-and-steel', 'test:flint-and-steel-mirror'] },
+      ])
+    }),
+  )
+
+  it.effect('conflictsIn sorts three-or-more conflicts, and skips a hole in the table', () =>
+    Effect.sync(() => {
+      // Three recipes, all pairwise conflicting on ingredients, produce THREE
+      // conflict entries — enough for `Array.prototype.sort` to actually invoke
+      // the comparator (it never does for zero or one element), which is the
+      // only way to exercise both of its branches: two entries that share
+      // `recipeIds[0]` (tie-broken on `recipeIds[1]`) and two that do not.
+      const a = shapelessRecipe('test:conflict-a', ['dirt', 'dirt'], itemStack('gravel', 1))
+      const b = shapelessRecipe('test:conflict-b', ['dirt', 'dirt'], itemStack('sand', 1))
+      const c = shapelessRecipe('test:conflict-c', ['dirt', 'dirt'], itemStack('bowl', 1))
+
+      // A table with a genuine gap — `table.length` is a plain writable number
+      // property, so this is a real hole reachable through `RecipeTable`'s own
+      // type, not a cast. `first === undefined || second === undefined` exists
+      // for exactly this, and every pairing that touches the gap must be
+      // skipped rather than throwing on `.id`.
+      const table: Array<Recipe> = [a]
+      table[3] = c
+      table[2] = b
+      // table[1] is the gap; table.length is 4.
+
+      expect(conflictsIn(table)).toStrictEqual([
+        { reason: 'same-ingredients', recipeIds: ['test:conflict-a', 'test:conflict-b'] },
+        { reason: 'same-ingredients', recipeIds: ['test:conflict-a', 'test:conflict-c'] },
+        { reason: 'same-ingredients', recipeIds: ['test:conflict-b', 'test:conflict-c'] },
       ])
     }),
   )

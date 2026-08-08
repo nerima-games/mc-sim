@@ -288,6 +288,24 @@ describe('furnace progression', () => {
     }),
   )
 
+  it.effect('a fuel item with no matching fuel rule stops progress rather than burning', () =>
+    Effect.sync(() => {
+      // `dirt` is a real, known item — so it clears `assertSlot` — but no
+      // starter fuel rule names it, which is a different failure than an empty
+      // fuel slot and must be refused the same way rather than defaulting to
+      // some duration.
+      const outcome = advanceFurnace(
+        furnaceWith({ input: itemStack('raw_iron', 1), fuel: itemStack('dirt', 1) }),
+        5,
+      )
+
+      expect(outcome.state.burnRemainingSecs).toBe(0)
+      expect(outcome.state.fuel).toStrictEqual(itemStack('dirt', 1))
+      expect(outcome.smelted).toBe(0)
+      expect(outcome.fuelConsumed).toBe(0)
+    }),
+  )
+
   it.effect('non-positive and non-finite deltas are no-ops', () =>
     Effect.sync(() => {
       const state = furnaceWith({ input: itemStack('raw_iron', 1), fuel: itemStack('coal', 1) })
@@ -345,6 +363,49 @@ describe('inventory-backed furnace progression', () => {
     }),
   )
 
+  it.effect('a zero, negative, or non-integer count is refused before anything else is checked', () =>
+    Effect.sync(() => {
+      const inventory = addItem(emptyInventory(), 'raw_iron', 5).inventory
+
+      for (const count of [0, -1, 1.5]) {
+        const outcome = transferToFurnace(inventory, emptyFurnaceState(), 'input', 'raw_iron', count)
+        expect(outcome.result).toStrictEqual({ _tag: 'InvalidCount', count })
+        expect(outcome.inventory).toBe(inventory)
+      }
+    }),
+  )
+
+  it.effect('transferring into an already-occupied slot accumulates onto it, up to its capacity', () =>
+    Effect.sync(() => {
+      const inventory = addItem(emptyInventory(), 'raw_iron', 63).inventory
+      const partiallyFilled = furnaceWith({ input: itemStack('raw_iron', 5) })
+
+      // Fits: 64 (max) - 5 (already there) = 59 room, and only 3 are asked for.
+      const fits = transferToFurnace(inventory, partiallyFilled, 'input', 'raw_iron', 3)
+      expect(fits.result).toStrictEqual({ _tag: 'Transferred', item: 'raw_iron', count: 3 })
+      expect(fits.furnace.input).toStrictEqual(itemStack('raw_iron', 8))
+
+      // Does not fit: the slot already holds 60, and 60 + 60 would exceed 64.
+      const nearlyFull = furnaceWith({ input: itemStack('raw_iron', 60) })
+      const tooMuch = transferToFurnace(inventory, nearlyFull, 'input', 'raw_iron', 60)
+      expect(tooMuch.result).toStrictEqual({ _tag: 'NoRoom', available: 4 })
+      expect(tooMuch.inventory).toBe(inventory)
+      expect(tooMuch.furnace).toBe(nearlyFull)
+    }),
+  )
+
+  it.effect('collecting an empty furnace changes nothing', () =>
+    Effect.sync(() => {
+      const inventory = addItem(emptyInventory(), 'raw_iron', 1).inventory
+      const furnace = emptyFurnaceState()
+      const outcome = collectFurnaceOutput(inventory, furnace)
+
+      expect(outcome.result).toStrictEqual({ _tag: 'Empty' })
+      expect(outcome.inventory).toBe(inventory)
+      expect(outcome.furnace).toBe(furnace)
+    }),
+  )
+
   it.effect('does not partially collect output when the inventory is full', () =>
     Effect.sync(() => {
       const inventory: Inventory = {
@@ -381,6 +442,39 @@ describe('inventory-backed furnace progression', () => {
       })
     }),
   )
+
+  it.effect('rejects a malformed, foreign, or overcounted slot inside an otherwise-valid snapshot', () =>
+    Effect.sync(() => {
+      const state = furnaceWith({ input: itemStack('raw_iron', 2), fuel: itemStack('coal', 1) })
+
+      // Not `null` and not `{ item, count }` at all.
+      expect(validateFurnaceSnapshot({ ...state, input: 'raw_iron' })).toMatchObject({
+        _tag: 'Invalid',
+        error: { path: 'input', reason: 'expected null or exactly { item, count }' },
+      })
+      // The right shape, missing `count`.
+      expect(validateFurnaceSnapshot({ ...state, input: { item: 'raw_iron' } })).toMatchObject({
+        _tag: 'Invalid',
+        error: { path: 'input', reason: 'expected null or exactly { item, count }' },
+      })
+
+      // A well-shaped slot naming an item this build has no vocabulary for.
+      expect(
+        validateFurnaceSnapshot({ ...state, fuel: { item: 'unknown_item', count: 1 } }),
+      ).toMatchObject({
+        _tag: 'Invalid',
+        error: { path: 'fuel.item', reason: 'expected a known item' },
+      })
+
+      // A well-shaped, well-known slot with a count outside its stack bound.
+      expect(
+        validateFurnaceSnapshot({ ...state, output: { item: 'iron_ingot', count: 0 } }),
+      ).toMatchObject({
+        _tag: 'Invalid',
+        error: { path: 'output.count', reason: 'expected a valid positive stack count' },
+      })
+    }),
+  )
 })
 
 describe('furnace boundary validation', () => {
@@ -402,6 +496,17 @@ describe('furnace boundary validation', () => {
       }
       expect(() => advanceFurnace(furnaceWith({ fuel: excessiveFuel }), 1)).toThrow(RangeError)
       expect(() => advanceFurnace(furnaceWith({ output: excessiveOutput }), 1)).toThrow(RangeError)
+    }),
+  )
+
+  it.effect('a slot naming an item this build has no vocabulary for is refused, not smelted', () =>
+    Effect.sync(() => {
+      // The cast bypasses the type system the way a foreign or hand-edited save
+      // does; `validateFurnaceSnapshot` is the guard on the way IN from
+      // persistence, and this is the guard `advanceFurnace` itself still
+      // carries for a `FurnaceState` built any other way.
+      const foreignInput = { item: 'unknown_item', count: 1 } as unknown as ItemStack
+      expect(() => advanceFurnace(furnaceWith({ input: foreignInput }), 1)).toThrow(RangeError)
     }),
   )
 

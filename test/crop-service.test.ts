@@ -174,4 +174,47 @@ describe('crop service', () => {
       })))._tag).toBe('Left')
     }).pipe(Effect.provide(CropServiceLayer)),
   )
+
+  it.effect('returns null and changes nothing for a location that was never planted', () =>
+    Effect.gen(function* () {
+      const crops = yield* CropService
+      const missing = location(9, 70, 9)
+
+      expect(yield* crops.matureYieldAt(missing)).toBeNull()
+      expect(yield* crops.matureYieldsAt(missing)).toBeNull()
+      expect(yield* crops.remove(missing)).toBeNull()
+      expect((yield* crops.snapshot).crops).toHaveLength(0)
+    }).pipe(Effect.provide(CropServiceLayer)),
+  )
+
+  it.effect('strict restore rejects malformed candidate shapes, dimensions, crop types, and positions', () =>
+    Effect.gen(function* () {
+      const crops = yield* CropService
+      const base = {
+        dimension: 'overworld',
+        position: { x: 1, y: 64, z: 1 },
+        crop: 'potato_crop',
+        growthSecs: 0,
+      }
+
+      const missingField = {
+        dimension: 'overworld',
+        position: { x: 1, y: 64, z: 1 },
+        crop: 'potato_crop',
+      }
+      expect((yield* Effect.either(crops.restore({ crops: [missingField] })))._tag).toBe('Left')
+
+      expect((yield* Effect.either(
+        crops.restore({ crops: [{ ...base, dimension: 'moon' }] }),
+      ))._tag).toBe('Left')
+
+      expect((yield* Effect.either(
+        crops.restore({ crops: [{ ...base, crop: 'carrot_crop' }] }),
+      ))._tag).toBe('Left')
+
+      expect((yield* Effect.either(
+        crops.restore({ crops: [{ ...base, position: { x: 1, y: 64 } }] }),
+      ))._tag).toBe('Left')
+    }).pipe(Effect.provide(CropServiceLayer)),
+  )
 })

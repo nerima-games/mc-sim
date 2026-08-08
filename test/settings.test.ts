@@ -193,6 +193,21 @@ describe('key bindings are overrides, not a roster', () => {
     }),
   )
 
+  it.effect('unbinding one action keeps every OTHER rebind', () =>
+    Effect.sync(() => {
+      const bound = bindKey(bindKey(DEFAULT_SETTINGS, 'jump', 'Space'), 'sneak', 'ShiftLeft')
+
+      expect(unbindKey(bound, 'jump').keyBindings).toEqual({ sneak: 'ShiftLeft' })
+    }),
+  )
+
+  it.effect('a blank action or code is refused rather than stored, by identity', () =>
+    Effect.sync(() => {
+      expect(bindKey(DEFAULT_SETTINGS, '', 'Space')).toBe(DEFAULT_SETTINGS)
+      expect(bindKey(DEFAULT_SETTINGS, 'jump', '')).toBe(DEFAULT_SETTINGS)
+    }),
+  )
+
   it.effect('a patch REPLACES the map, so a rebind can be removed', () =>
     Effect.sync(() => {
       // Merging would make removal impossible: the map is already the override
@@ -262,6 +277,32 @@ describe('SettingsService', () => {
       expect(isValidSettings(restored)).toBe(true)
       expect(restored.fovDegrees).toBe(75)
       expect(restored.renderDistance).toBe(16)
+    }),
+  )
+
+  it.effect('restore repairs a stored save rather than refusing it', () =>
+    Effect.gen(function* () {
+      // The second entry point. `makeSettingsService`'s header records what
+      // happened elsewhere in this repository when only one entry point was
+      // guarded: a layer built from stored values and `restore` disagreeing
+      // about what "legal" means.
+      const settings = yield* makeSettingsService()
+
+      const fromDisk: Settings = {
+        ...DEFAULT_SETTINGS,
+        renderDistance: 400,
+        fovDegrees: Number.NaN,
+        audioEnabled: 'false' as unknown as boolean,
+      }
+
+      yield* settings.restore(fromDisk)
+      const restored = yield* settings.snapshot
+
+      expect(isValidSettings(restored)).toBe(true)
+      expect(restored.renderDistance).toBe(16)
+      expect(restored.fovDegrees).toBe(75)
+      expect(restored.audioEnabled).toBe(false)
+      expect(isValidSettings(fromDisk)).toBe(false)
     }),
   )
 

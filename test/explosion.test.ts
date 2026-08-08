@@ -120,6 +120,54 @@ describe('planExplosion', () => {
     expect(shielded.destroyedBlocks).not.toContainEqual({ x: 8, y: 0, z: 0 })
   })
 
+  it('treats a non-finite center, radius, or seed as zero instead of propagating NaN', () => {
+    const plan = planExplosion({
+      center: { x: Number.NaN, y: 0.5, z: 0.5 }, radius: Number.NaN, seed: Number.NaN,
+      blocks: world([]), entities: [],
+    })
+    expect(plan.center).toStrictEqual({ x: 0, y: 0.5, z: 0.5 })
+    expect(plan.radius).toBe(0)
+    expect(plan.seed).toBe(0)
+  })
+
+  it('never crosses an unloaded cell when a large explosion shares radial traces', () => {
+    const plan = planExplosion({
+      center: position(0.5, 0.5, 0.5), radius: 12, seed: 9,
+      blocks: world([['5,0,0', 0]], ['3,0,0']), entities: [],
+    })
+    expect(plan.destroyedBlocks).not.toContainEqual({ x: 5, y: 0, z: 0 })
+  })
+
+  it('reports truncation when a radial trace target exceeds the ray-step budget', () => {
+    const plan = planExplosion({
+      center: position(0.5, 0.5, 0.5), radius: 12, seed: 10,
+      blocks: world([['10,0,0', 0]]), entities: [],
+      limits: { maxRaySteps: 4 },
+    })
+    expect(plan.destroyedBlocks).not.toContainEqual({ x: 10, y: 0, z: 0 })
+    expect(plan.truncated).toBe(true)
+  })
+
+  it('skips a hole in a sparse entities array instead of throwing', () => {
+    const entities: Array<Entity<null>> = [entity('e:1', 1, 0, 0)]
+    entities.length = 2 // introduces a hole at index 1: entities[1] is undefined, unlike a missing tail element
+    const plan = planExplosion({
+      center: position(0.5, 0.5, 0.5), radius: 4, seed: 12, blocks: world([]),
+      entities,
+    })
+    expect(plan.entityEffects).toHaveLength(1)
+    expect(plan.entityEffects[0]?.id).toBe('e:1')
+  })
+
+  it('does not let an entity standing exactly at the blast center divide by zero', () => {
+    const plan = planExplosion({
+      center: position(0, 0, 0), radius: 4, seed: 13, blocks: world([]),
+      entities: [entity('center', 0, -0.9, 0)],
+    })
+    expect(plan.entityEffects).toHaveLength(1)
+    expect(plan.entityEffects[0]?.knockback).toStrictEqual({ x: 0, y: 0, z: 0 })
+  })
+
   it.effect('hands one immutable mutation to the host transaction', () =>
     Effect.gen(function* () {
       const plan = planExplosion({ center: position(0.5, 0.5, 0.5), radius: 2, seed: 6, blocks: world([['0,0,0', 0]]), entities: [] })

@@ -206,6 +206,15 @@ describe('hunger: saturation, exhaustion and the cascade', () => {
     }),
   )
 
+  it.effect('eating nothing is a no-op: zero and negative food both leave vitals untouched', () =>
+    Effect.sync(() => {
+      // Mirrors 'negative damage does not heal' below: the early return must
+      // hand back the SAME object, not an equal-looking copy.
+      expect(eat(SPAWN_VITALS, 0, 1)).toBe(SPAWN_VITALS)
+      expect(eat(SPAWN_VITALS, -3, 1)).toBe(SPAWN_VITALS)
+    }),
+  )
+
   it.effect('the saturation term is food * modifier * 2, as in the reference', () =>
     Effect.sync(() => {
       // player-hunger-resolution.ts:52. Bread is 5 food, modifier 0.6, so the
@@ -374,6 +383,36 @@ describe('REGRESSION: the XP curve is the reference curve, and its closed form i
 })
 
 /**
+ * THE regression test for a guard `experienceProgress` deliberately does NOT
+ * have.
+ *
+ * `experienceProgress` divides by `experienceCostOfLevel(level)`. A `cost <=
+ * 0` guard was removed from that function as dead code: every branch of
+ * `experienceCostOfLevel`'s three-piece formula is strictly positive for a
+ * non-negative `atLevel`, and `atLevel` is clamped to a non-negative number
+ * (or +Infinity, never negative) before the formula runs. If that stopped
+ * being true, `experienceProgress` would divide by zero or a negative number
+ * for a normal player, and nothing else in this suite would catch it.
+ */
+describe('REGRESSION: experienceCostOfLevel must never return zero or negative', () => {
+  it.effect('every reachable input, including the ones the type clamps away, costs at least 7', () =>
+    Effect.sync(() => {
+      const inputs = [
+        0, 1, 15, 16, 30, 31, 100, 1000,
+        -1, -100,
+        Number.NaN,
+        Number.POSITIVE_INFINITY,
+        Number.NEGATIVE_INFINITY,
+      ]
+
+      for (const level of inputs) {
+        expect(experienceCostOfLevel(level)).toBeGreaterThanOrEqual(7)
+      }
+    }),
+  )
+})
+
+/**
  * THE regression test for the hang.
  *
  * `levelFromXP` in the reference is `while (true)` with an `accumulated + cost >
@@ -413,6 +452,18 @@ describe('experience as the HUD reads it', () => {
 
       expect(experienceLevel(levelled)).toBe(1)
       expect(experienceProgress(levelled)).toBe(0)
+    }),
+  )
+
+  it.effect('REGRESSION: a non-finite total must not make the progress bar NaN', () =>
+    Effect.sync(() => {
+      // `normaliseVitals` would send this to 0 on the load path, but
+      // `experienceProgress` is a pure projection with no normalising guard of
+      // its own — it must answer safely for a state that bypassed the load
+      // path, exactly as `vitalsView` does for `healthPoints` elsewhere in this
+      // file.
+      expect(experienceProgress(withVitals({ totalExperience: Number.NaN }))).toBe(0)
+      expect(experienceProgress(withVitals({ totalExperience: Number.POSITIVE_INFINITY }))).toBe(0)
     }),
   )
 
@@ -626,6 +677,17 @@ describe('normaliseVitals is total over what a save can contain', () => {
       for (const state of malformed) {
         expect(isValidVitals(normaliseVitals(state))).toBe(true)
       }
+    }),
+  )
+
+  it.effect('a genuine string cause survives normalisation unchanged', () =>
+    Effect.sync(() => {
+      // Every OTHER case in this file reaches normaliseVitals with
+      // lastDamageCause either absent or the wrong type (the `7` above), so the
+      // branch that carries a real cause through untouched needs its own case.
+      const repaired = normaliseVitals(withVitals({ lastDamageCause: 'lava' }))
+
+      expect(repaired.lastDamageCause).toBe('lava')
     }),
   )
 
