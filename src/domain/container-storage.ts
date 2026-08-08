@@ -178,10 +178,16 @@ export const containerCapacity = (kind: ContainerKind): number => {
       return DISPENSER_CONTAINER_CAPACITY
     case 'hopper':
       return HOPPER_CONTAINER_CAPACITY
+    /* v8 ignore start -- `ContainerKind` is a closed string-literal union and
+       every member is handled above, so `kind` is typed `never` here. This is
+       exhaustiveness satisfying `no default-case`, not a defensive check
+       against a value that can occur at runtime; no cast-based test is added
+       for it (that would test the cast, not this function). */
     default: {
       const exhaustive: never = kind
       throw new Error(`Unhandled container kind: ${String(exhaustive)}`)
     }
+    /* v8 ignore stop */
   }
 }
 
@@ -430,8 +436,16 @@ export const transferContainerItem = (
   if (containerIndex < 0)
     return failure(playerStorage, containerStorage, { _tag: 'ContainerNotFound' })
   const container = containerStorage.containers[containerIndex]
+  /* v8 ignore start -- `containerIndex` is the index `findIndex` matched on
+     this exact array, so `containers[containerIndex]` is always a
+     `Container`. `noUncheckedIndexedAccess` still widens the read to
+     `Container | undefined` because TypeScript cannot see that relationship;
+     `containerStorage.containers` is only ever built by spread/map/filter
+     over `Container` values and never holds a hole, so this branch cannot be
+     reached through the public API, not merely untested. */
   if (container === undefined)
     return failure(playerStorage, containerStorage, { _tag: 'ContainerNotFound' })
+  /* v8 ignore stop */
   if (!validContainerSlot(container, request.containerSlot))
     return failure(playerStorage, containerStorage, { _tag: 'InvalidContainerSlot' })
 
@@ -493,7 +507,12 @@ export const extractContainerItem = (
   const containerIndex = storage.containers.findIndex((container) => container.id === request.containerId)
   if (containerIndex < 0) return { storage, result: { _tag: 'ContainerNotFound' } }
   const container = storage.containers[containerIndex]
+  /* v8 ignore start -- same unreachability as transferContainerItem above:
+     `containerIndex` is a match `findIndex` found in this exact dense array,
+     so the element it names is never `undefined` at runtime; the check only
+     exists because `noUncheckedIndexedAccess` widens the element type. */
   if (container === undefined) return { storage, result: { _tag: 'ContainerNotFound' } }
+  /* v8 ignore stop */
   if (!validContainerSlot(container, request.containerSlot))
     return { storage, result: { _tag: 'InvalidContainerSlot' } }
   if (!Number.isSafeInteger(request.count) || request.count <= 0)
@@ -566,9 +585,15 @@ const lookupMoveContainers = (storage: ContainerStorage, request: ContainerMoveR
   if (destinationIndex < 0) return { _tag: 'Invalid', result: { _tag: 'DestinationContainerNotFound' } }
   const sourceContainer = storage.containers[sourceIndex]
   const destinationContainer = storage.containers[destinationIndex]
+  /* v8 ignore start -- same unreachability as transferContainerItem's
+     container lookup: `sourceIndex`/`destinationIndex` are matches
+     `findIndex` found in this exact dense array, so neither element is ever
+     `undefined` at runtime. `noUncheckedIndexedAccess` widens both reads
+     regardless. */
   if (sourceContainer === undefined) return { _tag: 'Invalid', result: { _tag: 'SourceContainerNotFound' } }
   if (destinationContainer === undefined)
     return { _tag: 'Invalid', result: { _tag: 'DestinationContainerNotFound' } }
+  /* v8 ignore stop */
   if (!validContainerSlot(sourceContainer, request.sourceSlot))
     return { _tag: 'Invalid', result: { _tag: 'InvalidSourceSlot' } }
   if (!validContainerSlot(destinationContainer, request.destinationSlot))
@@ -624,7 +649,11 @@ export const drainContainer = (
   const index = storage.containers.findIndex((container) => container.id === id)
   if (index < 0) return { storage, result: { _tag: 'ContainerNotFound' } }
   const container = storage.containers[index]
+  /* v8 ignore start -- same unreachability as transferContainerItem's
+     container lookup: `index` is a match `findIndex` found in this exact
+     dense array, so the element it names is never `undefined` at runtime. */
   if (container === undefined) return { storage, result: { _tag: 'ContainerNotFound' } }
+  /* v8 ignore stop */
   return {
     storage: { containers: storage.containers.filter((_, candidate) => candidate !== index) },
     result: {

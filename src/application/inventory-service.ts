@@ -124,7 +124,18 @@ const carriedAt = (player: Storage.PlayerStorage, index: number): InventoryCarri
   if (slot === undefined) return undefined
   const durability = player.inventoryDurability[index]
   return Eq.isDamageableItemType(slot.item) && Eq.isValidDurabilityForItem(slot.item, durability)
-    ? { ...slot, durability: durability === null ? undefined : { ...durability } }
+    ? {
+        ...slot,
+        durability: durability === null
+          /* v8 ignore next -- `Eq.isValidDurabilityForItem` requires
+             `Eq.isDurability(durability)`, which is false for `null` (it is
+             not a record). The guard above already proved that predicate
+             true, so `durability` cannot be `null` on this branch; this arm
+             exists only to satisfy the `Eq.Durability | null` element type of
+             `inventoryDurability`, not a value this function can observe. */
+          ? undefined
+          : { ...durability },
+      }
     : { ...slot }
 }
 
@@ -525,7 +536,16 @@ export const makeInventoryService = (
             Eq.isDamageableItemType(click.carried.item)) {
           const durability = click.carried.durability ?? Eq.durabilityForItem(click.carried.item)
           const values = [...next.inventoryDurability]
-          values[click.slotIndex] = durability === null ? null : { ...durability }
+          values[click.slotIndex] = durability === null
+            /* v8 ignore next -- `durability` is either `click.carried.durability`
+               (typed `Eq.Durability | undefined`, never `null`) or the result of
+               `Eq.durabilityForItem(click.carried.item)` on an item this branch
+               has already confirmed `Eq.isDamageableItemType`, which is exactly
+               `durabilityForItem`'s own non-null condition. Neither operand of
+               the `??` can be `null`, so this arm is unreachable from this call
+               site; it exists to satisfy `Eq.Durability | null`'s wider type. */
+            ? null
+            : { ...durability }
           next = { ...next, inventoryDurability: values }
         }
         const result = (outcome.result._tag === 'PickedUp' || outcome.result._tag === 'Swapped') &&

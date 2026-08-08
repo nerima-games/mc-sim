@@ -34,8 +34,14 @@ export const experienceLevel = (vitals: Vitals): number =>
 
 export const experienceProgress = (vitals: Vitals): number => {
   const level = experienceLevel(vitals)
+  // `cost` is never <= 0 here: `experienceCostOfLevel` clamps its own input to
+  // a non-negative integer (or +Infinity) before evaluating the three-piece
+  // formula, and every piece is strictly positive and increasing from 7 at
+  // atLevel 0. A `cost <= 0` guard would be dead code no input can reach —
+  // pinned by the "REGRESSION: experienceCostOfLevel must never return zero or
+  // negative" test in test/vitals.test.ts, which is what would go red if that
+  // stopped being true.
   const cost = experienceCostOfLevel(level)
-  if (cost <= 0) return 0
 
   const total = Number.isFinite(vitals.totalExperience)
     ? Math.max(0, vitals.totalExperience)
