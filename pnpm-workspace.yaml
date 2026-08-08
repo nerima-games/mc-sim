@@ -6,5 +6,3 @@ minimumReleaseAgeExclude:
   - '@nerima-games/mc-save@0.1.0'
   - '@nerima-games/mc-worldgen@0.1.1 || 0.1.14'
   - '@nerima-games/mc-noise@0.2.0'
-overrides:
-  '@nerima-games/mc-kernel': link:../mc-kernel
