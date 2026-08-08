@@ -153,6 +153,38 @@ describe('normaliseStatistics is total over what a save can contain', () => {
       expect(repaired.unlocked).toEqual(['a', 'b'])
     }),
   )
+
+  it.effect('a genuinely positive counter survives repair rather than only the broken ones', () =>
+    Effect.sync(() => {
+      // Every case above is a counter being DROPPED. Without this one, nothing
+      // proves a legitimate value is actually kept rather than the function
+      // happening to drop everything it is ever handed.
+      const repaired = normaliseStatistics({ counters: { 'blocks.mined': 5 }, unlocked: [] })
+
+      expect(repaired.counters).toEqual({ 'blocks.mined': 5 })
+    }),
+  )
+})
+
+describe('isValidStatistics rejects what normaliseStatistics repairs', () => {
+  it.effect('a non-object counters map is invalid', () =>
+    Effect.sync(() => {
+      expect(isValidStatistics({ counters: null as unknown as Record<string, number>, unlocked: [] })).toBe(
+        false,
+      )
+      expect(
+        isValidStatistics({ counters: 'nope' as unknown as Record<string, number>, unlocked: [] }),
+      ).toBe(false)
+    }),
+  )
+
+  it.effect('an unlocked that is not an array is invalid', () =>
+    Effect.sync(() => {
+      expect(
+        isValidStatistics({ counters: {}, unlocked: 'time-to-mine' as unknown as ReadonlyArray<string> }),
+      ).toBe(false)
+    }),
+  )
 })
 
 describe('StatisticsService', () => {
@@ -193,6 +225,25 @@ describe('StatisticsService', () => {
       )
 
       expect(yield* statistics.counterOf('blocks.mined')).toBe(100)
+    }),
+  )
+
+  it.effect('restore repairs a stored record rather than refusing it', () =>
+    Effect.gen(function* () {
+      // The second entry point. `makeStatisticsService`'s header records why
+      // both `restore` and the layer's initial value are normalised: a save
+      // reaches this service through either one.
+      const statistics = yield* makeStatisticsService()
+
+      yield* statistics.record('deaths', 3)
+      yield* statistics.restore({ counters: { 'blocks.mined': 12 }, unlocked: ['a', 'a'] })
+
+      const restored = yield* statistics.snapshot
+
+      expect(isValidStatistics(restored)).toBe(true)
+      // restore REPLACES the record rather than merging into it.
+      expect(restored.counters).toEqual({ 'blocks.mined': 12 })
+      expect(restored.unlocked).toEqual(['a'])
     }),
   )
 

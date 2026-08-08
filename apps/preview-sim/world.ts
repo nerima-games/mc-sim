@@ -380,7 +380,8 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
       pushLog(book, text, severity)
     })
 
-  const applyAction = (action: ScriptedAction): Effect.Effect<void> => {
+  /** Movement and inventory actions. `undefined` means "not one of mine". */
+  const applyMovementAction = (action: ScriptedAction): Effect.Effect<void> | undefined => {
     switch (action.kind) {
       case 'look':
         return guarded('look', player.look(action.deltaYaw, action.deltaPitch))
@@ -415,6 +416,14 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
             ),
         )
 
+      default:
+        return undefined
+    }
+  }
+
+  /** Time-of-day actions. `undefined` means "not one of mine". */
+  const applyTimeAction = (action: ScriptedAction): Effect.Effect<void> | undefined => {
+    switch (action.kind) {
       case 'setDayLength':
         return guarded('setDayLength', time.setDayLength(action.seconds)).pipe(
           Effect.zipRight(note(`setDayLength(${String(action.seconds)}) ALONE — watch the clock face`, 'fault')),
@@ -446,14 +455,22 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
           Effect.zipRight(guarded('time.restore', time.restore(incoming))),
           Effect.zipRight(
             note(
-              `time.restore({ticks:${String(action.ticks)}, dayLengthTicks:${String(action.dayLengthTicks)}})` +
-                (repairable ? ' — INVALID, repaired by normaliseTimeState' : ''),
+              `time.restore({ticks:${String(action.ticks)}, dayLengthTicks:${String(action.dayLengthTicks)}})${
+                repairable ? ' — INVALID, repaired by normaliseTimeState' : ''}`,
               'event',
             ),
           ),
         )
       }
 
+      default:
+        return undefined
+    }
+  }
+
+  /** Save-restore and world-lifecycle actions. `undefined` means "not one of mine". */
+  const applyRestoreAction = (action: ScriptedAction): Effect.Effect<void> | undefined => {
+    switch (action.kind) {
       case 'restoreInventory': {
         const incoming: Inventory = {
           slots: Array.from({ length: action.slots }, (_unused, index) =>
@@ -532,6 +549,14 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
           Effect.zipRight(note('teardown + reload on the SAME service instances', 'event')),
         )
 
+      default:
+        return undefined
+    }
+  }
+
+  /** Vitals and progression actions. `undefined` means "not one of mine". */
+  const applyVitalsAction = (action: ScriptedAction): Effect.Effect<void> | undefined => {
+    switch (action.kind) {
       case 'damage': {
         // Counted HERE, at the call, because a blow that did nothing is by
         // design indistinguishable from a blow that was never thrown. The
@@ -557,9 +582,9 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
                     }).pipe(
                       Effect.zipRight(
                         note(
-                          `damage ${String(action.amount)} (${action.cause}) -> ${outcome.vitals.healthPoints.toFixed(1)} hp` +
-                            (outcome.died ? ' — DIED' : '') +
-                            (withoutMagnitude ? ' — NO MAGNITUDE, absorbed' : ''),
+                          `damage ${String(action.amount)} (${action.cause}) -> ${outcome.vitals.healthPoints.toFixed(1)} hp${
+                            outcome.died ? ' — DIED' : ''
+                            }${withoutMagnitude ? ' — NO MAGNITUDE, absorbed' : ''}`,
                           outcome.died || withoutMagnitude ? 'fault' : 'event',
                         ),
                       ),
@@ -608,6 +633,31 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
           Effect.zipRight(note('respawn — experience survives, because the penalty is a RULE', 'event')),
         )
 
+      case 'restoreVitals': {
+        const repairable = !Vitals.isValidVitals(action.vitals)
+        return Effect.sync(() => {
+          if (repairable) {
+            book.vitalsRepaired += 1
+          }
+        }).pipe(
+          Effect.zipRight(guarded('vitals.restore', vitals.restore(action.vitals))),
+          Effect.zipRight(
+            note(
+              `vitals.restore(...)${  repairable ? ' — INVALID, repaired by normaliseVitals' : ''}`,
+              repairable ? 'fault' : 'event',
+            ),
+          ),
+        )
+      }
+
+      default:
+        return undefined
+    }
+  }
+
+  /** Statistics, settings, and loop-control actions. `undefined` means "not one of mine". */
+  const applyMiscAction = (action: ScriptedAction): Effect.Effect<void> | undefined => {
+    switch (action.kind) {
       case 'unlock':
         return guarded('statistics.unlock', statistics.unlock(action.id)).pipe(
           Effect.zipRight(note(`unlock ${action.id} (mc-sim holds no registry)`, 'event')),
@@ -639,23 +689,6 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
         )
       }
 
-      case 'restoreVitals': {
-        const repairable = !Vitals.isValidVitals(action.vitals)
-        return Effect.sync(() => {
-          if (repairable) {
-            book.vitalsRepaired += 1
-          }
-        }).pipe(
-          Effect.zipRight(guarded('vitals.restore', vitals.restore(action.vitals))),
-          Effect.zipRight(
-            note(
-              'vitals.restore(...)' + (repairable ? ' — INVALID, repaired by normaliseVitals' : ''),
-              repairable ? 'fault' : 'event',
-            ),
-          ),
-        )
-      }
-
       case 'stopLoop':
         return loop.stop.pipe(
           Effect.zipRight(note('loop.stop — submitFrame is a silent no-op from here', 'event')),
@@ -665,9 +698,17 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
         return note(action.text, 'note')
 
       default:
-        return Effect.void
+        return undefined
     }
   }
+
+  const applyAction = (action: ScriptedAction): Effect.Effect<void> =>
+    applyMovementAction(action) ??
+    applyTimeAction(action) ??
+    applyRestoreAction(action) ??
+    applyVitalsAction(action) ??
+    applyMiscAction(action) ??
+    Effect.void
 
   const frameStepSecs = 1 / config.fps
   // Nanoseconds, not milliseconds. `Duration.millis(Math.round(1000 / fps))` at

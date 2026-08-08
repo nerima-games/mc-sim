@@ -80,6 +80,50 @@ describe('REGRESSION: exactly one blow reports the kill', () => {
   )
 })
 
+describe('heal and eat go through the same Ref the rest of the service does', () => {
+  it.effect('heal returns the healed state, capped at the maximum', () =>
+    Effect.gen(function* () {
+      const vitals = yield* makeVitalsService()
+
+      yield* vitals.damage({ amount: 12, cause: 'fall' })
+      const healed = yield* vitals.heal(100)
+
+      expect(healed.healthPoints).toBe(20)
+      expect(yield* vitals.snapshot).toEqual(healed)
+    }),
+  )
+
+  it.effect('heal never revives a dead player', () =>
+    Effect.gen(function* () {
+      const vitals = yield* makeVitalsService()
+
+      yield* vitals.damage({ amount: 20, cause: 'fall' })
+      const healed = yield* vitals.heal(10)
+
+      expect(isDead(healed)).toBe(true)
+      expect(healed.healthPoints).toBe(0)
+    }),
+  )
+
+  it.effect('eat raises hunger and saturation, and the change persists in the Ref', () =>
+    Effect.gen(function* () {
+      const vitals = yield* makeVitalsService({
+        ...SPAWN_VITALS,
+        hungerPoints: 10,
+        saturation: 0,
+      })
+
+      // Same numbers as the domain-level 'saturation term is food * modifier *
+      // 2' test: bread is 5 food, modifier 0.6, so the reserve gains 6.
+      yield* vitals.eat(5, 0.6)
+      const fed = yield* vitals.snapshot
+
+      expect(fed.hungerPoints).toBe(15)
+      expect(fed.saturation).toBe(6)
+    }),
+  )
+})
+
 describe('the service reads no clock', () => {
   it.effect('the food timer advances only by the delta it is handed', () =>
     Effect.gen(function* () {

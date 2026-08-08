@@ -183,6 +183,32 @@ const clampWithDefault = (value: number, low: number, high: number, fallback: nu
   hasMagnitude(value) ? Math.max(low, Math.min(high, value)) : fallback
 
 /**
+ * Keep only the entries that are a string bound to a string.
+ *
+ * Non-string entries are DROPPED rather than coerced, matching
+ * `normaliseStatistics`: a key code has no meaningful nearest legal value, and
+ * coercing one would bind an action to a key that no keyboard produces — an
+ * input that silently does nothing and looks, to the player, exactly like a
+ * broken game.
+ */
+const normaliseKeyBindings = (
+  bindings: Readonly<Record<string, string>>,
+): Readonly<Record<string, string>> => {
+  const source: unknown = bindings
+  if (typeof source !== 'object' || source === null) {
+    return {}
+  }
+
+  const kept: Record<string, string> = {}
+  for (const [action, code] of Object.entries(source as Record<string, unknown>)) {
+    if (typeof code === 'string' && code.length > 0 && action.length > 0) {
+      kept[action] = code
+    }
+  }
+  return kept
+}
+
+/**
  * Repair settings read from persistence into values every consumer can act on.
  *
  * Every entry point goes through this — `makeSettingsService`'s initial value,
@@ -239,32 +265,6 @@ export const normaliseSettings = (settings: Settings): Settings => ({
   ),
   keyBindings: normaliseKeyBindings(settings.keyBindings),
 })
-
-/**
- * Keep only the entries that are a string bound to a string.
- *
- * Non-string entries are DROPPED rather than coerced, matching
- * `normaliseStatistics`: a key code has no meaningful nearest legal value, and
- * coercing one would bind an action to a key that no keyboard produces — an
- * input that silently does nothing and looks, to the player, exactly like a
- * broken game.
- */
-const normaliseKeyBindings = (
-  bindings: Readonly<Record<string, string>>,
-): Readonly<Record<string, string>> => {
-  const source: unknown = bindings
-  if (typeof source !== 'object' || source === null) {
-    return {}
-  }
-
-  const kept: Record<string, string> = {}
-  for (const [action, code] of Object.entries(source as Record<string, unknown>)) {
-    if (typeof code === 'string' && code.length > 0 && action.length > 0) {
-      kept[action] = code
-    }
-  }
-  return kept
-}
 
 /**
  * Change some settings and leave the rest.

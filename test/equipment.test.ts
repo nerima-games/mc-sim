@@ -128,6 +128,35 @@ describe('equipment domain', () => {
     }),
   )
 
+  it.effect('no-ops on identical slots, rejects when either side is incompatible, and otherwise swaps', () =>
+    Effect.sync(() => {
+      const withHelmet = equip(emptyEquipment(), 'head', helmet()).equipment
+      expect(swapEquipment(withHelmet, 'head', 'head')).toBe(withHelmet)
+
+      // secondItem (flint, offhand-only) is incompatible with 'head' -> rejected before the second clause
+      const withHelmetAndFlint = equip(withHelmet, 'offhand', flint()).equipment
+      expect(swapEquipment(withHelmetAndFlint, 'head', 'offhand')).toBe(withHelmetAndFlint)
+
+      // target slot is empty, but firstItem (helmet, head-only) is incompatible with 'chest'
+      expect(swapEquipment(withHelmet, 'head', 'chest')).toBe(withHelmet)
+
+      // both slots empty -> swap succeeds, producing a new but structurally-equal equipment value
+      const bothEmpty = emptyEquipment()
+      const swapped = swapEquipment(bothEmpty, 'legs', 'feet')
+      expect(swapped).not.toBe(bothEmpty)
+      expect(swapped).toStrictEqual(bothEmpty)
+    }),
+  )
+
+  it.effect('unequipping an empty slot returns the same equipment reference and a null result', () =>
+    Effect.sync(() => {
+      const initial = emptyEquipment()
+      const outcome = unequip(initial, 'head')
+      expect(outcome.result).toBeNull()
+      expect(outcome.equipment).toBe(initial)
+    }),
+  )
+
   it.effect('applies damage and removes an item atomically when it breaks', () =>
     Effect.sync(() => {
       const equipped = equip(emptyEquipment(), 'head', helmet(3)).equipment
@@ -149,6 +178,24 @@ describe('equipment domain', () => {
       const invalid = damageEquipment(equipped, 'offhand', 0)
       expect(invalid.result).toStrictEqual({ _tag: 'InvalidAmount', amount: 0 })
       expect(invalid.equipment).toBe(equipped)
+    }),
+  )
+
+  it.effect('reports Empty for an empty slot and NotDamageable for a non-damageable item', () =>
+    Effect.sync(() => {
+      const empty = emptyEquipment()
+      const emptyOutcome = damageEquipment(empty, 'head', 1)
+      expect(emptyOutcome.result).toStrictEqual({ _tag: 'Empty' })
+      expect(emptyOutcome.equipment).toBe(empty)
+
+      // A durability-less item can only arise outside the validated equip() path; damageEquipment
+      // is a pure function over Equipment and must handle it defensively regardless.
+      const nonDamageable = {
+        slots: { ...empty.slots, offhand: { ...itemStack('flint_and_steel', 1), durability: null } },
+      }
+      const nonDamageableOutcome = damageEquipment(nonDamageable, 'offhand', 1)
+      expect(nonDamageableOutcome.result).toMatchObject({ _tag: 'NotDamageable' })
+      expect(nonDamageableOutcome.equipment).toBe(nonDamageable)
     }),
   )
 
@@ -177,6 +224,33 @@ describe('equipment domain', () => {
         const snapshot = { slots: { ...valid.slots, feet: item } }
         expect(validateEquipmentSnapshot(snapshot)._tag).toBe('Invalid')
       }
+    }),
+  )
+
+  it.effect('rejects malformed top-level and slots shapes before inspecting any item', () =>
+    Effect.sync(() => {
+      expect(validateEquipmentSnapshot(null)._tag).toBe('Invalid')
+      expect(validateEquipmentSnapshot('not an object')._tag).toBe('Invalid')
+      expect(validateEquipmentSnapshot({ slots: emptyEquipment().slots, extra: true })._tag).toBe('Invalid')
+      expect(
+        validateEquipmentSnapshot({ slots: { head: null, chest: null, legs: null, feet: null } })._tag,
+      ).toBe('Invalid')
+      expect(validateEquipmentSnapshot({ slots: 'not an object' })._tag).toBe('Invalid')
+    }),
+  )
+
+  it.effect('accepts a fully equipped snapshot across every slot', () =>
+    Effect.sync(() => {
+      const step1 = equip(emptyEquipment(), 'head', helmet()).equipment
+      const step2 = equip(step1, 'chest', equipmentItem(itemStack('iron_chestplate', 1))).equipment
+      const step3 = equip(step2, 'legs', equipmentItem(itemStack('iron_leggings', 1))).equipment
+      const step4 = equip(step3, 'feet', equipmentItem(itemStack('iron_boots', 1))).equipment
+      const fullyEquipped = equip(step4, 'offhand', flint()).equipment
+
+      expect(validateEquipmentSnapshot(JSON.parse(JSON.stringify(fullyEquipped)))).toStrictEqual({
+        _tag: 'Valid',
+        equipment: fullyEquipped,
+      })
     }),
   )
 })

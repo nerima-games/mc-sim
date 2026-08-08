@@ -98,6 +98,94 @@ const readNumber = (
   return value
 }
 
+type TakeValue = () => string | undefined
+
+/** Zero-argument flags. Returns whether `flag` was recognised. */
+const applyBooleanFlag = (accumulator: Accumulator, flag: string): boolean => {
+  switch (flag) {
+    // pnpm 9 forwards a literal `--` into argv when someone writes
+    // `pnpm preview -- --stats` out of npm habit. Rejecting it as an unknown
+    // option would be technically correct and completely unhelpful.
+    case '--':
+      return true
+    case '--help':
+    case '-h':
+      accumulator.help = true
+      return true
+    case '--list':
+      accumulator.list = true
+      return true
+    case '--stats':
+      accumulator.stats = true
+      return true
+    case '--once':
+      accumulator.once = true
+      return true
+    case '--ascii':
+      accumulator.ascii = true
+      return true
+    default:
+      return false
+  }
+}
+
+/** Returns whether `flag` was recognised. */
+const applyScenarioFlag = (accumulator: Accumulator, flag: string, takeValue: TakeValue): boolean => {
+  if (flag !== '--scenario') return false
+  const value = takeValue()
+  if (value !== undefined && isScenario(value)) {
+    accumulator.scenario = value
+  } else {
+    accumulator.errors = [
+      ...accumulator.errors,
+      `--scenario: "${String(value)}" is not one of ${SCENARIO_NAMES.join(', ')}`,
+    ]
+  }
+  return true
+}
+
+/** Value-bearing numeric flags. Returns whether `flag` was recognised. */
+const applyNumericFlag = (accumulator: Accumulator, flag: string, takeValue: TakeValue): boolean => {
+  switch (flag) {
+    case '--frames':
+      accumulator.frames = Math.max(
+        1,
+        Math.trunc(readNumber(accumulator, flag, takeValue()) ?? accumulator.frames),
+      )
+      return true
+    case '--fps':
+      accumulator.fps = Math.max(
+        1,
+        readNumber(accumulator, flag, takeValue()) ?? accumulator.fps,
+      )
+      return true
+    case '--at':
+      accumulator.at = Math.max(
+        0,
+        Math.trunc(readNumber(accumulator, flag, takeValue()) ?? accumulator.at),
+      )
+      return true
+    case '--day-length':
+      accumulator.dayLengthSecs =
+        readNumber(accumulator, flag, takeValue()) ?? accumulator.dayLengthSecs
+      return true
+    case '--time':
+      accumulator.timeOfDay = readNumber(accumulator, flag, takeValue()) ?? accumulator.timeOfDay
+      return true
+    case '--autosave':
+      accumulator.autoSaveSecs = Math.max(
+        0.001,
+        readNumber(accumulator, flag, takeValue()) ?? accumulator.autoSaveSecs,
+      )
+      return true
+    case '--width':
+      accumulator.width = readNumber(accumulator, flag, takeValue()) ?? accumulator.width
+      return true
+    default:
+      return false
+  }
+}
+
 /**
  * Accepts `--flag value` and `--flag=value`.
  *
@@ -118,80 +206,12 @@ export const parseArguments = (argv: ReadonlyArray<string>): PreviewOptions => {
     const equalsAt = token.indexOf('=')
     const flag = equalsAt === -1 ? token : token.slice(0, equalsAt)
     const inlineValue = equalsAt === -1 ? undefined : token.slice(equalsAt + 1)
-    const takeValue = (): string | undefined => inlineValue ?? queue.shift()
+    const takeValue: TakeValue = () => inlineValue ?? queue.shift()
 
-    switch (flag) {
-      // pnpm 9 forwards a literal `--` into argv when someone writes
-      // `pnpm preview -- --stats` out of npm habit. Rejecting it as an unknown
-      // option would be technically correct and completely unhelpful.
-      case '--':
-        break
-      case '--help':
-      case '-h':
-        accumulator.help = true
-        break
-      case '--list':
-        accumulator.list = true
-        break
-      case '--stats':
-        accumulator.stats = true
-        break
-      case '--once':
-        accumulator.once = true
-        break
-      case '--ascii':
-        accumulator.ascii = true
-        break
-      case '--scenario': {
-        const value = takeValue()
-        if (value !== undefined && isScenario(value)) {
-          accumulator.scenario = value
-        } else {
-          accumulator.errors = [
-            ...accumulator.errors,
-            `--scenario: "${String(value)}" is not one of ${SCENARIO_NAMES.join(', ')}`,
-          ]
-        }
-        break
-      }
-      case '--frames':
-        accumulator.frames = Math.max(
-          1,
-          Math.trunc(readNumber(accumulator, flag, takeValue()) ?? accumulator.frames),
-        )
-        break
-      case '--fps':
-        accumulator.fps = Math.max(
-          1,
-          readNumber(accumulator, flag, takeValue()) ?? accumulator.fps,
-        )
-        break
-      case '--at':
-        accumulator.at = Math.max(
-          0,
-          Math.trunc(readNumber(accumulator, flag, takeValue()) ?? accumulator.at),
-        )
-        break
-      case '--day-length':
-        accumulator.dayLengthSecs =
-          readNumber(accumulator, flag, takeValue()) ?? accumulator.dayLengthSecs
-        break
-      case '--time':
-        accumulator.timeOfDay = readNumber(accumulator, flag, takeValue()) ?? accumulator.timeOfDay
-        break
-      case '--autosave':
-        accumulator.autoSaveSecs = Math.max(
-          0.001,
-          readNumber(accumulator, flag, takeValue()) ?? accumulator.autoSaveSecs,
-        )
-        break
-      case '--width':
-        accumulator.width = readNumber(accumulator, flag, takeValue()) ?? accumulator.width
-        break
-      default:
-        accumulator.errors = [...accumulator.errors, `unknown option: ${flag}`]
-        break
-    }
+    if (applyBooleanFlag(accumulator, flag)) continue
+    if (applyScenarioFlag(accumulator, flag, takeValue)) continue
+    if (applyNumericFlag(accumulator, flag, takeValue)) continue
+    accumulator.errors = [...accumulator.errors, `unknown option: ${flag}`]
   }
 
   return { ...accumulator }

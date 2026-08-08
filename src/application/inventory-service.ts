@@ -124,7 +124,18 @@ const carriedAt = (player: Storage.PlayerStorage, index: number): InventoryCarri
   if (slot === undefined) return undefined
   const durability = player.inventoryDurability[index]
   return Eq.isDamageableItemType(slot.item) && Eq.isValidDurabilityForItem(slot.item, durability)
-    ? { ...slot, durability: durability === null ? undefined : { ...durability } }
+    ? {
+        ...slot,
+        durability: durability === null
+          /* v8 ignore next -- `Eq.isValidDurabilityForItem` requires
+             `Eq.isDurability(durability)`, which is false for `null` (it is
+             not a record). The guard above already proved that predicate
+             true, so `durability` cannot be `null` on this branch; this arm
+             exists only to satisfy the `Eq.Durability | null` element type of
+             `inventoryDurability`, not a value this function can observe. */
+          ? undefined
+          : { ...durability },
+      }
     : { ...slot }
 }
 
@@ -151,56 +162,51 @@ const sameCarried = (left: InventoryCarriedSlot, right: InventoryCarriedSlot): b
   left?.item === right?.item && left?.count === right?.count &&
   sameDurability(left?.durability, right?.durability)
 
-/** Apply one Minecraft-style slot click without exposing an intermediate inventory. */
-const clickInventory = (inventory: Inv.Inventory, click: InventoryClick): InventoryClickOutcome => {
-  if (
-    !Number.isInteger(click.slotIndex) ||
-    click.slotIndex < 0 ||
-    click.slotIndex >= Inv.INVENTORY_SLOT_COUNT
-  ) {
-    return { inventory, result: { _tag: 'InvalidSlot', carried: click.carried } }
-  }
-  if (!validCarried(click.carried)) {
-    return { inventory, result: { _tag: 'InvalidCount', carried: click.carried } }
-  }
-
-  const slot = inventory.slots[click.slotIndex]
-  if (click._tag === 'LeftClick') {
-    if (click.carried === undefined) {
-      if (slot === undefined) {
-        return { inventory, result: { _tag: 'NoChange', carried: undefined } }
-      }
-      const slots = [...inventory.slots]
-      slots[click.slotIndex] = undefined
-      return { inventory: { slots }, result: { _tag: 'PickedUp', carried: slot } }
-    }
+const clickInventoryLeft = (
+  inventory: Inv.Inventory,
+  click: Extract<InventoryClick, { readonly _tag: 'LeftClick' }>,
+  slot: Inv.Slot,
+): InventoryClickOutcome => {
+  if (click.carried === undefined) {
     if (slot === undefined) {
-      const slots = [...inventory.slots]
-      slots[click.slotIndex] = Inv.itemStack(click.carried.item, click.carried.count)
-      return { inventory: { slots }, result: { _tag: 'Placed', carried: undefined } }
-    }
-    if (slot.item !== click.carried.item) {
-      const slots = [...inventory.slots]
-      slots[click.slotIndex] = Inv.itemStack(click.carried.item, click.carried.count)
-      return { inventory: { slots }, result: { _tag: 'Swapped', carried: slot } }
-    }
-
-    const accepted = Math.min(Inv.maxStackCountForItem(slot.item) - slot.count, click.carried.count)
-    if (accepted <= 0) {
-      return { inventory, result: { _tag: 'NoChange', carried: click.carried } }
+      return { inventory, result: { _tag: 'NoChange', carried: undefined } }
     }
     const slots = [...inventory.slots]
-    slots[click.slotIndex] = Inv.itemStack(slot.item, slot.count + accepted)
-    const remaining = click.carried.count - accepted
-    return {
-      inventory: { slots },
-      result: {
-        _tag: 'Merged',
-        carried: remaining === 0 ? undefined : Inv.itemStack(click.carried.item, remaining),
-      },
-    }
+    slots[click.slotIndex] = undefined
+    return { inventory: { slots }, result: { _tag: 'PickedUp', carried: slot } }
+  }
+  if (slot === undefined) {
+    const slots = [...inventory.slots]
+    slots[click.slotIndex] = Inv.itemStack(click.carried.item, click.carried.count)
+    return { inventory: { slots }, result: { _tag: 'Placed', carried: undefined } }
+  }
+  if (slot.item !== click.carried.item) {
+    const slots = [...inventory.slots]
+    slots[click.slotIndex] = Inv.itemStack(click.carried.item, click.carried.count)
+    return { inventory: { slots }, result: { _tag: 'Swapped', carried: slot } }
   }
 
+  const accepted = Math.min(Inv.maxStackCountForItem(slot.item) - slot.count, click.carried.count)
+  if (accepted <= 0) {
+    return { inventory, result: { _tag: 'NoChange', carried: click.carried } }
+  }
+  const slots = [...inventory.slots]
+  slots[click.slotIndex] = Inv.itemStack(slot.item, slot.count + accepted)
+  const remaining = click.carried.count - accepted
+  return {
+    inventory: { slots },
+    result: {
+      _tag: 'Merged',
+      carried: remaining === 0 ? undefined : Inv.itemStack(click.carried.item, remaining),
+    },
+  }
+}
+
+const clickInventoryRight = (
+  inventory: Inv.Inventory,
+  click: Extract<InventoryClick, { readonly _tag: 'RightClick' }>,
+  slot: Inv.Slot,
+): InventoryClickOutcome => {
   if (click.carried === undefined) {
     if (slot === undefined) {
       return { inventory, result: { _tag: 'NoChange', carried: undefined } }
@@ -229,6 +235,25 @@ const clickInventory = (inventory: Inv.Inventory, click: InventoryClick): Invent
       carried: remaining === 0 ? undefined : Inv.itemStack(click.carried.item, remaining),
     },
   }
+}
+
+/** Apply one Minecraft-style slot click without exposing an intermediate inventory. */
+const clickInventory = (inventory: Inv.Inventory, click: InventoryClick): InventoryClickOutcome => {
+  if (
+    !Number.isInteger(click.slotIndex) ||
+    click.slotIndex < 0 ||
+    click.slotIndex >= Inv.INVENTORY_SLOT_COUNT
+  ) {
+    return { inventory, result: { _tag: 'InvalidSlot', carried: click.carried } }
+  }
+  if (!validCarried(click.carried)) {
+    return { inventory, result: { _tag: 'InvalidCount', carried: click.carried } }
+  }
+
+  const slot = inventory.slots[click.slotIndex]
+  return click._tag === 'LeftClick'
+    ? clickInventoryLeft(inventory, click, slot)
+    : clickInventoryRight(inventory, click, slot)
 }
 
 export type InventoryServiceApi = {
@@ -511,7 +536,16 @@ export const makeInventoryService = (
             Eq.isDamageableItemType(click.carried.item)) {
           const durability = click.carried.durability ?? Eq.durabilityForItem(click.carried.item)
           const values = [...next.inventoryDurability]
-          values[click.slotIndex] = durability === null ? null : { ...durability }
+          values[click.slotIndex] = durability === null
+            /* v8 ignore next -- `durability` is either `click.carried.durability`
+               (typed `Eq.Durability | undefined`, never `null`) or the result of
+               `Eq.durabilityForItem(click.carried.item)` on an item this branch
+               has already confirmed `Eq.isDamageableItemType`, which is exactly
+               `durabilityForItem`'s own non-null condition. Neither operand of
+               the `??` can be `null`, so this arm is unreachable from this call
+               site; it exists to satisfy `Eq.Durability | null`'s wider type. */
+            ? null
+            : { ...durability }
           next = { ...next, inventoryDurability: values }
         }
         const result = (outcome.result._tag === 'PickedUp' || outcome.result._tag === 'Swapped') &&

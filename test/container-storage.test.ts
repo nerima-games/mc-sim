@@ -7,6 +7,7 @@ import {
   DISPENSER_CONTAINER_CAPACITY,
   containerIdAt,
   createContainer,
+  emptyChestContainer,
   emptyContainerStorage,
   HOPPER_CONTAINER_CAPACITY,
   extractContainerItem,
@@ -175,6 +176,399 @@ describe('container storage domain', () => {
     expect(outcome.result).toStrictEqual({ _tag: 'InvalidDirection' })
     expect(outcome.playerStorage).toBe(player)
     expect(outcome.containerStorage).toBe(storage)
+  })
+
+  it('creates a chest-kind container via the deprecated emptyChestContainer alias', () => {
+    const container = emptyChestContainer('legacy-chest')
+    expect(container.kind).toBe('chest')
+    expect(container.slots).toHaveLength(CHEST_CONTAINER_CAPACITY)
+    expect(container.slots.every((slot) => slot === null)).toBe(true)
+  })
+
+  it('rejects an empty container id without touching storage', () => {
+    const storage = emptyContainerStorage()
+    const created = createContainer(storage, '')
+    expect(created.result).toStrictEqual({ _tag: 'InvalidContainerId' })
+    expect(created.storage).toBe(storage)
+  })
+
+  it('rejects a snapshot whose top level is not a record with exactly version and containers', () => {
+    expect(validateContainerStorageSnapshot(null)._tag).toBe('Invalid')
+    expect(validateContainerStorageSnapshot([])._tag).toBe('Invalid')
+    expect(validateContainerStorageSnapshot({ version: CONTAINER_STORAGE_SNAPSHOT_VERSION })._tag).toBe('Invalid')
+  })
+
+  it('rejects a snapshot whose containers field is not an array', () => {
+    const result = validateContainerStorageSnapshot({
+      version: CONTAINER_STORAGE_SNAPSHOT_VERSION,
+      containers: 'not-an-array',
+    })
+    expect(result).toStrictEqual({
+      _tag: 'Invalid',
+      error: {
+        _tag: 'ContainerStorageValidationError',
+        path: 'containerStorage.containers',
+        reason: 'expected an array',
+      },
+    })
+  })
+
+  it('rejects a legacy (v1) candidate with the legacy-shaped error message', () => {
+    const result = validateContainerStorageSnapshot({
+      version: 1,
+      containers: [{ id: 'legacy', kind: 'chest', slots: [] }],
+    })
+    expect(result).toStrictEqual({
+      _tag: 'Invalid',
+      error: {
+        _tag: 'ContainerStorageValidationError',
+        path: 'containerStorage.containers.0',
+        reason: 'expected exactly id and slots',
+      },
+    })
+  })
+
+  it('rejects a candidate with an id that is not a non-empty trimmed string', () => {
+    const result = validateContainerStorageSnapshot({
+      version: CONTAINER_STORAGE_SNAPSHOT_VERSION,
+      containers: [{ id: ' padded ', kind: 'chest', slots: [] }],
+    })
+    expect(result).toStrictEqual({
+      _tag: 'Invalid',
+      error: {
+        _tag: 'ContainerStorageValidationError',
+        path: 'containerStorage.containers.0.id',
+        reason: 'expected a non-empty trimmed string',
+      },
+    })
+  })
+
+  it('rejects a candidate naming an unsupported container kind', () => {
+    const result = validateContainerStorageSnapshot({
+      version: CONTAINER_STORAGE_SNAPSHOT_VERSION,
+      containers: [{ id: 'furnace-1', kind: 'furnace', slots: [] }],
+    })
+    expect(result).toStrictEqual({
+      _tag: 'Invalid',
+      error: {
+        _tag: 'ContainerStorageValidationError',
+        path: 'containerStorage.containers.0.kind',
+        reason: 'expected a supported container kind',
+      },
+    })
+  })
+
+  it('rejects a candidate whose slots array length does not match its kind capacity', () => {
+    const result = validateContainerStorageSnapshot({
+      version: CONTAINER_STORAGE_SNAPSHOT_VERSION,
+      containers: [{ id: 'short-chest', kind: 'chest', slots: [] }],
+    })
+    expect(result).toStrictEqual({
+      _tag: 'Invalid',
+      error: {
+        _tag: 'ContainerStorageValidationError',
+        path: 'containerStorage.containers.0.slots',
+        reason: `expected exactly ${CHEST_CONTAINER_CAPACITY} slots`,
+      },
+    })
+  })
+
+  it('rejects a stored stack whose count exceeds its item max stack size', () => {
+    const slots = Array.from({ length: CHEST_CONTAINER_CAPACITY }, () => null) as Array<unknown>
+    slots[0] = { item: 'stone', count: 999, durability: null }
+    const result = validateContainerStorageSnapshot({
+      version: CONTAINER_STORAGE_SNAPSHOT_VERSION,
+      containers: [{ id: 'overfull', kind: 'chest', slots }],
+    })
+    expect(result).toStrictEqual({
+      _tag: 'Invalid',
+      error: {
+        _tag: 'ContainerStorageValidationError',
+        path: 'containerStorage.containers.0.slots.0',
+        reason: 'expected a valid stored item stack',
+      },
+    })
+  })
+
+  it('rejects a non-durable stored stack that carries a non-null durability', () => {
+    const slots = Array.from({ length: CHEST_CONTAINER_CAPACITY }, () => null) as Array<unknown>
+    slots[0] = { item: 'stone', count: 1, durability: { current: 1, max: 1 } }
+    const result = validateContainerStorageSnapshot({
+      version: CONTAINER_STORAGE_SNAPSHOT_VERSION,
+      containers: [{ id: 'stone-chest', kind: 'chest', slots }],
+    })
+    expect(result).toStrictEqual({
+      _tag: 'Invalid',
+      error: {
+        _tag: 'ContainerStorageValidationError',
+        path: 'containerStorage.containers.0.slots.0.durability',
+        reason: 'non-durable item requires null',
+      },
+    })
+  })
+
+  it('accepts and round-trips a non-durable stored stack with a null durability', () => {
+    const slots = Array.from({ length: CHEST_CONTAINER_CAPACITY }, () => null) as Array<unknown>
+    slots[0] = { item: 'stone', count: 5, durability: null }
+    const result = validateContainerStorageSnapshot({
+      version: CONTAINER_STORAGE_SNAPSHOT_VERSION,
+      containers: [{ id: 'stone-chest', kind: 'chest', slots }],
+    })
+    expect(result._tag).toBe('Valid')
+    if (result._tag !== 'Valid') return
+    expect(result.storage.containers[0]?.slots[0]).toStrictEqual({ item: 'stone', count: 5, durability: null })
+  })
+
+  it('rejects a player slot holding a raw non-record value as an invalid source stack', () => {
+    const player = {
+      ...emptyPlayerStorage(),
+      inventory: {
+        slots: ['not-a-stack', ...Array.from({ length: 35 }, () => undefined)],
+      },
+    } as unknown as ReturnType<typeof emptyPlayerStorage>
+    const storage = createContainer(emptyContainerStorage(), 'chest-a').storage
+
+    const outcome = transferContainerItem(player, storage, {
+      direction: 'PlayerToContainer',
+      containerId: 'chest-a',
+      playerSlot: 0,
+      containerSlot: 0,
+      count: 1,
+    })
+    expect(outcome.result).toStrictEqual({ _tag: 'InvalidSourceStack' })
+    expect(outcome.playerStorage).toBe(player)
+    expect(outcome.containerStorage).toBe(storage)
+  })
+
+  it('rejects a PlayerToContainer transfer that would overflow the destination stack', () => {
+    const player = {
+      ...emptyPlayerStorage(),
+      inventory: {
+        slots: [itemStack('stone', 1), ...Array.from({ length: 35 }, () => undefined)],
+      },
+    }
+    let storage = emptyContainerStorage()
+    storage = createContainer(storage, 'full-chest').storage
+    const container = storage.containers[0]
+    if (container === undefined) throw new Error('test setup failed')
+    storage = {
+      containers: [
+        { ...container, slots: [{ ...itemStack('stone', 64), durability: null }, ...container.slots.slice(1)] },
+      ],
+    }
+
+    const outcome = transferContainerItem(player, storage, {
+      direction: 'PlayerToContainer',
+      containerId: 'full-chest',
+      playerSlot: 0,
+      containerSlot: 0,
+      count: 1,
+    })
+    expect(outcome.result).toStrictEqual({ _tag: 'DestinationFull' })
+    expect(outcome.playerStorage).toBe(player)
+    expect(outcome.containerStorage).toBe(storage)
+  })
+
+  it('reports ContainerNotFound, InvalidContainerSlot, and InvalidCount for extractContainerItem', () => {
+    const storage = createContainer(emptyContainerStorage(), 'chest-a').storage
+    expect(extractContainerItem(storage, { containerId: 'missing', containerSlot: 0, count: 1 }).result)
+      .toStrictEqual({ _tag: 'ContainerNotFound' })
+    expect(extractContainerItem(storage, { containerId: 'chest-a', containerSlot: -1, count: 1 }).result)
+      .toStrictEqual({ _tag: 'InvalidContainerSlot' })
+    expect(extractContainerItem(storage, { containerId: 'chest-a', containerSlot: 0, count: 0 }).result)
+      .toStrictEqual({ _tag: 'InvalidCount' })
+  })
+
+  it('reports EmptySource when extracting from a slot with nothing in it', () => {
+    const storage = createContainer(emptyContainerStorage(), 'chest-a').storage
+    const outcome = extractContainerItem(storage, { containerId: 'chest-a', containerSlot: 0, count: 1 })
+    expect(outcome.result).toStrictEqual({ _tag: 'EmptySource' })
+    expect(outcome.storage).toBe(storage)
+  })
+
+  it('reports InvalidSourceStack and InvalidSourceDurability for a malformed extract source', () => {
+    const malformedShapeSlots = Array.from({ length: CHEST_CONTAINER_CAPACITY }, () => null) as Array<unknown>
+    malformedShapeSlots[0] = { item: 'stone', count: 65, durability: null }
+    const malformedShapeStorage = {
+      containers: [{ id: 'bad-shape', kind: 'chest' as const, slots: malformedShapeSlots }],
+    } as unknown as ReturnType<typeof emptyContainerStorage>
+    expect(extractContainerItem(malformedShapeStorage, {
+      containerId: 'bad-shape', containerSlot: 0, count: 1,
+    }).result).toStrictEqual({ _tag: 'InvalidSourceStack' })
+
+    const badDurabilitySlots = Array.from({ length: CHEST_CONTAINER_CAPACITY }, () => null) as Array<unknown>
+    badDurabilitySlots[0] = { item: 'bow', count: 1, durability: { current: 1, max: 1 } }
+    const badDurabilityStorage = {
+      containers: [{ id: 'bad-durability', kind: 'chest' as const, slots: badDurabilitySlots }],
+    } as unknown as ReturnType<typeof emptyContainerStorage>
+    expect(extractContainerItem(badDurabilityStorage, {
+      containerId: 'bad-durability', containerSlot: 0, count: 1,
+    }).result).toStrictEqual({ _tag: 'InvalidSourceDurability' })
+  })
+
+  it('leaves the remaining count in the slot when an extract does not take the whole stack', () => {
+    let storage = emptyContainerStorage()
+    storage = createContainer(storage, 'source').storage
+    const source = storage.containers[0]
+    if (source === undefined) throw new Error('test setup failed')
+    storage = {
+      containers: [{ ...source, slots: [{ ...itemStack('stone', 5), durability: null }, ...source.slots.slice(1)] }],
+    }
+
+    const outcome = extractContainerItem(storage, { containerId: 'source', containerSlot: 0, count: 2 })
+    expect(outcome.result).toStrictEqual({
+      _tag: 'Extracted',
+      stack: { item: 'stone', count: 2, durability: null },
+    })
+    expect(outcome.storage.containers[0]?.slots[0]).toStrictEqual({ item: 'stone', count: 3, durability: null })
+  })
+
+  it('reports SourceContainerNotFound, InvalidSourceSlot, InvalidDestinationSlot, and InvalidCount for moveContainerItem', () => {
+    let storage = emptyContainerStorage()
+    storage = createContainer(storage, 'source').storage
+    storage = createContainer(storage, 'destination').storage
+
+    expect(moveContainerItem(storage, {
+      sourceContainerId: 'missing', sourceSlot: 0,
+      destinationContainerId: 'destination', destinationSlot: 0, count: 1,
+    }).result).toStrictEqual({ _tag: 'SourceContainerNotFound' })
+
+    expect(moveContainerItem(storage, {
+      sourceContainerId: 'source', sourceSlot: -1,
+      destinationContainerId: 'destination', destinationSlot: 0, count: 1,
+    }).result).toStrictEqual({ _tag: 'InvalidSourceSlot' })
+
+    expect(moveContainerItem(storage, {
+      sourceContainerId: 'source', sourceSlot: 0,
+      destinationContainerId: 'destination', destinationSlot: -1, count: 1,
+    }).result).toStrictEqual({ _tag: 'InvalidDestinationSlot' })
+
+    expect(moveContainerItem(storage, {
+      sourceContainerId: 'source', sourceSlot: 0,
+      destinationContainerId: 'destination', destinationSlot: 0, count: 0,
+    }).result).toStrictEqual({ _tag: 'InvalidCount' })
+  })
+
+  it('rejects a move whose source and destination are the exact same container slot', () => {
+    let storage = emptyContainerStorage()
+    storage = createContainer(storage, 'chest-a').storage
+    const source = storage.containers[0]
+    if (source === undefined) throw new Error('test setup failed')
+    storage = {
+      containers: [{ ...source, slots: [{ ...itemStack('stone', 1), durability: null }, ...source.slots.slice(1)] }],
+    }
+
+    const outcome = moveContainerItem(storage, {
+      sourceContainerId: 'chest-a', sourceSlot: 0,
+      destinationContainerId: 'chest-a', destinationSlot: 0, count: 1,
+    })
+    expect(outcome.result).toStrictEqual({ _tag: 'DestinationMismatch' })
+    expect(outcome.storage).toBe(storage)
+  })
+
+  it('rejects moveContainerItem validation failures: empty, malformed, and mismatched stacks', () => {
+    let emptyPair = emptyContainerStorage()
+    emptyPair = createContainer(emptyPair, 'source').storage
+    emptyPair = createContainer(emptyPair, 'destination').storage
+    expect(moveContainerItem(emptyPair, {
+      sourceContainerId: 'source', sourceSlot: 0,
+      destinationContainerId: 'destination', destinationSlot: 0, count: 1,
+    }).result).toStrictEqual({ _tag: 'EmptySource' })
+
+    const malformedSourceSlots = Array.from({ length: CHEST_CONTAINER_CAPACITY }, () => null) as Array<unknown>
+    malformedSourceSlots[0] = { item: 'stone', count: 65, durability: null }
+    const malformedSourceStorage = {
+      containers: [
+        { id: 'source', kind: 'chest' as const, slots: malformedSourceSlots },
+        { id: 'destination', kind: 'chest' as const, slots: Array.from({ length: CHEST_CONTAINER_CAPACITY }, () => null) },
+      ],
+    } as unknown as ReturnType<typeof emptyContainerStorage>
+    expect(moveContainerItem(malformedSourceStorage, {
+      sourceContainerId: 'source', sourceSlot: 0,
+      destinationContainerId: 'destination', destinationSlot: 0, count: 1,
+    }).result).toStrictEqual({ _tag: 'InvalidSourceStack' })
+
+    const badSourceDurabilitySlots = Array.from({ length: CHEST_CONTAINER_CAPACITY }, () => null) as Array<unknown>
+    badSourceDurabilitySlots[0] = { item: 'bow', count: 1, durability: { current: 1, max: 1 } }
+    const badSourceDurabilityStorage = {
+      containers: [
+        { id: 'source', kind: 'chest' as const, slots: badSourceDurabilitySlots },
+        { id: 'destination', kind: 'chest' as const, slots: Array.from({ length: CHEST_CONTAINER_CAPACITY }, () => null) },
+      ],
+    } as unknown as ReturnType<typeof emptyContainerStorage>
+    expect(moveContainerItem(badSourceDurabilityStorage, {
+      sourceContainerId: 'source', sourceSlot: 0,
+      destinationContainerId: 'destination', destinationSlot: 0, count: 1,
+    }).result).toStrictEqual({ _tag: 'InvalidSourceDurability' })
+
+    const badDestinationSlots = Array.from({ length: CHEST_CONTAINER_CAPACITY }, () => null) as Array<unknown>
+    badDestinationSlots[0] = { item: 'stone', count: 65, durability: null }
+    const goodSourceSlots = Array.from({ length: CHEST_CONTAINER_CAPACITY }, () => null) as Array<unknown>
+    goodSourceSlots[0] = { item: 'stone', count: 1, durability: null }
+    const badDestinationStorage = {
+      containers: [
+        { id: 'source', kind: 'chest' as const, slots: goodSourceSlots },
+        { id: 'destination', kind: 'chest' as const, slots: badDestinationSlots },
+      ],
+    } as unknown as ReturnType<typeof emptyContainerStorage>
+    expect(moveContainerItem(badDestinationStorage, {
+      sourceContainerId: 'source', sourceSlot: 0,
+      destinationContainerId: 'destination', destinationSlot: 0, count: 1,
+    }).result).toStrictEqual({ _tag: 'InvalidDestinationStack' })
+
+    const insufficientSourceSlots = Array.from({ length: CHEST_CONTAINER_CAPACITY }, () => null) as Array<unknown>
+    insufficientSourceSlots[0] = { item: 'stone', count: 1, durability: null }
+    const insufficientStorage = {
+      containers: [
+        { id: 'source', kind: 'chest' as const, slots: insufficientSourceSlots },
+        { id: 'destination', kind: 'chest' as const, slots: Array.from({ length: CHEST_CONTAINER_CAPACITY }, () => null) },
+      ],
+    } as unknown as ReturnType<typeof emptyContainerStorage>
+    expect(moveContainerItem(insufficientStorage, {
+      sourceContainerId: 'source', sourceSlot: 0,
+      destinationContainerId: 'destination', destinationSlot: 0, count: 2,
+    }).result).toStrictEqual({ _tag: 'InsufficientSource', available: 1 })
+  })
+
+  it('moves an item between two slots of the SAME container', () => {
+    let storage = emptyContainerStorage()
+    storage = createContainer(storage, 'chest-a').storage
+    const source = storage.containers[0]
+    if (source === undefined) throw new Error('test setup failed')
+    storage = {
+      containers: [{ ...source, slots: [{ ...itemStack('stone', 5), durability: null }, ...source.slots.slice(1)] }],
+    }
+
+    const outcome = moveContainerItem(storage, {
+      sourceContainerId: 'chest-a', sourceSlot: 0,
+      destinationContainerId: 'chest-a', destinationSlot: 1, count: 2,
+    })
+    expect(outcome.result).toStrictEqual({ _tag: 'Moved', item: 'stone', count: 2 })
+    expect(outcome.storage.containers[0]?.slots[0]).toStrictEqual({ item: 'stone', count: 3, durability: null })
+    expect(outcome.storage.containers[0]?.slots[1]).toStrictEqual({ item: 'stone', count: 2, durability: null })
+  })
+
+  it('empties the source slot and merges into an existing destination stack on a full-count move', () => {
+    let storage = emptyContainerStorage()
+    storage = createContainer(storage, 'source').storage
+    storage = createContainer(storage, 'destination').storage
+    const source = storage.containers[0]
+    const destination = storage.containers[1]
+    if (source === undefined || destination === undefined) throw new Error('test setup failed')
+    storage = {
+      containers: [
+        { ...source, slots: [{ ...itemStack('stone', 2), durability: null }, ...source.slots.slice(1)] },
+        { ...destination, slots: [{ ...itemStack('stone', 3), durability: null }, ...destination.slots.slice(1)] },
+      ],
+    }
+
+    const outcome = moveContainerItem(storage, {
+      sourceContainerId: 'source', sourceSlot: 0,
+      destinationContainerId: 'destination', destinationSlot: 0, count: 2,
+    })
+    expect(outcome.result).toStrictEqual({ _tag: 'Moved', item: 'stone', count: 2 })
+    expect(outcome.storage.containers[0]?.slots[0]).toBeNull()
+    expect(outcome.storage.containers[1]?.slots[0]).toStrictEqual({ item: 'stone', count: 5, durability: null })
   })
 })
 

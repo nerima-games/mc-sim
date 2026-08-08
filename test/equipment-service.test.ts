@@ -1,7 +1,13 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect } from 'effect'
 import { makeEquipmentService } from '../src/application/equipment-service'
-import { durability, equipmentItem, type EquipmentItem } from '../src/domain/equipment'
+import {
+  durability,
+  emptyEquipment,
+  equipmentItem,
+  type EquipmentItem,
+  type EquipmentSlot,
+} from '../src/domain/equipment'
 import { itemStack } from '../src/domain/inventory'
 
 const helmet = (current = 165): EquipmentItem =>
@@ -91,6 +97,26 @@ describe('EquipmentService', () => {
       expect(outcomes.filter(({ _tag }) => _tag === 'Damaged')).toHaveLength(99)
       expect(outcomes.filter(({ _tag }) => _tag === 'Broken')).toHaveLength(1)
       expect((yield* service.snapshot).slots.head).toBeNull()
+    }),
+  )
+
+  it.effect('rejects invalid equipment slots at every boundary before touching state', () =>
+    Effect.gen(function* () {
+      const service = yield* makeEquipmentService()
+      const bogusSlot = 'bogus' as unknown as EquipmentSlot
+
+      expect(yield* service.equip(bogusSlot, helmet()).pipe(Effect.flip))
+        .toMatchObject({ _tag: 'EquipmentValidationError', path: 'slot' })
+      expect(yield* service.unequip(bogusSlot).pipe(Effect.flip))
+        .toMatchObject({ _tag: 'EquipmentValidationError', path: 'slot' })
+      expect(yield* service.swap(bogusSlot, 'head').pipe(Effect.flip))
+        .toMatchObject({ _tag: 'EquipmentValidationError', path: 'slot' })
+      expect(yield* service.swap('head', bogusSlot).pipe(Effect.flip))
+        .toMatchObject({ _tag: 'EquipmentValidationError', path: 'slot' })
+      expect(yield* service.damage(bogusSlot, 1).pipe(Effect.flip))
+        .toMatchObject({ _tag: 'EquipmentValidationError', path: 'slot' })
+
+      expect(yield* service.snapshot).toStrictEqual(emptyEquipment())
     }),
   )
 })

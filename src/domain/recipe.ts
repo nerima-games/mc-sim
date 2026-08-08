@@ -187,31 +187,6 @@ const patternCellAt = (pattern: RecipePattern, x: number, y: number): PatternCel
 // Construction
 // ---------------------------------------------------------------------------
 
-/**
- * A shaped recipe written the way vanilla's recipe JSON writes one: rows of
- * single-character keys, a legend, and an output.
- *
- * ```ts
- * shapedRecipe('mc-sim:wooden-pickaxe', ['PPP', ' S ', ' S '],
- *   { P: 'oak_planks', S: 'stick' }, itemStack('wooden_pickaxe', 1))
- * ```
- *
- * A space is empty. A character absent from `key` is ALSO empty — the
- * alternative would be a throwing constructor in a pure domain module, and the
- * miskeyed character cannot hide: `test/recipe.test.ts` asserts every recipe in
- * `STARTER_RECIPES` matches its own canonical grid, which a dropped cell breaks
- * immediately.
- *
- * The empty border is trimmed here, which is the invariant `RecipePattern`
- * documents.
- */
-export const shapedRecipe = (
-  id: RecipeId,
-  rows: ReadonlyArray<string>,
-  key: Readonly<Record<string, ItemType>>,
-  output: ItemStack,
-): ShapedRecipe => ({ _tag: 'Shaped', id, pattern: trimPattern(rows, key), output })
-
 const trimPattern = (rows: ReadonlyArray<string>, key: Readonly<Record<string, ItemType>>): RecipePattern => {
   const rawHeight = rows.length
   const rawWidth = rows.reduce((widest, row) => Math.max(widest, row.length), 0)
@@ -254,6 +229,31 @@ const trimPattern = (rows: ReadonlyArray<string>, key: Readonly<Record<string, I
     ),
   }
 }
+
+/**
+ * A shaped recipe written the way vanilla's recipe JSON writes one: rows of
+ * single-character keys, a legend, and an output.
+ *
+ * ```ts
+ * shapedRecipe('mc-sim:wooden-pickaxe', ['PPP', ' S ', ' S '],
+ *   { P: 'oak_planks', S: 'stick' }, itemStack('wooden_pickaxe', 1))
+ * ```
+ *
+ * A space is empty. A character absent from `key` is ALSO empty — the
+ * alternative would be a throwing constructor in a pure domain module, and the
+ * miskeyed character cannot hide: `test/recipe.test.ts` asserts every recipe in
+ * `STARTER_RECIPES` matches its own canonical grid, which a dropped cell breaks
+ * immediately.
+ *
+ * The empty border is trimmed here, which is the invariant `RecipePattern`
+ * documents.
+ */
+export const shapedRecipe = (
+  id: RecipeId,
+  rows: ReadonlyArray<string>,
+  key: Readonly<Record<string, ItemType>>,
+  output: ItemStack,
+): ShapedRecipe => ({ _tag: 'Shaped', id, pattern: trimPattern(rows, key), output })
 
 export const shapelessRecipe = (
   id: RecipeId,

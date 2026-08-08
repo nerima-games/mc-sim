@@ -115,7 +115,18 @@ const heldCount = (stack: ItemStack): number =>
  * only constructors, and all three respect `MAX_STACK_COUNT`.
  */
 const derivedStackCount = (count: number): StackCount =>
-  StackCount(Number.isFinite(count) ? Math.min(MAX_STACK_COUNT, Math.max(0, Math.floor(count))) : 0)
+  StackCount(
+    Number.isFinite(count)
+      ? Math.min(MAX_STACK_COUNT, Math.max(0, Math.floor(count)))
+      /* v8 ignore next -- every call site in this module (`removeItemAt`,
+         `removeItem`, `normaliseInventory`) passes a value derived from
+         `heldCount`, which already forces `Number.isFinite` to hold (it
+         returns 0 for anything non-finite) before this function ever sees
+         it. A non-finite argument cannot reach this function through any
+         path this module exposes; only a caller outside it could construct
+         one, and this module has none. */
+      : 0,
+  )
 
 /** A slot is either empty (`undefined`) or holds a stack. */
 export type Slot = ItemStack | undefined
