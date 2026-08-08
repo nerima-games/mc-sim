@@ -1,7 +1,7 @@
 import { Context, Effect, Layer, Ref } from 'effect'
 import type { BlockType } from '@nerima-games/mc-kernel'
 import type { ItemStack } from '../domain/inventory'
-import type { DeltaTimeSecs } from '@nerima-games/mc-kernel'
+import type { DeltaTimeSecs } from '../domain/kernel-vocabulary'
 import * as Crop from '../domain/crop'
 
 export type CropServiceApi = {
@@ -75,12 +75,9 @@ export const makeCropService = (): Effect.Effect<CropServiceApi> =>
         return [copyCrop(crop), next]
       }),
     advance: (delta) =>
-      Ref.update(state, (current) => {
-        current.forEach((crop, key) => {
-          current.set(key, Crop.advanceCrop(crop, delta))
-        })
-        return current
-      }),
+      Ref.update(state, (current) =>
+        new Map(Array.from(current, ([key, crop]) => [key, Crop.advanceCrop(crop, delta)])),
+      ),
     advanceByBoneMeal: (location) =>
       Ref.modify(state, (current) => {
         const key = Crop.cropLocationKey(location)

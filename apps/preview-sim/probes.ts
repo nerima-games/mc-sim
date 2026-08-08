@@ -40,7 +40,7 @@ import {
   removeItem,
   type Inventory,
 } from '../../src/domain/inventory'
-import { MAX_STACK_COUNT, MonotonicTimeSecs, type StackCount } from '@nerima-games/mc-kernel'
+import { MAX_STACK_COUNT, MonotonicTimeSecs, type StackCount } from '../../src/domain/kernel-vocabulary'
 import * as Time from '../../src/domain/time-of-day'
 import { clockFace, fixed, padStart, pad } from './style'
 
@@ -412,9 +412,9 @@ const autoSaveProbe = Effect.gen(function* () {
     '',
     '   ClockPort cannot carry a schedule. It READS AN INSTANT — monotonicSecs and',
     '   wallClockEpochMillis are its whole surface — while a schedule SLEEPS FOR A DURATION. There',
-    '   is no sleep on the Port and there cannot be one: the published ClockPort contract',
-    '   prevents a wider copy of a Context.Tag resolved by textual key from becoming a',
-    '   runtime hazard. A Port-driven daemon would have to poll,',
+    '   is no sleep on the Port and there cannot be one: it is mirrored from mc-kernel, and a',
+    '   wider copy of a Context.Tag resolved by textual key is the exact runtime hazard',
+    '   test/kernel-mirror.test.ts exists to prevent. A Port-driven daemon would have to poll,',
     '   which needs something else to drive the poll and which TestClock.adjust would no longer',
     '   advance — every autosave test would become a hand-driven polling harness and the schedule',
     '   would stop being the thing under test.',

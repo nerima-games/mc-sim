@@ -67,9 +67,10 @@
  * that the two are different mechanisms rather than two spellings of one:
  *
  *   - `ClockPort` READS AN INSTANT. `monotonicSecs` and `wallClockEpochMillis`
- *     are its whole surface (`@nerima-games/mc-kernel`). It is a published
- *     contract: a wider or narrower copy of a `Context.Tag` resolved by textual
- *     key would be a runtime hazard.
+ *     are its whole surface (`@nerima-games/mc-kernel`), and it is mirrored
+ *     from mc-kernel — a mirror that may not grow a field here, because a wider
+ *     or narrower copy of a `Context.Tag` resolved by textual key is the exact
+ *     runtime hazard `test/kernel-mirror.test.ts` exists to prevent.
  *   - A schedule SLEEPS FOR A DURATION. There is no `sleep` on `ClockPort` and
  *     there cannot be one, so a Port-driven daemon would have to poll
  *     `monotonicSecs` in a loop — which needs something else to drive the poll,

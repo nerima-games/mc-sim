@@ -1,6 +1,6 @@
 import { Effect } from 'effect'
 import { describe, expect, it, vi } from '@effect/vitest'
-import { position } from '@nerima-games/mc-kernel'
+import { position } from '../src/domain/kernel-vocabulary'
 import {
   applyPrimedTntPlan,
   MAX_TNT_FUSE_ADVANCE_SECS,

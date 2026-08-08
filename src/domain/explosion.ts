@@ -1,6 +1,6 @@
 import type { Effect } from 'effect'
 import type { Entity, EntityId } from './entity'
-import type { Position } from '@nerima-games/mc-kernel'
+import type { Position } from './kernel-vocabulary'
 
 export type ExplosionBlockPosition = {
   readonly x: number

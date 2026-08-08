@@ -20,9 +20,10 @@
 `mc-noise` は **import できない**（`mc-worldgen` 経由の推移依存に過ぎないため）。
 `mc-render` は下流なので当然依存しない。`mc-playground-kit` には実行時にも devDependency にも依存しない。
 
-現在は `@nerima-games/mc-kernel@0.2.18`、`@nerima-games/mc-physics@0.1.0`、`effect` を
-直接依存として固定している。共有語彙と Port は公開済み kernel から直接 import し、
-新しい crop 境界も kernel の `BlockPosition` / `BlockType` を直接利用する。
+現在は `@nerima-games/mc-kernel@0.2.4`、`@nerima-games/mc-physics@0.1.0`、`effect` を
+直接依存として固定している。既存コードの段階的移行のため
+`domain/kernel-vocabulary.ts` の互換ミラーは残るが、新しい crop 境界は kernel の
+`BlockPosition` / `BlockType` を直接 import する。
 
 ## このリポジトリの位置づけ
 
@@ -175,12 +176,23 @@ Nix を使わない場合は Node.js 24 以上と pnpm 11（`corepack` 推奨）
   それまで `version` は `0.x` に留める（[`docs/versioning.md`](./docs/versioning.md)）。
 - **カバレッジ閾値は未設定。** 参照実装は 99% を強制しているが、スケルトンに閾値を課しても意味がない。
   計測とレポートは常に動かしており、99% ゲートは完了条件到達時に有効化する。
-- **共有語彙と Clock Port は公開済み mc-kernel を直接使う。** `index.ts` から再 export
-  しないのは、mc-sim が kernel の責務を再所有しないためである。`ClockPort` は
-  文字列キーで解決される `Context.Tag` なので、キー文字列とサービス形状を公開 package と
-  一致させる必要がある。`EpochMillis` / `fixedClock` / `wallClockEpochMillis` と
-  オブジェクト引数の `FixedClockLayer` も package の公開契約をそのまま利用する。詳細は
-  [`docs/versioning.md`](./docs/versioning.md) §5。
+- **`domain/kernel-vocabulary.ts` は段階移行中の互換ミラー。** 新規 API は公開済み mc-kernel を直接使う。
+  `index.ts` から re-export していないのは、真実の出所を 2 つにしないため。
+  ミラーは意図的に最小だが、**Clock Port だけは丸ごと**写してある —— `ClockPort` は
+  文字列キーで解決される `Context.Tag` なので、狭いミラーは「語彙が少ない」ではなく
+  実行時ハザードである（狭い `Layer` が広い Tag を満たし、欠けたフィールドが `undefined` になる）。
+  `test/kernel-mirror.test.ts` が Tag キーと形を両方向で固定している
+  （[`docs/versioning.md`](./docs/versioning.md) §5-1、[`docs/testing.md`](./docs/testing.md) §3.1）。
+  **アイテム語彙（`ITEM_TYPES` / `ItemType` / `isItemType`）も丸ごと写してある** ——
+  閉じたリテラル union は「メンバの集合そのものが型」なので、mc-sim が使う 6 個だけを
+  写したミラーは *狭い別の型* になる。逆向き（mc-sim の都合で 1 個足す）はもっと悪く、
+  ローカルでは通り、ミラー削除の日に初めて壊れる。ロスタを増やすのは mc-kernel の
+  決定であってここの決定ではない（[`domain/recipe.ts`](./domain/recipe.ts) の表ヘッダ）。
+  **この手順は 1 度回った**: 足りない 8 個を値段つきで要求し、kernel が 7 個を
+  それぞれの kernel 側の理由（ドロップ規則・mob ドロップ・着火アイテム）とともに承認、
+  1 個（`crafting_table`）は却下。ロスタは 16 → 23 になり、削っていたレシピ 2 行が戻った
+  （[`docs/public-api.md`](./docs/public-api.md) §4.1-7、
+  [`docs/versioning.md`](./docs/versioning.md) §5-4）。
 
 ## ドキュメント
 

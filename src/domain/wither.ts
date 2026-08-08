@@ -1,4 +1,4 @@
-import type { Position } from '@nerima-games/mc-kernel'
+import type { Position } from './kernel-vocabulary'
 
 export const WITHER_MAX_HEALTH = 300
 export const WITHER_SPAWN_CHARGE_SECS = 10

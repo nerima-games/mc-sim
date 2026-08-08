@@ -1,7 +1,7 @@
 import { Effect } from 'effect'
 import { describe, expect, it } from 'vitest'
 import { makeVehicleService } from '../src/application/vehicle-service'
-import { position } from '@nerima-games/mc-kernel'
+import { position } from '../src/domain/kernel-vocabulary'
 import { OccupantId, VehicleId } from '../src/domain/vehicle'
 
 describe('VehicleService lifecycle', () => {

@@ -34,7 +34,7 @@ import {
 } from './style'
 import { MAX_FRAME_DELTA_SECS, MIN_FRAME_DELTA_SECS } from '../../src/domain/frame-timing'
 import { INVENTORY_SLOT_COUNT } from '../../src/domain/inventory'
-import { MAX_STACK_COUNT } from '@nerima-games/mc-kernel'
+import { MAX_STACK_COUNT } from '../../src/domain/kernel-vocabulary'
 import { MAX_RENDER_DISTANCE } from '../../src/domain/settings'
 import { MOON_PHASE_COUNT, TICKS_PER_SECOND } from '../../src/domain/time-of-day'
 import { EXHAUSTION_PER_POINT, FOOD_TICK_SECS } from '../../src/domain/vitals'

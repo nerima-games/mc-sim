@@ -7,7 +7,7 @@ import {
   type Inventory,
   type ItemStack,
 } from './inventory'
-import { isItemType, type ItemType } from '@nerima-games/mc-kernel'
+import { isItemType, type ItemType } from './kernel-vocabulary'
 
 export type SmeltingRecipe = {
   readonly id: string

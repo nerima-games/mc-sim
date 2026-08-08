@@ -1,5 +1,5 @@
 import { Brand } from 'effect'
-import type { Position } from '@nerima-games/mc-kernel'
+import type { Position } from './kernel-vocabulary'
 import type { Dimension } from './worldgen-vocabulary'
 
 export type VehicleId = string & Brand.Brand<'VehicleId'>
