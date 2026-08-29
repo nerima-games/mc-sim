@@ -1,12 +1,13 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Option } from 'effect'
 import {
-  launchArrow,
+  ARROW_PROFILE,
+  launchProjectile,
   raycastArrowBlock,
-  stepArrow,
-  type Arrow,
-  type ArrowLaunch,
+  stepProjectile,
+  type Projectile,
   type ProjectileHit,
+  type ProjectileLaunch,
   type ProjectileStep,
   type ProjectileWorld,
 } from '../src'
@@ -20,19 +21,19 @@ const world: ProjectileWorld = {
 
 describe('projectile facade', () => {
   it('publishes arrow physics values and types from mc-sim', () => {
-    const launch: ArrowLaunch = {
+    const launch: ProjectileLaunch = {
       pitchRadians: 0,
       position: { x: 0, y: 0, z: 0 },
       speed: 3,
       yawRadians: 0,
     }
-    const arrow: Arrow = launchArrow(launch)
-    const step: ProjectileStep = stepArrow(arrow, world, 0.05)
+    const arrow: Projectile = launchProjectile(launch)
+    const step: ProjectileStep = stepProjectile(arrow, 0.05, world, ARROW_PROFILE)
     const hit: ProjectileHit | undefined = step.hit
 
     expect(arrow.state).toBe('flying')
     expect(hit).toBeUndefined()
-    expect(step.arrow.state).toBe('flying')
+    expect(step.projectile.state).toBe('flying')
   })
 
   it('resolves the first blocking voxel on an arrow segment', () => {

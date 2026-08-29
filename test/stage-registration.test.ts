@@ -16,11 +16,11 @@
  */
 import { describe, expect, it } from '@effect/vitest'
 import {
+  FULL_BLOCK_SHAPE,
   PLAYER_HALF_HEIGHT,
   PLAYER_HALF_WIDTH,
   SLAB_SHAPE,
   TERMINAL_VELOCITY_Y,
-  vec3,
 } from '@nerima-games/mc-physics'
 import { Effect, Layer, Option, Ref } from 'effect'
 import { CropService, CropServiceLayer } from '../src/application/crop-service'
@@ -86,13 +86,19 @@ const FrozenClockLayer = FixedClockLayer({
   wallClockEpochMillis: EpochMillis(1_700_000_000_000),
 })
 
+// mc-physics 0.2.0 dropped `ResolveOptions.isBlockSolid` for `blockPropertiesAt`, and a
+// `blockShapeAt` no longer falls through to it when a cell's shape is `null` (it used to,
+// via `??`; see mc-physics CHANGELOG.md 0.2.0 patch notes). `blockPropertiesAt` is therefore
+// unreachable whenever `blockShapeAt` is supplied, so the fixture expresses solidity as a
+// full-cube shape and leaves `blockPropertiesAt` a dead stub for the type.
 const makePhysicsConfig = (
-  isBlockSolid: SimPhysicsConfig['resolve']['isBlockSolid'],
+  isBlockSolid: (bx: number, by: number, bz: number) => boolean,
 ): SimPhysicsConfig => ({
   resolve: {
     halfWidth: PLAYER_HALF_WIDTH,
     halfHeight: PLAYER_HALF_HEIGHT,
-    isBlockSolid,
+    blockPropertiesAt: () => null,
+    blockShapeAt: (bx, by, bz) => (isBlockSolid(bx, by, bz) ? FULL_BLOCK_SHAPE : null),
   },
   walkSpeed: 4,
   jumpSpeed: 7,
@@ -238,7 +244,7 @@ describe('the stage works through the services, and keeps no copy of what they o
       expect(yield* Ref.get(state.resolvedFeetPosition)).toStrictEqual(Option.none())
       expect(yield* Ref.get(state.movementIntent)).toStrictEqual({ forward: 0, strafe: 0 })
       expect(yield* Ref.get(state.jumpIntent)).toBe(false)
-      expect(yield* Ref.get(state.velocity)).toStrictEqual(vec3(0, 0, 0))
+      expect(yield* Ref.get(state.velocity)).toStrictEqual(position(0, 0, 0))
       expect(yield* Ref.get(state.isGrounded)).toBe(false)
       expect(yield* Ref.get(state.accumulatedFallDistance)).toBe(0)
       expect(yield* Ref.get(state.landingImpact)).toStrictEqual(Option.none())
@@ -305,7 +311,7 @@ describe('the stage works through the services, and keeps no copy of what they o
       yield* Ref.set(first.resolvedFeetPosition, Option.some(position(1, 2, 3)))
       yield* Ref.set(first.movementIntent, { forward: 1, strafe: -1 })
       yield* Ref.set(first.jumpIntent, true)
-      yield* Ref.set(first.velocity, vec3(4, 5, 6))
+      yield* Ref.set(first.velocity, position(4, 5, 6))
       yield* Ref.set(first.isGrounded, true)
       yield* Ref.set(first.accumulatedFallDistance, 7)
       yield* Ref.set(
@@ -317,7 +323,7 @@ describe('the stage works through the services, and keeps no copy of what they o
       expect(yield* Ref.get(second.resolvedFeetPosition)).toStrictEqual(Option.none())
       expect(yield* Ref.get(second.movementIntent)).toStrictEqual({ forward: 0, strafe: 0 })
       expect(yield* Ref.get(second.jumpIntent)).toBe(false)
-      expect(yield* Ref.get(second.velocity)).toStrictEqual(vec3(0, 0, 0))
+      expect(yield* Ref.get(second.velocity)).toStrictEqual(position(0, 0, 0))
       expect(yield* Ref.get(second.isGrounded)).toBe(false)
       expect(yield* Ref.get(second.accumulatedFallDistance)).toBe(0)
       expect(yield* Ref.get(second.landingImpact)).toStrictEqual(Option.none())
@@ -360,13 +366,13 @@ describe('the physical simulation path is opt-in and player pose remains authori
       yield* Ref.set(state.resolvedFeetPosition, Option.some(target))
       yield* Ref.set(state.movementIntent, { forward: 1, strafe: 1 })
       yield* Ref.set(state.jumpIntent, true)
-      yield* Ref.set(state.velocity, vec3(1, 2, 3))
+      yield* Ref.set(state.velocity, position(1, 2, 3))
       yield* Ref.set(state.isGrounded, true)
       yield* stages[0]?.run(DeltaTimeSecs(0.25)) ?? Effect.void
 
       expect((yield* player.pose).feetPosition).toStrictEqual(target)
       expect(yield* Ref.get(state.resolvedFeetPosition)).toStrictEqual(Option.none())
-      expect(yield* Ref.get(state.velocity)).toStrictEqual(vec3(1, 2, 3))
+      expect(yield* Ref.get(state.velocity)).toStrictEqual(position(1, 2, 3))
       expect(yield* Ref.get(state.isGrounded)).toBe(true)
     }).pipe(Effect.provide(SimulationLayer), Effect.provide(FrozenClockLayer)),
   )
@@ -411,7 +417,7 @@ describe('the physical simulation path is opt-in and player pose remains authori
     Effect.gen(function* () {
       const { state, stages } = yield* makeControllableSimStagesWithPhysics(AirPhysicsConfig)
       yield* Ref.set(state.jumpIntent, true)
-      yield* Ref.set(state.velocity, vec3(0, -1, 0))
+      yield* Ref.set(state.velocity, position(0, -1, 0))
 
       yield* stages[0]?.run(DeltaTimeSecs(0.1)) ?? Effect.void
 
@@ -457,7 +463,7 @@ describe('the physical simulation path is opt-in and player pose remains authori
       const player = yield* PlayerService
       const { state, stages } = yield* makeControllableSimStagesWithPhysics(FloorPhysicsConfig)
       yield* player.moveTo(position(0, 0.2, 0))
-      yield* Ref.set(state.velocity, vec3(0, -5, 0))
+      yield* Ref.set(state.velocity, position(0, -5, 0))
 
       yield* stages[0]?.run(DeltaTimeSecs(0.05)) ?? Effect.void
 
@@ -502,7 +508,7 @@ describe('the physical simulation path is opt-in and player pose remains authori
   it.effect('does not count upward movement as fall distance', () =>
     Effect.gen(function* () {
       const { state, stages } = yield* makeControllableSimStagesWithPhysics(AirPhysicsConfig)
-      yield* Ref.set(state.velocity, vec3(0, 3, 0))
+      yield* Ref.set(state.velocity, position(0, 3, 0))
 
       yield* stages[0]?.run(DeltaTimeSecs(0.1)) ?? Effect.void
 
@@ -519,11 +525,18 @@ describe('the physical simulation path is opt-in and player pose remains authori
       expect(yield* Ref.get(stationary.state.landingImpact)).toStrictEqual(Option.none())
 
       const isSlab = (bx: number, by: number): boolean => bx === 1 && by === 0
+      // `blockShapeAt` fully governs a cell once supplied (mc-physics 0.2.0 no longer
+      // falls through to `blockPropertiesAt` on a `null` shape), so the floor at
+      // `by === -1` has to be restated here rather than inherited from the spread.
       const stepConfig: SimPhysicsConfig = {
         ...makePhysicsConfig((_bx, by) => by === -1),
         resolve: {
           ...makePhysicsConfig((_bx, by) => by === -1).resolve,
-          blockShapeAt: (bx, by) => (isSlab(bx, by) ? SLAB_SHAPE : null),
+          blockShapeAt: (bx, by) => {
+            if (isSlab(bx, by)) return SLAB_SHAPE
+            if (by === -1) return FULL_BLOCK_SHAPE
+            return null
+          },
           stepHeight: 0.6,
         },
       }
@@ -560,7 +573,7 @@ describe('the physical simulation path is opt-in and player pose remains authori
     Effect.gen(function* () {
       const { state, stages } = yield* makeControllableSimStagesWithPhysics(AirPhysicsConfig)
       const physics = stages[0]
-      yield* Ref.set(state.velocity, vec3(0, 3, 0))
+      yield* Ref.set(state.velocity, position(0, 3, 0))
 
       yield* physics?.run(DeltaTimeSecs(0.1)) ?? Effect.void
       const first = yield* Ref.get(state.velocity)

@@ -93,14 +93,14 @@ import {
   FootY,
   PLAYER_HALF_HEIGHT,
   PLAYER_HALF_WIDTH,
+  advanceFallTracking,
   centreOfFoot,
   footOfCentre,
   integrateBody,
   resolveBody,
-  vec3,
   type Body,
+  type FallTrackingState,
   type ResolveOptions,
-  type Vec3,
 } from '@nerima-games/mc-physics'
 import { InventoryService, InventoryServiceLayer } from '../application/inventory-service'
 import { CropService, CropServiceLayer, type CropServiceApi } from '../application/crop-service'
@@ -150,7 +150,7 @@ export type SimFrameState = {
   readonly resolvedFeetPosition: Ref.Ref<Option.Option<Position>>
   readonly movementIntent: Ref.Ref<MovementIntent>
   readonly jumpIntent: Ref.Ref<boolean>
-  readonly velocity: Ref.Ref<Vec3>
+  readonly velocity: Ref.Ref<Position>
   readonly isGrounded: Ref.Ref<boolean>
   readonly accumulatedFallDistance: Ref.Ref<number>
   readonly landingImpact: Ref.Ref<Option.Option<LandingImpact>>
@@ -187,7 +187,7 @@ export const makeSimFrameState: Effect.Effect<SimFrameState> = Effect.all({
   resolvedFeetPosition: Ref.make(Option.none<Position>()),
   movementIntent: Ref.make<MovementIntent>({ forward: 0, strafe: 0 }),
   jumpIntent: Ref.make(false),
-  velocity: Ref.make<Vec3>(vec3(0, 0, 0)),
+  velocity: Ref.make<Position>(position(0, 0, 0)),
   isGrounded: Ref.make(false),
   accumulatedFallDistance: Ref.make(0),
   landingImpact: Ref.make(Option.none<LandingImpact>()),
@@ -310,26 +310,21 @@ export const simStages = (
         }
         const integrated = integrateBody(body, dt)
         const resolvedBody = resolveBody(integrated, dt, resolveOptions)
-        const downwardDistance = Math.max(0, body.y - resolvedBody.body.y)
-        const priorFallDistance = wasGrounded
-          ? 0
-          : yield* Ref.get(state.accumulatedFallDistance)
-        const fallDistance = integrated.vy < 0 ? priorFallDistance + downwardDistance : 0
-
-        if (!wasGrounded && resolvedBody.isGrounded && fallDistance > 0 && integrated.vy < 0) {
-          yield* Ref.set(
-            state.landingImpact,
-            Option.some({ fallDistance, impactVelocityY: integrated.vy }),
-          )
+        const priorAccumulatedFallDistance = yield* Ref.get(state.accumulatedFallDistance)
+        const fallTrackingBefore: FallTrackingState = {
+          accumulatedFallDistance: priorAccumulatedFallDistance,
+          isGrounded: wasGrounded,
         }
-        yield* Ref.set(
-          state.accumulatedFallDistance,
-          resolvedBody.isGrounded || integrated.vy >= 0 ? 0 : fallDistance,
-        )
+        const fallTracking = advanceFallTracking(fallTrackingBefore, body, integrated, resolvedBody)
+
+        if (fallTracking.landingImpact !== null) {
+          yield* Ref.set(state.landingImpact, Option.some(fallTracking.landingImpact))
+        }
+        yield* Ref.set(state.accumulatedFallDistance, fallTracking.state.accumulatedFallDistance)
 
         yield* Ref.set(
           state.velocity,
-          vec3(resolvedBody.body.vx, resolvedBody.body.vy, resolvedBody.body.vz),
+          position(resolvedBody.body.vx, resolvedBody.body.vy, resolvedBody.body.vz),
         )
         yield* Ref.set(state.isGrounded, resolvedBody.isGrounded)
         yield* player.moveTo(

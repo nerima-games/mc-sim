@@ -2,9 +2,10 @@
  * REGRESSION: the delta-time clamp is exactly
  * `Math.min(Math.max(0.001, raw), 0.05)`.
  *
- * Verified against the reference at
- * ts-minecraft/packages/game/application/game-loop.ts:119, with the first-frame
- * value at ts-minecraft/packages/core/domain/constants.ts:9.
+ * `domain/frame-timing.ts` now forwards these three numbers and the clamp
+ * function from `@nerima-games/mc-physics` rather than hand-copying them, so
+ * this pins the CONSUMED values rather than a reimplementation — it fails if
+ * the physics dependency ever ships a different clamp.
  *
  * The bounds are asserted as literals, not as arithmetic on the constants,
  * because the point is that these three numbers were measured rather than

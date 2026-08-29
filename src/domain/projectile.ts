@@ -3,11 +3,20 @@ import { Option } from 'effect'
 import type { Position } from '@nerima-games/mc-kernel'
 
 /** Projectile physics exposed through the simulation package's public API. */
-export { launchArrow, stepArrow } from '@nerima-games/mc-physics'
+export {
+  ARROW_PROFILE,
+  EGG_PROFILE,
+  launchProjectile,
+  SNOWBALL_PROFILE,
+  stepProjectile,
+  TRIDENT_PROFILE,
+} from '@nerima-games/mc-physics'
 export type {
-  Arrow,
-  ArrowLaunch,
+  Projectile,
+  ProjectileEntity,
   ProjectileHit,
+  ProjectileLaunch,
+  ProjectileProfile,
   ProjectileStep,
   ProjectileWorld,
 } from '@nerima-games/mc-physics'

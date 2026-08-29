@@ -1,4 +1,3 @@
-import { Effect } from 'effect'
 import { describe, expect, it, vi } from '@effect/vitest'
 import {
   applyExplosionPlan,
@@ -168,13 +167,11 @@ describe('planExplosion', () => {
     expect(plan.entityEffects[0]?.knockback).toStrictEqual({ x: 0, y: 0, z: 0 })
   })
 
-  it.effect('hands one immutable mutation to the host transaction', () =>
-    Effect.gen(function* () {
-      const plan = planExplosion({ center: position(0.5, 0.5, 0.5), radius: 2, seed: 6, blocks: world([['0,0,0', 0]]), entities: [] })
-      const commit = vi.fn(() => Effect.void)
-      yield* applyExplosionPlan(plan, commit)
-      expect(commit).toHaveBeenCalledOnce()
-      expect(commit).toHaveBeenCalledWith({ destroyedBlocks: plan.destroyedBlocks, entityEffects: plan.entityEffects })
-    }),
-  )
+  it('hands one immutable mutation to the host transaction', () => {
+    const plan = planExplosion({ center: position(0.5, 0.5, 0.5), radius: 2, seed: 6, blocks: world([['0,0,0', 0]]), entities: [] })
+    const commit = vi.fn()
+    applyExplosionPlan(plan, commit)
+    expect(commit).toHaveBeenCalledOnce()
+    expect(commit).toHaveBeenCalledWith({ destroyedBlocks: plan.destroyedBlocks, entityEffects: plan.entityEffects })
+  })
 })

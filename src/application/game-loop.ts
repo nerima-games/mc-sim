@@ -79,7 +79,8 @@
  * design and now says how much: `secondsLostToClamp`.
  */
 import { Cause, Context, Effect, Fiber, Layer, Option, Queue, Ref } from 'effect'
-import { frameDeltaBetween, frameDeltaLossBetween } from '../domain/frame-timing'
+import { frameDeltaLossBetween } from '../domain/frame-timing'
+import { deltaTimeBetween as frameDeltaBetween } from '@nerima-games/mc-physics'
 import type { DeltaTimeSecs, MonotonicTimeSecs } from "@nerima-games/mc-kernel"
 
 /**

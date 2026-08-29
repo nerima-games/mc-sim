@@ -1,4 +1,3 @@
-import { Effect } from 'effect'
 import { describe, expect, it, vi } from '@effect/vitest'
 import { position } from '@nerima-games/mc-kernel'
 import {
@@ -24,11 +23,11 @@ describe('primed TNT', () => {
     const plan = planPrimedTnt(request(primeTnt(4), 1.5))
 
     expect(plan).toMatchObject({
-      after: { _tag: 'Primed', remainingFuseSecs: 2.5 },
+      after: { kind: 'primed', remainingFuseSecs: 2.5 },
       advancedSecs: 1.5,
       deferredSecs: 0,
-      explosion: undefined,
     })
+    expect(plan.explosion).toBeUndefined()
   })
 
   it('detonates once and reuses the deterministic bounded explosion planner', () => {
@@ -38,17 +37,17 @@ describe('primed TNT', () => {
     })
     const terminal = planPrimedTnt(request(first.after, 4))
 
-    expect(first.after).toStrictEqual({ _tag: 'Detonated' })
+    expect(first.after).toStrictEqual({ kind: 'detonated' })
     expect(first.explosion).toMatchObject({
       seed: 17,
       visitedBlocks: 3,
       truncated: true,
     })
     expect(terminal).toMatchObject({
-      after: { _tag: 'Detonated' },
+      after: { kind: 'detonated' },
       advancedSecs: 0,
-      explosion: undefined,
     })
+    expect(terminal.explosion).toBeUndefined()
   })
 
   it('does not cross an unloaded cell while planning the TNT blast', () => {
@@ -66,51 +65,47 @@ describe('primed TNT', () => {
   })
 
   it('clamps a non-finite fuse duration to zero', () => {
-    expect(primeTnt(NaN)).toStrictEqual({ _tag: 'Primed', remainingFuseSecs: 0 })
+    expect(primeTnt(NaN)).toStrictEqual({ kind: 'primed', remainingFuseSecs: 0 })
   })
 
   it('caps oversized frame work and reports time that must be retried', () => {
     const plan = planPrimedTnt(request(primeTnt(30), 25))
 
     expect(plan).toMatchObject({
-      after: { _tag: 'Primed', remainingFuseSecs: 20 },
+      after: { kind: 'primed', remainingFuseSecs: 20 },
       advancedSecs: MAX_TNT_FUSE_ADVANCE_SECS,
       deferredSecs: 15,
     })
   })
 
-  it.effect('commits fuse and blast as one host-owned mutation', () =>
-    Effect.gen(function* () {
-      const plan = planPrimedTnt(request())
-      const commit = vi.fn(() => Effect.void)
+  it('commits fuse and blast as one host-owned mutation', () => {
+    const plan = planPrimedTnt(request())
+    const commit = vi.fn()
 
-      yield* applyPrimedTntPlan(plan, commit)
+    applyPrimedTntPlan(plan, commit)
 
-      expect(commit).toHaveBeenCalledOnce()
-      expect(commit).toHaveBeenCalledWith({
-        expected: plan.before,
-        next: plan.after,
-        explosion: {
-          destroyedBlocks: plan.explosion?.destroyedBlocks,
-          entityEffects: plan.explosion?.entityEffects,
-        },
-      })
-    }),
-  )
+    expect(commit).toHaveBeenCalledOnce()
+    expect(commit).toHaveBeenCalledWith({
+      expected: plan.before,
+      next: plan.after,
+      explosion: {
+        destroyedBlocks: plan.explosion?.destroyedBlocks,
+        entityEffects: plan.explosion?.entityEffects,
+      },
+    })
+  })
 
-  it.effect('commits an undefined explosion payload while the fuse is still counting down', () =>
-    Effect.gen(function* () {
-      const plan = planPrimedTnt(request(primeTnt(4), 1))
-      const commit = vi.fn(() => Effect.void)
+  it('commits an undefined explosion payload while the fuse is still counting down', () => {
+    const plan = planPrimedTnt(request(primeTnt(4), 1))
+    const commit = vi.fn()
 
-      yield* applyPrimedTntPlan(plan, commit)
+    applyPrimedTntPlan(plan, commit)
 
-      expect(plan.explosion).toBeUndefined()
-      expect(commit).toHaveBeenCalledWith({
-        expected: plan.before,
-        next: plan.after,
-        explosion: undefined,
-      })
-    }),
-  )
+    expect(plan.explosion).toBeUndefined()
+    expect(commit).toHaveBeenCalledWith({
+      expected: plan.before,
+      next: plan.after,
+      explosion: undefined,
+    })
+  })
 })
