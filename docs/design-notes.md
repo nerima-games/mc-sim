@@ -183,6 +183,23 @@ packages/game/application/game-state-service.ts:87-92   （同種の reset）
 
 ## DN-03 deltaTime クランプは `min(max(0.001, raw), 0.05)`
 
+### 現状（mc-physics 0.2.0 以降）—— 手動同期義務は解消された
+
+以前このセクションは「plan.md は §3.4（mc-physics）でも同じ制約を挙げている。**両リポジトリで
+同値を維持すること。**」と、mc-sim と mc-physics それぞれが持つ 3 定数とクランプ式を手作業で
+同値に保つ義務を課していた。**mc-physics 0.2.0 でこの義務は解消した。**
+`domain/frame-timing.ts` の `MIN_FRAME_DELTA_SECS` / `MAX_FRAME_DELTA_SECS` /
+`FIRST_FRAME_DELTA_SECS` は `@nerima-games/mc-physics` の `MIN_DELTA_SECS` /
+`MAX_DELTA_SECS` / `FIRST_FRAME_DELTA_SECS` を forward するだけの定数になり、
+`clampFrameDelta` / `frameDeltaBetween` も physics の `clampDeltaTime` / `deltaTimeBetween`
+そのものである（`application/game-loop.ts` は `deltaTimeBetween` を physics から直接 import する）。
+値を 2 箇所で手入力する経路が無くなったので、「ずれる」という失敗モードそのものが消えた。
+`test/frame-timing.test.ts` の意味も変わっている —— 独自実装を参照実装と突き合わせる回帰テストから、
+**physics から実際に消費している値を固定する**テストに変わった（physics が値を変えれば赤くなる）。
+
+以下は独自実装だった当時の証跡と設計判断であり、**なぜこの 3 つの値と式なのか**という理由は
+forward 後も変わらず有効なので、教訓として残す。
+
 ### 参照実装の証跡
 
 ```
@@ -196,8 +213,9 @@ packages/core/domain/constants.ts:9
   export const FIRST_FRAME_DELTA_SECS: DeltaTimeSecs = DeltaTimeSecs.make(0.016)
 ```
 
-plan.md は §3.4（mc-physics）でも同じ制約を挙げている。**両リポジトリで同値を維持すること。**
-ずれると「クランプしたつもりが片方だけ」になり、症状が物理側にだけ出る。
+plan.md は §3.4（mc-physics）でも同じ制約を挙げている。**当時はこの一致を手作業で維持する必要があった**
+——ずれると「クランプしたつもりが片方だけ」になり、症状が物理側にだけ出る。上の「現状」節が書いている通り、
+mc-physics 0.2.0 以降は mc-sim 側が forward するだけになったため、この手動同期義務そのものが無い。
 
 ### 各境界の理由
 

@@ -13,17 +13,20 @@
 | 依存先 | 何をもらうか |
 | --- | --- |
 | `mc-kernel` | 共有語彙。どのリポジトリからも import 可（許可リストに書かずに import できる） |
-| `mc-physics` | `integrateBody(state, dt)` / `resolveBody(state, dt, options)`、AABB クエリ、voxel-DDA |
+| `mc-physics` | `integrateBody(state, dt)` / `resolveBody(state, dt, options)`、AABB クエリ、voxel-DDA、`advanceFallTracking`。加えて mc-kernel 実装への re-export として爆発計画（`planExplosion` / `applyExplosionPlan`）、Primed TNT（`planPrimedTnt` / `applyPrimedTntPlan` / `primeTnt`）、汎用 projectile（`launchProjectile` / `stepProjectile` とプロファイル群）、frame-timing クランプ（`clampDeltaTime` / `deltaTimeBetween`） |
 | `mc-save` | `defineFormat` / `StoragePort`。mc-sim は自分のフォーマットを定義する側 |
 | `mc-worldgen` | `generateChunk` / `BiomeService` / `ChunkStore`（ブロックの読み書きとダーティ購読） |
 
 `mc-noise` は **import できない**（`mc-worldgen` 経由の推移依存に過ぎないため）。
 `mc-render` は下流なので当然依存しない。`mc-playground-kit` には実行時にも devDependency にも依存しない。
 
-現在は `@nerima-games/mc-kernel@0.4.0`、`@nerima-games/mc-physics@0.1.7`、
+現在は `@nerima-games/mc-kernel@0.5.0`、`@nerima-games/mc-physics@0.2.0`、
 `@nerima-games/mc-save@0.2.2`、`@nerima-games/mc-worldgen@0.1.14`、`effect` を
 直接依存として宣言している。mc-kernel と mc-worldgen の語彙はローカルに複製せず、
-各パッケージの公開 API を直接 import する。
+各パッケージの公開 API を直接 import する。mc-physics 0.2.0 以降、爆発・Primed TNT・
+frame-timing クランプの独自実装（xorshift ベースの破壊パターン、手動同期していた定数）は
+廃止し、physics（= kernel）実装への named re-export に置き換えた。詳細は
+[`docs/design-notes.md`](./docs/design-notes.md) DN-03 と [`docs/public-api.md`](./docs/public-api.md) §8。
 
 ## このリポジトリの位置づけ
 
@@ -110,8 +113,8 @@ Nix を使わない場合は Node.js 24 以上と pnpm 11（`corepack` 推奨）
 | レシピ表とクラフトの原子性 | `domain/recipe-data.ts` / `domain/recipe.ts` / `domain/crafting.ts` | DN-07 / DN-11 |
 | 次元・ブロック座標ごとの作物状態 | `domain/crop.ts` / `application/crop-service.ts` | JSON-safe snapshot と deterministic tick |
 | **エンティティ台帳（`EntityManager`）** | `domain/entity.ts` / `application/entity-manager.ts` | DN-07 / DN-09 / DN-11。[公開API §7](./docs/public-api.md) |
-| **爆発計画** | `domain/explosion.ts` | seed・遮蔽・耐性・距離減衰を純粋計算し、全変更をホストの単一 transaction へ渡す。[公開API §8](./docs/public-api.md) |
-| **TNT fuse 統合** | `domain/primed-tnt.ts` | fuse snapshot を最大 10 秒ずつ純粋に進め、detonation と爆発 mutation をホストの単一 transaction へ渡す。[公開API §8.1](./docs/public-api.md) |
+| **爆発計画** | `domain/explosion.ts`（mc-physics 0.2.0 = mc-kernel 実装への re-export） | seed・遮蔽・耐性・距離減衰を純粋計算し、全変更を同期の `commit` コールバックへ 1 回だけ渡す。[公開API §8](./docs/public-api.md) |
+| **TNT fuse 統合** | `domain/primed-tnt.ts`（同上） | fuse snapshot を最大 10 秒ずつ純粋に進め、`PrimedTntState` は `kind: 'primed' \| 'detonated'` で判別する。detonation と爆発 mutation を同期の `commit` コールバックへ 1 回だけ渡す。[公開API §8.1](./docs/public-api.md) |
 | **`sim:physics` の登録と着地衝撃通知** | `stages/registration.ts` / `stages/stage-ids.ts` | [責務 §2.1](./docs/responsibility.md) / [公開API §4.2](./docs/public-api.md) |
 
 `sim:physics` は**ロスターのリポジトリ間順序エッジ 4 本すべての宛先**であり、

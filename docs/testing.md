@@ -56,7 +56,8 @@ pnpm preview -- --stats
 - `mc-kernel` は `ItemType`、ブロック、時計、金床などを所有する。
 - `mc-worldgen` はワールド生成の型を所有する。
 - `mc-save` は保存フォーマットとストレージ境界を所有する。
-- `mc-physics` は物理の型と計算を所有する。
+- `mc-physics` は物理の型と計算を所有する。爆発・Primed TNT・projectile・frame-timing クランプの
+  計算そのもの（mc-physics 0.2.0 = mc-kernel 実装）もここに含み、mc-sim は re-export するだけである。
 
 これらの語彙を `src/domain` に複製したミラーは存在しない。`ClockPort` は mc-kernel から
 直接 import し、Effect の `Clock` はサービス層で注入する。シミュレーションのコードは

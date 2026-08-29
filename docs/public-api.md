@@ -632,7 +632,9 @@ shapeless、shaped の平行移動・左右鏡像・穴のあるパターン、3
 ## 4.2 着地衝撃通知
 
 `sim:physics` は mc-physics の積分と衝突解決を順に呼び、その境界でのみ分かる
-「空中から接地へ遷移した瞬間」を 1 フレームの値として公開する。
+「空中から接地へ遷移した瞬間」を 1 フレームの値として公開する。落下距離の追跡自体は
+mc-physics 0.2.0 の `advanceFallTracking` / `FallTrackingState` に委譲しており（旧: `stages/registration.ts`
+内のインライン計算）、下記の公開契約（`LandingImpact` の形と `Some`/`None` の遷移条件）は変わっていない。
 
 ```typescript
 type LandingImpact = {
@@ -986,6 +988,22 @@ mc-sim と一緒に到着する」と書いているものが `countOfKind` で�
 
 ## 8. 爆発計画
 
+**mc-physics 0.2.0（mc-kernel 0.5.0）採用に伴う破壊的変更。** `domain/explosion.ts` /
+`domain/primed-tnt.ts` は独自実装（xorshift ベースの破壊ハッシュ）を廃止し、
+`@nerima-games/mc-physics`（= mc-kernel 実装）への named re-export に置き換わった。
+本節は**この新 API を現状として**記述する。旧実装からの非互換点:
+
+- **同一 seed の破壊パターンが変わる**(旧 xorshift ハッシュ → kernel の `Math.sin` ベースの
+  ハッシュ)。保存済み seed をリプレイして同一の破壊結果を期待するホスト・fixture は影響を受ける。
+- `planExplosion` / `applyExplosionPlan` のジェネリック `<S>`（`ExplosionRequest<S>` /
+  `ExplosionCommit<E, R>` 込み）が消え、非ジェネリックになった。
+- `applyExplosionPlan` / `applyPrimedTntPlan` の `commit` は
+  `Effect.Effect<void, E, R>` を返す契約から `void` を返す**同期関数**に変わった。
+  host はもう `yield*` せず、`Ref.modify` などの中で `commit` を直接呼ぶ。
+- `PrimedTntState` の判別フィールドは `_tag: 'Primed' | 'Detonated'` から
+  `kind: 'primed' | 'detonated'` に変わった（下記 §8.1）。
+- `primeTnt` の `fuseSecs` は必須引数から省略可能引数になった（下記 §8.1）。
+
 `domain/explosion.ts` は、爆発の発生条件やブロック種別ごとのゲームルールを持たず、
 与えられた読み取り面から破壊対象・エンティティへのダメージ・ノックバックを計画する。
 
@@ -994,16 +1012,14 @@ type ExplosionBlockReader = (
   position: ExplosionBlockPosition,
 ) => ExplosionBlock | undefined
 
-declare const planExplosion: <S>(request: ExplosionRequest<S>) => ExplosionPlan
+declare const planExplosion: (request: ExplosionRequest) => ExplosionPlan
 
-type ExplosionCommit<E, R> = (
-  mutation: ExplosionMutation,
-) => Effect.Effect<void, E, R>
+type ExplosionCommit = (mutation: ExplosionMutation) => void
 
-declare const applyExplosionPlan: <E, R>(
+declare const applyExplosionPlan: (
   plan: ExplosionPlan,
-  commit: ExplosionCommit<E, R>,
-) => Effect.Effect<void, E, R>
+  commit: ExplosionCommit,
+) => void
 ```
 
 `planExplosion` は純粋関数である。同じ seed・snapshot・入力には同じ結果を返し、距離減衰、
@@ -1014,16 +1030,116 @@ declare const applyExplosionPlan: <E, R>(
 上限に達した計画は `truncated: true` を返すため、ホストは適用・延期・破棄を明示的に選べる。
 
 計画と適用は分離されている。`applyExplosionPlan` は完成済みの `ExplosionMutation` を
-`commit` に **1 回だけ**渡し、`ChunkStore` や entity roster を個別には変更しない。
-したがって原子性とロールバックは具体的な保存先を所有するホスト transaction の責務であり、
-失敗と依存は `Effect` の `E` / `R` に型付きで残る。
+`commit` に **1 回だけ、同期的に**渡し、`ChunkStore` や entity roster を個別には変更しない。
+原子性とロールバックは具体的な保存先を所有するホストの責務であり、host は自分の
+`Ref.modify` や Effect の中から `commit` を直接呼ぶ（`Effect` の `E` / `R` はもう関与しない）。
 
 ### 8.1 Primed TNT
 
-`domain/primed-tnt.ts` は host 所有の fuse snapshot を 1 要求あたり最大 10 秒だけ進める。
-`planPrimedTnt` は fuse が尽きた呼び出しでだけ既存の `planExplosion` を呼び、終端状態への
-再入力から二度目の爆発を生成しない。上限を超えた時間は `deferredSecs` として返す。
+`domain/primed-tnt.ts` も同じく `@nerima-games/mc-physics`（= mc-kernel）への re-export である。
+host 所有の fuse snapshot を 1 要求あたり最大 `MAX_TNT_FUSE_ADVANCE_SECS`（10）秒だけ進める。
 
-`applyPrimedTntPlan` は `expected` snapshot、次の fuse 状態、任意の爆発 mutation を一つに束ね、
-host transaction を 1 回だけ呼ぶ。host は同じ transaction 内で `expected` を比較してから、
+```typescript
+type PrimedTntState =
+  | { readonly kind: 'primed'; readonly remainingFuseSecs: number }
+  | { readonly kind: 'detonated' }
+
+declare const DEFAULT_TNT_FUSE_SECS = 4
+
+declare const primeTnt: (fuseSecs?: number) => PrimedTntState
+
+declare const planPrimedTnt: (request: PrimedTntRequest) => PrimedTntPlan
+
+type PrimedTntCommit = (mutation: PrimedTntMutation) => void
+
+declare const applyPrimedTntPlan: (
+  plan: PrimedTntPlan,
+  commit: PrimedTntCommit,
+) => void
+```
+
+`primeTnt` の `fuseSecs` は省略可能で、省略時は `DEFAULT_TNT_FUSE_SECS`（4 秒）。非有限な値は
+0 に丸める（`Number.isFinite` で弾き、負値は 0 にクランプ）。
+
+`planPrimedTnt` は fuse が尽きた呼び出しでだけ既存の `planExplosion` を呼び、終端状態
+（`kind: 'detonated'`）への再入力から二度目の爆発を生成しない。上限を超えた時間は
+`deferredSecs` として返す。
+
+`applyPrimedTntPlan` は `expected` snapshot、次の fuse 状態、任意の爆発 mutation を
+一つの `PrimedTntMutation` に束ね、`commit` を **1 回だけ、同期的に**呼ぶ。`explosion`
+フィールドは、その呼び出しで実際に起爆した（`plan.explosion` が存在する）ときだけ含まれる。
+host は同じ更新単位（`Ref.modify` など）の中で `expected` を比較してから、
 TNT entity の更新または除去と block/entity effects を一括適用する。
+
+## 9. Projectile
+
+**破壊的変更。** `domain/projectile.ts` は矢専用だった API（`launchArrow` / `stepArrow` /
+`Arrow` / `ArrowLaunch`）を撤去し、`@nerima-games/mc-physics` の汎用 projectile エンジンへの
+re-export に置き換わった。旧シグネチャは存在しないため、呼び出し側はコンパイルエラーになる。
+
+| 旧（撤去） | 新 |
+| --- | --- |
+| `launchArrow(launch)` | `launchProjectile(launch)` |
+| `stepArrow(state, dt, world)` | `stepProjectile(state, dt, world, ARROW_PROFILE)` |
+| `Arrow` | `Projectile` |
+| `ArrowLaunch` | `ProjectileLaunch` |
+| `ProjectileStep.arrow` | `ProjectileStep.projectile`（フィールド名も変更） |
+
+```typescript
+type ProjectileProfile = {
+  readonly gravity: number
+  readonly airDrag: number
+  readonly waterDrag: number
+  readonly maxLifetimeSeconds: number
+  readonly shooterGraceSeconds: number
+}
+
+declare const ARROW_PROFILE: ProjectileProfile
+declare const SNOWBALL_PROFILE: ProjectileProfile
+declare const EGG_PROFILE: ProjectileProfile
+declare const TRIDENT_PROFILE: ProjectileProfile
+
+type ProjectileLaunch = {
+  readonly position: Position
+  readonly yawRadians: number
+  readonly pitchRadians: number
+  readonly speed: number
+  readonly shooterId?: string
+}
+
+type Projectile =
+  | { readonly position: Position; readonly velocity: Position; readonly ageSeconds: number; readonly shooterId?: string; readonly state: 'flying' }
+  | { /* 同上のフィールド */ readonly state: 'stuck'; readonly hit: ProjectileHit; readonly recoverable: boolean }
+  | { /* 同上のフィールド */ readonly state: 'despawned'; readonly reason: 'invalid' | 'lifetime' | 'world' | 'entity-hit' }
+
+type ProjectileStep = { readonly projectile: Projectile; readonly hit?: ProjectileHit }
+
+declare const launchProjectile: (launch: ProjectileLaunch) => Projectile
+declare const stepProjectile: (
+  state: Projectile,
+  dt: number,
+  world: ProjectileWorld,
+  profile: ProjectileProfile,
+) => ProjectileStep
+```
+
+`launchProjectile` の運動学はプロファイルに依存しない —— 初速は yaw/pitch/speed だけから決まる。
+プロファイル（重力・空気抵抗・水中抵抗・最大寿命・射手の無敵猶予）は `stepProjectile` の呼び出しごとに
+渡すので、同じ関数で矢・雪玉・卵・トライデントを表現できる。`ARROW_PROFILE` は
+`@nerima-games/mc-kernel` の `ARROW_GRAVITY` / `ARROW_AIR_DRAG` / `ARROW_WATER_DRAG` /
+`ARROW_MAX_LIFETIME_SECONDS` / `ARROW_SHOOTER_GRACE_SECONDS` とビット単位で一致することを
+`test/projectile.test.ts` が固定する。
+
+`domain/projectile.ts` はこれとは別に、mc-sim 自身が持つ `raycastArrowBlock` を今回の
+移行でも変えずに提供する。DDA の詳細を隠して、始点・終点・「このブロックは遮蔽するか」の
+述語から最初の遮蔽ボクセルを解決するユーティリティである。
+
+```typescript
+type ArrowBlockImpact = { readonly distance: number; readonly point: Position }
+type IsArrowBlocker = (x: number, y: number, z: number) => boolean
+declare const raycastArrowBlock: (
+  from: Position,
+  to: Position,
+  isBlocking: IsArrowBlocker,
+) => Option.Option<ArrowBlockImpact>
+```

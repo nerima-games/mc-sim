@@ -24,7 +24,7 @@ plan.md §2.3-1 の分類でいう **名詞**。
 | 実績 / 統計 | **記録**（画面は mx-ui） | 実装済 `domain/statistics.ts` / `application/statistics-service.ts`。セーブは `SimulationSave` v2。§3.5 |
 | 時間 | `TimeService`。tick カウンタ、昼夜、月齢 | 実装済 `application/time-service.ts` |
 | 作物 | `CropService`。次元 + `BlockPosition` ごとの植栽・成長・除去状態 | 実装済 `domain/crop.ts` / `application/crop-service.ts` |
-| 爆発計画 | seed・距離減衰・耐性・遮蔽から破壊対象と entity effect を純粋計算する。具体的な変更はホスト transaction が一括適用 | 実装済 `domain/explosion.ts`。公開 API §8 |
+| 爆発計画 | seed・距離減衰・耐性・遮蔽から破壊対象と entity effect を純粋計算する。具体的な変更はホストの `commit` コールバックへ 1 回だけ渡す | 実装済 `domain/explosion.ts` / `domain/primed-tnt.ts`。mc-physics 0.2.0 以降は mc-kernel 実装への re-export であり、責務としての所有（何を計算するか）はここに残るが、実装（どう計算するか）は物理側にある。公開 API §8 |
 | ゲームループ | フレーム駆動、開始/停止、再入可能な初期化 | 実装済 `application/game-loop.ts` |
 | 自動保存 | いつ保存するか（何を書くかは mc-save のフォーマット定義） | 実装済 `application/autosave.ts` |
 | **stage 登録** | `sim:physics` 1 本。`after` 制約は **0 本**（§2.1） | 実装済 `stages/registration.ts` |
@@ -79,7 +79,7 @@ plan.md §2.3-3 により mc-compose のもの、(2) mc-render は mc-sim に依
 | **実行時入力（キーボード/マウス/ポインタロック/タッチ/リマッピング）** | mc-render | plan.md §2.3-2 / §7。kit は devDependency 専用なので入力を kit に置けない |
 | **地形生成・バイオーム分類・カーバー・構造物** | mc-worldgen | plan.md §3.7 |
 | **ノイズ関数** | mc-noise（mc-sim からは **推移依存で import 禁止**） | plan.md §2.3-5 |
-| **物理積分・AABB 衝突解決・voxel-DDA** | mc-physics | plan.md §3.4。mc-sim は `integrateBody()` と `resolveBody()` を**呼ぶ**だけ |
+| **物理積分・AABB 衝突解決・voxel-DDA** | mc-physics | plan.md §3.4。mc-sim は `integrateBody()`・`resolveBody()`・`advanceFallTracking()` を**呼ぶ**だけ。deltaTime クランプ（`clampDeltaTime` / `deltaTimeBetween`）、爆発・Primed TNT・projectile の計画関数も mc-physics（= mc-kernel）を直接呼ぶか re-export するだけで、mc-sim 側に独自実装は無い |
 | **メッシュ生成** | mc-meshing | plan.md §3.3 |
 | **セーブフォーマットの実体（IndexedDB アダプタ・コーデック基盤）** | mc-save | plan.md §3.5。mc-sim は `defineFormat` で自分のフォーマットを**定義する側** |
 | **サウンド再生・字幕発行** | mc-audio | plan.md §3.6 |
