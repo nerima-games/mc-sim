@@ -67,10 +67,9 @@
  * that the two are different mechanisms rather than two spellings of one:
  *
  *   - `ClockPort` READS AN INSTANT. `monotonicSecs` and `wallClockEpochMillis`
- *     are its whole surface (`@nerima-games/mc-kernel`), and it is mirrored
- *     from mc-kernel — a mirror that may not grow a field here, because a wider
- *     or narrower copy of a `Context.Tag` resolved by textual key is the exact
- *     runtime hazard `test/kernel-mirror.test.ts` exists to prevent.
+ *     are its whole surface and are imported directly from
+ *     `@nerima-games/mc-kernel`. A wider or narrower local copy of a
+ *     `Context.Tag` resolved by textual key would be a runtime hazard.
  *   - A schedule SLEEPS FOR A DURATION. There is no `sleep` on `ClockPort` and
  *     there cannot be one, so a Port-driven daemon would have to poll
  *     `monotonicSecs` in a loop — which needs something else to drive the poll,
@@ -86,11 +85,10 @@
  * deterministic replay must set the Effect Clock", and
  * `test/autosave.test.ts` pins that the daemon obeys one.
  *
- * `scripts/check-dependency-whitelist.ts` cannot see this dependency — it greps
- * for `Date.now()` / `new Date()` / `performance.now()`, and a schedule reaches
- * the platform clock through a service. That is a limit of the gate, not a
- * wall-clock read, and it is written down here so the next reader does not have
- * to rediscover it from the type.
+ * Static import rules cannot identify this dependency because a schedule reaches
+ * the platform clock through Effect's service. That is still deterministic when
+ * the service is replaced, so the executable tests provide the guard against
+ * accidentally introducing a direct wall-clock read.
  */
 import { Cause, Duration, Effect, Fiber, Schedule } from 'effect'
 

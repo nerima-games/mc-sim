@@ -1,6 +1,10 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect } from 'effect'
-import { makeWeatherService } from '../src/application/weather-service'
+import {
+  makeWeatherService,
+  WeatherService,
+  WeatherServiceLayer,
+} from '../src/application/weather-service'
 import {
   INITIAL_WEATHER_STATE,
   isValidWeatherState,
@@ -110,5 +114,13 @@ describe('WeatherService', () => {
       expect(transition).toStrictEqual({ weather: 'rain', remainingSecs: 180 })
       expect(yield* weather.snapshot).toStrictEqual(INITIAL_WEATHER_STATE)
     }),
+  )
+
+  it.effect('provides the weather service through its layer', () =>
+    Effect.gen(function* () {
+      const weather = yield* WeatherService
+
+      expect(yield* weather.snapshot).toStrictEqual(INITIAL_WEATHER_STATE)
+    }).pipe(Effect.provide(WeatherServiceLayer())),
   )
 })

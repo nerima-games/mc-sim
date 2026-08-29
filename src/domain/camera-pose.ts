@@ -45,8 +45,8 @@
  * mc-sim owns a `CameraPoseSnapshot` and publishes it once per frame.
  * mc-render mirrors it into a THREE camera and NEVER writes back. The
  * dependency graph makes the wrong direction unrepresentable: mc-render depends
- * on mc-sim, so mc-sim cannot depend on mc-render without a cycle, and
- * `pnpm check:deps` rejects cycles outright.
+ * on mc-sim, so mc-sim cannot depend on mc-render without a cycle, and the
+ * dependency policy rejects cycles outright.
  *
  * A cosmetic effect such as the attack-swing bob therefore belongs entirely to
  * mc-render, applied on top of the mirrored pose and never folded back into it.

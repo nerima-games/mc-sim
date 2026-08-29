@@ -1,7 +1,7 @@
 import { Effect } from 'effect'
 import { describe, expect, it } from 'vitest'
 import { makeVehicleService, VehicleService, VehicleServiceLayer } from '../src/application/vehicle-service'
-import { position } from '../src/domain/kernel-vocabulary'
+import { position } from '@nerima-games/mc-kernel'
 import { OccupantId, validateVehicleSnapshot, VehicleId } from '../src/domain/vehicle'
 
 const baseVehicleItem = {
@@ -171,6 +171,15 @@ describe('VehicleService lifecycle', () => {
 })
 
 describe('validateVehicleSnapshot rejects each malformed field', () => {
+  it('accepts externally named vehicle ids', () => {
+    const snapshot = {
+      vehicles: [{ ...baseVehicleItem, id: 'boat:custom' }],
+      nextSerial: 0,
+    }
+
+    expect(validateVehicleSnapshot(snapshot)).toStrictEqual({ _tag: 'Valid', snapshot })
+  })
+
   it('rejects a snapshot whose vehicles field is missing or not an array', () => {
     expect(validateVehicleSnapshot({ nextSerial: 0 })).toStrictEqual({
       _tag: 'Invalid',

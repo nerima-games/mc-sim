@@ -44,7 +44,7 @@
  *
  * 2. THE PLAYER'S RESOLVED POSE. Written through `PlayerService.moveTo`.
  *    A one-frame resolved-position mailbox remains the highest-priority
- *    compatibility path. When physics is configured, this stage instead samples
+ *    frame-local override. When physics is configured, this stage instead samples
  *    the current player pose, steps a body through mc-physics and writes the
  *    resolved feet position back through the owning service. The body position
  *    is intentionally reconstructed every frame rather than copied into this
@@ -106,7 +106,7 @@ import { InventoryService, InventoryServiceLayer } from '../application/inventor
 import { CropService, CropServiceLayer, type CropServiceApi } from '../application/crop-service'
 import { PlayerService, PlayerServiceLayer, type PlayerServiceApi } from '../application/player-service'
 import { TimeService, TimeServiceLayer, type TimeServiceApi } from '../application/time-service'
-import { position, type GameModule, type Position, type StageRegistration } from '../domain/kernel-vocabulary'
+import { position, type GameModule, type Position, type StageRegistration } from '@nerima-games/mc-kernel'
 import { SIM_STAGE_IDS } from './stage-ids'
 
 export type MovementIntent = {
@@ -137,7 +137,7 @@ export type LandingImpact = {
  */
 export type SimFrameState = {
   /**
-   * A compatibility override for the resolved feet position for this frame.
+   * A frame-local override for the resolved feet position for this frame.
    *
    * `Option`, and taken with `getAndSet(none)` rather than read with `get`,
    * because an override belongs to the frame that produced it. A plain
@@ -248,7 +248,7 @@ export const simStages = (
         yield* time.advance(dt)
         yield* crops.advance(dt)
 
-        // Compatibility overrides win for exactly one frame and skip physics.
+        // Frame-local overrides win for exactly one frame and skip physics.
         // Draining the mailbox prevents a stale position from being re-applied.
         const resolved = yield* Ref.getAndSet(state.resolvedFeetPosition, Option.none<Position>())
         if (Option.isSome(resolved)) {
@@ -406,8 +406,8 @@ export const makeSimStagesWithPhysics = (
  * same provide, so the mistake becomes unwritable.
  *
  * It does not settle §4.3's actual question, which is WHO provides it: mc-compose
- * may not import mc-sim (`transitive-import`, `pnpm check:deps`), so the answer
- * lies with whoever builds the browser entry point. This file only makes sure
+ * may not import mc-sim through an inverted dependency, so the answer lies with
+ * whoever builds the browser entry point. This file only makes sure
  * that when that is decided there is exactly one thing to hand them.
  *
  * `GameLoop` is deliberately NOT in `ROut`. It takes the `FrameHandler` that a
@@ -481,6 +481,3 @@ export const makeControllableSimStagesWithPhysics = (
     yield* Ref.set(state.physicsConfig, Option.some(config))
     return { state, stages: simStages(state, time, player, crops), input: makeSimInputPort(state) }
   })
-
-/** Preview-compatible name retained alongside the production host API. */
-export const makeSimStagesForPreviewWithPhysics = makeControllableSimStagesWithPhysics

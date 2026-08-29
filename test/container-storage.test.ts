@@ -7,7 +7,6 @@ import {
   DISPENSER_CONTAINER_CAPACITY,
   containerIdAt,
   createContainer,
-  emptyChestContainer,
   emptyContainerStorage,
   HOPPER_CONTAINER_CAPACITY,
   extractContainerItem,
@@ -51,7 +50,7 @@ describe('container storage domain', () => {
     })._tag).toBe('Invalid')
   })
 
-  it('uses kind-specific capacities and migrates v1 chest snapshots', () => {
+  it('uses kind-specific capacities in the current snapshot format', () => {
     const dispenser = createContainer(emptyContainerStorage(), 'dispenser', 'dispenser')
     const dropper = createContainer(dispenser.storage, 'dropper', 'dropper')
     const hopper = createContainer(dropper.storage, 'hopper', 'hopper')
@@ -60,15 +59,13 @@ describe('container storage domain', () => {
     expect(dropper.storage.containers[1]?.slots).toHaveLength(DISPENSER_CONTAINER_CAPACITY)
     expect(hopper.storage.containers[2]?.slots).toHaveLength(HOPPER_CONTAINER_CAPACITY)
 
-    const legacy = {
-      version: 1,
-      containers: [{ id: 'legacy-chest', slots: Array.from({ length: CHEST_CONTAINER_CAPACITY }, () => null) }],
-    }
-    const restored = validateContainerStorageSnapshot(legacy)
+    const snapshot = snapshotContainerStorage(hopper.storage)
+    const restored = validateContainerStorageSnapshot(snapshot)
     expect(restored._tag).toBe('Valid')
     if (restored._tag !== 'Valid') return
-    expect(restored.storage.containers[0]?.kind).toBe('chest')
-    expect(snapshotContainerStorage(restored.storage).version).toBe(CONTAINER_STORAGE_SNAPSHOT_VERSION)
+    expect(restored.storage.containers[0]?.kind).toBe('dispenser')
+    expect(restored.storage.containers[2]?.kind).toBe('hopper')
+    expect(snapshot.version).toBe(CONTAINER_STORAGE_SNAPSHOT_VERSION)
   })
 
   it('does not expose stored slot or durability references through create and find results', () => {
@@ -178,13 +175,6 @@ describe('container storage domain', () => {
     expect(outcome.containerStorage).toBe(storage)
   })
 
-  it('creates a chest-kind container via the deprecated emptyChestContainer alias', () => {
-    const container = emptyChestContainer('legacy-chest')
-    expect(container.kind).toBe('chest')
-    expect(container.slots).toHaveLength(CHEST_CONTAINER_CAPACITY)
-    expect(container.slots.every((slot) => slot === null)).toBe(true)
-  })
-
   it('rejects an empty container id without touching storage', () => {
     const storage = emptyContainerStorage()
     const created = createContainer(storage, '')
@@ -213,17 +203,17 @@ describe('container storage domain', () => {
     })
   })
 
-  it('rejects a legacy (v1) candidate with the legacy-shaped error message', () => {
+  it('rejects an unsupported snapshot version before reading candidates', () => {
     const result = validateContainerStorageSnapshot({
       version: 1,
-      containers: [{ id: 'legacy', kind: 'chest', slots: [] }],
+      containers: [{ id: 'unsupported', kind: 'chest', slots: [] }],
     })
     expect(result).toStrictEqual({
       _tag: 'Invalid',
       error: {
         _tag: 'ContainerStorageValidationError',
-        path: 'containerStorage.containers.0',
-        reason: 'expected exactly id and slots',
+        path: 'containerStorage.version',
+        reason: `expected ${CONTAINER_STORAGE_SNAPSHOT_VERSION}`,
       },
     })
   })
@@ -944,9 +934,10 @@ describe('InventoryService chest integration', () => {
       yield* service.createContainer('chest-a')
       const before = bytes(yield* service.containerStorageSnapshot)
       const malformed = {
-        version: 1,
+        version: CONTAINER_STORAGE_SNAPSHOT_VERSION,
         containers: [{
           id: 'broken',
+          kind: 'chest',
           slots: Array.from({ length: CHEST_CONTAINER_CAPACITY }, (_, index) => index === 0
             ? { item: 'bow', count: 1, durability: { current: 999, max: 384 } }
             : null),

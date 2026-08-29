@@ -407,7 +407,7 @@ describe('player storage', () => {
     }),
   )
 
-  it.effect('legacy inventory restore preserves equipment and unchanged durability', () =>
+  it.effect('inventory restore preserves equipment and unchanged durability', () =>
     Effect.gen(function* () {
       const service = yield* makeInventoryService()
       yield* service.add('iron_boots', 1)
@@ -668,6 +668,37 @@ describe('player storage', () => {
       }),
   )
 
+  it.effect('reports InvalidLocation for an unknown equipment slot', () =>
+    Effect.gen(function* () {
+      const service = yield* makeInventoryService()
+      const before = yield* service.storageSnapshot
+
+      expect(yield* service.consumeAndDamageAt({
+        consume: { item: 'arrow', count: 1 },
+        damage: {
+          location: { _tag: 'Equipment', slot: 'invalid' } as unknown as StorageLocation,
+          expectedItem: 'bow',
+          amount: 1,
+        },
+      })).toStrictEqual({ _tag: 'InvalidLocation' })
+      expect(yield* service.storageSnapshot).toStrictEqual(before)
+    }),
+  )
+
+  it.effect('reports DamageTargetMismatch with a null actualItem for an empty inventory slot', () =>
+    Effect.gen(function* () {
+      const service = yield* makeInventoryService()
+      yield* service.add('arrow', 1)
+      const before = yield* service.storageSnapshot
+
+      expect(yield* service.consumeAndDamageAt({
+        consume: { item: 'arrow', count: 1 },
+        damage: { location: { _tag: 'Inventory', slotIndex: 1 }, expectedItem: 'bow', amount: 1 },
+      })).toStrictEqual({ _tag: 'DamageTargetMismatch', actualItem: null })
+      expect(yield* service.storageSnapshot).toStrictEqual(before)
+    }),
+  )
+
   it.effect('reports DamageTargetMismatch with a null actualItem when the damage location is an empty equipment slot', () =>
     Effect.gen(function* () {
       const service = yield* makeInventoryService()
@@ -830,6 +861,50 @@ describe('player storage', () => {
           _tag: 'PlayerStorageValidationError',
           path: 'storage.inventoryDurability.5',
           reason: 'empty slot requires null',
+        })
+      }
+      expect(yield* service.storageSnapshot).toStrictEqual(valid)
+    }),
+  )
+
+  it.effect('accepts explicit null empty slots during restore', () =>
+    Effect.gen(function* () {
+      const service = yield* makeInventoryService()
+      const valid = yield* service.storageSnapshot
+      const explicitNull = {
+        ...valid,
+        inventory: {
+          ...valid.inventory,
+          slots: valid.inventory.slots.map((slot, index) => (index === 5 ? null : slot)),
+        },
+        inventoryDurability: valid.inventoryDurability.map((value, index) => (index === 5 ? null : value)),
+      }
+
+      expect((yield* Effect.either(service.restoreStorage(explicitNull)))._tag).toBe('Right')
+      expect((yield* service.storageSnapshot).inventory.slots[5]).toBeUndefined()
+    }),
+  )
+
+  it.effect('rejects an invalid item stack shape during restore', () =>
+    Effect.gen(function* () {
+      const service = yield* makeInventoryService()
+      const valid = yield* service.storageSnapshot
+      const corrupted = {
+        ...valid,
+        inventory: {
+          ...valid.inventory,
+          slots: valid.inventory.slots.map((slot, index) =>
+            (index === 0 ? { item: 'stone', count: 0 } : slot)),
+        },
+      }
+
+      const result = yield* Effect.either(service.restoreStorage(corrupted))
+      expect(result._tag).toBe('Left')
+      if (result._tag === 'Left') {
+        expect(result.left).toStrictEqual({
+          _tag: 'PlayerStorageValidationError',
+          path: 'storage.inventory.slots.0',
+          reason: 'expected a valid item stack',
         })
       }
       expect(yield* service.storageSnapshot).toStrictEqual(valid)

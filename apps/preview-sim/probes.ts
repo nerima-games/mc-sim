@@ -36,11 +36,12 @@ import {
 import {
   emptyInventory,
   INVENTORY_SLOT_COUNT,
+  maxStackCountForItem,
   normaliseInventory,
   removeItem,
   type Inventory,
 } from '../../src/domain/inventory'
-import { MAX_STACK_COUNT, MonotonicTimeSecs, type StackCount } from '../../src/domain/kernel-vocabulary'
+import { MonotonicTimeSecs, type StackCount } from '@nerima-games/mc-kernel'
 import * as Time from '../../src/domain/time-of-day'
 import { clockFace, fixed, padStart, pad } from './style'
 
@@ -305,7 +306,7 @@ const inventoryProbe = Effect.gen(function* () {
       'INV-STACK',
       'removeItem writes a derived count, and StackCount is a Brand.refined constructor.',
     ),
-    `   MAX_STACK_COUNT        ${String(MAX_STACK_COUNT)}`,
+    `   stone item stack limit     ${String(maxStackCountForItem('stone'))}`,
     `   a restored slot holding 200 stone`,
     `   removeItem(inventory, 'stone', 1)   ->   ${removal.ok ? 'returned normally' : 'THREW (Brand refinement rejected 199)'}   (was: THREW)`,
     `   emptyInventory() length             ->   ${String(addition.ok ? addition.value.slots.length : 'threw')}`,
@@ -315,7 +316,7 @@ const inventoryProbe = Effect.gen(function* () {
     '',
     '   SIM-3 FIXED. domain/inventory.ts is documented as pure and total — every transition',
     '   "returns the resulting inventory plus whatever the caller has to know about it". removeItem',
-    '   was neither, for any slot outside [0, 64], and that was reachable from restore(). In the',
+    "   was neither, for any slot outside its item's kernel limit, and that was reachable from restore(). In the",
     '   frame loop the throw became a Cause.Die, which application/game-loop.ts logs and SWALLOWS,',
     '   so the player simply found that mining and crafting had stopped working. Nothing failed;',
     '   nothing could.',
@@ -326,7 +327,7 @@ const inventoryProbe = Effect.gen(function* () {
     '   surplus, which is why it is the total path and not the sanctioned one: normaliseInventory',
     '   spills 200 stone across four slots and reports what will not fit, and restore() runs it',
     '   before a slot like this can exist. Pinned by test/inventory.test.ts',
-    '   `removeItem does not throw on a slot holding more than MAX_STACK_COUNT` and',
+    "   `removeItem does not throw on a slot holding more than the item's stack limit` and",
     '   `an over-full slot keeps a full stack and the surplus spills into free slots`.',
     '   Reproduce: pnpm preview --scenario corrupt-save --at 280 --once --ascii',
   ]
@@ -414,7 +415,7 @@ const autoSaveProbe = Effect.gen(function* () {
     '   wallClockEpochMillis are its whole surface — while a schedule SLEEPS FOR A DURATION. There',
     '   is no sleep on the Port and there cannot be one: it is mirrored from mc-kernel, and a',
     '   wider copy of a Context.Tag resolved by textual key is the exact runtime hazard',
-    '   test/kernel-mirror.test.ts exists to prevent. A Port-driven daemon would have to poll,',
+    '   the direct mc-kernel ClockPort boundary is meant to prevent. A Port-driven daemon would have to poll,',
     '   which needs something else to drive the poll and which TestClock.adjust would no longer',
     '   advance — every autosave test would become a hand-driven polling harness and the schedule',
     '   would stop being the thing under test.',
@@ -426,10 +427,9 @@ const autoSaveProbe = Effect.gen(function* () {
     '   "provide a Port", and test/autosave.test.ts now pins it: `the schedule is driven entirely',
     '   by the Effect Clock, with no wall-clock read` fast-forwards ten simulated minutes.',
     '',
-    '   scripts/check-dependency-whitelist.ts still cannot see this dependency — it greps for',
-    '   Date.now() / new Date() / performance.now(), and a schedule reaches the platform clock',
-    '   through a service. That is a limit of the gate, not a wall-clock read, and it is written',
-    '   down in application/autosave.ts so the next reader need not rediscover it from the type.',
+    '   static import rules still cannot see this service dependency — it is governed by',
+    '   deterministic TestClock coverage and by the explicit Effect Clock boundary in',
+    '   application/autosave.ts, not by a direct wall-clock read.',
     '   Reproduce: pnpm preview --scenario clock-divergence --at 200 --once --ascii',
   ]
 })

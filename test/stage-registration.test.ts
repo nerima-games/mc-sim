@@ -2,8 +2,8 @@
  * Named regression tests for mc-sim's contribution to the frame.
  *
  * Two things are being pinned, and neither is visible to `tsc` or to
- * `pnpm check:deps`, because both are expressed with STRINGS rather than with
- * imports:
+ * import-based dependency checks, because both are expressed with STRINGS rather
+ * than with imports:
  *
  *   - plan.md §2.3-1 / §2.3-3 — WHAT is declared: one id, and no `after` edge at
  *     all. `stages/stage-ids.ts` argues why the empty edge set is a decision.
@@ -39,14 +39,13 @@ import {
   StageId,
   type GameModule,
   type StageRegistration,
-} from '../src/domain/kernel-vocabulary'
+} from '@nerima-games/mc-kernel'
 import * as Time from '../src/domain/time-of-day'
 import {
   makeControllableSimStagesWithPhysics,
   makeSimFrameState,
   makeSimStages,
   makeSimStagesForPreview,
-  makeSimStagesForPreviewWithPhysics,
   makeSimStagesWithPhysics,
   resetLandingImpact,
   simModule,
@@ -76,9 +75,8 @@ const SimulationLayer = Layer.mergeAll(
 )
 
 /**
- * `FrameServices` is `ClockPort` (kernel's real alias — see
- * `domain/kernel-vocabulary.ts` on why this repository may not mirror it as
- * `never`), so running a stage means discharging a clock even when the stage
+ * `FrameServices` is `ClockPort` (the alias imported directly from mc-kernel),
+ * so running a stage means discharging a clock even when the stage
  * does not read one. Frozen rather than moving: nothing below measures a
  * duration, and a clock that advanced by itself would make it impossible to
  * tell "the stage read the clock" from "the stage did not".
@@ -112,7 +110,7 @@ describe('§2.3-1 zero edges between experience modules', () => {
       const stages = yield* makeSimStages
       // mc-sim is a foundation module, so unlike the mx-* repositories NONE of
       // the four prefixes is its own: every one of them is a child, and an edge
-      // to a child would invert the dependency while passing `pnpm check:deps`,
+      // to a child would invert the dependency while evading import-based checks,
       // which cannot see a string.
       const foreign = allAfterEdges(stages).filter((edge) =>
         EXPERIENCE_MODULE_STAGE_PREFIXES.some((prefix) => edge.startsWith(prefix)),
@@ -341,7 +339,7 @@ describe('the physical simulation path is opt-in and player pose remains authori
     }).pipe(Effect.provide(SimulationLayer), Effect.provide(FrozenClockLayer)),
   )
 
-  it.effect('legacy mode with physicsConfig none leaves the player pose unchanged', () =>
+  it.effect('default mode with physicsConfig none leaves the player pose unchanged', () =>
     Effect.gen(function* () {
       const player = yield* PlayerService
       const { stages } = yield* makeSimStagesForPreview
@@ -651,7 +649,7 @@ describe('mc-sim is a real GameModule', () => {
         { readonly state: unknown; readonly stages: ReadonlyArray<StageRegistration> },
         never,
         PlayerService | TimeService | CropService
-      > = makeSimStagesForPreviewWithPhysics(AirPhysicsConfig)
+      > = makeControllableSimStagesWithPhysics(AirPhysicsConfig)
 
       const stages = yield* needsBoth.pipe(Effect.provide(SimulationLayer))
       expect(stages).toHaveLength(1)
@@ -668,9 +666,6 @@ describe('mc-sim is a real GameModule', () => {
     const registrationImpact: LandingImpact = impact
 
     expect(PublicApi.makeSimStagesWithPhysics).toBe(makeSimStagesWithPhysics)
-    expect(PublicApi.makeSimStagesForPreviewWithPhysics).toBe(
-      makeSimStagesForPreviewWithPhysics,
-    )
     expect(PublicApi.makeControllableSimStagesWithPhysics).toBe(
       makeControllableSimStagesWithPhysics,
     )

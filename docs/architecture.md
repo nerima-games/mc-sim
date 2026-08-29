@@ -94,9 +94,9 @@ plan.md の見出しと §2.4 は「**15 リポジトリで固定**」と書き�
 束ねる薄いリポジトリで、開発中は `workspace:*` 解決でモノレポ同等の DX を得る。
 npm 公開・バージョン bump 運用は界面安定（APIロック 4 週間無変更）まで開始しない（plan.md §6 Step 0-2）。
 
-このグラフは `scripts/check-dependency-whitelist.ts` の `REPOSITORY_POLICY.dependencyGraph` に
-**全 16 行そのまま**記録されており、`pnpm check:deps` が循環検査を行う。
-`test/check-dependency-whitelist.test.ts` が「16 行あること」「全体が非循環であること」を assert している。
+この依存方向は `package.json` の直接依存と各ソースの import で表現され、TypeScript の型検査、
+Lint、ビルド、テストで継続的に検証する。共有語彙をこのパッケージに複製せず、所有するパッケージの
+公開 API を直接参照することが、循環と型のずれを同時に防ぐ。
 
 ## 3. mc-sim の位置
 
@@ -113,21 +113,19 @@ npm 公開・バージョン bump 運用は界面安定（APIロック 4 週間�
 
 `mc-render` / `mc-playground-kit` / `mx-gameplay` / `mx-redstone` / `mx-ui` / `mx-multiplayer`。
 
-これが plan.md §8 の第2リスク「mc-sim のAPIが揺れて全下流に波及」の実体である。
-対策は **APIロックファイルを最初から適用**し、公開APIの変更を明示的なレビュー対象にすること
-（plan.md §6 Step 0-3）。**これは実装済みで、§9 のツール選定も決着している。**
-`api-lock.md` が公開面の正本、`scripts/api-lock.ts` が生成器、`pnpm api:check` が
-`pnpm verify` と CI の両方で走る。この 6 リポジトリが依存している `PlayerService` などの
-`Context.Tag` は Tag 識別子文字列ごとロックされるので、
-文字列を変えて全下流の `Layer` 解決を黙って壊す変更は commit 前に落ちる
-（[public-api.md](./public-api.md) §6）。
+これが依存先の公開 API を安定して扱うための境界である。公開面の正本は `src/index.ts` と
+`package.json#exports` であり、`pnpm typecheck` はソース・テスト・プレビューの型を、
+`pnpm build` は配布用の JavaScript と declaration を検証する。`Context.Tag` の識別子を含む
+Effect のサービス契約もこの公開面に含まれるため、変更時は生成された declaration と利用側テストを
+同じ変更として確認する（[public-api.md](./public-api.md) §6）。
 
 ### 3.3 推移閉包は禁止
 
 `mc-sim → mc-worldgen → mc-noise` だが、**mc-sim は mc-noise を import できない**。
 地形の値は `Chunk` として mc-worldgen の API 経由で来るべきであり、mc-sim がノイズ関数から
 再導出すると「ある座標に何があるか」の実装が 2 つになって必ず食い違う。
-`test/check-dependency-whitelist.test.ts` の `transitive-import` 回帰テストがこれを固定している。
+直接依存を `package.json` に限定し、実装は公開されたパッケージ API だけを import する。`pnpm typecheck` と
+`pnpm build` が、推移依存を直接参照する変更を型と配布物の両面で検出する。
 
 同様に `mc-sim → mc-save` はあるが、`mc-save → mc-kernel` の推移で得られるものは無い（kernel は例外）。
 
@@ -163,7 +161,7 @@ kit は「ミニ世界 + カメラ + レンダラ + 入力を1秒で束ねる糊
 - **mc-sim は kit に依存しない**（実行時にも devDependency にも）。mc-sim のシナリオテストは
   Node で決定論的に走るのが要件（plan.md §3.8 検証）であり、ブラウザハーネスを必要としない。
 
-強制は `scripts/check-dependency-whitelist.ts` の `DEV_ONLY_PACKAGES` で行う:
+この境界は `package.json` の `dependencies` / `devDependencies` と、出荷ソースの import で表す:
 
 | 違反 | 検出ルール |
 | --- | --- |
@@ -220,14 +218,14 @@ plan.md §5.1-2「カメラ姿勢は sim 所有」。詳細と参照実装の証
 ```
 
 新設計が構造的に保証される理由は**依存の向き**である。`mc-render → mc-sim` があるため、
-`mc-sim → mc-render` は循環になり `pnpm check:deps` が落とす。
+`mc-sim → mc-render` は循環になる。mc-sim の出荷ソースにはレンダラの import を置かない。
 mc-sim には「レンダラに問い合わせる」という選択肢がそもそも存在しない。
 
-## 6. リポジトリ内 workspace（未実装）
+## 6. パッケージ内の分割方針（現状）
 
-plan.md §3.8 内部構成: `entity` / `inventory` / `game` 相当を**リポジトリ内 workspace** で分割し、
-一方向依存（entity → inventory → game）に整流する。別リポジトリ化はしない（plan.md §5.3:
-「依存ハブでありAPIが揺れる間は昇格させない」）。
+責務は `domain/`（値と状態遷移）、`application/`（Effect サービス）、`stages/`（実行順序の登録）に
+分ける。依存は `domain → 直接依存パッケージ`、`application → domain` の向きを保ち、
+UI・描画・ネットワークの責務をこのパッケージへ戻さない。
 
-現状のスケルトンは `domain/` + `application/` の 2 層のみ。workspace 分割は
-実装量が閾値を超えた時点で行う。分割しても**リポジトリの数は 15 のまま**である（plan.md §2.4）。
+現在は単一パッケージのまま、長い責務は機能単位のファイルへ分割している。さらに分割する場合も、
+公開 API を増やさず、型検査・Lint・テスト・ビルドを通過する最小単位で行う。

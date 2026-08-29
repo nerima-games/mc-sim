@@ -1,5 +1,5 @@
 import type { ItemStack } from './inventory'
-import { isItemType, MAX_STACK_COUNT, type ItemType } from './kernel-vocabulary'
+import { isItemType, type ItemType } from '@nerima-games/mc-kernel'
 
 export const EQUIPMENT_SLOTS = ['head', 'chest', 'legs', 'feet', 'offhand'] as const
 
@@ -20,6 +20,7 @@ export const EQUIPMENT_CATALOG = {
   iron_leggings: { slot: 'legs' },
   iron_boots: { slot: 'feet' },
   flint_and_steel: { slot: 'offhand' },
+  shears: { slot: 'offhand' },
   wooden_pickaxe: { slot: 'offhand' },
   stone_pickaxe: { slot: 'offhand' },
   iron_pickaxe: { slot: 'offhand' },
@@ -41,6 +42,7 @@ export const ITEM_DURABILITY_CATALOG = {
   iron_leggings: { maxDurability: 225 },
   iron_boots: { maxDurability: 195 },
   flint_and_steel: { maxDurability: 64 },
+  shears: { maxDurability: 238 },
   wooden_pickaxe: { maxDurability: 59 },
   stone_pickaxe: { maxDurability: 131 },
   iron_pickaxe: { maxDurability: 250 },
@@ -80,6 +82,10 @@ export type Durability = {
 /** An inventory-compatible stack with optional per-item durability state. */
 export type EquipmentItem = ItemStack & {
   readonly durability: Durability | null
+}
+
+export type ValidEquipmentItem = EquipmentItem & {
+  readonly durability: Durability
 }
 
 export type EquipmentSlots = Readonly<Record<EquipmentSlot, EquipmentItem | null>>
@@ -144,18 +150,20 @@ export const isDurability = (value: unknown): value is Durability => {
 const isEquipmentItemShape = (value: unknown): value is EquipmentItem => {
   if (!isRecord(value) || !hasExactKeys(value, ['item', 'count', 'durability'])) return false
   return typeof value['item'] === 'string' && isItemType(value['item']) &&
-    validPositiveSafeInteger(value['count']) && value['count'] <= MAX_STACK_COUNT &&
+    value['count'] === 1 &&
     (value['durability'] === null || isDurability(value['durability']))
 }
 
-export const isEquipmentItem = (value: unknown): value is EquipmentItem => {
+export const isEquipmentItem = (value: unknown): value is ValidEquipmentItem => {
   if (!isEquipmentItemShape(value)) return false
   const definition = itemDurabilityDefinitionFor(value['item'])
-  return definition !== undefined && value['count'] === 1 && isDurability(value['durability']) &&
+  return definition !== undefined && isDurability(value['durability']) &&
     value['durability'].max === definition.maxDurability
 }
 
-export const durabilityForItem = (item: ItemType): Durability | null => {
+export function durabilityForItem(item: DamageableItemType): Durability
+export function durabilityForItem(item: ItemType): Durability | null
+export function durabilityForItem(item: ItemType): Durability | null {
   const definition = itemDurabilityDefinitionFor(item)
   return definition === undefined
     ? null
@@ -173,7 +181,7 @@ export const isValidDurabilityForItem = (
 export const isEquipmentItemForSlot = (
   slot: EquipmentSlot,
   item: EquipmentItem,
-): boolean => equipmentDefinitionFor(item.item)?.slot === slot && isEquipmentItem(item)
+): item is ValidEquipmentItem => equipmentDefinitionFor(item.item)?.slot === slot && isEquipmentItem(item)
 
 export const durability = (current: number, max: number): Durability => {
   const value: Durability = { current, max }
@@ -196,9 +204,9 @@ export const equipmentItem = (
   return value
 }
 
-const copyEquipmentItem = (item: EquipmentItem): EquipmentItem => ({
+const copyEquipmentItem = (item: ValidEquipmentItem): ValidEquipmentItem => ({
   ...item,
-  durability: item.durability === null ? null : { ...item.durability },
+  durability: { ...item.durability },
 })
 
 export const emptyEquipment = (): Equipment => ({
@@ -308,29 +316,26 @@ export const validateEquipmentSnapshot = (value: unknown): EquipmentValidationRe
     return invalid('equipment.slots', 'expected exactly head, chest, legs, feet, and offhand')
   }
 
+  const validatedSlots = {} as Record<EquipmentSlot, ValidEquipmentItem | null>
   for (const slot of EQUIPMENT_SLOTS) {
     const item = slots[slot]
-    if (item !== null && (!isEquipmentItem(item) || !isEquipmentItemForSlot(slot, item))) {
+    if (item === null) {
+      validatedSlots[slot] = null
+      continue
+    }
+    if (!isEquipmentItem(item) || !isEquipmentItemForSlot(slot, item)) {
       return invalid(
         `equipment.slots.${slot}`,
         'expected null or the slot-compatible item with count 1 and exact durability',
       )
     }
+    validatedSlots[slot] = copyEquipmentItem(item)
   }
-
-  const validatedSlots = slots as EquipmentSlots
 
   return {
     _tag: 'Valid',
     equipment: {
-      slots: {
-        head: validatedSlots.head === null ? null : copyEquipmentItem(validatedSlots.head),
-        chest: validatedSlots.chest === null ? null : copyEquipmentItem(validatedSlots.chest),
-        legs: validatedSlots.legs === null ? null : copyEquipmentItem(validatedSlots.legs),
-        feet: validatedSlots.feet === null ? null : copyEquipmentItem(validatedSlots.feet),
-        offhand:
-          validatedSlots.offhand === null ? null : copyEquipmentItem(validatedSlots.offhand),
-      },
+      slots: validatedSlots,
     },
   }
 }

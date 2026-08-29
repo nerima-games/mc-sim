@@ -3,9 +3,10 @@
  *
  * See `@nerima-games/mc-kernel` for why a stage id is a string and what
  * that implies: naming one creates no import and no dependency edge, so an
- * `after` constraint is invisible to `pnpm check:deps`. Collecting them here is
- * what makes them reviewable, and `test/stage-registration.test.ts` reads this
- * file and fails if an edge points somewhere it should not.
+ * `after` constraint is invisible to import-based dependency checks. Collecting
+ * them here makes the execution edges reviewable, and
+ * `test/stage-registration.test.ts` verifies that each edge names a valid
+ * stage.
  *
  * ---------------------------------------------------------------------------
  * The live defect this file closes
@@ -104,8 +105,8 @@ export const SIM_STAGE_IDS = {
  *    the experience-facing order, so what its own correctness needs is nothing.
  *
  * 2. mc-sim CANNOT SEE mc-render. `mc-render -> mc-sim` is a declared edge, so
- *    the reverse is an outright cycle and `pnpm check:deps` rejects it. An
- *    `after` edge would evade that gate — it is a string — while coupling this
+ *    the reverse is an outright cycle and the dependency policy rejects it. An
+ *    `after` edge would evade import-based checks — it is a string — while coupling this
  *    repository's frame position to a repository that depends on it. That is the
  *    camera-ownership inversion of plan.md §3.8 reappearing in the frame order
  *    instead of in a type.
@@ -129,8 +130,8 @@ export const UPSTREAM_STAGE_IDS = {} as const satisfies Readonly<Record<string, 
  * mc-sim is a foundation module and none of these is its own prefix, so for this
  * repository the rule is total: an `after` edge starting with ANY of them is
  * wrong. mc-sim is the parent of all four; ordering itself against a child would
- * invert the dependency exactly as reason 2 above describes, and would pass
- * `pnpm check:deps` while doing it.
+ * invert the dependency exactly as reason 2 above describes, while evading
+ * import-based checks.
  */
 export const EXPERIENCE_MODULE_STAGE_PREFIXES = ['gameplay:', 'redstone:', 'ui:', 'multiplayer:'] as const
 

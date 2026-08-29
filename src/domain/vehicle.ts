@@ -1,18 +1,20 @@
 import { Brand } from 'effect'
-import type { Position } from './kernel-vocabulary'
-import type { Dimension } from './worldgen-vocabulary'
+import type { Position } from '@nerima-games/mc-kernel'
+import type { Dimension } from '@nerima-games/mc-worldgen'
 
 export type VehicleId = string & Brand.Brand<'VehicleId'>
-export const VehicleId = Brand.refined<VehicleId>(
+const vehicleId = Brand.refined<VehicleId>(
   (value) => typeof value === 'string' && value.trim().length > 0,
   () => Brand.error('VehicleId must be a non-blank string'),
 )
+export { vehicleId as VehicleId }
 
 export type OccupantId = string & Brand.Brand<'VehicleOccupantId'>
-export const OccupantId = Brand.refined<OccupantId>(
+const occupantId = Brand.refined<OccupantId>(
   (value) => typeof value === 'string' && value.trim().length > 0,
   () => Brand.error('OccupantId must be a non-blank string'),
 )
+export { occupantId as OccupantId }
 
 export type VehicleType = 'boat' | 'minecart'
 export type VehicleVelocity = Readonly<{ x: number; y: number; z: number }>

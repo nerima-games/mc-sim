@@ -15,7 +15,7 @@ import {
   EpochMillis,
   FixedClockLayer,
   MonotonicTimeSecs,
-} from '../src/domain/kernel-vocabulary'
+} from '@nerima-games/mc-kernel'
 import { makeSimStages } from '../src/stages/registration'
 
 const location = (
@@ -92,9 +92,9 @@ describe('crop service', () => {
       yield* crops.plant(planted)
 
       yield* stages[0]?.run(DeltaTimeSecs(POTATO_MATURITY_SECS - 1)) ?? Effect.void
-      expect(yield* crops.matureYieldAt(planted)).toBeNull()
+      expect(yield* crops.matureYieldsAt(planted)).toBeNull()
       yield* stages[0]?.run(DeltaTimeSecs(1)) ?? Effect.void
-      expect(yield* crops.matureYieldAt(planted)).toStrictEqual({ item: 'potato', count: 2 })
+      expect(yield* crops.matureYieldsAt(planted)).toStrictEqual([{ item: 'potato', count: 2 }])
     }).pipe(Effect.provide(ServicesLayer), Effect.provide(FrozenClockLayer)),
   )
 
@@ -118,6 +118,20 @@ describe('crop service', () => {
 
       expect(yield* crops.advanceByBoneMeal(planted)).toBe(false)
       expect(yield* crops.advanceByBoneMeal(location(6, 70, 6))).toBe(false)
+    }).pipe(Effect.provide(CropServiceLayer)),
+  )
+
+  it.effect('keeps crop growth bounded for invalid time deltas', () =>
+    Effect.gen(function* () {
+      const crops = yield* CropService
+      const planted = location(3, 70, 3)
+      yield* crops.plant(planted, 'wheat_crop')
+
+      yield* crops.advance(-12 as DeltaTimeSecs)
+      expect((yield* crops.cropAt(planted))?.growthSecs).toBe(0)
+
+      yield* crops.advance(Number.NaN as DeltaTimeSecs)
+      expect((yield* crops.cropAt(planted))?.growthSecs).toBe(0)
     }).pipe(Effect.provide(CropServiceLayer)),
   )
 
@@ -180,7 +194,6 @@ describe('crop service', () => {
       const crops = yield* CropService
       const missing = location(9, 70, 9)
 
-      expect(yield* crops.matureYieldAt(missing)).toBeNull()
       expect(yield* crops.matureYieldsAt(missing)).toBeNull()
       expect(yield* crops.remove(missing)).toBeNull()
       expect((yield* crops.snapshot).crops).toHaveLength(0)

@@ -1,232 +1,86 @@
 # バージョニングと公開
 
-## 1. 現状
+## 1. 現在のパッケージ形態
 
-| 項目 | 値 |
+現在の `package.json` は次の公開境界を持つ。
+
+| 項目 | 現在の方針 |
 | --- | --- |
-| `version` | `0.1.0` |
-| 公開状態 | **未公開**。GitHub Packages にも上げていない |
-| `main` / `types` / `exports` | **TypeScript ソースを直接指す**（`./index.ts`）。ビルド成果物ではない |
-| ビルドパイプライン | **無い**。全 tsconfig が `noEmit: true` の検査専用 |
-| `dependencies` | `effect` のみ |
+| バージョン | `0.1.42`。`0.x` のため破壊的変更は minor で表す |
+| 実行時入口 | `dist/index.mjs` |
+| 型入口 | `dist/index.d.ts` |
+| 配布対象 | `dist`、`README.md`、`LICENSE` |
+| Node / pnpm | Node 24 以上、pnpm 11 以上 |
+| 公開 API | `src/index.ts` を入口にし、build で成果物を検査する |
 
-## 2. なぜ `0.x` に留めるのか
+`pnpm build` は `tsdown` で実行時バンドルを作り、TypeScript で宣言ファイルを出す。
+TypeScript ソースしか公開していない段階ではないため、公開物の import と型宣言の両方を
+検証対象にする。
 
-plan.md §6 Step 3 / §8:
+## 2. `0.x` の運用
 
-> 界面が安定した（APIロック4週間無変更）リポジトリから GitHub Packages 等へ npm 公開 +
-> changesets 運用に切り替え。それまでは dev-meta workspace 統合で開発。
+`0.x` では互換性を自動で約束しない。変更の種類は次のように扱う。
 
-> **新規構築初期は全界面が高churn** → npm公開を遅らせ dev-meta workspace で開発（§6 Step 0）。
-> bump連鎖を構造的に回避
+- 既存の入力・出力・型を壊す変更は minor bump。
+- 後方互換な機能追加や修正は patch bump。
+- 公開面を変える場合は、`src/index.ts`、生成された宣言、利用側のテストを同じ変更単位で確認する。
 
-mc-sim には**下流が 6 リポジトリある**（mc-render / mc-playground-kit / mx-gameplay /
-mx-redstone / mx-ui / mx-multiplayer）。この段階で publish すると、mc-sim を 1 回 bump するたびに
-6 リポジトリの `package.json` を更新し、そのうち mc-render / mx-* の bump がさらに
-mc-compose に波及する。plan.md §8 が第 2 リスクに挙げる「API が揺れて全下流に波及」は、
-まさにこの連鎖のことである。
+`1.0.0` は実装がすべて終わったことではなく、公開面を互換性のある契約として維持する
+判断である。判断材料は、必須テストとプレビュー、実際の下流利用、未設計の公開 API の
+解消、レビュー済みのビルド成果物とする。API の凍結日数を測る自動ロック機構は導入しない。
 
-開発中は `mc-dev-meta` workspace が 16 リポジトリの clone を `repos/` に並べ、
-`workspace:*` 解決でモノレポ同等の DX を提供する（plan.md §6 Step 0-2）。
-公開しなくても他リポジトリから使える状態はここで作る。
+### 2.1 保存形式の版管理
 
-## 3. `0.x` → `1.0.0` の条件
+`SIMULATION_SAVE_FORMAT` の現行 version は 2。v2 はホットバーの選択状態と
+統計台帳（カウンタ / unlocked ID）を保存する。v1 → v2 は `mc-save` の migration
+chain で初期選択 0 と空の台帳へ移行する。
 
-`1.0.0` は「完成した」の意味ではなく「**この界面を壊さないと約束する**」の意味である。
+これは既存の公開 API を温存する互換アダプターではなく、保存形式そのものの版管理である。
 
-**旧ゲートの廃止**: かつては「APIロックファイル（`api-lock.md`）が4週間変更されていない」という
-日数計測ベースの自動フリーズゲートを条件の1つとしていた。この機構（`api-lock.md` /
-`scripts/api-lock.ts` / `pnpm api:check`）は org 全体の方針として撤去された
-（[API_STANDARD.md §4](../../.github/API_STANDARD.md)）。**代わりに、`1.0.0` への昇格は
-maintainer(take)による裁量判断のみで行う**（[RELEASE_STANDARD.md §4.2](../../.github/RELEASE_STANDARD.md)）。
-「〇〇日間 API 変更なし」のような定量的な代替ゲートは導入しない。
+## 3. 共有依存の直接利用
 
-以下は昇格を判断する際に maintainer が参照する材料であり、自動ゲートではない。
+共有語彙は各パッケージが所有し、mc-sim は公開 API を直接 import する。
 
-1. **[testing.md](./testing.md) §2 の完了条件を満たしている。**
-   テスト green **かつ**内蔵障害物コースプレビューが操作可能。
-2. **下流が実際に消費して契約を確認している。** 少なくとも mc-render と
-   mc-playground-kit が mc-sim を使って動いていること。使われていない界面に
-   「壊さない」と約束しても意味がない。
-3. **[public-api.md](./public-api.md) §5 の未設計 API が埋まっている。**
-   ただし**チャンクダーティ通知はここには来ない**。plan.md §3.8 はそれを mc-sim の API に
-   挙げているが、フラグを持つのは §3.7 により mc-worldgen であり、worldgen は sim を
-   呼べない（循環）。sim が公開するには毎フレーム全チャンクをポーリングするしかなく、
-   それは §3.11 の O(chunks × blocks) の失敗そのものになる。チャンネルはフラグと同じ
-   場所 —— `mc-worldgen` の `ChunkStore.subscribeDirty` —— に置かれた。
-   根拠は `mc-worldgen/docs/public-api.md` §6-2。
-4. `domain/kernel-vocabulary.ts` が削除され、`@nerima-games/mc-kernel` を
-   `dependencies` から参照している（§5 参照）。
+- `mc-kernel` はアイテム、ブロック、時計、金床などを提供する。
+- `mc-worldgen` はディメンションなどのワールド生成型を提供する。
+- `mc-save` は保存フォーマットを提供する。
+- `mc-physics` は物理の計算と型を提供する。
 
-mc-sim は依存ハブなので、**このプロジェクトで最後に `1.0.0` になるリポジトリのひとつ**になる想定。
-早く 1.0.0 を出すことに価値はない。
+ローカルの共有語彙ファイルは削除済みである。複製を残すと、型検査では見えない Tag や閉じた union のずれが
+実行時に現れるためである。共有依存の更新は、上流パッケージの型・実行時挙動・このリポジトリ
+のテストを同時に確認する。
 
-### 3.1 `0.x` の間の運用
+TypeScript ソースとして公開される依存は、`tsdown.config.ts` で実行時バンドルに含める。
+これにより、公開バンドルを Node が直接 import したときに依存側の未変換 TypeScript を
+解決しようとしない。宣言ファイルでは依存の型を参照し、実行時と型の責務を分けている。
 
-`0.x` では semver の互換保証が働かない（`^0.1.0` は `0.2.0` を受け入れない）。
-mc-dev-meta workspace で開発している間は問題にならないが、publish 後 `1.0.0` 前の期間は:
+## 4. 依存バージョン
 
-- **破壊的変更 = minor bump**（`0.1.0` → `0.2.0`）
-- **後方互換の追加・修正 = patch bump**（`0.1.0` → `0.1.1`）
-- 下流は `~0.1.0` ではなく **`0.1.x` を明示ピン**して、意図しない minor 取り込みを防ぐ
-
-## 4. GitHub Packages
-
-`package.json`:
-
-```json
-"publishConfig": {
-  "registry": "https://npm.pkg.github.com",
-  "access": "restricted"
-}
-```
-
-- スコープは `@nerima-games`。GitHub Organization `nerima-games` 配下のリポジトリと対応する。
-- `access: restricted`（private）。plan.md §9 の未決事項「パッケージ公開先」は
-  GitHub Packages で確定したものとして扱う。
-- 消費側は `.npmrc` に `@nerima-games:registry=https://npm.pkg.github.com` と
-  `//npm.pkg.github.com/:_authToken=...` が要る。**現在の `.npmrc` にはまだ書いていない**
-  （公開物が無いため）。最初の publish と同時に 16 リポジトリ分を揃える。
-
-## 5. `domain/kernel-vocabulary.ts` の削除
-
-**publish 運用より前に片付ける負債。**
-
-nothing-is-published のブートストラップ問題を回避するため、mc-kernel の語彙のうち
-mc-sim が使う分だけを `domain/kernel-vocabulary.ts` にミラーしてある。
-mc-kernel が publish されたら:
-
-1. `@nerima-games/mc-kernel` を `package.json#dependencies` に追加
-2. `domain/kernel-vocabulary.ts` を削除
-3. `from './kernel-vocabulary'` を `from '@nerima-games/mc-kernel'` に置換
-
-**これで型検査が通らなければ、ミラーが drift しており、その drift 自体がバグである。**
-ミラーは意図的に最小（mc-sim が実際に使う分だけ）にしてあり、これは「正直に保つ対象を小さくする」ため。
-
-### 5-1. 「最小」の唯一の例外 — Clock Port は**丸ごと**ミラーする
-
-`ClockPort` は `Context.Tag` であり、Effect は Tag を**その文字列キー**
-（`'@nerima-games/mc-kernel/ClockPort'`）で解決する。
-同じキーから作られた 2 つのクラスは、TypeScript にとっては無関係な名前的別型でありながら、
-**実行時には同じサービス**である。
-
-したがって `ClockService` の**狭い**ミラーは「語彙が少ない」ではなく**サイレントな実行時ハザード**である。
-1 フィールドのミラーに対して組んだ `Layer` が 2 フィールドの Tag を満たしてしまい、
-足りないフィールドは、このファイルを見たことのないリポジトリで `undefined` として読まれる。
-
-**これは実際に起きていた。** mc-sim のミラーは `monotonicSecs` の 1 フィールドで、
-mc-kernel と mc-playground-kit は 2 フィールドだった。
-mc-playground-kit は mc-sim に依存するので、両者は同じバンドルに同居する。
-
-そのため、mc-sim が壁時計を 1 度も読まないにもかかわらず、
-`EpochMillis` / `fixedClock` / `wallClockEpochMillis` とオブジェクト引数の `FixedClockLayer` まで
-ミラーしてある。`test/kernel-mirror.test.ts` が Tag キーと形を**両方向で**固定しているので、
-次の drift はフレームではなく CI で落ちる（[testing.md](./testing.md) §3.1）。
-
-ミラーの drift が「削除して import に置き換えれば通る」という約束を破る唯一の経路であり、
-その約束はこの節の 3 手順そのものである。
-
-### 5-2. 2 つ目の例外 — `ITEM_TYPES` は**23 件すべて**ミラーする
-
-閉じたリテラル union では、**メンバの集合そのものが型**である。
-mc-sim のレシピ表が使う 6 個だけを写したミラーは「語彙が少ない」ではなく*狭い別の型*で、
-`isItemType('sand')` がここでは `false`、kernel では `true` になる。
-逆向き（mc-sim の都合でロスタに 1 個足す）はもっと悪い: ローカルでは通り、
-kernel の `ItemType` が拒否するレシピ表を出荷し、**壊れるのはミラーを削除する日**である
-—— この節が「何も起きない日」だと約束している、まさにその日である。
-
-したがってロスタを増減させるのは mc-kernel の決定であって本リポジトリの決定ではない。
-kernel 側では additive・MINOR、mc-sim 側では**ミラーとテストを同じコミットで更新する**だけの作業になる。
-
-**この手順は 1 度回った。** 足りなかった 8 個の要求を値段つきで出し
-（[public-api.md](./public-api.md) §4.1-7）、kernel が 7 個を —— それぞれ kernel 側の理由
-（鉱石 / 砂利のドロップ、mob ドロップ、flammable 能力の着火アイテム）を伴って —— 承認し、
-ロスタは **16 → 23** になった。8 個目の `crafting_table` は却下され、ミラーにも入っていない。
-mc-sim 側の作業は宣言通りで、`domain/kernel-vocabulary.ts` の転記、
-`test/kernel-mirror.test.ts` の `KERNEL_ITEM_TYPES` の再転記、
-そしてレシピ 2 行の復帰が**同じコミット**に入る。順序が逆になった瞬間
-（ミラーが先に進む）に壊れる約束が §5 の 3 手順である。
-
-### 5-3. この付け替えは mc-sim の公開面を**壊した**（歴史的記録。ウィンドウ機構自体は撤去済み）
-
-**この節は api-lock 時代の記録として残す。** 当時は mc-kernel が `0.2.0` に上がり
-`api-lock.md` が変わって §3 の 4 週間ウィンドウがリセットされる、という運用だったが、
-そのフリーズウィンドウ機構自体が org 全体で撤去された（§3 冒頭「旧ゲートの廃止」参照）。
-`domain/kernel-vocabulary.ts` はミラーであって公開面ではないが、
-**ミラーの型が mc-sim の署名に現れている**ため、当時これも公開面の破壊的変更として扱われた。
-
-| 差分 | 種別 |
+| 依存 | 現在の扱い |
 | --- | --- |
-| `ItemId`（公開型、`= string`）を**削除** | 破壊的 |
-| `add` / `remove` / `countOf` / `addItem` / `removeItem` / `countOf` / `itemStack` / `exactly` / `ingredientMatches` / `shapedRecipe` / `shapelessRecipe` / `craftGrid` / `ingredientCost` の `ItemId` → `ItemType`（`string` → 閉じた union） | 破壊的（入力が狭くなる） |
-| `ItemStack.item` / `Ingredient.item` / `MissingIngredient.item` の型 | 破壊的 |
-| `NormaliseOutcome.discarded` を追加 | 追加（ただし返り値型の変更なので lock に出る） |
-| `STARTER_RECIPES` の内容が 7 件 → 5 件 | 型は不変・**値**の変更（lock には出ない。[public-api.md](./public-api.md) §4.1-7） |
+| `effect` | `^3.22.1`。Effect の Context / Layer を共有するため同一 major を使う |
+| `mc-kernel` | `0.4.0` |
+| `mc-physics` | `0.1.7` |
+| `mc-save` | `0.2.2` |
+| `mc-worldgen` | `0.1.14` |
+| TypeScript | `pnpm typecheck` は `@typescript/native` の TypeScript 7 を使用する。tsdown の宣言生成系が要求する TypeScript 6 の alias は依存境界として残す |
+| Vitest | `@effect/vitest` と互換な 3 系を使う |
 
-`exported declarations` は 112 → 111、`supporting declarations` は 22 → 24
-（`ITEM_TYPES` と `ItemType` が署名から参照されるため）。
-**§3 の条件 2 の起点は、このコミットに移動する。**
+依存を更新したら `pnpm install --frozen-lockfile`、`pnpm peers check`、`pnpm typecheck`、
+`pnpm build`、`pnpm test:coverage` を実行する。特に Effect と依存パッケージの major を
+混ぜない。Context.Tag と Layer の型は package identity を跨いで合成されるためである。
 
-なお `index.ts` はこのミラーを **re-export していない**。consumer が mc-sim 経由で
-kernel の語彙を取ると真実の出所が 2 つになり、上記の削除が破壊的変更に化けるためである。
+## 5. リリース前の確認
 
-### 5-4. ロスタが 16 → 23 になり、**ウィンドウがもう一度リセットされた（歴史的記録）**
+リリース候補では、次の順に確認する。
 
-§5-2 の要求が通り、kernel の `ITEM_TYPES` が 7 個増えた。ミラーを同じコミットで追随させた結果、
-当時は `api-lock.md` が変わっている(この文書・機構は現在は廃止済み。§3 冒頭参照)。
+1. `pnpm typecheck`
+2. `pnpm lint`
+3. `pnpm test`
+4. `pnpm test:coverage`
+5. `pnpm build`
+6. `node --input-type=module` で `dist/index.mjs` を import し、代表的な公開 API を呼ぶ
+7. `pnpm pack --dry-run` で `dist` とドキュメントだけが配布対象であることを確認する
 
-| 差分 | 種別 |
-| --- | --- |
-| `ITEM_TYPES` のタプル型に 7 リテラル追加（`coal` / `iron_ingot` / `flint` / `gunpowder` / `blaze_powder` / `flint_and_steel` / `fire_charge`） | **追加**。ただし `ItemType = (typeof ITEM_TYPES)[number]` は**広がる** |
-| `STARTER_RECIPES` の内容が 5 件 → 7 件 | 型は不変・**値**の変更（lock には出ない。[public-api.md](./public-api.md) §4.1-7） |
-
-`exported declarations` は 111、`supporting declarations` は 24 のまま —— **宣言は増減していない**。
-それでも §3 の条件 2 の起点は**このコミットに移動する**。理由は `ItemType` が
-union として広がった側だからである:
-
-- **入力位置**（`add` / `remove` / `countOf` / `itemStack` / `exactly` / `shapelessRecipe` …）では
-  追加であり、既存の呼び出しは 1 つも壊れない。
-- **出力位置**（`ItemStack.item` / `Ingredient.item` / `MissingIngredient.item`）では
-  consumer 側が受け取る union が広がる。`ItemType` を**網羅的に**switch している consumer
-  （mx-ui のアイテムアイコン表が該当しうる）は、7 ケース足りなくなる。
-  「網羅性が壊れる」は型検査で落ちる変更であり、lock の宣言数が動かないことは
-  その根拠にならない。
-
-これは kernel 側の分類（additive・MINOR）と矛盾しない。MINOR は「既存の呼び出しが壊れない」で
-あって「誰も何も直さなくてよい」ではなく、閉じた union を公開する型の宿命として、
-**広がりは下流に伝播する**。当時の4週間ウィンドウはそれが落ち着くまでの期間だったが、
-この機構は現在は撤去されている（§3 冒頭参照）。
-
-## 6. ビルド / publish パイプライン（完了時に追加）
-
-現在 `noEmit: true` で `exports` が `.ts` を指しているのは、**consumer が TypeScript を
-直接コンパイルする前提**の暫定形。dev-meta workspace 内では動くが、publish 物としては不可。
-
-完了条件到達時に追加するもの:
-
-| 項目 | 内容 |
-| --- | --- |
-| ビルド | `tsconfig.build.json` の `noEmit` を外し `outDir: dist` + `declaration` |
-| `exports` | `{ ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } }` |
-| `files` | `dist` 中心に変更 |
-| changesets | plan.md §6 Step 3。bump とチェンジログの運用 |
-| publish ワークフロー | `.github/workflows/` に追加。タグ or changeset 起点 |
-| カバレッジ 99% ゲート | `vitest.config.ts` + CI（[testing.md](./testing.md) §5） |
-
-`.gitignore` は既に `dist/` `build/` `out/` を無視するようにしてある。
-
-**APIロック機構（`api-lock.md` / `scripts/api-lock.ts` / `pnpm api:check`）は org 全体の方針として
-撤去された。** 破壊的変更の判定は自動ツールではなく人間のレビューで行う
-（[API_STANDARD.md §3-4](../../.github/API_STANDARD.md)）。
-
-## 7. 依存の固定
-
-| 依存 | 現在 | 方針 |
-| --- | --- | --- |
-| `effect` | `^3.20.0` | 16 リポジトリで**同一メジャーに揃える**。Context / Layer の型が跨るため、メジャーが混ざると合成できない |
-| `@nerima-games/*` | 未宣言 | publish 後は**厳密ピン**（`0.3.1` のように範囲なし）。plan.md の bottom-up publish-then-pin |
-| `typescript` / `vitest` | `^` 付き | ツールチェーンは揃えるが厳密ピンはしない |
-| `oxlint` | `flake.nix` の devShell（package.json の devDependency ではない） | 16 リポジトリで同一バージョンに固定し、npm 経由のバージョンドリフトを排除する |
-| `packageManager` | `pnpm@9.15.0` | 16 リポジトリで同一 |
-
-`engines.node` は `>=22.0.0`。`flake.nix` の devShell が `nodejs_22` を入れる。
+変更セットや publish の実行はリリース担当の明示的な判断で行う。検証で見つかった
+失敗を、タイムアウト延長・テスト除外・型の緩和で隠してはならない。

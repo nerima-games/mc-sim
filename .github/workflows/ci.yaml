@@ -19,9 +19,9 @@ jobs:
 
     steps:
       - name: Checkout
-        # Pinned to a commit, not the mutable v6 tag: a tag can be repointed at
+        # Pinned to a commit, not the mutable v7 tag: a tag can be repointed at
         # new code without any change here (SUPPLY_CHAIN.md).
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # GITHUB_TOKEN is not needed by any later step; do not leave it
           # sitting in .git/config for the rest of the job (SUPPLY_CHAIN.md).
@@ -31,12 +31,12 @@ jobs:
           fetch-depth: 0
 
       - name: Setup pnpm
-        # Pinned to a commit, not the mutable v4 tag: this is a third-party action
+        # Pinned to a commit, not the mutable v6 tag: this is a third-party action
         # and a tag can be repointed at new code without any change here.
-        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
 
       - name: Setup Node.js
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "24"
           cache: "pnpm"
@@ -55,10 +55,12 @@ jobs:
       - name: Type check
         run: pnpm typecheck
 
+      - name: Build
+        run: pnpm build
+
       - name: Lint
-        # Cross-repository dependency boundaries (DEPENDENCY_POLICY.md) are
-        # enforced here via .oxlintrc.json's no-restricted-imports, which absorbed
-        # the role of the now-removed scripts/check-dependency-whitelist.ts.
+        # Cross-repository dependency boundaries are enforced by the
+        # no-restricted-imports rule in .oxlintrc.json.
         run: pnpm lint
 
       - name: Changeset status
@@ -76,7 +78,7 @@ jobs:
       - name: Test
         run: pnpm test
 
-      # Coverage gate: statements/branches/functions/lines all >= 99%
+      # Coverage gate: statements/branches/functions/lines are all 100%.
       # (TEST_STANDARD.md §3). `vitest run --coverage` itself exits non-zero
       # when a threshold is not met, so no extra assertion script is needed.
       # This is a separate required gate from `pnpm verify` (TEST_STANDARD.md
@@ -86,7 +88,7 @@ jobs:
 
       - name: Upload coverage report
         if: always()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage
           path: coverage/

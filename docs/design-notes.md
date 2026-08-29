@@ -87,7 +87,7 @@ packages/app/application/frame/stages/render-stage.ts:98-100   Effect.ensuring �
 - 演出（攻撃スイングのバンプ等）はミラー後の姿勢の上に適用し、mc-sim には戻さない。
 - 目線オフセット `1.62` は **mc-sim が加算**する。描画側が加算すると
   「狙っているブロック」と「ハイライトされているブロック」が二重実装になる。
-- 構造的保証: `mc-render → mc-sim` があるため逆エッジは循環であり `pnpm check:deps` が落とす。
+- 構造的保証: `mc-render → mc-sim` があるため逆エッジは循環になる。直接依存と静的 import の境界を型検査・ビルドで確認する。
 
 ### 書くべき回帰テスト
 
@@ -96,7 +96,7 @@ packages/app/application/frame/stages/render-stage.ts:98-100   Effect.ensuring �
 | `forwardVector — the sanctioned replacement for camera.getWorldDirection()` | `test/camera-pose.test.ts` | 視線ベクトルが mc-sim 側だけで計算できる（yaw 0 = -Z、yaw π/2 = -X、pitch 正 = 上、常に単位長） |
 | `applies the eye offset HERE, not in the renderer` | `test/camera-pose.test.ts` | `cameraPoseOf` が feet + 1.62 を返す |
 | `stops just short of vertical, so yaw never becomes unrecoverable` | `test/camera-pose.test.ts` | pitch クランプが ±(π/2 − 0.01) |
-| `mc-render depends on mc-sim, which is what makes the reverse edge a cycle` | `test/check-dependency-whitelist.test.ts` | 依存グラフ上、逆エッジが循環になること |
+| `mc-render depends on mc-sim, which is what makes the reverse edge a cycle` | `docs/architecture.md` と `package.json` | 依存方向を公開パッケージの直接依存と import で確認すること |
 | **（要追加）** `no THREE import reaches the simulation` | 本実装時 | `tsconfig.base.json` の `lib` に DOM が無いこと + `three` が `dependencies` に無いことを assert |
 | **（要追加）** `a render-side weapon bob does not perturb the pose the simulation reports` | mc-render 側 | ミラー先を動かしても `cameraPose` が変わらない |
 
@@ -435,7 +435,7 @@ packages/app/application/main/session-autosave.ts:20-33（コメント全文が�
 | テスト名 | 場所 | 状態 |
 | --- | --- | --- |
 | `rejects non-positive and non-integer counts without corrupting anything` | `test/inventory.test.ts` | 済 |
-| `removeItem does not throw on a slot holding more than MAX_STACK_COUNT` | `test/inventory.test.ts` | 済（SIM-3） |
+| `removeItem does not throw on a slot holding more than the item's stack limit` | `test/inventory.test.ts` | 済（SIM-3） |
 | `a NaN or fractional count cannot poison `removed` with arithmetic` | `test/inventory.test.ts` | 済（SIM-3） |
 | `an over-full slot keeps a full stack and the surplus spills into free slots` | `test/inventory.test.ts` | 済（SIM-2 / SIM-3 の精算側） |
 | **（要追加）** `every branded constructor rejects its out-of-range value` | mc-kernel 側 | mc-kernel の `test/branded-types.test.ts` が担当 |
@@ -559,8 +559,8 @@ mc-sim にブロック挙動の判断は**無い**（すべて能力フラグ参
 
 ### レシピ表はこの規則の**例外ではなく**、規則が区別している側である
 
-`domain/recipe.ts` の `STARTER_RECIPES` には `'oak_planks'` のようなアイテム ID リテラルが並ぶ。
-これは**データ**であって挙動の分岐ではない。同ファイルの一致判定は `Ingredient` と
+`domain/recipe-data.ts` の `STARTER_RECIPES` には `'oak_planks'` のようなアイテム ID リテラルが並ぶ。
+これは**データ**であって挙動の分岐ではない。`domain/recipe.ts` の一致判定は `Ingredient` と
 グリッドのセルを比較するだけで、`=== 'stone'` 型の名指し分岐を 1 つも持たない。
 DN-11 が禁じているのは後者である。
 
@@ -592,32 +592,28 @@ kernel 側の理由が無く、入らなかった —— そしてその行は�
 
 | テスト名 | 内容 |
 | --- | --- |
-| `no behavioural branch names a block or item literal` | ソースを走査して `=== 'STONE'` 相当が無いことを assert。`scripts/check-dependency-whitelist.ts` と同じ機構で書ける |
+| `no behavioural branch names a block or item literal` | 判定ロジックが mc-kernel の型と能力 API を直接使い、リテラル表に依存しないことをレビューと型検査で確認する |
 
 ---
 
 ## DN-12 `Date.now()` を使わない
 
-plan.md §4.3 / §5.1-3。時刻はすべて注入された Clock Port から取る。
+plan.md §4.3 / §5.1-3。時刻は mc-kernel が公開する `ClockPort` または Effect の `Clock` を
+依存として受け取る。シミュレーションの状態遷移は実クロックを直接読まず、プレビューとテストが
+固定したポートを注入できるため、同じ入力から同じ結果を再現できる。
 
-強制は `scripts/check-dependency-whitelist.ts` の `findBannedTimeSources`
-（`Date.now()` / `new Date()` / `performance.now()` の 3 つ）。
-**.oxlintrc.json ではない** — oxlint 0.12 は `no-restricted-syntax` も
-`no-restricted-properties` も実装しておらず、`no-restricted-globals` は一覧に出るが実装されていない
-（mc-kernel で 0.12.0 に対し実測確認済み。3 ルールすべて設定しても診断 0 件）。
-oxlint が該当ルールを実装したら .oxlintrc.json へ移し、スクリプト側の time-source 節を消す。
-
-Clock Port の実装アダプタだけは実クロックを読む必要があるため、
-その行に `mc-kernel-allow-time-source` コメントを付けると除外される。
+`PlayerService.cameraPose` のようにゲーム時刻を読む API には `ClockPort` が型として現れ、
+スケジュールの待機には Effect の `Clock` を使う。この二つは役割が異なるので、時刻の読み取りを
+待機処理へ、または待機処理をゲーム時刻ポートへ隠さない。Lint、型検査、シナリオテストでこの境界を
+確認する。
 
 ### 書くべき回帰テスト
 
 | テスト名 | 場所 |
 | --- | --- |
-| `catches all three raw clock reads, with line numbers` | `test/check-dependency-whitelist.test.ts` |
-| `ignores the same text inside a comment or a string` | 同上 |
-| `the escape hatch exempts exactly the line that carries it` | 同上 |
-| `is reproducible: the same script twice produces byte-identical state` | `test/scenario.test.ts` |
+| `camera snapshots use the injected game clock` | `test/player-service.test.ts` |
+| `autosave waits on Effect Clock, not game time` | `test/autosave.test.ts` |
+| `the same scenario is reproducible with a fixed clock` | `test/scenario.test.ts` |
 
 ---
 

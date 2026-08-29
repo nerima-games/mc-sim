@@ -1,6 +1,6 @@
 import * as Eq from './equipment'
 import * as Inv from './inventory'
-import { isItemType, StackCount } from './kernel-vocabulary'
+import { isItemType, StackCount } from '@nerima-games/mc-kernel'
 import type { ContainerStoredStack } from './container-storage'
 
 export const FLINT_AND_STEEL_MAX_DURABILITY =
@@ -202,7 +202,7 @@ export const equipFromInventory = (
   const stack = storage.inventory.slots[inventorySlot]
   if (stack === undefined) return { storage, result: { _tag: 'Empty' } }
   const definition = Eq.equipmentDefinitionFor(stack.item)
-  if (definition?.slot !== equipmentSlot || stack.count !== 1)
+  if (definition?.slot !== equipmentSlot || stack.count !== 1 || !Eq.isDamageableItemType(stack.item))
     return { storage, result: { _tag: 'Incompatible', item: stack } }
   const occupied = storage.equipment.slots[equipmentSlot]
   if (occupied !== null) return { storage, result: { _tag: 'Occupied', item: occupied } }
@@ -211,7 +211,6 @@ export const equipFromInventory = (
   const durability = Eq.isValidDurabilityForItem(stack.item, storedDurability)
     ? storedDurability
     : Eq.durabilityForItem(stack.item)
-  if (durability === null) return { storage, result: { _tag: 'Incompatible', item: stack } }
   const item = Eq.equipmentItem(stack, durability)
   const slots = [...storage.inventory.slots]
   slots[inventorySlot] = undefined
@@ -321,7 +320,7 @@ const targetDurabilityAt = (
 ): Eq.Durability | null | undefined =>
   location._tag === 'Inventory'
     ? storage.inventoryDurability[location.slotIndex]
-    : storage.equipment.slots[location.slot]?.durability
+    : storage.equipment.slots[location.slot]!.durability
 
 type ConsumablePlan = { readonly available: number; readonly excludedSlot: number }
 
@@ -401,15 +400,13 @@ export const consumeAndDamageAt = (
     request.damage.location,
     request.damage.amount,
   )
-  if (damaged.result._tag !== 'Damaged' && damaged.result._tag !== 'Broken') {
-    return { storage, result: { _tag: 'NotDamageable', item: target } }
-  }
+  const appliedDamage = damaged.result as AppliedDamageResult
   return {
     storage: damaged.storage,
     result: {
       _tag: 'Applied',
       consumed: request.consume.count,
-      damage: damaged.result,
+      damage: appliedDamage,
     },
   }
 }

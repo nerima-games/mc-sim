@@ -16,7 +16,7 @@ import { Context, Effect, Layer, Ref } from 'effect'
 import * as Camera from '../domain/camera-pose'
 import type { CameraPoseSnapshot, Position } from "@nerima-games/mc-kernel"
 import { ClockPort, monotonicSecs } from "@nerima-games/mc-kernel"
-import type { Dimension } from '../domain/worldgen-vocabulary'
+import type { Dimension } from '@nerima-games/mc-worldgen'
 
 /**
  * The dimension a fresh world starts in.
@@ -56,8 +56,8 @@ export type PlayerServiceApi = {
    * or receive the second — `mx-gameplay/domain/player-port.ts` recorded the gap
    * by name, and this is the member it named.
    *
-   * mc-sim NEVER READS THIS VALUE. Nothing here branches on it; see
-   * `domain/worldgen-vocabulary.ts`.
+   * mc-sim NEVER READS THIS VALUE. Nothing here branches on it; the type is
+   * imported directly from mc-worldgen.
    */
   readonly dimension: Effect.Effect<Dimension>
   /** Rotate the view. Pitch is clamped; yaw is not wrapped. */
@@ -89,9 +89,8 @@ export type PlayerServiceApi = {
    *
    * Deliberately an `Effect` requiring `ClockPort` rather than a plain read:
    * making the clock dependency visible in the type is what stops someone
-   * "simplifying" this into a `Date.now()` call, which `pnpm check:deps` would
-   * reject anyway but which would then have to be un-designed rather than
-   * un-written.
+   * "simplifying" this into a `Date.now()` call. The tests and code review keep
+   * the wall-clock boundary explicit.
    */
   readonly cameraPose: Effect.Effect<CameraPoseSnapshot, never, ClockPort>
   /**

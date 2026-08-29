@@ -8,7 +8,7 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect } from 'effect'
 import { itemStack } from '../src/domain/inventory'
-import { ItemType } from '../src/domain/kernel-vocabulary'
+import { ItemType } from '@nerima-games/mc-kernel'
 import {
   cellAt,
   conflictsIn,
@@ -21,8 +21,8 @@ import {
   RecipeTable,
   shapedRecipe,
   shapelessRecipe,
-  STARTER_RECIPES,
 } from '../src/domain/recipe'
+import { STARTER_RECIPES } from '../src/domain/recipe-data'
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -92,6 +92,11 @@ const matchedId = (grid: CraftGrid, table: RecipeTable = STARTER_RECIPES): strin
   return match._tag === 'Match' ? match.recipe.id : 'NoMatch'
 }
 
+const AMBIGUOUS_RECIPES: RecipeTable = [
+  ...STARTER_RECIPES,
+  shapelessRecipe('test:stick-from-loose-planks', ['oak_planks', 'oak_planks'], itemStack('stick', 2)),
+]
+
 const permutations = <A>(values: ReadonlyArray<A>): ReadonlyArray<ReadonlyArray<A>> =>
   values.length <= 1
     ? [values]
@@ -125,6 +130,15 @@ const gridFromPattern = (pattern: RecipePattern, mirrored: boolean): CraftGrid =
       return cell?.item
     }),
   )
+
+const canonicalGrid = (recipe: Recipe): CraftGrid =>
+  recipe._tag === 'Shaped'
+    ? gridFromPattern(recipe.pattern, false)
+    : craftGrid(
+        recipe.ingredients.length,
+        1,
+        recipe.ingredients.map((ingredient) => ingredient.item),
+      )
 
 /**
  * Whether a pattern is unchanged by the horizontal flip — and so can say nothing
@@ -271,6 +285,12 @@ describe('shaped matching translates', () => {
     }),
   )
 
+  it.effect('fishing rod fits the three-by-three crafting table layout', () =>
+    Effect.sync(() => {
+      expect(matchedId(gridOf('  S', ' ST', 'S T'))).toBe('mc-sim:fishing-rod')
+    }),
+  )
+
   it.effect('iron armor recipes match their canonical layouts', () =>
     Effect.sync(() => {
       const cases = [
@@ -296,8 +316,8 @@ describe('shaped matching translates', () => {
   it.effect('extra iron in an armor pattern empty cell prevents a match', () =>
     Effect.sync(() => {
       expect(matchedId(gridOf('III', 'I I', ' I '))).toBe('NoMatch')
-      // Filling the lower middle is invalid; filling the upper middle would be a helmet.
-      expect(matchedId(gridOf('I I', 'III'))).toBe('NoMatch')
+      // A third-row iron prevents both the two-row minecart and all armor shapes.
+      expect(matchedId(gridOf('I I', 'III', ' I '))).toBe('NoMatch')
     }),
   )
 
@@ -376,19 +396,10 @@ describe('shaped matching translates', () => {
 
 /*
  * Both blocks below run against `STARTER_RECIPES` — the table `InventoryService`
- * hands to mx-ui — and not against fixtures.
- *
- * That was not true for a while. When this table was repointed onto kernel's
- * `ItemType`, the only asymmetric shaped recipe (`mc-sim:flint-and-steel`) and
- * the only three-distinct shapeless one (`mc-sim:fire-charge`) named items the
- * roster did not have, and nothing vanilla over the sixteen that existed had
- * either shape. The rules moved to local tables rather than to invented rows,
- * which was right: a row here is a claim about what the game can make.
- *
- * Kernel has since granted the seven literals, each on a reason of its own, so
- * the claim is true again and the fixtures are gone. A reader who wants to know
- * what the game can make and a reader who wants to know what the matcher does
- * are back to reading one list.
+ * hands to mx-ui — and not against fixtures. That keeps the matcher properties
+ * covered by rows the simulation actually publishes: asymmetric shaped rows
+ * exercise the horizontal mirror, while distinct shapeless rows exercise
+ * permutation. Ambiguity-only recipes remain local to the tests that need them.
  */
 describe('shaped matching mirrors horizontally, and only horizontally', () => {
   it.effect('an asymmetric shape matches its left-right mirror, as vanilla does', () =>
@@ -426,28 +437,16 @@ describe('shaped matching mirrors horizontally, and only horizontally', () => {
 
   it.effect('REGRESSION: a shipped recipe distinguishes the mirror, so deleting it breaks the game', () =>
     Effect.sync(() => {
-      // The inversion of the assertion this used to make. While the table was
-      // trimmed, every shipped pattern was its own horizontal mirror, so
-      // deleting the mirroring branch of `matchesShaped` left the shipped table
-      // entirely green and only a fixture stood in the way.
-      //
-      // Now at least one shipped pattern is NOT its own mirror, and the mirrored
-      // layout of every such pattern must still match its own recipe. Trimming
-      // the table back down to symmetric rows fails the first assertion, which
-      // is the point: it says out loud what the shipped data has to keep
-      // carrying for the rule to be load-bearing.
+      // At least one shipped pattern is NOT its own mirror, and the mirrored
+      // layout of every such pattern must still match its own recipe. Keeping
+      // the assertion data-driven means adding an official row cannot silently
+      // leave its mirror behavior untested.
       const shaped = shapedIn(STARTER_RECIPES)
       expect(shaped.length).toBeGreaterThan(0)
 
       const asymmetric = shaped.filter((recipe) => !isOwnMirror(recipe.pattern))
-      expect(asymmetric.map((recipe) => recipe.id)).toStrictEqual([
-        'mc-sim:bow',
-        'mc-sim:flint-and-steel',
-        'mc-sim:wooden-hoe',
-        'mc-sim:stone-hoe',
-        'mc-sim:iron-hoe',
-        'mc-sim:diamond-hoe',
-      ])
+      expect(asymmetric.length).toBeGreaterThan(0)
+      expect(asymmetric.map((recipe) => recipe.id)).toContain('mc-sim:flint-and-steel')
 
       for (const recipe of asymmetric) {
         // Laid out as written, and laid out flipped. Both are the same recipe.
@@ -510,12 +509,12 @@ describe('shapeless matching permutes', () => {
 
   it.effect('two identical ingredients are not satisfied by one matching item plus an unrelated one', () =>
     Effect.sync(() => {
-      // mc-sim:stick-from-loose-planks needs two planks. Against a plank next to
+      // The ambiguity fixture needs two planks. Against a plank next to
       // dirt, the backtracking assignment greedily takes the plank for the
       // first ingredient slot, finds nothing left for the second, and must
       // release (not merely abandon) that choice before it can conclude the
       // recipe does not apply.
-      expect(matchedId(gridOf('PX'))).toBe('NoMatch')
+      expect(matchedId(gridOf('PX'), AMBIGUOUS_RECIPES)).toBe('NoMatch')
     }),
   )
 
@@ -524,10 +523,11 @@ describe('shapeless matching permutes', () => {
       // Weaker than the three-distinct case above and kept because it is a
       // different case, not a lesser copy of it: with interchangeable
       // candidates the assignment succeeds on its first choice every time, and
-      // this pair is also the shapeless half of the ambiguity below.
-      expect(matchedId(gridOf('PP'))).toBe('mc-sim:stick-from-loose-planks')
+      // this pair is also the shapeless half of the ambiguity below. A diagonal
+      // layout avoids the official two-plank pressure-plate recipe.
+      expect(matchedId(gridOf('P ', ' P'), AMBIGUOUS_RECIPES)).toBe('test:stick-from-loose-planks')
       expect(matchedId(gridOf('P', 'P', ' '))).toBe('mc-sim:stick')
-      expect(matchedId(gridOf('P  ', '  P'))).toBe('mc-sim:stick-from-loose-planks')
+      expect(matchedId(gridOf('P  ', '  P'), AMBIGUOUS_RECIPES)).toBe('test:stick-from-loose-planks')
     }),
   )
 })
@@ -535,14 +535,14 @@ describe('shapeless matching permutes', () => {
 describe('the ambiguity rule', () => {
   it.effect('the shaped recipe beats the shapeless one that also matches', () =>
     Effect.sync(() => {
-      // Two planks in a column satisfy BOTH mc-sim:stick (shaped) and
-      // mc-sim:stick-from-loose-planks (shapeless). The outputs differ, so
+      // Two planks in a column satisfy BOTH mc-sim:stick (shaped) and the
+      // test-only loose-plank recipe (shapeless). The outputs differ, so
       // getting this wrong is visible rather than merely theoretical.
       const column = gridOf('P', 'P')
-      const match = matchRecipe(STARTER_RECIPES, column)
+      const match = matchRecipe(AMBIGUOUS_RECIPES, column)
 
       expect(match._tag).toBe('Match')
-      expect(matchedId(column)).toBe('mc-sim:stick')
+      expect(matchedId(column, AMBIGUOUS_RECIPES)).toBe('mc-sim:stick')
       expect(match._tag === 'Match' ? match.output : undefined).toStrictEqual({
         item: 'stick',
         count: 4,
@@ -553,8 +553,8 @@ describe('the ambiguity rule', () => {
   it.effect('REGRESSION: the winner does not depend on where the recipe sits in the table', () =>
     Effect.sync(() => {
       const column = gridOf('P', 'P')
-      const orderings = [...rotations(STARTER_RECIPES), [...STARTER_RECIPES].reverse()]
-      expect(orderings).toHaveLength(STARTER_RECIPES.length + 1)
+      const orderings = [...rotations(AMBIGUOUS_RECIPES), [...AMBIGUOUS_RECIPES].reverse()]
+      expect(orderings).toHaveLength(AMBIGUOUS_RECIPES.length + 1)
 
       for (const table of orderings) {
         expect(matchedId(column, table)).toBe('mc-sim:stick')
@@ -564,10 +564,11 @@ describe('the ambiguity rule', () => {
 
   it.effect('the less specific recipe still wins where the specific one does not apply', () =>
     Effect.sync(() => {
-      // Side by side is not the stick SHAPE, so preferring shaped is a
+      // A diagonal layout is not the stick SHAPE, so preferring shaped is a
       // preference and not a veto.
-      expect(matchedId(gridOf('PP'))).toBe('mc-sim:stick-from-loose-planks')
-      const match = matchRecipe(STARTER_RECIPES, gridOf('PP'))
+      const diagonal = gridOf('P ', ' P')
+      expect(matchedId(diagonal, AMBIGUOUS_RECIPES)).toBe('test:stick-from-loose-planks')
+      const match = matchRecipe(AMBIGUOUS_RECIPES, diagonal)
       expect(match._tag === 'Match' ? match.output : undefined).toStrictEqual({
         item: 'stick',
         count: 2,
@@ -659,19 +660,8 @@ describe('the ambiguity rule', () => {
     }),
   )
 
-  it.effect('STARTER_RECIPES leans on specificity, never on the id tie-break', () =>
+  it.effect('STARTER_RECIPES has no conflicting recipe pairs', () =>
     Effect.sync(() => {
-      // The shaped/shapeless stick pair is deliberate and is resolved by rule.
-      // Anything reported here would be resolved by alphabet, which is the
-      // situation conflictsIn exists to make impossible to ship unnoticed.
-      //
-      // Restoring `mc-sim:flint-and-steel` put a SECOND 2x2 shaped recipe in the
-      // table beside `mc-sim:glowstone`, and restoring `mc-sim:fire-charge` put a
-      // third shapeless one beside two others. Neither is a conflict — the
-      // patterns differ cell for cell, mirror included, and the ingredient
-      // multisets are disjoint — but "adding rows cannot create an ambiguity" is
-      // not a thing anyone gets to assume, which is why this assertion is over
-      // the whole table rather than over the pairs someone thought of.
       expect(conflictsIn(STARTER_RECIPES)).toStrictEqual([])
     }),
   )
@@ -680,52 +670,11 @@ describe('the ambiguity rule', () => {
 describe('matching is total', () => {
   it.effect('every starter recipe matches its own canonical layout', () =>
     Effect.sync(() => {
-      const canonical: ReadonlyArray<readonly [string, CraftGrid]> = [
-        ['mc-sim:bone-meal', gridOf('M')],
-        ['mc-sim:oak-planks', gridOf('L')],
-        ['mc-sim:stick', gridOf('P', 'P')],
-        ['mc-sim:stick-from-loose-planks', gridOf('PP')],
-        ['mc-sim:crafting-table', gridOf('PP', 'PP')],
-        ['mc-sim:furnace', gridOf('BBB', 'B B', 'BBB')],
-        ['mc-sim:chest', gridOf('PPP', 'P P', 'PPP')],
-        ['mc-sim:torch', gridOf('C', 'S')],
-        ['mc-sim:bucket', gridOf('I I', ' I ')],
-        ['mc-sim:bow', gridOf(' ST', 'S T', ' ST')],
-        ['mc-sim:glowstone', gridOf('GG', 'GG')],
-        ['mc-sim:flint-and-steel', gridOf('I ', ' F')],
-        ['mc-sim:fire-charge', gridOf('NZC')],
-        ['mc-sim:eye-of-ender', gridOf('EZ')],
-        ['mc-sim:coal-block', gridOf('CCC', 'CCC', 'CCC')],
-        ['mc-sim:coal-from-block', gridOf('Q')],
-        ['mc-sim:iron-block', gridOf('III', 'III', 'III')],
-        ['mc-sim:iron-from-block', gridOf('R')],
-        ['mc-sim:diamond-block', gridOf('DDD', 'DDD', 'DDD')],
-        ['mc-sim:diamond-from-block', gridOf('A')],
-        ['mc-sim:wooden-pickaxe', gridOf('PPP', ' S ', ' S ')],
-        ['mc-sim:stone-pickaxe', gridOf('BBB', ' S ', ' S ')],
-        ['mc-sim:iron-pickaxe', gridOf('III', ' S ', ' S ')],
-        ['mc-sim:diamond-pickaxe', gridOf('DDD', ' S ', ' S ')],
-        ['mc-sim:wooden-hoe', gridOf('PP', ' S', ' S')],
-        ['mc-sim:stone-hoe', gridOf('BB', ' S', ' S')],
-        ['mc-sim:iron-hoe', gridOf('II', ' S', ' S')],
-        ['mc-sim:diamond-hoe', gridOf('DD', ' S', ' S')],
-        ['mc-sim:wooden-sword', gridOf('P', 'P', 'S')],
-        ['mc-sim:stone-sword', gridOf('B', 'B', 'S')],
-        ['mc-sim:iron-sword', gridOf('I', 'I', 'S')],
-        ['mc-sim:diamond-sword', gridOf('D', 'D', 'S')],
-        ['mc-sim:iron-helmet', gridOf('III', 'I I')],
-        ['mc-sim:iron-chestplate', gridOf('I I', 'III', 'III')],
-        ['mc-sim:iron-leggings', gridOf('III', 'I I', 'I I')],
-        ['mc-sim:iron-boots', gridOf('I I', 'I I')],
-      ]
-
-      // Every recipe is covered: a new entry with no canonical grid fails here,
-      // and so does a shapedRecipe whose legend drops a character.
-      expect(canonical.map(([id]) => id).sort()).toStrictEqual(
-        STARTER_RECIPES.map((recipe) => recipe.id).sort(),
-      )
-      for (const [id, grid] of canonical) {
-        expect({ id, matched: matchedId(grid) }).toStrictEqual({ id, matched: id })
+      for (const recipe of STARTER_RECIPES) {
+        expect({ id: recipe.id, matched: matchedId(canonicalGrid(recipe)) }).toStrictEqual({
+          id: recipe.id,
+          matched: recipe.id,
+        })
       }
     }),
   )

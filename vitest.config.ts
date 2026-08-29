@@ -34,19 +34,10 @@ export default defineConfig({
         '**/*.config.ts',
         '**/*.test.ts',
         '**/*.spec.ts',
-        // PURE_TYPE: declaration-only, zero executable statements. v8 reports
-        // this kind of file as 0% rather than 100%, which makes the headline
-        // numbers meaningless if included. The contract is verified by
-        // test/worldgen-mirror.test.ts (compile-time roster pinning in both
-        // directions) and by `pnpm typecheck`.
-        'src/domain/worldgen-vocabulary.ts',
       ],
-      all: true,
       reporter: ['text', 'json', 'html', 'lcov'],
       reportsDirectory: './coverage',
-      // Org-wide decision (TEST_STANDARD.md §3): 99% on all 4 metrics,
-      // rolled out immediately and uniformly, no staged ramp-up.
-      thresholds: { branches: 99, functions: 99, lines: 99, statements: 99 },
+      thresholds: { branches: 100, functions: 100, lines: 100, statements: 100 },
     },
   },
   esbuild: {

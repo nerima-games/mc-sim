@@ -1,6 +1,6 @@
 import type { BlockPosition, BlockType, ItemType } from '@nerima-games/mc-kernel'
 import { itemStack, type ItemStack } from './inventory'
-import type { Dimension } from './worldgen-vocabulary'
+import type { Dimension } from '@nerima-games/mc-worldgen'
 
 export const CROP_TYPES = ['wheat_crop', 'potato_crop', 'nether_wart_crop'] as const satisfies ReadonlyArray<BlockType>
 
@@ -94,14 +94,19 @@ export const matureYieldsFor = (crop: CropState): ReadonlyArray<ItemStack> | nul
     ? cropDefinitionFor(crop.crop).guaranteedMatureYield.map((stack) => ({ ...stack }))
     : null
 
-/** The primary guaranteed mature drop retained for backwards compatibility. */
-export const matureYieldFor = (crop: CropState): ItemStack | null =>
-  matureYieldsFor(crop)?.[0] ?? null
+const nonNegativeFinite = (value: number): number =>
+  Number.isFinite(value) ? Math.max(0, value) : 0
 
-export const advanceCrop = (crop: CropState, deltaSecs: number): CropState => ({
-  ...crop,
-  growthSecs: Math.min(maturitySecsFor(crop.crop), crop.growthSecs + deltaSecs),
-})
+export const advanceCrop = (crop: CropState, deltaSecs: number): CropState => {
+  const maturitySecs = maturitySecsFor(crop.crop)
+  return {
+    ...crop,
+    growthSecs: Math.min(
+      maturitySecs,
+      nonNegativeFinite(crop.growthSecs) + nonNegativeFinite(deltaSecs),
+    ),
+  }
+}
 
 export const advanceCropByBoneMeal = (crop: CropState): CropState =>
   advanceCrop(crop, BONE_MEAL_GROWTH_SECS)

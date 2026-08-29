@@ -16,12 +16,12 @@ import {
   type EntityId,
   type EntityRoster,
 } from '../src/domain/entity'
-import { position } from '../src/domain/kernel-vocabulary'
+import { position } from '@nerima-games/mc-kernel'
 
 /**
  * Stands in for mx-gameplay's `CreeperFuse`. Transcribed rather than imported —
- * mx-gameplay depends on mc-sim, so the reverse edge is a cycle `pnpm check:deps`
- * rejects, and that impossibility is exactly what the behaviour type parameter
+ * mx-gameplay depends on mc-sim, so the reverse edge is a cycle the dependency
+ * policy rejects, and that impossibility is exactly what the behaviour type parameter
  * exists to survive. See `test/entity.test.ts`.
  */
 type Fuse =
@@ -345,9 +345,9 @@ describe('EntityManager — the Tag', () => {
   it.effect('a Layer built at one behaviour type satisfies a Tag asked for at another', () =>
     Effect.gen(function* () {
       // The property that makes the parameter a static view rather than a second
-      // service. It is NOT the ClockPort hazard `test/kernel-mirror.test.ts`
-      // guards: that one is a SHAPE disagreement, where a narrow mirror's Layer
-      // satisfies a wide Tag and a missing field reads `undefined`. Here every
+      // service. The kernel-owned ClockPort is a different boundary: a narrow
+      // shape could satisfy a wide Tag and make a missing field read `undefined`.
+      // Here every
       // instantiation has identical methods and identical arities, and the only
       // thing that varies is the static type of a field mc-sim never reads.
       const opaque = { anything: 'mc-sim cannot read this' }

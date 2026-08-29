@@ -7,7 +7,8 @@ import {
   type Inventory,
   type ItemStack,
 } from './inventory'
-import { isItemType, type ItemType } from './kernel-vocabulary'
+import { isItemType, type ItemType } from '@nerima-games/mc-kernel'
+import { STARTER_FUEL_RULES, STARTER_SMELTING_RECIPES } from './smelting-data'
 
 export type SmeltingRecipe = {
   readonly id: string
@@ -70,35 +71,6 @@ export type FurnaceSnapshotValidationError = {
 export type FurnaceSnapshotValidationResult =
   | { readonly _tag: 'Valid'; readonly state: FurnaceState }
   | { readonly _tag: 'Invalid'; readonly error: FurnaceSnapshotValidationError }
-
-export const STARTER_SMELTING_RECIPES: ReadonlyArray<SmeltingRecipe> = [
-  {
-    id: 'mc-sim:iron-ingot',
-    input: 'raw_iron',
-    output: itemStack('iron_ingot', 1),
-    cookDurationSecs: 10,
-  },
-  {
-    id: 'mc-sim:stone',
-    input: 'cobblestone',
-    output: itemStack('stone', 1),
-    cookDurationSecs: 10,
-  },
-  {
-    id: 'mc-sim:glass',
-    input: 'sand',
-    output: itemStack('glass', 1),
-    cookDurationSecs: 10,
-  },
-]
-
-export const STARTER_FUEL_RULES: ReadonlyArray<FuelRule> = [
-  { item: 'coal', burnDurationSecs: 80 },
-  { item: 'coal_block', burnDurationSecs: 800 },
-  { item: 'oak_log', burnDurationSecs: 15 },
-  { item: 'oak_planks', burnDurationSecs: 15 },
-  { item: 'stick', burnDurationSecs: 5 },
-]
 
 export const emptyFurnaceState = (): FurnaceState => ({
   input: null,

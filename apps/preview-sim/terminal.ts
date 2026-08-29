@@ -10,10 +10,8 @@
  * library keeps its clock behind a Port.
  *
  * Note what is NOT here, and what is not anywhere in this app: a clock read.
- * `Date.now()` / `new Date()` / `performance.now()` do not appear, and the
- * `mc-kernel-allow-time-source` escape hatch in
- * `scripts/check-dependency-whitelist.ts` is not used. The preview's whole
- * subject is that time is supplied rather than observed, so an app that peeked
+ * `Date.now()` / `new Date()` / `performance.now()` do not appear. The preview's
+ * whole subject is that time is supplied rather than observed, so an app that peeked
  * at the wall clock to draw itself would be arguing against its own thesis.
  * Frames are drawn in response to keystrokes.
  */

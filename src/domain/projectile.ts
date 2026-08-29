@@ -1,6 +1,6 @@
 import { voxelRaycast } from '@nerima-games/mc-physics'
 import { Option } from 'effect'
-import type { Position } from './kernel-vocabulary'
+import type { Position } from '@nerima-games/mc-kernel'
 
 /** Projectile physics exposed through the simulation package's public API. */
 export { launchArrow, stepArrow } from '@nerima-games/mc-physics'

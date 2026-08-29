@@ -1,60 +1,18 @@
 {
   "$schema": "https://oxc-project.github.io/oxc/schema/linter.json",
-  // *** FOLLOW-UP FIX: a block of `eslint`-plugin style/formatting rules this
-  // file used to set (`indent`, `comma-dangle`, `array-bracket-spacing`,
-  // `no-tabs`, etc.) no longer exist in oxlint 1.76.0 (oxlint moved formatting
-  // out of the linter into a separate, still-experimental formatter) and
-  // caused a hard config-parse failure — with them present, oxlint refused to
-  // parse this file at all and `pnpm lint` never actually ran any custom rule,
-  // including the `no-restricted-imports` Tier2 dependency-boundary check
-  // below. They have been removed.
-  //
-  // Once the config actually parsed, `"style": "warn"` (previously inert)
-  // turned out to enable far more than formatting: oxlint's `style` category
-  // also bundles opinionated shape rules — `no-magic-numbers`, `sort-keys`,
-  // `id-length`, `capitalized-comments`, `no-ternary`, `no-undefined`,
-  // `func-names`, `curly`, `new-cap`, `sort-imports`, `max-statements`,
-  // `no-underscore-dangle`, and more. Verified empirically: with `style`
-  // left at `warn`, `pnpm lint` reports 6374 lines of diagnostics across
-  // virtually every file in src/test/apps; setting `"style": "off"` alone
-  // drops that to 405. oxlint's own stance is that formatting is a
-  // formatter's job (Oxfmt), not the linter's, and there is deliberately no
-  // formatter configured in this repository (see below) — so `style: off`
-  // is not a loosened gate but the setting that matches oxlint's intended
-  // scope. This matches the already-green precedent in `@nerima-games/mc-kernel`
-  // and `@nerima-games/mc-save`, both of which set `"style": "off"` for the
-  // same reason; mc-noise, cited elsewhere as a reference, still has
-  // `"style": "warn"` and is itself currently red under `pnpm lint` for this
-  // same cause.
-  //
-  // The Tier2 boundary rule below was also silently inert for a second,
-  // independent reason: `no-restricted-imports`'s `patterns` entries must use
-  // `group` (glob, with `!` negation), not `regex` — verified empirically
-  // against oxlint 1.76.0, `regex`-only patterns produce zero diagnostics for
-  // a matching import.
-  //
-  // oxlint is the ONLY lint/format configuration in this repository.
-  // There is deliberately no prettier, no biome and no .editorconfig.
-  //
-  // NOTE on the `Date.now()` ban: oxlint 0.12 does not implement
-  // `no-restricted-syntax` or `no-restricted-properties`, and while
-  // `no-restricted-globals` is listed by `oxlint --rules` it is not implemented
-  // either (no checkmark). Verified empirically against oxlint 0.12.0: a file
-  // containing `Date.now()` produces 0 diagnostics under all three rules.
-  // `scripts/check-dependency-whitelist.ts`, which used to enforce this ban, has
-  // been removed org-wide (DEPENDENCY_POLICY.md / PACKAGE_STANDARD.md): the org
-  // standard no longer requires a replacement script for checks oxlint cannot
-  // express, so this ban is currently NOT enforced by tooling. All time must
-  // still come from the injected clock Port (@nerima-games/mc-kernel
-  // ClockPort) by convention. When oxlint gains `no-restricted-syntax`, add the
-  // ban here.
+  // Formatting is intentionally outside oxlint; no formatter is configured.
+  // The restriction rule below protects dependency direction. Shared gameplay
+  // vocabulary is imported from its owning package rather than mirrored here.
+  // Time-dependent state uses mc-kernel's ClockPort or Effect's Clock. The
+  // boundary is kept visible in types and tests because the linter cannot
+  // express every time-source policy reliably.
   "env": {
     "es2022": true,
     "node": true
   },
   "settings": {
     "typescript": {
-      "version": "5.9"
+      "version": "6.0"
     }
   },
   "plugins": [],
@@ -117,19 +75,8 @@
     "no-sync": "warn",
 
     // Style
-    // NOTE: this block used to also set ~30 `eslint`-plugin formatting rules
-    // (`array-bracket-spacing`, `block-spacing`, `brace-style`, `camelcase`,
-    // `comma-dangle`, `comma-spacing`, `comma-style`, `computed-property-spacing`,
-    // `eol-last`, `func-call-spacing`, `indent`, `key-spacing`, `keyword-spacing`,
-    // `linebreak-style`, `lines-between-class-members`, `no-mixed-spaces-and-tabs`,
-    // `no-new-object`, `no-tabs`, `no-trailing-spaces`, `no-whitespace-before-property`,
-    // `object-curly-spacing`, `one-var`, `operator-linebreak`, `padded-blocks`,
-    // `quote-props`, `semi-spacing`, `space-before-blocks`, `space-infix-ops`,
-    // `space-unary-ops`, `spaced-comment`). None of these exist as rule names
-    // in oxlint 1.76.0 (see the top-of-file note). Formatting is no longer
-    // this repository's concern via oxlint; the `style` category is `off`
-    // (see the top-of-file note), so these two rules are enabled by their
-    // explicit entry here, not by the category default.
+    // Formatting remains outside the linter; these correctness rules are
+    // enabled explicitly while the style category stays off.
     "no-array-method-this-argument": "warn",
     // PERFORMANCE / CORRECTNESS EXCEPTION — src/domain/explosion.ts's
     // `hashUnit` is a deterministic uint32-wrapping hash (xorshift-style
@@ -145,8 +92,8 @@
     "default-case": "warn",
     "default-case-last": "warn",
     "no-empty-character-class": "warn",
-    // Declared for intent and for the day oxlint implements it; inert in 0.12.
-    // (see the `Date.now()` NOTE at the top of this file for enforcement status).
+    // This documents restricted globals; time-source policy is enforced at
+    // typed service boundaries and by tests.
     "no-restricted-globals": ["warn", "name", "open", "close", "event"],
     "no-restricted-imports": [
       "error",
@@ -165,9 +112,8 @@
         // the Tier2 siblings (mc-render, mc-playground-kit), and all of
         // Tier3/Tier4 — Tier2 must not depend laterally or upward.
         //
-        // Use `group` (glob, with `!` negation), not `regex` — verified
-        // empirically against oxlint 1.76.0, a `regex`-only pattern produces
-        // zero diagnostics for a matching import (see top-of-file note).
+        // `group` is a glob with `!` negation, which keeps the allowed package
+        // set explicit and reviewable.
         "patterns": [
           {
             "group": [

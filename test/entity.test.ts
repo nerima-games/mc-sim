@@ -22,14 +22,14 @@ import {
   type EntityRoster,
   type EntityStep,
 } from '../src/domain/entity'
-import { position } from '../src/domain/kernel-vocabulary'
+import { position } from '@nerima-games/mc-kernel'
 
 /**
  * A stand-in for mx-gameplay's `CreeperFuse`.
  *
  * TRANSCRIBED, NOT IMPORTED, and the impossibility of importing it is the whole
  * point of the type parameter these tests exercise: mx-gameplay depends on
- * mc-sim, so the reverse edge is a cycle `pnpm check:deps` rejects. The shape is
+ * mc-sim, so the reverse edge is a cycle the dependency policy rejects. The shape is
  * `mx-gameplay/domain/mob/creeper-fuse.ts`'s three-case union, reproduced here
  * only so that the tests below can ask what mc-sim does with a value it has
  * never heard of.

@@ -18,9 +18,10 @@ plan.md §2.3-1 の分類でいう **名詞**。
 | エンティティ管理 | `EntityManager`。存在・ID・トランスフォームの台帳 | 実装済 `domain/entity.ts` / `application/entity-manager.ts`。§3.1 |
 | プレイヤー状態 | `PlayerService`。姿勢（feet 原点）、**どの次元に居るか**、モード | 姿勢と次元は実装済 `application/player-service.ts`。§3.7 |
 | **カメラ姿勢** | `CameraPoseSnapshot` の**正**。唯一の発行者 | 実装済 `application/player-service.ts` |
-| インベントリ | スタックの置き場、追加/削除/照会 | 骨組みのみ `application/inventory-service.ts` |
+| インベントリ | スタックの置き場、追加/削除/照会、クラフト、ホットバーの9スロット投影 | 実装済 `domain/inventory.ts` / `domain/crafting.ts` / `application/inventory-service.ts` |
+| ホットバー選択 | 選択スロットの保持、直接選択、スクロール、選択中アイテム | 実装済 `domain/hotbar.ts` / `application/hotbar-service.ts`。入力イベントの解釈はホスト側 |
 | 体力 / 空腹 / XP | 数値状態と遷移（「何がダメージを与えるか」は持たない） | 実装済 `domain/vitals.ts` / `application/vitals-service.ts`。§3.4 |
-| 実績 / 統計 | **記録**（画面は mx-ui） | 実装済 `domain/statistics.ts` / `application/statistics-service.ts`。§3.5 |
+| 実績 / 統計 | **記録**（画面は mx-ui） | 実装済 `domain/statistics.ts` / `application/statistics-service.ts`。セーブは `SimulationSave` v2。§3.5 |
 | 時間 | `TimeService`。tick カウンタ、昼夜、月齢 | 実装済 `application/time-service.ts` |
 | 作物 | `CropService`。次元 + `BlockPosition` ごとの植栽・成長・除去状態 | 実装済 `domain/crop.ts` / `application/crop-service.ts` |
 | 爆発計画 | seed・距離減衰・耐性・遮蔽から破壊対象と entity effect を純粋計算する。具体的な変更はホスト transaction が一括適用 | 実装済 `domain/explosion.ts`。公開 API §8 |
@@ -29,7 +30,7 @@ plan.md §2.3-1 の分類でいう **名詞**。
 | **stage 登録** | `sim:physics` 1 本。`after` 制約は **0 本**（§2.1） | 実装済 `stages/registration.ts` |
 | 設定状態 | グラフィックス / 音量 / 操作の**値の保持**（画面は mx-ui、適用は各所） | 実装済 `domain/settings.ts` / `application/settings-service.ts`。§3.6 |
 | ~~チャンクダーティ通知~~ | **mc-worldgen に移った**（`ChunkStore.subscribeDirty`）。mc-sim は中継しない — §3.3 | — |
-| レシピ / クラフト状態 | レシピ表とクラフト結果の状態（画面は mx-ui） | 実装済 `domain/recipe.ts` / `domain/crafting.ts` / `application/inventory-service.ts`。§3.1 |
+| レシピ / クラフト状態 | レシピ表とクラフト結果の状態（画面は mx-ui） | 実装済 `domain/recipe-data.ts` / `domain/recipe.ts` / `domain/crafting.ts` / `application/inventory-service.ts`。§3.1 |
 
 ### 2.1 `sim:physics` —— なぜ 1 本で、なぜ `after` が 0 本なのか
 
@@ -63,7 +64,7 @@ mx-gameplay が `stages/registration.ts:276-284` で「時計を進めるのは 
 
 **`after` は 0 本。** 唯一の候補 `render:input` は宣言しない。(1) 全順序の主張は
 plan.md §2.3-3 により mc-compose のもの、(2) mc-render は mc-sim に依存しているので逆向きエッジは
-循環であり、文字列である `after` は `pnpm check:deps` をすり抜けてそれをやってしまう、
+循環であり、ここで宣言すると依存方向に反する、
 (3) 入力 stage を 1 本も登録しないビルド（シナリオテスト、ヘッドレスサーバ）でも
 シミュレーションは正しい ——つまり本リポジトリの制約ではない。
 
@@ -108,7 +109,7 @@ plan.md §2.3-3 により mc-compose のもの、(2) mc-render は mc-sim に依
 
 境界の実装上の形は 1 つの型引数である。`Entity<S>` の `behaviour` が
 mx-gameplay の `CreeperFuse` を運ぶが、**mc-sim はその中を読まないし読めない**
-（mx-gameplay を import すれば循環で `pnpm check:deps` が落ちる）。
+（mx-gameplay を import すれば依存方向に反する）。
 `domain/entity.ts` に `'creeper'` という文字列は 1 つも無く、kind による分岐も無い。
 根拠と、`Record<string, unknown>` にしなかった理由は
 [public-api.md](./public-api.md) §7-1。
@@ -125,15 +126,14 @@ plan.md §7「sim(状態) + gameplay(ルール)」。
 **クラフト。** レシピ表とクラフト結果の状態は mc-sim、画面は mx-ui（plan.md §7）。**実装済。**
 以下は「最初の実装時に決めて本文書に追記すること」への回答である。
 
-- **レシピ表は名詞なのでここ。** `STARTER_RECIPES` は **20 件**だけで、モデル（shaped / shapeless /
-  平行移動 / 鏡像 / 穴 / 順列 / 曖昧性）を動かすためにあり、コンテンツのデータベースではない。
-  鉄のヘルメット / チェストプレート / レギンス / ブーツの 4 種も、本家と同じ shaped の配置で含む。
-  大きな捏造表は構造ではなくコンテンツであり、コンテンツは mc-kernel のブロック表の議論の隣にある
-  （[design-notes.md](./design-notes.md) DN-11）。
-  **鏡像と「相異なる 3 材料の順列」もこの表が動かしている。** 一時期は該当する本家レシピが
-  kernel の 16 アイテムの中に無く、見せるためだけに捏造せずローカル表へ移していた。
-  kernel がロスタを 23 に広げた（それぞれ kernel 側の理由を伴って）ので、
-  本家レシピ 2 行がそのまま戻った（[public-api.md](./public-api.md) §4.1-7）。
+- **レシピ表は名詞なのでここ。** 公開データ `STARTER_RECIPES` は
+  `domain/recipe-data.ts` が所有し、shaped / shapeless、平行移動、鏡像、穴、順列、曖昧性を
+  表現する。`domain/recipe.ts` はレシピの型・コンストラクタ・一致判定・衝突検出を所有し、
+  `domain/crafting.ts` はインベントリへの原子的な適用を所有する。
+  大きな捏造表は構造ではなくコンテンツであり、公開するレシピは現行 mc-kernel の
+  `ItemType` 語彙で表現できる公式データに限定する（[design-notes.md](./design-notes.md) DN-11）。
+- **マッチャーの性質テストも公開データを汚さない。** 曖昧性の検証に必要なテスト専用レシピは
+  `test/recipe.test.ts` と `test/crafting.test.ts` の fixture に置き、`STARTER_RECIPES` には含めない。
 - **一致判定（`matchRecipe`）は全域かつ表順非依存。** 曖昧性は「shaped > shapeless、
   同順位は id 辞書順」で解決し、`conflictsIn` が同順位の衝突を報告する。
   根拠は [public-api.md](./public-api.md) §4.1-2。
@@ -141,18 +141,22 @@ plan.md §7「sim(状態) + gameplay(ルール)」。
   保持すると 36 スロットと二重管理になる。§4.1-4 に代償ごと書いてある。
 - **`craft` は `InventoryService` に置いた。** 原子性は 1 つの Ref でしか成立せず、
   Ref を持っているのはインベントリだからである（§4.1-5、DN-07）。サービスは増えていない。
-- **アイテム語彙は増やしていない。いまは増やせない。** レシピ表の `'oak_planks'` 等は
-  mc-kernel の `ItemType`（閉じたリテラル union）のメンバで、`domain/kernel-vocabulary.ts` に
-  ミラーしてある。望ましい失敗は実際に起きた —— 表の 3 件が存在しないアイテムを名指していて
-  型検査に落ち、**kernel に 8 個足させるのではなく削った**（[public-api.md](./public-api.md) §4.1-7）。
-  ロスタを決めるのは kernel であり、tier-2 のレシピ表を根拠に tier-1 の語彙を広げるのは
-  本プロジェクトが 2 回退けた「推測されたロスタ」と同じ形である。
+- **アイテム語彙は mc-kernel から直接読む。** レシピ表の `'oak_planks'` 等は
+  mc-kernel の `ItemType`（閉じたリテラル union）のメンバであり、ローカルの語彙ミラーは置かない。
+  型検査が kernel の登録表とレシピデータの不一致を捕捉する（[public-api.md](./public-api.md) §4.1-7）。
+  ロスタを決めるのは kernel であり、tier-2 のレシピ表を根拠に tier-1 の語彙を広げない。
   判定コードは**アイテム ID を名指しで分岐しない**（DN-11）—— 名指しがあるのはデータ側だけ。
 
-**かまど / 醸造 / 金床 / エンチャントは入っていない。** グリッド形ではないので `Recipe` の
-仲間ではなく、`domain/recipe.ts` に 1 行も無い。「かまどが何秒で焼けるか」の進行が
-tick を持つ mc-sim 側になる、という見立ては変わっていない —— ただし決めるのは
-かまどを実装する時であり、レシピモデルを先に一般化して待ち構えることはしない。
+**かまど / 醸造 / 金床は実装済み。** グリッド形の `Recipe` とは分離し、
+`domain/smelting.ts` と `domain/brewing.ts` が進行と結果の純粋な遷移を持つ。
+金床の汎用計画・適用 API は `@nerima-games/mc-kernel` が所有し、`src/index.ts` から再公開する。
+Effect の公開サービスと `src/index.ts` の export がホストから利用できる。
+**エンチャントの対応範囲は実装済み。** `domain/enchantment-data.ts` が、現行
+`mc-kernel` の `ItemType` 語彙で表現できる 32 個のバニラ規則（最大レベル、適用先、競合）と、
+エンチャント本 / 同種アイテム別の金床コスト表を所有し、`domain/enchantment.ts` が入力に応じた規則集合を
+`mc-kernel` の汎用金床 API に渡す。`domain/enchantment-table-data.ts` と
+`domain/enchantment-table.ts` は同じデータ境界で、公式のスロット計算・重み付き抽選・競合除去・本の出力を
+提供する。語彙外の装備規則は `mc-kernel` の境界の外に残る。
 
 ### 3.3 チャンクダーティ通知は mc-sim のものではなくなった
 
@@ -246,10 +250,10 @@ plan.md §2.3-1 の「採掘→インベントリに入る」は sim 経由、�
 - **mx-ui の `VitalsSnapshot` に合わせてあるのはフィールド名である。**
   `healthPoints` / `maxHealthPoints` / `hungerPoints` / `maxHungerPoints` /
   `experienceLevel` / `experienceProgress` の 6 つを `vitalsView` が出す。
-  残る 2 つ（`hotbar` / `selectedHotbarIndex`）はインベントリ側であり、
-  **選択中スロットは mc-sim にまだ無い**。状態なので来るときはここに来るが、
-  呼び手のいない公開 API を先に生やすのは plan.md §8 の第 2 リスクそのものなので、
-  `domain/vitals.ts` に行き先つきで名指ししてある。
+  残る 2 つ（`hotbar` / `selectedHotbarIndex`）はインベントリ側である。
+  `hotbar` の内容は `InventoryService.getHotbarSlots`、`selectedHotbarIndex` は
+  `HotbarService` が所有する。キー番号やホイール量をこの状態へ変換する入力マッピングは
+  mc-render またはホストの責務であり、mc-sim は正規化済みの選択・スクロール値を受け取る。
 
 - **プレイヤーの体力が `EntityManager` の台帳に入らない理由。** §3.1 の
   「最大体力を持たない」は **kind の表**についての議論であり、プレイヤーはその表の行ではない。
@@ -264,10 +268,15 @@ plan.md §2.3-1 の「採掘→インベントリに入る」は sim 経由、�
 1. **何が今までに起きたか** —— 集計と、解除済み実績の集合。状態、セーブ対象、所有者 1 つ。**ここ。**
 2. **何をイベントと数えるか** —— ブロックを壊したのは採掘イベントか、日光で死んだクリーパーは
    キルか。ルール。mx-gameplay。
-3. **実績の解除条件と前提実績** —— 参照実装は
+   3. **実績の解除条件と前提実績** —— 参照実装は
    `isUnlocked: (stats) => boolean` の表と不動点掃引である
    （`achievement/achievement.ts:10-44`）。**世界に対する述語の表はルール表である。**
    mc-sim は `unlock` と言われて記録するだけで、レジストリも述語も持たない。
+
+保存境界は `domain/save-data.ts` の `SimulationSave` v2 である。
+`player.selectedHotbarSlot`（0..8）と `statistics.counters` /
+`statistics.unlocked` を保存する。v1 のセーブは `mc-save` の v1→v2 migration
+で初期選択 0 と空の台帳へ移行する。これは公開 API の互換アダプターではなく、保存形式の版管理である。
 
 **カウンタが名前付きフィールドではなく開いた map なのはなぜか。** 参照実装の
 `Statistics` は 8 つの名前付きフィールドを持つ（`statistics/statistics.ts:9-18`）が、
@@ -312,7 +321,7 @@ DN-09 が要求するので存在し、意味は設定画面の RESTORE DEFAULTS
 ### 3.7 次元 —— 語は mc-worldgen のもの、状態はここ
 
 `application/player-service.ts` の `dimension` / `setDimension`、および
-`domain/worldgen-vocabulary.ts`。**実装済。**
+`@nerima-games/mc-worldgen` の `Dimension`。**実装済。**
 
 **この行が長らく空いていた理由は、メソッドが未実装だったからではない。**
 `mx-gameplay/domain/player-port.ts` が欠けているものを名指しで記録していた ——
@@ -325,11 +334,8 @@ DN-09 が要求するので存在し、意味は設定画面の RESTORE DEFAULTS
 （実測、`block-registry.ts` の無関係なコメント 1 件のみ）候補ではあっても現職ではない。
 参照実装は `packages/world`（= mc-worldgen）に宣言しており、
 **その union を読むルールを既に所有しているのも mc-worldgen** である。
-mc-worldgen が barrel に出したので、ここは `domain/worldgen-vocabulary.ts` に
-**文字単位で転記**している。`domain/kernel-vocabulary.ts` に足していないのは、
-あのファイルを置き換えるのは `@nerima-games/mc-kernel` であり、
-kernel は `Dimension` を出さないからである（ミラーの住所は
-「どの barrel が置き換えるか」で決まる）。
+mc-worldgen が barrel に出したので、`player-service.ts` はそこから直接 import する。
+ローカルの union や転記ファイルを置かないのは、語彙の所有者と利用側を一つに保つためである。
 
 **mc-sim はこの値で分岐しない。** `if (dimension === 'nether')` は 1 つも無く、
 あってはならない。ネザーの何が違うか —— 天井、溶岩湖、ポータル連結、湧くもの ——
@@ -357,12 +363,12 @@ kernel は `Dimension` を出さないからである（ミラーの住所は
 
 ### 親（mc-sim が依存する）
 
-| リポジトリ | 使うもの | 未公開のため現状 |
+| リポジトリ | 使うもの | 現状 |
 | --- | --- | --- |
-| `mc-kernel` | 語彙全般（ブランデッド型、座標、`CameraPoseSnapshot`、Clock Port、`GameModule`） | `domain/kernel-vocabulary.ts` に暫定ミラー |
+| `mc-kernel` | 語彙全般（ブランデッド型、座標、`CameraPoseSnapshot`、Clock Port、`GameModule`） | `src/domain` / `src/application` から直接 import |
 | `mc-physics` | `integrateBody(state, dt)`、`resolveBody(state, dt, options)`、AABB クエリ、voxel-DDA | `sim:physics` から使用 |
-| `mc-save` | `defineFormat(name, version, schema, migrations)`、`StoragePort` | 未使用（`autosave.ts` は永続化 Effect を引数で受ける） |
-| `mc-worldgen` | `generateChunk`、`BiomeService`、`ChunkStore`（物理のためにブロックを読む）、**`Dimension`** | `domain/worldgen-vocabulary.ts` に暫定ミラー（`Dimension` のみ）。§3.7 |
+| `mc-save` | `defineFormat(name, version, schema, migrations)`、`StoragePort` | `domain/save-data.ts` と `application/save-service.ts` から使用 |
+| `mc-worldgen` | `generateChunk`、`BiomeService`、`ChunkStore`（物理のためにブロックを読む）、**`Dimension`** | `player-service.ts` から直接 import。§3.7 |
 
 ### 子（mc-sim に依存する）
 
@@ -376,8 +382,8 @@ kernel は `Dimension` を出さないからである（ミラーの住所は
 | `mx-multiplayer` | 同期すべき状態のスナップショットと適用 | スナップショット/復元の対称性 |
 
 **この 6 者への影響を評価せずに公開 API を変更しないこと。**
-APIロックファイル（plan.md §6 Step 0-3）を最初から適用し、公開 API の diff をレビュー対象にする。
-これは実装済みで、`pnpm api:check` が `pnpm verify` と CI の両方で走る。
-公開面を変える PR は `pnpm api:update` の結果を同じ PR に含めること —— その差分が、
+`src/index.ts` の公開 export、`package.json` の `exports`、生成された `dist/index.d.ts` を
+レビュー対象にする。`pnpm typecheck` と `pnpm build` が宣言の破綻と配布物の生成を検査する。
+公開面を変える変更は同じ変更単位で宣言差分を確認すること —— その差分が、
 上の表の「壊れると困るもの」に何が起きたかを 6 者に見せる唯一の場所である
 （[public-api.md](./public-api.md) §6）。

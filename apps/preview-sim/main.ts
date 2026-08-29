@@ -50,17 +50,17 @@
  * Constraints this app is written under
  * ---------------------------------------------------------------------------
  *
- *  - `apps` is in `SCAN_ROOTS` (scripts/check-dependency-whitelist.ts), so the
- *    preview's imports are gated like any other source here. It imports this
+ *  - The preview is included by `tsconfig.preview.json` and the repository lint
+ *    gate, so its imports are checked like any other source here. It imports this
  *    repository's own modules and `effect`, which is already a declared
  *    dependency. No org package, no new npm dependency.
  *  - The `Date.now()` / `new Date()` / `performance.now()` ban applies, and this
  *    app is the one that must take it most seriously, because driving its own
  *    clock is the property under display. Both clocks are injected: `ClockPort`
  *    from a `Ref`, and Effect's own `Clock` from `TestContext`. The
- *    `mc-kernel-allow-time-source` escape hatch is NOT used.
- *  - `pnpm verify` does not run this app. `tsconfig.preview.json` typechecks it
- *    and `pnpm lint` lints it, but `pnpm preview` is not a gate.
+ *    no time-source escape hatch is needed.
+ *  - `pnpm verify` typechecks this app through `tsconfig.preview.json` and lints
+ *    it. `pnpm preview` remains an interactive smoke test rather than a CI gate.
  */
 import { Effect } from 'effect'
 import { parseArguments, USAGE, type PreviewOptions } from './options'

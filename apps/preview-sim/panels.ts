@@ -34,7 +34,6 @@ import {
 } from './style'
 import { MAX_FRAME_DELTA_SECS, MIN_FRAME_DELTA_SECS } from '../../src/domain/frame-timing'
 import { INVENTORY_SLOT_COUNT } from '../../src/domain/inventory'
-import { MAX_STACK_COUNT } from '../../src/domain/kernel-vocabulary'
 import { MAX_RENDER_DISTANCE } from '../../src/domain/settings'
 import { MOON_PHASE_COUNT, TICKS_PER_SECOND } from '../../src/domain/time-of-day'
 import { EXHAUSTION_PER_POINT, FOOD_TICK_SECS } from '../../src/domain/vitals'
@@ -224,8 +223,8 @@ export const inventoryPanel = (view: WorldView, style: Style, width: number): Re
     return row(
       style,
       '',
-      `${style.dim(`[${padStart(String(slot.index), 2)}]`)} ${style.paint(pad(slot.item, 14), colour)}${style.paint(padStart(String(slot.count), 4), colour)}${style.dim(`/${String(MAX_STACK_COUNT)}`)} ${style.paint(bar(slot.count, MAX_STACK_COUNT, 16), colour) 
-        }${slot.overfull ? style.paint('  OVER MAX_STACK_COUNT', BAD) : ''}`,
+      `${style.dim(`[${padStart(String(slot.index), 2)}]`)} ${style.paint(pad(slot.item, 14), colour)}${style.paint(padStart(String(slot.count), 4), colour)}${style.dim(`/${String(slot.maxStackCount)}`)} ${style.paint(bar(slot.count, slot.maxStackCount, 16), colour)
+        }${slot.overfull ? style.paint('  OVER ITEM LIMIT', BAD) : ''}`,
     )
   })
 
@@ -464,8 +463,8 @@ export const findingsPanel = (view: WorldView, style: Style, width: number): Rea
       id: 'SIM-3',
       hit: !view.inventoryUsable,
       text: view.inventoryUsable
-        ? 'no slot exceeds MAX_STACK_COUNT: restore() normalises, and removeItem is total even if one did'
-        : 'a slot exceeds MAX_STACK_COUNT — removeItem repairs it rather than throwing, but nothing should have produced it',
+        ? "no slot exceeds its item's kernel stack limit: restore() normalises, and removeItem is total even if one did"
+        : "a slot exceeds its item's kernel stack limit — removeItem repairs it rather than throwing, but nothing should have produced it",
     },
     {
       id: 'SIM-4',

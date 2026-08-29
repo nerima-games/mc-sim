@@ -149,6 +149,12 @@ mob/ の実装コード 4,722 LOC は**丸ごと mx-gameplay ではなく分割�
 `chest-service*`、`furnace-service*`（6 ファイル）、`equipment-service*`、`recipe-service*`、
 `hotbar-service.ts`、`inventory-rollback.ts`。
 
+このうちホットバーは `domain/hotbar.ts` と `application/hotbar-service.ts` に分離して移植済みである。
+`InventoryService.getHotbarSlots` は参照実装と同じく 27 番目から 9 スロットを返し、
+選択状態・循環スクロール・選択中アイテムの照会は `HotbarService` が担当する。
+キー割り当てやマウスホイールなどの入力イベントは参照実装の `PlayerInputService` ごと移さず、
+ホスト側で `HotbarInput` に変換する。
+
 **分岐判断**: かまど（`furnace-service*`）は「焼ける時間」という tick 進行を持つ。
 状態は mc-sim、レシピ表も mc-sim（plan.md §7「クラフト・かまど…: sim(レシピ/状態) + ui(画面)」）。
 「燃料を入れたら燃え始める」というルールが mx-gameplay かどうかは要判断。

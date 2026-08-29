@@ -7,7 +7,7 @@ import {
   type ExplosionBlockPosition,
 } from '../src/domain/explosion'
 import { EntityId, EntityKind, type Entity } from '../src/domain/entity'
-import { position } from '../src/domain/kernel-vocabulary'
+import { position } from '@nerima-games/mc-kernel'
 
 const key = ({ x, y, z }: ExplosionBlockPosition): string => `${x},${y},${z}`
 const air = () => ({ resistance: 0, destructible: false })

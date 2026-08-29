@@ -14,14 +14,13 @@ import {
   collectFurnaceOutput,
   emptyFurnaceState,
   matchSmeltingRecipe,
-  STARTER_FUEL_RULES,
-  STARTER_SMELTING_RECIPES,
   transferToFurnace,
   validateFurnaceSnapshot,
   type FuelRule,
   type FurnaceState,
   type SmeltingRecipe,
 } from '../src/domain/smelting'
+import { STARTER_FUEL_RULES, STARTER_SMELTING_RECIPES } from '../src/domain/smelting-data'
 
 const furnaceWith = (overrides: Partial<FurnaceState> = {}): FurnaceState => ({
   ...emptyFurnaceState(),
@@ -32,12 +31,25 @@ const uncheckedStack = (item: ItemStack['item'], count: number): ItemStack =>
   ({ item, count }) as unknown as ItemStack
 
 describe('starter smelting data', () => {
-  it.effect('each starter input has one ten-second output recipe', () =>
+  it.effect('each supported starter input has one ten-second output recipe', () =>
     Effect.sync(() => {
       const expected = [
         ['raw_iron', 'iron_ingot'],
         ['cobblestone', 'stone'],
         ['sand', 'glass'],
+        ['coal_ore', 'coal'],
+        ['deepslate_coal_ore', 'coal'],
+        ['iron_ore', 'iron_ingot'],
+        ['deepslate_iron_ore', 'iron_ingot'],
+        ['diamond_ore', 'diamond'],
+        ['deepslate_diamond_ore', 'diamond'],
+        ['redstone_ore', 'redstone_dust'],
+        ['deepslate_redstone_ore', 'redstone_dust'],
+        ['lapis_ore', 'lapis_lazuli'],
+        ['deepslate_lapis_ore', 'lapis_lazuli'],
+        ['emerald_ore', 'emerald'],
+        ['deepslate_emerald_ore', 'emerald'],
+        ['netherrack', 'nether_brick'],
       ] as const
 
       for (const [input, output] of expected) {
@@ -47,6 +59,7 @@ describe('starter smelting data', () => {
           cookDurationSecs: 10,
         })
       }
+      expect(STARTER_SMELTING_RECIPES).toHaveLength(expected.length)
       expect(matchSmeltingRecipe(STARTER_SMELTING_RECIPES, itemStack('dirt', 1))).toBeNull()
     }),
   )
@@ -71,6 +84,20 @@ describe('starter smelting data', () => {
         { item: 'oak_log', burnDurationSecs: 15 },
         { item: 'oak_planks', burnDurationSecs: 15 },
         { item: 'stick', burnDurationSecs: 5 },
+        { item: 'oak_stairs', burnDurationSecs: 15 },
+        { item: 'crafting_table', burnDurationSecs: 15 },
+        { item: 'chest', burnDurationSecs: 15 },
+        { item: 'bow', burnDurationSecs: 15 },
+        { item: 'fishing_rod', burnDurationSecs: 15 },
+        { item: 'oak_boat', burnDurationSecs: 60 },
+        { item: 'ladder', burnDurationSecs: 15 },
+        { item: 'sapling', burnDurationSecs: 5 },
+        { item: 'wooden_pickaxe', burnDurationSecs: 10 },
+        { item: 'wooden_hoe', burnDurationSecs: 10 },
+        { item: 'wooden_sword', burnDurationSecs: 10 },
+        { item: 'bowl', burnDurationSecs: 5 },
+        { item: 'wool', burnDurationSecs: 5 },
+        { item: 'door', burnDurationSecs: 10 },
       ])
     }),
   )
@@ -437,6 +464,14 @@ describe('inventory-backed furnace progression', () => {
         error: { path: 'burnRemainingSecs' },
       })
       expect(validateFurnaceSnapshot({ ...state, extra: true })).toMatchObject({
+        _tag: 'Invalid',
+        error: { path: 'snapshot' },
+      })
+      expect(validateFurnaceSnapshot(null)).toMatchObject({
+        _tag: 'Invalid',
+        error: { path: 'snapshot' },
+      })
+      expect(validateFurnaceSnapshot([])).toMatchObject({
         _tag: 'Invalid',
         error: { path: 'snapshot' },
       })

@@ -15,8 +15,8 @@ $ pnpm preview --once --ascii --at 130                # 1 フレームを文字�
 $ pnpm preview --scenario corrupt-save --at 280 --once --ascii
 ```
 
-`pnpm verify` はこれを実行しない。ただし `pnpm typecheck`（`tsconfig.preview.json`）と
-`pnpm lint` と `pnpm check:deps` の対象には**入っている**。
+`pnpm verify` は対話実行しない。ただし `pnpm typecheck`（`tsconfig.preview.json`）と
+`pnpm lint` の対象には**入っている**。
 
 ## なぜ「障害物コース」ではなく「シナリオステッパ」なのか
 
@@ -70,7 +70,7 @@ camera-pose / frame-timing / time-of-day —— 8 つとも、注入されたク
 
 | | 何か | mc-sim での見え方 |
 | --- | --- | --- |
-| `ClockPort` | mc-kernel の Port（`domain/kernel-vocabulary.ts` にミラー） | `cameraPose: Effect<…, never, ClockPort>` —— **型に出る** |
+| `ClockPort` | mc-kernel が公開する Port（ローカルのミラーなし） | `cameraPose: Effect<…, never, ClockPort>` —— **型に出る** |
 | Effect `Clock` | `Schedule.spaced` が sleep する先 | `startAutoSaveDaemon: Effect<Fiber.RuntimeFiber<…>>` —— **型に出ない** |
 
 `application/player-service.ts` は「クロック依存を型に見せることが、
@@ -78,9 +78,8 @@ camera-pose / frame-timing / time-of-day —— 8 つとも、注入されたク
 「いつ」を決めることだけが仕事のサービスが、それをしていない —— という指摘（SIM-6）は妥当だった。
 
 **結論は「移さない」で、理由は `application/autosave.ts` にある。** Port は**瞬間を読む**もので、
-スケジュールは**期間だけ眠る**もの。`ClockPort` に `sleep` は無く、mc-kernel のミラーなので
-足すこともできない（Tag は文字列キーで解決されるため、広いミラーは `test/kernel-mirror.test.ts` が
-潰している当のハザードそのものになる）。Port で駆動すると polling になり、
+スケジュールは**期間だけ眠る**もの。`ClockPort` に `sleep` は無く、公開された Port の契約なので
+足すこともできない（Tag は文字列キーで解決されるため、別の定義はランタイム境界を壊す）。Port で駆動すると polling になり、
 `TestClock.adjust` では進まなくなって、オートセーブのテスト一式が手回しハーネスに変わる。
 
 Effect の `Clock` もサービスであり、`TestClock` が差し替えるのはそれである。
@@ -91,8 +90,8 @@ Effect の `Clock` もサービスであり、`TestClock` が差し替えるの�
 このアプリは前者を `Ref<number>` で、後者を `TestContext.TestContext` で backing する。
 だから 5 秒のオートセーブ間隔は実時間 0 秒で、全部再現可能である。
 `Date.now()` / `new Date()` / `performance.now()` はこのアプリのどこにも無い。
-`scripts/check-dependency-whitelist.ts` の `mc-kernel-allow-time-source`
-エスケープハッチは**使っていない**。
+静的 import だけでは Effect の Clock サービスまでは判定できないため、テストとレビューで
+この境界を固定している。
 
 ## シナリオ
 
@@ -116,7 +115,7 @@ Effect の `Clock` もサービスであり、`TestClock` が差し替えるの�
 | --- | --- | --- |
 | SIM-11 | **順序ハザードの正典的な説明が算術的に間違っている。** `0.60` ではなく `0.20` | ヘッダを両方向とも書き下し、**コメントが印字する数値**を assert するテストを追加 |
 | SIM-1 | `TimeService.restore({dayLengthTicks: 0})` → 全読み取りが NaN、**`isNight` は `false`**（恒久的な昼） | `normaliseTimeState` を `restore` に適用。`isNight` は**不変**（mx-gameplay のミラー） |
-| SIM-3 | `removeItem` は `MAX_STACK_COUNT` 超のスロットで**throw する**。純粋・全域と書いてあるのに | スロットの読みをガードし派生する書き込みを clamp。全域になった |
+| SIM-3 | `removeItem` はアイテム別 stack limit 超のスロットで**throw する**。純粋・全域と書いてあるのに | スロットの読みをガードし派生する書き込みを clamp。全域になった |
 | SIM-2 | `InventoryService.restore` はスロット数を検査しない。36 スロットが 2 になる | `normaliseInventory` を適用。`restore` は入らなかった数を返す |
 | SIM-6 | オートセーブのクロックだけが Port ではない | **移さない。** Port は瞬間を読むだけで `sleep` を持てない。理由を `application/autosave.ts` に記載 |
 | SIM-8 | `configureDay` は「ワールドロードが呼ぶもの」と書いてあるが、月齢を 0 に戻す | doc を「ブートストラップ専用」に。ロード経路のテストを新設 |
@@ -176,7 +175,7 @@ mc-sim 側の修復はもう非有限を渡さないが、上限の値を決め�
 
 **このリポジトリ自身のモジュールと `effect` だけ。**
 `effect` は既に `dependencies` にある。org パッケージも新規 npm 依存も無い。
-`apps` は `SCAN_ROOTS` に入っているので、import は `domain/` と同じゲートを通る。
+`apps` は preview 用の型設定と lint の対象なので、import は `domain/` と同じ品質ゲートを通る。
 
 ## ファイル
 

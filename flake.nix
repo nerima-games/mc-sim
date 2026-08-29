@@ -32,13 +32,10 @@
           # the `packageManager` field in package.json — one source of truth
           # instead of two that can drift.
           #
-          # oxlint is the opposite case: it is NOT a package.json devDependency.
-          # It used to be, and every repo in the org independently drifted onto
-          # a different version (some on 0.12.x, some on 1.76.x) without anyone
-          # noticing, because the config file (`.oxlintrc.json`) had a filename
-          # bug that meant it was never actually being loaded either way. Once
-          # that bug was fixed, a single pinned Nix-provided oxlint became the
-          # one source of truth instead of 16 independently-drifting npm pins.
+          # oxlint is declared in package.json and pnpm-lock.yaml so CI and local
+          # installs resolve the same CLI. The devShell supplies the same command
+          # for editor workflows; packageManager/Corepack remains the install
+          # source of truth.
           default = pkgs.mkShell {
             packages = [
               pkgs.nodejs_24

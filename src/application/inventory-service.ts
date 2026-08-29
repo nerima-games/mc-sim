@@ -12,36 +12,36 @@ import { Context, Effect, Layer, Ref } from 'effect'
 import * as Container from '../domain/container-storage'
 import * as Craft from '../domain/crafting'
 import * as Eq from '../domain/equipment'
+import * as Hotbar from '../domain/hotbar'
 import * as Inv from '../domain/inventory'
 import type { ItemType } from '@nerima-games/mc-kernel'
 import * as Storage from '../domain/player-storage'
 import * as Recipe from '../domain/recipe'
+import { STARTER_RECIPES } from '../domain/recipe-data'
+import {
+  carriedAt,
+  carriedWithCount,
+  clickInventory,
+  copyCarried,
+  isValidSlotIndex,
+  sameCarried,
+  sameDurability,
+  validCarried,
+  withCarriedSlots,
+} from './inventory-interaction'
+import type {
+  InventoryCarriedSlot,
+  InventoryCarriedStack,
+  InventoryClick,
+  InventoryClickResult,
+} from './inventory-interaction'
 
-export type InventoryCarriedStack = Inv.ItemStack & {
-  readonly durability?: Eq.Durability | undefined
-}
-export type InventoryCarriedSlot = InventoryCarriedStack | undefined
-
-export type InventoryClick =
-  | {
-      readonly _tag: 'LeftClick'
-      readonly slotIndex: number
-      readonly carried: InventoryCarriedSlot
-    }
-  | {
-      readonly _tag: 'RightClick'
-      readonly slotIndex: number
-      readonly carried: InventoryCarriedSlot
-    }
-
-export type InventoryClickResult =
-  | { readonly _tag: 'PickedUp'; readonly carried: InventoryCarriedStack }
-  | { readonly _tag: 'Placed'; readonly carried: InventoryCarriedSlot }
-  | { readonly _tag: 'Merged'; readonly carried: InventoryCarriedSlot }
-  | { readonly _tag: 'Swapped'; readonly carried: InventoryCarriedStack }
-  | { readonly _tag: 'NoChange'; readonly carried: InventoryCarriedSlot }
-  | { readonly _tag: 'InvalidSlot'; readonly carried: InventoryCarriedSlot }
-  | { readonly _tag: 'InvalidCount'; readonly carried: InventoryCarriedSlot }
+export type {
+  InventoryCarriedSlot,
+  InventoryCarriedStack,
+  InventoryClick,
+  InventoryClickResult,
+} from './inventory-interaction'
 
 export type InventorySetSlotResult =
   | { readonly _tag: 'Updated'; readonly slot: InventoryCarriedSlot }
@@ -85,175 +85,6 @@ export type MoveOneContainerItemAtRequest = {
   readonly sourceSlot: number
   readonly destination: ContainerPositionAddress
   readonly destinationSlot: number
-}
-
-type InventoryClickOutcome = {
-  readonly inventory: Inv.Inventory
-  readonly result: InventoryClickResult
-}
-
-const validCarried = (carried: InventoryCarriedSlot): boolean =>
-  carried === undefined ||
-  (Number.isInteger(carried.count) && carried.count > 0 &&
-    carried.count <= Inv.maxStackCountForItem(carried.item) &&
-    (Eq.isDamageableItemType(carried.item)
-      ? carried.durability === undefined ||
-        Eq.isValidDurabilityForItem(carried.item, carried.durability)
-      : carried.durability === undefined))
-
-const sameDurability = (
-  left: Eq.Durability | null | undefined,
-  right: Eq.Durability | null | undefined,
-): boolean => left === right || (left !== null && left !== undefined && right !== null && right !== undefined &&
-  left.current === right.current && left.max === right.max)
-
-const copyCarried = (carried: InventoryCarriedSlot): InventoryCarriedSlot => carried === undefined
-  ? undefined
-  : {
-      ...carried,
-      ...(carried.durability === undefined ? {} : { durability: { ...carried.durability } }),
-    }
-
-const carriedWithCount = (carried: InventoryCarriedStack, count: number): InventoryCarriedStack => ({
-  ...Inv.itemStack(carried.item, count),
-  ...(carried.durability === undefined ? {} : { durability: { ...carried.durability } }),
-})
-
-const carriedAt = (player: Storage.PlayerStorage, index: number): InventoryCarriedSlot => {
-  const slot = player.inventory.slots[index]
-  if (slot === undefined) return undefined
-  const durability = player.inventoryDurability[index]
-  return Eq.isDamageableItemType(slot.item) && Eq.isValidDurabilityForItem(slot.item, durability)
-    ? {
-        ...slot,
-        durability: durability === null
-          /* v8 ignore next -- `Eq.isValidDurabilityForItem` requires
-             `Eq.isDurability(durability)`, which is false for `null` (it is
-             not a record). The guard above already proved that predicate
-             true, so `durability` cannot be `null` on this branch; this arm
-             exists only to satisfy the `Eq.Durability | null` element type of
-             `inventoryDurability`, not a value this function can observe. */
-          ? undefined
-          : { ...durability },
-      }
-    : { ...slot }
-}
-
-const durabilityForCarried = (carried: InventoryCarriedSlot): Eq.Durability | null => {
-  if (carried === undefined || !Eq.isDamageableItemType(carried.item)) return null
-  return carried.durability === undefined
-    ? Eq.durabilityForItem(carried.item)
-    : { ...carried.durability }
-}
-
-const withCarriedSlots = (
-  player: Storage.PlayerStorage,
-  slots: ReadonlyArray<InventoryCarriedSlot>,
-): Storage.PlayerStorage => ({
-  ...player,
-  inventory: { slots: slots.map((slot) => slot === undefined ? undefined : { item: slot.item, count: slot.count }) },
-  inventoryDurability: slots.map(durabilityForCarried),
-})
-
-const isValidSlotIndex = (index: number): boolean =>
-  Number.isInteger(index) && index >= 0 && index < Inv.INVENTORY_SLOT_COUNT
-
-const sameCarried = (left: InventoryCarriedSlot, right: InventoryCarriedSlot): boolean =>
-  left?.item === right?.item && left?.count === right?.count &&
-  sameDurability(left?.durability, right?.durability)
-
-const clickInventoryLeft = (
-  inventory: Inv.Inventory,
-  click: Extract<InventoryClick, { readonly _tag: 'LeftClick' }>,
-  slot: Inv.Slot,
-): InventoryClickOutcome => {
-  if (click.carried === undefined) {
-    if (slot === undefined) {
-      return { inventory, result: { _tag: 'NoChange', carried: undefined } }
-    }
-    const slots = [...inventory.slots]
-    slots[click.slotIndex] = undefined
-    return { inventory: { slots }, result: { _tag: 'PickedUp', carried: slot } }
-  }
-  if (slot === undefined) {
-    const slots = [...inventory.slots]
-    slots[click.slotIndex] = Inv.itemStack(click.carried.item, click.carried.count)
-    return { inventory: { slots }, result: { _tag: 'Placed', carried: undefined } }
-  }
-  if (slot.item !== click.carried.item) {
-    const slots = [...inventory.slots]
-    slots[click.slotIndex] = Inv.itemStack(click.carried.item, click.carried.count)
-    return { inventory: { slots }, result: { _tag: 'Swapped', carried: slot } }
-  }
-
-  const accepted = Math.min(Inv.maxStackCountForItem(slot.item) - slot.count, click.carried.count)
-  if (accepted <= 0) {
-    return { inventory, result: { _tag: 'NoChange', carried: click.carried } }
-  }
-  const slots = [...inventory.slots]
-  slots[click.slotIndex] = Inv.itemStack(slot.item, slot.count + accepted)
-  const remaining = click.carried.count - accepted
-  return {
-    inventory: { slots },
-    result: {
-      _tag: 'Merged',
-      carried: remaining === 0 ? undefined : Inv.itemStack(click.carried.item, remaining),
-    },
-  }
-}
-
-const clickInventoryRight = (
-  inventory: Inv.Inventory,
-  click: Extract<InventoryClick, { readonly _tag: 'RightClick' }>,
-  slot: Inv.Slot,
-): InventoryClickOutcome => {
-  if (click.carried === undefined) {
-    if (slot === undefined) {
-      return { inventory, result: { _tag: 'NoChange', carried: undefined } }
-    }
-    const pickedUp = Math.ceil(slot.count / 2)
-    const remaining = slot.count - pickedUp
-    const slots = [...inventory.slots]
-    slots[click.slotIndex] = remaining === 0 ? undefined : Inv.itemStack(slot.item, remaining)
-    return {
-      inventory: { slots },
-      result: { _tag: 'PickedUp', carried: Inv.itemStack(slot.item, pickedUp) },
-    }
-  }
-
-  if (slot !== undefined &&
-      (slot.item !== click.carried.item || slot.count >= Inv.maxStackCountForItem(slot.item))) {
-    return { inventory, result: { _tag: 'NoChange', carried: click.carried } }
-  }
-  const slots = [...inventory.slots]
-  slots[click.slotIndex] = Inv.itemStack(click.carried.item, (slot?.count ?? 0) + 1)
-  const remaining = click.carried.count - 1
-  return {
-    inventory: { slots },
-    result: {
-      _tag: slot === undefined ? 'Placed' : 'Merged',
-      carried: remaining === 0 ? undefined : Inv.itemStack(click.carried.item, remaining),
-    },
-  }
-}
-
-/** Apply one Minecraft-style slot click without exposing an intermediate inventory. */
-const clickInventory = (inventory: Inv.Inventory, click: InventoryClick): InventoryClickOutcome => {
-  if (
-    !Number.isInteger(click.slotIndex) ||
-    click.slotIndex < 0 ||
-    click.slotIndex >= Inv.INVENTORY_SLOT_COUNT
-  ) {
-    return { inventory, result: { _tag: 'InvalidSlot', carried: click.carried } }
-  }
-  if (!validCarried(click.carried)) {
-    return { inventory, result: { _tag: 'InvalidCount', carried: click.carried } }
-  }
-
-  const slot = inventory.slots[click.slotIndex]
-  return click._tag === 'LeftClick'
-    ? clickInventoryLeft(inventory, click, slot)
-    : clickInventoryRight(inventory, click, slot)
 }
 
 export type InventoryServiceApi = {
@@ -305,6 +136,8 @@ export type InventoryServiceApi = {
   readonly click: (click: InventoryClick) => Effect.Effect<InventoryClickResult>
   /** Read one slot including tool durability without exposing mutable state. */
   readonly getSlot: (slotIndex: number) => Effect.Effect<InventoryCarriedSlot>
+  /** Read the nine hotbar slots in their player-inventory order. */
+  readonly getHotbarSlots: Effect.Effect<ReadonlyArray<InventoryCarriedSlot>>
   /** Replace one slot atomically, validating the stack before mutation. */
   readonly setSlot: (
     slotIndex: number,
@@ -353,18 +186,18 @@ export type InventoryServiceApi = {
     position: Container.ContainerPosition,
     kind?: Container.ContainerKind,
   ) => Effect.Effect<Container.CreateContainerResult>
-  /** Read one chest without exposing the service's mutable state. */
+  /** Read one container without exposing the service's mutable state. */
   readonly containerSnapshot: (
     id: Container.ContainerId,
-  ) => Effect.Effect<Container.ChestContainer | null>
-  /** Resolve a stable block id and read one chest without exposing service state. */
+  ) => Effect.Effect<Container.Container | null>
+  /** Resolve a stable block id and read one container without exposing service state. */
   readonly containerSnapshotAt: (
     dimension: string,
     position: Container.ContainerPosition,
-  ) => Effect.Effect<Container.ChestContainer | null>
-  /** JSON-safe, versioned snapshot of all chest containers. */
+  ) => Effect.Effect<Container.Container | null>
+  /** JSON-safe, versioned snapshot of all containers. */
   readonly containerStorageSnapshot: Effect.Effect<Container.ContainerStorageSnapshot>
-  /** Strictly restore all chest containers, leaving current state intact on validation failure. */
+  /** Strictly restore all containers, leaving current state intact on validation failure. */
   readonly restoreContainerStorage: (
     snapshot: unknown,
   ) => Effect.Effect<void, Container.ContainerStorageValidationError>
@@ -403,7 +236,7 @@ export type InventoryServiceApi = {
    * to install whatever it was handed, so a two-slot save turned a 36-slot
    * player into a two-slot one and the next 872 mined blocks went on the floor
    * with no symptom but a full inventory. The result now always has exactly
-   * `INVENTORY_SLOT_COUNT` slots and no stack outside [0, `MAX_STACK_COUNT`],
+   * `INVENTORY_SLOT_COUNT` slots and no stack outside the item's kernel limit,
    * which is also what makes `Inv.removeItem` unable to meet a count it has to
    * repair.
    *
@@ -489,7 +322,7 @@ type InventoryServiceState = {
  */
 export const makeInventoryService = (
   initial: Inv.Inventory = Inv.emptyInventory(),
-  recipeTable: Recipe.RecipeTable = Recipe.STARTER_RECIPES,
+  recipeTable: Recipe.RecipeTable = STARTER_RECIPES,
 ): Effect.Effect<InventoryServiceApi> =>
   Effect.map(
     Ref.make<InventoryServiceState>({
@@ -536,16 +369,7 @@ export const makeInventoryService = (
             Eq.isDamageableItemType(click.carried.item)) {
           const durability = click.carried.durability ?? Eq.durabilityForItem(click.carried.item)
           const values = [...next.inventoryDurability]
-          values[click.slotIndex] = durability === null
-            /* v8 ignore next -- `durability` is either `click.carried.durability`
-               (typed `Eq.Durability | undefined`, never `null`) or the result of
-               `Eq.durabilityForItem(click.carried.item)` on an item this branch
-               has already confirmed `Eq.isDamageableItemType`, which is exactly
-               `durabilityForItem`'s own non-null condition. Neither operand of
-               the `??` can be `null`, so this arm is unreachable from this call
-               site; it exists to satisfy `Eq.Durability | null`'s wider type. */
-            ? null
-            : { ...durability }
+          values[click.slotIndex] = { ...durability }
           next = { ...next, inventoryDurability: values }
         }
         const result = (outcome.result._tag === 'PickedUp' || outcome.result._tag === 'Swapped') &&
@@ -557,6 +381,12 @@ export const makeInventoryService = (
       }),
     getSlot: (slotIndex) => Ref.get(state).pipe(
       Effect.map((current) => isValidSlotIndex(slotIndex) ? carriedAt(current.player, slotIndex) : undefined),
+    ),
+    getHotbarSlots: Ref.get(state).pipe(
+      Effect.map((current) => Array.from(
+        { length: Hotbar.HOTBAR_SIZE },
+        (_, offset) => carriedAt(current.player, Hotbar.HOTBAR_START + offset),
+      )),
     ),
     setSlot: (slotIndex, slot) =>
       Ref.modify(state, (current): readonly [InventorySetSlotResult, InventoryServiceState] => {
@@ -619,8 +449,8 @@ export const makeInventoryService = (
         const carriedSlots = current.player.inventory.slots.map((_, index) => carriedAt(current.player, index))
         const source = carriedSlots[slotIndex]
         if (source === undefined) return [{ _tag: 'EmptySlot' }, current]
-        const first = slotIndex < 27 ? 27 : 0
-        const last = slotIndex < 27 ? Inv.INVENTORY_SLOT_COUNT : 27
+        const first = slotIndex < Hotbar.HOTBAR_START ? Hotbar.HOTBAR_START : 0
+        const last = slotIndex < Hotbar.HOTBAR_START ? Inv.INVENTORY_SLOT_COUNT : Hotbar.HOTBAR_START
         let remaining = Number(source.count)
         for (let index = first; index < last && remaining > 0; index += 1) {
           const target = carriedSlots[index]
@@ -798,6 +628,6 @@ export const makeInventoryService = (
 
 export const InventoryServiceLayer = (
   initial: Inv.Inventory = Inv.emptyInventory(),
-  recipeTable: Recipe.RecipeTable = Recipe.STARTER_RECIPES,
+  recipeTable: Recipe.RecipeTable = STARTER_RECIPES,
 ): Layer.Layer<InventoryService> =>
   Layer.effect(InventoryService, makeInventoryService(initial, recipeTable))

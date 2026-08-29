@@ -15,7 +15,7 @@ import {
   type Inventory,
 } from '../src/domain/inventory'
 import { containerIdAt } from '../src/domain/container-storage'
-import { MAX_STACK_COUNT, type ItemType, type StackCount } from '../src/domain/kernel-vocabulary'
+import { MAX_STACK_COUNT, type ItemType, type StackCount } from '@nerima-games/mc-kernel'
 import { makeInventoryService } from '../src/application/inventory-service'
 import type { InventoryClick } from '../src/index'
 
@@ -306,6 +306,15 @@ describe('REGRESSION: the domain is total on a corrupt slot, and never dies insi
       // sanctioned one: `normaliseInventory` is what accounts for it, and
       // `InventoryService.restore` runs it before a slot like this can exist.
       expect(slotAt(taken.inventory, 0)).toStrictEqual({ item: 'stone', count: MAX_STACK_COUNT })
+    }),
+  )
+
+  it.effect('clamps a corrupt single-stack slot to the kernel item limit', () =>
+    Effect.sync(() => {
+      const taken = removeItem(corruptSlot('diamond_sword', 65), 'diamond_sword', 1)
+
+      expect(taken.removed).toBe(1)
+      expect(slotAt(taken.inventory, 0)).toStrictEqual({ item: 'diamond_sword', count: 1 })
     }),
   )
 
@@ -870,6 +879,19 @@ describe('InventoryService concurrency', () => {
         yield* service.click({ _tag: 'RightClick', slotIndex: 1, carried: placed.carried }),
       ).toStrictEqual({ _tag: 'Merged', carried: { item: 'stone', count: 1 } })
       expect(slotAt(yield* service.snapshot, 1)).toStrictEqual({ item: 'stone', count: 2 })
+    }),
+  )
+
+  it.effect('right-clicking a single item empties its source slot', () =>
+    Effect.gen(function* () {
+      const service = yield* makeInventoryService()
+      yield* service.setSlot(0, { item: 'stone', count: 1 as StackCount })
+
+      expect(yield* service.click({ _tag: 'RightClick', slotIndex: 0, carried: undefined })).toStrictEqual({
+        _tag: 'PickedUp',
+        carried: { item: 'stone', count: 1 },
+      })
+      expect(slotAt(yield* service.snapshot, 0)).toBeUndefined()
     }),
   )
 

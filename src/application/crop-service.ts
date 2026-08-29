@@ -1,7 +1,7 @@
 import { Context, Effect, Layer, Ref } from 'effect'
 import type { BlockType } from '@nerima-games/mc-kernel'
 import type { ItemStack } from '../domain/inventory'
-import type { DeltaTimeSecs } from '../domain/kernel-vocabulary'
+import type { DeltaTimeSecs } from '@nerima-games/mc-kernel'
 import * as Crop from '../domain/crop'
 
 export type CropServiceApi = {
@@ -11,7 +11,6 @@ export type CropServiceApi = {
     soil?: BlockType,
   ) => Effect.Effect<boolean>
   readonly cropAt: (location: Crop.CropLocation) => Effect.Effect<Crop.CropState | null>
-  readonly matureYieldAt: (location: Crop.CropLocation) => Effect.Effect<ItemStack | null>
   readonly matureYieldsAt: (
     location: Crop.CropLocation,
   ) => Effect.Effect<ReadonlyArray<ItemStack> | null>
@@ -54,11 +53,6 @@ export const makeCropService = (): Effect.Effect<CropServiceApi> =>
       Effect.map(Ref.get(state), (current) => {
         const crop = current.get(Crop.cropLocationKey(location))
         return crop === undefined ? null : copyCrop(crop)
-      }),
-    matureYieldAt: (location) =>
-      Effect.map(Ref.get(state), (current) => {
-        const crop = current.get(Crop.cropLocationKey(location))
-        return crop === undefined ? null : Crop.matureYieldFor(crop)
       }),
     matureYieldsAt: (location) =>
       Effect.map(Ref.get(state), (current) => {

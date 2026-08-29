@@ -6,7 +6,7 @@
  * and thirteen simulation-side call sites read `camera.position` /
  * `camera.getWorldDirection(...)` out of it — see the citations in
  * domain/camera-pose.ts. The structural fix is the dependency direction
- * (mc-render -> mc-sim, never the reverse), which `pnpm check:deps` enforces.
+ * (mc-render -> mc-sim, never the reverse), which the dependency policy enforces.
  * These tests pin the behavioural half: everything a consumer could want from a
  * camera is computable HERE, in Node, with no renderer in the process.
  */
@@ -25,7 +25,7 @@ import {
   snapshotAgeSecs,
   withFeetPosition,
 } from '../src/domain/camera-pose'
-import { MonotonicTimeSecs, position } from '../src/domain/kernel-vocabulary'
+import { MonotonicTimeSecs, position } from '@nerima-games/mc-kernel'
 
 const AT = MonotonicTimeSecs(500)
 

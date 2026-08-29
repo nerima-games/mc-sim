@@ -1,6 +1,6 @@
 import * as Eq from './equipment'
 import * as Inv from './inventory'
-import { isItemType, StackCount } from './kernel-vocabulary'
+import { isItemType, StackCount } from '@nerima-games/mc-kernel'
 import * as Player from './player-storage'
 
 export type ContainerKind = 'chest' | 'shulker_box' | 'dispenser' | 'dropper' | 'hopper'
@@ -30,9 +30,6 @@ export type Container = {
   readonly slots: ReadonlyArray<ContainerSlot>
 }
 
-/** @deprecated Use Container. */
-export type ChestContainer = Container
-
 export type ContainerStorage = {
   readonly containers: ReadonlyArray<Container>
 }
@@ -53,8 +50,8 @@ export type ContainerStorageValidationResult =
   | { readonly _tag: 'Invalid'; readonly error: ContainerStorageValidationError }
 
 export type CreateContainerResult =
-  | { readonly _tag: 'Created'; readonly container: ChestContainer }
-  | { readonly _tag: 'AlreadyExists'; readonly container: ChestContainer }
+  | { readonly _tag: 'Created'; readonly container: Container }
+  | { readonly _tag: 'AlreadyExists'; readonly container: Container }
   | { readonly _tag: 'InvalidContainerId' }
 
 export type ContainerTransferRequest = {
@@ -168,28 +165,15 @@ const copyStack = (stack: ContainerStoredStack): ContainerStoredStack => ({
   durability: copyDurability(stack.durability),
 })
 
-export const containerCapacity = (kind: ContainerKind): number => {
-  switch (kind) {
-    case 'chest':
-    case 'shulker_box':
-      return CHEST_CONTAINER_CAPACITY
-    case 'dispenser':
-    case 'dropper':
-      return DISPENSER_CONTAINER_CAPACITY
-    case 'hopper':
-      return HOPPER_CONTAINER_CAPACITY
-    /* v8 ignore start -- `ContainerKind` is a closed string-literal union and
-       every member is handled above, so `kind` is typed `never` here. This is
-       exhaustiveness satisfying `no default-case`, not a defensive check
-       against a value that can occur at runtime; no cast-based test is added
-       for it (that would test the cast, not this function). */
-    default: {
-      const exhaustive: never = kind
-      throw new Error(`Unhandled container kind: ${String(exhaustive)}`)
-    }
-    /* v8 ignore stop */
-  }
-}
+const CONTAINER_CAPACITY_BY_KIND = {
+  chest: CHEST_CONTAINER_CAPACITY,
+  shulker_box: CHEST_CONTAINER_CAPACITY,
+  dispenser: DISPENSER_CONTAINER_CAPACITY,
+  dropper: DISPENSER_CONTAINER_CAPACITY,
+  hopper: HOPPER_CONTAINER_CAPACITY,
+} satisfies Record<ContainerKind, number>
+
+export const containerCapacity = (kind: ContainerKind): number => CONTAINER_CAPACITY_BY_KIND[kind]
 
 const copyContainer = (container: Container): Container => ({
   id: container.id,
@@ -208,9 +192,6 @@ export const emptyContainer = (
   slots: Array.from({ length: containerCapacity(kind) }, () => null),
 })
 
-export const emptyChestContainer = (id: ContainerId): ChestContainer =>
-  emptyContainer(id, 'chest')
-
 /** Stable host-defined block key, including dimension when the host has more than one. */
 export const containerIdAt = (
   dimension: string,
@@ -220,7 +201,7 @@ export const containerIdAt = (
 export const findContainer = (
   storage: ContainerStorage,
   id: ContainerId,
-): ChestContainer | undefined => {
+): Container | undefined => {
   const container = storage.containers.find((candidate) => candidate.id === id)
   return container === undefined ? undefined : copyContainer(container)
 }
@@ -290,19 +271,18 @@ type ContainerCandidateValidation =
 const validateContainerCandidate = (
   candidate: unknown,
   path: string,
-  legacy: boolean,
   seenIds: ReadonlySet<string>,
 ): ContainerCandidateValidation => {
-  if (!isRecord(candidate) || !hasExactKeys(candidate, legacy ? ['id', 'slots'] : ['id', 'kind', 'slots']))
+  if (!isRecord(candidate) || !hasExactKeys(candidate, ['id', 'kind', 'slots']))
     return {
       _tag: 'Invalid',
-      error: invalidError(path, legacy ? 'expected exactly id and slots' : 'expected exactly id, kind and slots'),
+      error: invalidError(path, 'expected exactly id, kind and slots'),
     }
   if (typeof candidate['id'] !== 'string' || !validId(candidate['id']))
     return { _tag: 'Invalid', error: invalidError(`${path}.id`, 'expected a non-empty trimmed string') }
   if (seenIds.has(candidate['id']))
     return { _tag: 'Invalid', error: invalidError(`${path}.id`, 'container id must be unique') }
-  const kind = legacy ? 'chest' : candidate['kind']
+  const kind = candidate['kind']
   if (kind !== 'chest' && kind !== 'shulker_box' && kind !== 'dispenser' && kind !== 'dropper' && kind !== 'hopper')
     return { _tag: 'Invalid', error: invalidError(`${path}.kind`, 'expected a supported container kind') }
   const capacity = containerCapacity(kind)
@@ -325,8 +305,8 @@ export const validateContainerStorageSnapshot = (
   if (!isRecord(value) || !hasExactKeys(value, ['version', 'containers']))
     return invalid('containerStorage', 'expected exactly version and containers')
   const version = value['version']
-  if (version !== 1 && version !== CONTAINER_STORAGE_SNAPSHOT_VERSION)
-    return invalid('containerStorage.version', `expected 1 or ${CONTAINER_STORAGE_SNAPSHOT_VERSION}`)
+  if (version !== CONTAINER_STORAGE_SNAPSHOT_VERSION)
+    return invalid('containerStorage.version', `expected ${CONTAINER_STORAGE_SNAPSHOT_VERSION}`)
   if (!Array.isArray(value['containers']))
     return invalid('containerStorage.containers', 'expected an array')
 
@@ -335,7 +315,7 @@ export const validateContainerStorageSnapshot = (
   for (let containerIndex = 0; containerIndex < value['containers'].length; containerIndex += 1) {
     const candidate = value['containers'][containerIndex]
     const path = `containerStorage.containers.${containerIndex}`
-    const validated = validateContainerCandidate(candidate, path, version === 1, ids)
+    const validated = validateContainerCandidate(candidate, path, ids)
     if (validated._tag === 'Invalid') return { _tag: 'Invalid', error: validated.error }
     ids.add(validated.container.id)
     containers.push(validated.container)
@@ -435,17 +415,7 @@ export const transferContainerItem = (
   )
   if (containerIndex < 0)
     return failure(playerStorage, containerStorage, { _tag: 'ContainerNotFound' })
-  const container = containerStorage.containers[containerIndex]
-  /* v8 ignore start -- `containerIndex` is the index `findIndex` matched on
-     this exact array, so `containers[containerIndex]` is always a
-     `Container`. `noUncheckedIndexedAccess` still widens the read to
-     `Container | undefined` because TypeScript cannot see that relationship;
-     `containerStorage.containers` is only ever built by spread/map/filter
-     over `Container` values and never holds a hole, so this branch cannot be
-     reached through the public API, not merely untested. */
-  if (container === undefined)
-    return failure(playerStorage, containerStorage, { _tag: 'ContainerNotFound' })
-  /* v8 ignore stop */
+  const container = containerStorage.containers[containerIndex]!
   if (!validContainerSlot(container, request.containerSlot))
     return failure(playerStorage, containerStorage, { _tag: 'InvalidContainerSlot' })
 
@@ -506,13 +476,7 @@ export const extractContainerItem = (
 ): ContainerExtractOutcome => {
   const containerIndex = storage.containers.findIndex((container) => container.id === request.containerId)
   if (containerIndex < 0) return { storage, result: { _tag: 'ContainerNotFound' } }
-  const container = storage.containers[containerIndex]
-  /* v8 ignore start -- same unreachability as transferContainerItem above:
-     `containerIndex` is a match `findIndex` found in this exact dense array,
-     so the element it names is never `undefined` at runtime; the check only
-     exists because `noUncheckedIndexedAccess` widens the element type. */
-  if (container === undefined) return { storage, result: { _tag: 'ContainerNotFound' } }
-  /* v8 ignore stop */
+  const container = storage.containers[containerIndex]!
   if (!validContainerSlot(container, request.containerSlot))
     return { storage, result: { _tag: 'InvalidContainerSlot' } }
   if (!Number.isSafeInteger(request.count) || request.count <= 0)
@@ -583,17 +547,8 @@ const lookupMoveContainers = (storage: ContainerStorage, request: ContainerMoveR
     (container) => container.id === request.destinationContainerId,
   )
   if (destinationIndex < 0) return { _tag: 'Invalid', result: { _tag: 'DestinationContainerNotFound' } }
-  const sourceContainer = storage.containers[sourceIndex]
-  const destinationContainer = storage.containers[destinationIndex]
-  /* v8 ignore start -- same unreachability as transferContainerItem's
-     container lookup: `sourceIndex`/`destinationIndex` are matches
-     `findIndex` found in this exact dense array, so neither element is ever
-     `undefined` at runtime. `noUncheckedIndexedAccess` widens both reads
-     regardless. */
-  if (sourceContainer === undefined) return { _tag: 'Invalid', result: { _tag: 'SourceContainerNotFound' } }
-  if (destinationContainer === undefined)
-    return { _tag: 'Invalid', result: { _tag: 'DestinationContainerNotFound' } }
-  /* v8 ignore stop */
+  const sourceContainer = storage.containers[sourceIndex]!
+  const destinationContainer = storage.containers[destinationIndex]!
   if (!validContainerSlot(sourceContainer, request.sourceSlot))
     return { _tag: 'Invalid', result: { _tag: 'InvalidSourceSlot' } }
   if (!validContainerSlot(destinationContainer, request.destinationSlot))
@@ -648,12 +603,7 @@ export const drainContainer = (
 ): DrainContainerOutcome => {
   const index = storage.containers.findIndex((container) => container.id === id)
   if (index < 0) return { storage, result: { _tag: 'ContainerNotFound' } }
-  const container = storage.containers[index]
-  /* v8 ignore start -- same unreachability as transferContainerItem's
-     container lookup: `index` is a match `findIndex` found in this exact
-     dense array, so the element it names is never `undefined` at runtime. */
-  if (container === undefined) return { storage, result: { _tag: 'ContainerNotFound' } }
-  /* v8 ignore stop */
+  const container = storage.containers[index]!
   return {
     storage: { containers: storage.containers.filter((_, candidate) => candidate !== index) },
     result: {

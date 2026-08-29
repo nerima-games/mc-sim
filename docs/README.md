@@ -34,8 +34,9 @@ mc-render / mc-playground-kit / mx-gameplay / mx-redstone / mx-ui / mx-multiplay
 
 ## いま何が入っているか
 
-**pre-audit first cut（叩き台）。** 動くコードは以下だけで、いずれも
-「参照実装で実測確定した知見を、回帰テストとして最初から焼き込む」ためのもの。
+現在の実装は、状態・純粋な判定・Effect サービス・stage 登録を分離し、
+共有語彙を所有パッケージから直接利用する構成である。回帰テストは
+参照実装で確認した境界と、Minecraft の状態遷移を固定する。
 
 | 領域 | 実装 | 対応する設計注意 |
 | --- | --- | --- |
@@ -45,23 +46,24 @@ mc-render / mc-playground-kit / mx-gameplay / mx-redstone / mx-ui / mx-multiplay
 | `setDayLength → setTimeOfDay` 順序 | `domain/time-of-day.ts` / `application/time-service.ts` | DN-04 |
 | 自動保存の `Schedule.spaced` | `application/autosave.ts` | DN-05 |
 | `Ref.modify` による TOCTOU 回避 | `application/inventory-service.ts` | DN-07 |
-| レシピ表とクラフトの原子性 | `domain/recipe.ts` / `domain/crafting.ts` | DN-07 / DN-11（[public-api.md](./public-api.md) §4.1） |
+| **ホットバー選択** | `domain/hotbar.ts` / `application/hotbar-service.ts` | 9スロットの投影は `InventoryService`、選択状態は `HotbarService` |
+| レシピ表とクラフトの原子性 | `domain/recipe-data.ts` / `domain/recipe.ts` / `domain/crafting.ts` | DN-07 / DN-11（[public-api.md](./public-api.md) §4.1） |
 | **セーブ/ロード境界の修復**（`normaliseTimeState` / `normaliseInventory`） | `domain/time-of-day.ts` / `domain/inventory.ts` | [public-api.md](./public-api.md) §2-2 / §4-1 |
 | **捨てたものを数える**（`framesDropped` / `secondsLostToClamp`） | `application/game-loop.ts` / `domain/frame-timing.ts` | [public-api.md](./public-api.md) §3-1 |
+| エンティティ台帳・体力・空腹・XP | `application/entity-manager.ts` / `domain/vitals-hunger.ts` | [responsibility.md](./responsibility.md) §3.4 |
+| 統計・設定・採掘・採取・乗り物 | `domain/statistics.ts` / `domain/settings.ts` / `application/*-service.ts` | [responsibility.md](./responsibility.md) §3 |
+| かまど・醸造（現行語彙の4レシピ）・金床 | `domain/smelting.ts` / `domain/brewing.ts` / mc-kernel の anvil API | [public-api.md](./public-api.md) |
+| セーブ/ロード・ブロック相互作用 | `application/save-service.ts` / `domain/block-interaction.ts` | [testing.md](./testing.md) |
 
-内蔵プレビュー `--stats` が挙げた 11 件の発見は**全件決着済み**（10 件修正 + 1 件は
-「移さない」判断）。一覧と決着内容は [testing.md](./testing.md) §2.2 と
-[`apps/preview-sim/README.md`](../apps/preview-sim/README.md)。
+`--stats` が挙げた発見の決着内容は [`apps/preview-sim/README.md`](../apps/preview-sim/README.md) にある。
 
-まだ無いもの: EntityManager、体力/空腹/XP、実績/統計、設定状態、内蔵障害物コースプレビュー、
-かまど/醸造/金床/エンチャント、リポジトリ内 workspace 分割（entity / inventory / game）。
-APIロックファイルは**ある** —— `api-lock.md` と `pnpm api:check`（[public-api.md](./public-api.md) §6）。
-`domain/kernel-vocabulary.ts` は公開済みの mc-kernel 0.2.4 へ段階移行するための互換ミラーであり、移行完了後に削除する。
-ミラーは最小だが Clock Port とアイテム語彙（`ITEM_TYPES` / `ItemType` / `isItemType`）だけは丸ごと写してある
-（前者は文字列キーで解決される `Context.Tag` なので狭いミラーが実行時ハザードになり、
-後者は閉じたリテラル union なのでメンバの集合そのものが型である）。
-`test/kernel-mirror.test.ts` が形とロスタを固定している
-—— [versioning.md](./versioning.md) §5-1 / §5-2、[testing.md](./testing.md) §3.1。
-語彙の付け替えでレシピ表が 7 件から 5 件になり、kernel がロスタを 16 → 23 に広げて
-**7 件に戻った**経緯は [public-api.md](./public-api.md) §4.1-7、
-公開面への影響は [versioning.md](./versioning.md) §5-4。
+未実装または別パッケージが所有するものは、永続的な実績モデル、現行 `mc-kernel` の `ItemType` 語彙に
+含まれない装備のエンチャント規則と公式醸造レシピ、物理を伴う一人称
+障害物コース、リポジトリ内 workspace 分割、publish 自動化である。対応する 32 個のエンチャント規則は
+`domain/enchantment-data.ts` にあり、同ファイルの金床コスト表とともに、`domain/enchantment.ts` が
+`mc-kernel` の汎用金床 API に接続する。`domain/enchantment-table-data.ts` と
+`domain/enchantment-table.ts` は、同じ語彙境界でスロット計算・重み付き抽選・競合除去を実装する。
+金床コストはエンチャント本と同種アイテムを区別する。
+共有の `ItemType` / `ClockPort` は `@nerima-games/mc-kernel`、`Dimension` は
+`@nerima-games/mc-worldgen` から直接 import し、リポジトリ内の互換ミラーは置かない。
+公開入口は `src/index.ts` で、`pnpm build` が ESM 実行物と TypeScript 宣言を `dist/` に生成する。

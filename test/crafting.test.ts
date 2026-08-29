@@ -19,8 +19,9 @@ import {
   Inventory,
   itemStack,
 } from '../src/domain/inventory'
-import { ItemType, MAX_STACK_COUNT } from '../src/domain/kernel-vocabulary'
-import { CraftGrid, craftGrid, shapelessRecipe, STARTER_RECIPES } from '../src/domain/recipe'
+import { ItemType, MAX_STACK_COUNT } from '@nerima-games/mc-kernel'
+import { CraftGrid, craftGrid, shapelessRecipe } from '../src/domain/recipe'
+import { STARTER_RECIPES } from '../src/domain/recipe-data'
 
 const LEGEND: Readonly<Record<string, ItemType>> = {
   P: 'oak_planks',
@@ -45,6 +46,11 @@ const gridOf = (...rows: ReadonlyArray<string>): CraftGrid => {
 
 const stocked = (entries: ReadonlyArray<readonly [ItemType, number]>): Inventory =>
   entries.reduce((inventory, [item, count]) => addItem(inventory, item, count).inventory, emptyInventory())
+
+const AMBIGUOUS_RECIPES = [
+  ...STARTER_RECIPES,
+  shapelessRecipe('test:stick-from-loose-planks', ['oak_planks', 'oak_planks'], itemStack('stick', 2)),
+]
 
 // The stick grid: two planks in a column. Costs 2 planks, yields 4 sticks.
 const STICK_GRID = gridOf('P', 'P')
@@ -544,11 +550,11 @@ describe('craftFromGrid', () => {
       const before = stocked([['oak_planks', 4]])
 
       // Column -> shaped mc-sim:stick -> 4 sticks for 2 planks.
-      const column = craftFromGrid(before, STARTER_RECIPES, gridOf('P', 'P'))
+      const column = craftFromGrid(before, AMBIGUOUS_RECIPES, gridOf('P', 'P'))
       expect(countOf(column.inventory, 'stick')).toBe(4)
 
-      // Row -> the shapeless fallback -> 2 sticks for the same 2 planks.
-      const row = craftFromGrid(before, STARTER_RECIPES, gridOf('PP'))
+      // Diagonal layout -> the shapeless fallback -> 2 sticks for the same 2 planks.
+      const row = craftFromGrid(before, AMBIGUOUS_RECIPES, gridOf('P ', ' P'))
       expect(countOf(row.inventory, 'stick')).toBe(2)
     }),
   )

@@ -1,6 +1,6 @@
 import { Context, Effect, Layer, Ref } from 'effect'
-import type { Position } from '../domain/kernel-vocabulary'
-import type { Dimension } from '../domain/worldgen-vocabulary'
+import type { Position } from '@nerima-games/mc-kernel'
+import type { Dimension } from '@nerima-games/mc-worldgen'
 import {
   emptyVehicleSnapshot,
   type OccupantId,

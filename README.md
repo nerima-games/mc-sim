@@ -20,10 +20,10 @@
 `mc-noise` は **import できない**（`mc-worldgen` 経由の推移依存に過ぎないため）。
 `mc-render` は下流なので当然依存しない。`mc-playground-kit` には実行時にも devDependency にも依存しない。
 
-現在は `@nerima-games/mc-kernel@0.2.4`、`@nerima-games/mc-physics@0.1.0`、`effect` を
-直接依存として固定している。既存コードの段階的移行のため
-`domain/kernel-vocabulary.ts` の互換ミラーは残るが、新しい crop 境界は kernel の
-`BlockPosition` / `BlockType` を直接 import する。
+現在は `@nerima-games/mc-kernel@0.4.0`、`@nerima-games/mc-physics@0.1.7`、
+`@nerima-games/mc-save@0.2.2`、`@nerima-games/mc-worldgen@0.1.14`、`effect` を
+直接依存として宣言している。mc-kernel と mc-worldgen の語彙はローカルに複製せず、
+各パッケージの公開 API を直接 import する。
 
 ## このリポジトリの位置づけ
 
@@ -39,11 +39,8 @@ mc-render / mc-playground-kit / mx-gameplay / mx-redstone / mx-ui / mx-multiplay
 
 plan.md §8 のリスク表第 2 項が「mc-sim のAPIが揺れて全下流に波及（依存ハブ）」であり、
 **本リポジトリの公開 API 設計はプロジェクト全体の最大リスクそのもの**である。
-対策は APIロックファイルを最初から適用し、公開 API の変更を明示的なレビュー対象にすること。
-**これは実装されている。** リポジトリ直下の `api-lock.md`（公開宣言 70 件 + 参照されている非 export 宣言 17 件）が
-公開面の正本で、`pnpm api:check` が `pnpm verify` と CI の両方で走る
-（[`docs/public-api.md`](./docs/public-api.md) §6）。6 リポジトリが黙って壊れる変更は、
-レビューの前に diff として目に見える。
+対策は `src/index.ts` を公開面の正本とし、`pnpm build` が生成する declaration と
+実行バンドルを同時に検査すること。公開 API の変更は依存先を含めた明示的なレビュー対象にする。
 
 依存グラフ全体・4 階層・名詞/動詞ルール・kit の devDependency 専用規則・stage 全順序の所有者は
 [`docs/architecture.md`](./docs/architecture.md) を参照。
@@ -58,24 +55,12 @@ plan.md §8 のリスク表第 2 項が「mc-sim のAPIが揺れて全下流に�
 | kernel は例外 | mc-kernel はどこからでも import 可（`dependencies` への記載は必要） |
 | 宣言と実体の一致 | import する `@nerima-games/*` は `package.json` に記載必須 |
 | mc-playground-kit は devDependency 専用 | `dependencies` に入れてはならない。実行時依存になると出荷ビルドから入力処理が消える |
-| `Date.now()` 禁止 | 時刻はすべて注入された Clock Port から取得する |
+| 時刻の注入 | ゲーム状態の時刻は `ClockPort` / Effect のテスト可能なクロックから取得する |
 
-`scripts/check-dependency-whitelist.ts` は 16 リポジトリ共通のテンプレートである。
-冒頭で囲ってある `REPOSITORY_POLICY` 定数だけを書き換え、それ以外はそのままコピーする。
-本リポジトリの版は **plan.md §2.1 の 16 リポジトリ全行**を保持しており、循環検査が全体を見る。
+依存境界は `package.json` の直接依存宣言と `.oxlintrc.json` の import 制限で検査する。
+推移依存を直接参照せず、実行時に必要な `@nerima-games/*` は必ず dependencies に宣言する。
 
-### `Date.now()` 禁止の実装方法
-
-oxlint 0.12 は `no-restricted-syntax` も `no-restricted-properties` も実装しておらず、
-`no-restricted-globals` は `oxlint --rules` の一覧に出るものの実装されていない
-（mc-kernel で 0.12.0 に対し実測確認済み。3 ルールすべて設定した状態で `Date.now()` を書いても診断 0 件）。
-
-そのため禁止は **`scripts/check-dependency-whitelist.ts` 側で実装**している。
-対象は `Date.now()` / `new Date()` / `performance.now()` の 3 つ。
-コメント・文字列リテラル・正規表現リテラルの中身はマスクされるので誤検知しない。
-Clock Port の実装アダプタだけは `mc-kernel-allow-time-source` コメントで除外できる。
-
-oxlint が該当ルールを実装したら .oxlintrc.json 側へ移す。
+ランタイムの時刻取得を直接行わない規約は、型付きのポートとテスト用クロックで担保する。
 
 ## 開発
 
@@ -102,15 +87,13 @@ Nix を使わない場合は Node.js 24 以上と pnpm 11（`corepack` 推奨）
 | `pnpm preview` | 内蔵プレビュー（決定論シナリオステッパ）。**`pnpm verify` には入らない**。[`apps/preview-sim/README.md`](./apps/preview-sim/README.md) |
 | `pnpm test` | vitest（`@effect/vitest` の `it.effect` が主 API、`environment: 'node'`） |
 | `pnpm test:watch` | vitest watch |
-| `pnpm test:coverage` | カバレッジ計測（閾値は未設定。後述） |
-| `pnpm check:deps` | 依存ホワイトリスト + 循環検査 + `Date.now()` 禁止の検査 |
-| `pnpm api:check` | `api-lock.md` が実際の公開 API と食い違えば非ゼロ終了（[`docs/public-api.md`](./docs/public-api.md) §6） |
-| `pnpm api:update` | `api-lock.md` を書き直す。公開面を変える PR は結果を同じ PR に含める |
-| `pnpm verify` | `typecheck && lint && check:deps && api:check && test`。CI と同じ内容 |
+| `pnpm test:coverage` | V8 カバレッジ計測。statements / branches / functions / lines の閾値は 100% |
+| `pnpm build` | tsdown の実行バンドルと TypeScript declaration を `dist/` に生成 |
+| `pnpm verify` | `typecheck && lint && test` |
 
 ## 現状
 
-**このリポジトリはまだ叩き台（pre-audit first cut）である。**
+**現行実装の中心機能**
 
 入っているのは「参照実装で実測確定した設計注意を、回帰テストとして最初から焼き込む」ための最小実装だけ。
 
@@ -122,8 +105,9 @@ Nix を使わない場合は Node.js 24 以上と pnpm 11（`corepack` 推奨）
 | `setDayLength → setTimeOfDay` 順序 | `domain/time-of-day.ts` / `application/time-service.ts` | DN-04 |
 | 自動保存の `Schedule.spaced` | `application/autosave.ts` | DN-05 |
 | `Ref.modify` による TOCTOU 回避 | `application/inventory-service.ts` | DN-07 |
+| **ホットバー選択** | `domain/hotbar.ts` / `application/hotbar-service.ts` | 9スロットの投影は `InventoryService`、選択状態は `HotbarService` |
 | 消費アイテムと耐久消費の原子的決済 | `InventoryService.consumeAndDamageAt` | 対象スロット・アイテムを再検証し、同一 `Ref.modify` 内で全成功または無変更 |
-| レシピ表とクラフトの原子性 | `domain/recipe.ts` / `domain/crafting.ts` | DN-07 / DN-11 |
+| レシピ表とクラフトの原子性 | `domain/recipe-data.ts` / `domain/recipe.ts` / `domain/crafting.ts` | DN-07 / DN-11 |
 | 次元・ブロック座標ごとの作物状態 | `domain/crop.ts` / `application/crop-service.ts` | JSON-safe snapshot と deterministic tick |
 | **エンティティ台帳（`EntityManager`）** | `domain/entity.ts` / `application/entity-manager.ts` | DN-07 / DN-09 / DN-11。[公開API §7](./docs/public-api.md) |
 | **爆発計画** | `domain/explosion.ts` | seed・遮蔽・耐性・距離減衰を純粋計算し、全変更をホストの単一 transaction へ渡す。[公開API §8](./docs/public-api.md) |
@@ -149,13 +133,16 @@ Nix を使わない場合は Node.js 24 以上と pnpm 11（`corepack` 推奨）
   import できない（循環）。設計と、ホスト側の呼び出し列は
   [`docs/public-api.md`](./docs/public-api.md) §7。
   **`simModule` にはまだ入れていない**（§7-5 に理由）。
-- **体力・空腹・XP / 実績・統計 / 設定状態。** 台帳が持つ体力はエンティティの
-  `healthPoints` だけで、プレイヤーの空腹・XP・最大体力はまだ無い。
-- **かまど / 醸造 / 金床 / エンチャント**（plan.md §7 のうちクラフト以外）。
-  グリッド形ではないので `domain/recipe.ts` には 1 行も無い。レシピモデルは
-  shaped / shapeless までで、材料タグ（「任意の板材」）は `Ingredient` を
-  **メンバ 1 つの tagged union**にすることで、破壊的変更にならない形で繰り延べてある
-  （[`docs/public-api.md`](./docs/public-api.md) §4.1-6）。
+- ~~体力・空腹・XP / 統計 / 設定状態~~ → **実装済み**（`domain/vitals.ts`、
+  `domain/statistics.ts`、`domain/settings.ts`）。統計台帳（カウンタ / unlocked ID）は
+  `SimulationSave` v2 に保存し、実績の registry / predicate は `mx-gameplay` 側の責務としてまだ別途必要。
+- かまど / 醸造 / 金床 → **現行 `mc-kernel` 語彙の範囲を実装済み**（`domain/smelting.ts`、
+  `domain/brewing.ts`、mc-kernel の anvil API）。醸造は `STARTER_BREWING_RECIPES` の4レシピを
+  提供し、セーブ境界は `domain/save-data.ts` / `application/save-service.ts` にある。
+- ~~エンチャントテーブルの確率付きオファー~~ → **実装済み**（`domain/enchantment-table-data.ts`、
+  `domain/enchantment-table.ts`）。現行 `mc-kernel` の `ItemType` 語彙で表現できる 32 個の規則を
+  データとして分離し、公式のスロット計算・重み付き抽選・競合除去・本の出力を純粋ロジックで提供する。
+  語彙外の装備、`wind_burst` など `mc-kernel` にまだ存在しない規則は、依存パッケージの語彙境界に残る。
 - ~~チャンクダーティ通知~~ → **mc-worldgen の `ChunkStore` に決着した。ここには来ない。**
   plan.md §3.8 の公開 API 文は挙げているが、§3.7 が mc-worldgen に与える
   「ダーティフラグ」と両立しない。根拠は [docs/responsibility.md](./docs/responsibility.md) §3.3
@@ -172,27 +159,12 @@ Nix を使わない場合は Node.js 24 以上と pnpm 11（`corepack` 推奨）
   進めて見せる決定論シナリオステッパで、kit も publish も THREE.js も要らない
   （[`docs/testing.md`](./docs/testing.md) §2.1）。
 - **リポジトリ内 workspace 分割**（entity / inventory / game）。plan.md §3.8 内部構成。
-- **ビルド／publish はまだない。** `exports` は TypeScript ソースを直接指している。
-  それまで `version` は `0.x` に留める（[`docs/versioning.md`](./docs/versioning.md)）。
-- **カバレッジ閾値は未設定。** 参照実装は 99% を強制しているが、スケルトンに閾値を課しても意味がない。
-  計測とレポートは常に動かしており、99% ゲートは完了条件到達時に有効化する。
-- **`domain/kernel-vocabulary.ts` は段階移行中の互換ミラー。** 新規 API は公開済み mc-kernel を直接使う。
-  `index.ts` から re-export していないのは、真実の出所を 2 つにしないため。
-  ミラーは意図的に最小だが、**Clock Port だけは丸ごと**写してある —— `ClockPort` は
-  文字列キーで解決される `Context.Tag` なので、狭いミラーは「語彙が少ない」ではなく
-  実行時ハザードである（狭い `Layer` が広い Tag を満たし、欠けたフィールドが `undefined` になる）。
-  `test/kernel-mirror.test.ts` が Tag キーと形を両方向で固定している
-  （[`docs/versioning.md`](./docs/versioning.md) §5-1、[`docs/testing.md`](./docs/testing.md) §3.1）。
-  **アイテム語彙（`ITEM_TYPES` / `ItemType` / `isItemType`）も丸ごと写してある** ——
-  閉じたリテラル union は「メンバの集合そのものが型」なので、mc-sim が使う 6 個だけを
-  写したミラーは *狭い別の型* になる。逆向き（mc-sim の都合で 1 個足す）はもっと悪く、
-  ローカルでは通り、ミラー削除の日に初めて壊れる。ロスタを増やすのは mc-kernel の
-  決定であってここの決定ではない（[`domain/recipe.ts`](./domain/recipe.ts) の表ヘッダ）。
-  **この手順は 1 度回った**: 足りない 8 個を値段つきで要求し、kernel が 7 個を
-  それぞれの kernel 側の理由（ドロップ規則・mob ドロップ・着火アイテム）とともに承認、
-  1 個（`crafting_table`）は却下。ロスタは 16 → 23 になり、削っていたレシピ 2 行が戻った
-  （[`docs/public-api.md`](./docs/public-api.md) §4.1-7、
-  [`docs/versioning.md`](./docs/versioning.md) §5-4）。
+- **publish 自動化**。`pnpm build`、`exports`、`pnpm pack --dry-run` は整備済みだが、
+  レジストリへの公開ワークフローはこのリポジトリの責務外である。
+- ~~カバレッジ閾値~~ → **100% を設定済み**。対象は `src/` の実行コードで、テストは
+  Vitest/V8 の Node.js 24 実行環境を対象にする。
+- **ローカル語彙ミラー**。mc-kernel と mc-worldgen の旧ミラーは削除済みで、
+  ソース・テストとも公開パッケージを直接参照する。
 
 ## ドキュメント
 

@@ -25,19 +25,17 @@
  * that repairs a whole inventory and it ACCOUNTS for what it cannot place,
  * which is what `InventoryService.restore` runs on the world-load path.
  *
- * PRE-AUDIT FIRST CUT. The real model needs durability, enchantments, NBT-ish
- * per-item state and armour slots; the reference's InventoryService has 14
- * methods (ts-minecraft/packages/inventory/application/inventory-service.ts:22-101).
- * What is here is the part the mining scenario test needs, plus the stacking
- * rule, which is the part that is easy to get subtly wrong.
+ * Durability and equipment slots are modelled by equipment.ts and
+ * player-storage.ts. Enchantments and NBT-like per-item state are separate
+ * concerns rather than being hidden in the stack primitive. This module owns
+ * stack limits, normalization, and pure inventory transitions.
  */
 import {
   isItemType,
   ItemType,
   maxStackCountOfItem,
-  MAX_STACK_COUNT,
   StackCount,
-} from './kernel-vocabulary'
+} from '@nerima-games/mc-kernel'
 
 /*
  * THERE IS NO `ItemId` HERE ANY MORE.
@@ -45,7 +43,7 @@ import {
  * It was `export type ItemId = string`, provisional, with a comment promising to
  * repoint when mc-kernel published its half of plan.md §3.1's two vocabularies.
  * Kernel published it (`mc-kernel/domain/item-type.ts`) and the promise is kept:
- * every signature below takes `ItemType`, the mirrored closed union.
+ * every signature below takes `ItemType`, the kernel-owned closed union.
  *
  * The alias is GONE rather than retargeted to `= ItemType`, and that is the
  * point of the exercise. Kernel's header names the defect precisely — mc-sim,
@@ -53,8 +51,8 @@ import {
  * for one missing type — and an alias that survives the publication leaves
  * mc-sim's signatures saying `ItemId` where six consumers read `ItemType` from
  * kernel, which is the same confusion one indirection deeper. Deleting a
- * published name is a breaking change and is recorded as one (`api-lock.md`,
- * docs/versioning.md); it is the smaller of the two costs.
+ * published name is a breaking change and is recorded in the versioning
+ * documentation; it is the smaller of the two costs.
  */
 
 /** Number of slots in the player's main inventory, hotbar included. */
@@ -112,20 +110,11 @@ const heldCount = (stack: ItemStack): number =>
  * handle a corrupt inventory: `normaliseInventory` is, and it accounts for
  * every item instead of dropping it. Nothing mc-sim itself produces can reach
  * this clamp — `emptyInventory`, `addItem` and `normaliseInventory` are the
- * only constructors, and all three respect `MAX_STACK_COUNT`.
+ * only constructors, and all three respect each item's kernel-defined limit.
  */
-const derivedStackCount = (count: number): StackCount =>
+const derivedStackCount = (item: ItemType, count: number): StackCount =>
   StackCount(
-    Number.isFinite(count)
-      ? Math.min(MAX_STACK_COUNT, Math.max(0, Math.floor(count)))
-      /* v8 ignore next -- every call site in this module (`removeItemAt`,
-         `removeItem`, `normaliseInventory`) passes a value derived from
-         `heldCount`, which already forces `Number.isFinite` to hold (it
-         returns 0 for anything non-finite) before this function ever sees
-         it. A non-finite argument cannot reach this function through any
-         path this module exposes; only a caller outside it could construct
-         one, and this module has none. */
-      : 0,
+    Math.min(maxStackCountForItem(item), Math.max(0, Math.floor(count))),
   )
 
 /** A slot is either empty (`undefined`) or holds a stack. */
@@ -268,7 +257,9 @@ export const removeItemAt = (
 
   const remaining = available - count
   const slots = [...inventory.slots]
-  slots[slotIndex] = remaining === 0 ? undefined : { item: expectedItem, count: derivedStackCount(remaining) }
+  slots[slotIndex] = remaining === 0
+    ? undefined
+    : { item: expectedItem, count: derivedStackCount(expectedItem, remaining) }
   return { inventory: { slots }, result: { _tag: 'Removed', removed: count } }
 }
 
@@ -299,7 +290,7 @@ export const removeItem = (inventory: Inventory, item: ItemType, count: number):
     const held = heldCount(slot)
     const taken = Math.min(held, remaining)
     const left = held - taken
-    slots[index] = left === 0 ? undefined : { item, count: derivedStackCount(left) }
+    slots[index] = left === 0 ? undefined : { item, count: derivedStackCount(item, left) }
     remaining -= taken
   }
 
@@ -352,7 +343,7 @@ export type NormaliseOutcome = {
  *   1. LENGTH. The result is always exactly `INVENTORY_SLOT_COUNT` slots. A
  *      short save is padded; a long one has its tail re-inserted rather than
  *      truncated away.
- *   2. OVER-FULL SLOTS. A slot holding more than `MAX_STACK_COUNT` keeps a full
+ *   2. OVER-FULL SLOTS. A slot holding more than its item's kernel limit keeps a full
  *      stack and the surplus is re-inserted. This is what makes `removeItem`'s
  *      clamp unreachable for anything that came through here.
  *   3. EMPTY AND NON-NUMERIC STACKS. A slot holding 0, a fraction or `NaN`
@@ -362,7 +353,7 @@ export type NormaliseOutcome = {
  *      `ITEM_TYPES` is removed and counted in `discarded`. See below.
  *
  * Everything re-inserted goes back through `addItem`, so the top-up-first rule
- * and `MAX_STACK_COUNT` apply to a repaired inventory exactly as they do to a
+ * and each item's kernel limit apply to a repaired inventory exactly as they do to a
  * mined one, and whatever still does not fit is returned as `leftover`.
  *
  * ---------------------------------------------------------------------------
@@ -409,7 +400,10 @@ export const normaliseInventory = (inventory: Inventory): NormaliseOutcome => {
       return
     }
     const maxStackCount = maxStackCountForItem(slot.item)
-    slots[index] = { item: slot.item, count: derivedStackCount(Math.min(held, maxStackCount)) }
+    slots[index] = {
+      item: slot.item,
+      count: derivedStackCount(slot.item, Math.min(held, maxStackCount)),
+    }
     if (held > maxStackCount) {
       spilled.push({ item: slot.item, count: held - maxStackCount })
     }

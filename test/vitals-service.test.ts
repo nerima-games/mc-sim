@@ -1,7 +1,7 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect } from 'effect'
 import { makeVitalsService, VitalsServiceLayer, VitalsService } from '../src/application/vitals-service'
-import { DeltaTimeSecs } from '../src/domain/kernel-vocabulary'
+import { DeltaTimeSecs } from '@nerima-games/mc-kernel'
 import { isDead, isValidVitals, SPAWN_VITALS, type Vitals } from '../src/domain/vitals'
 
 const dt = (seconds: number): DeltaTimeSecs => DeltaTimeSecs(seconds)
@@ -131,7 +131,7 @@ describe('the service reads no clock', () => {
 
       // `it.effect` supplies a TestClock that nothing here touches. Four seconds
       // of world time cost zero seconds of anything, which is what
-      // `pnpm check:deps`' ban on wall-clock reads is protecting.
+      // The clock-injection convention is protecting this boundary.
       expect(yield* vitals.advanceFoodTimer(dt(2))).toBe('none')
       expect(yield* vitals.advanceFoodTimer(dt(1.9))).toBe('none')
       expect(yield* vitals.advanceFoodTimer(dt(0.1))).toBe('regen')

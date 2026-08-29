@@ -40,10 +40,11 @@
  * `@nerima-games/mc-kernel` documents for `ClockPort` across repositories,
  * used deliberately here rather than tripped over.
  *
- * IT IS WORTH BEING PRECISE ABOUT WHAT THAT DOES AND DOES NOT RISK, because the
- * ClockPort hazard `test/kernel-mirror.test.ts` guards looks superficially the
- * same. That one is a SHAPE disagreement: a Layer built against a one-field
- * mirror satisfies a two-field Tag and the missing field reads `undefined`. Here
+ * IT IS WORTH BEING PRECISE ABOUT WHAT THAT DOES AND DOES NOT RISK. The
+ * `ClockPort` shape is owned directly by `@nerima-games/mc-kernel`; unlike this
+ * generic service, it is not re-declared locally. A shape disagreement there
+ * would let a narrow Layer satisfy a wide Tag and make a missing field read
+ * `undefined`. Here
  * every instantiation has an identical shape — same methods, same arities — and
  * the only thing that varies is the static type of a field mc-sim never reads.
  * A consumer that instantiates the wrong `S` therefore gets a value it
@@ -180,8 +181,8 @@ export type EntityManager = {
 /**
  * The Tag's textual key. Effect resolves services by this string, so it is the
  * actual contract with the four repositories that will ask for the roster —
- * changing it typechecks everywhere and fails at composition time, which is what
- * `pnpm api:check` exists to make visible (docs/public-api.md §6.1).
+ * changing it typechecks everywhere and fails at composition time; the public
+ * source entry point and generated declarations make that contract reviewable.
  */
 export const ENTITY_MANAGER_TAG_KEY = '@nerima-games/mc-sim/EntityManager'
 

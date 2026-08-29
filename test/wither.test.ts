@@ -54,6 +54,9 @@ describe('wither lifecycle', () => {
     expect(moved.healthPoints).toBe(291)
     expect(Math.hypot(moved.velocity.x, moved.velocity.y, moved.velocity.z)).toBeCloseTo(5)
     expect(moved.feetPosition.y).toBeGreaterThan(0)
+
+    expect(stepWither(active, 0, { x: 100, y: 100, z: 0 }).state).toEqual(active)
+    expect(stepWither(active, 1, active.feetPosition).state.velocity).toEqual({ x: 0, y: 0, z: 0 })
   })
 
   it('enters permanent armour at half health and ignores ranged damage', () => {
@@ -73,6 +76,10 @@ describe('wither lifecycle', () => {
       drop: { item: 'nether_star', count: 1, position: { x: 2, y: 3, z: 4 } },
     })
     expect(damageWither(killed.state, 1, 'melee').death).toBeUndefined()
+    expect(stepWither(killed.state, 1)).toStrictEqual({
+      state: killed.state,
+      spawnExplosion: undefined,
+    })
   })
 
   it('round-trips a versioned snapshot and repairs invalid restored magnitudes', () => {
@@ -82,6 +89,17 @@ describe('wither lifecycle', () => {
       kind: 'wither', version: 1,
       state: { ...state, healthPoints: Number.NaN, feetPosition: { x: Number.NaN, y: 2, z: 3 } },
     })).toMatchObject({ phase: 'dead', healthPoints: 0, feetPosition: { x: 0, y: 2, z: 3 } })
+
+    const airborne = stepWither(createWither({ x: 1, y: 2, z: 3 }), 10).state
+    expect(restoreWither({ ...serializeWither(airborne), state: { ...airborne, phase: 'airborne' } })).toEqual(airborne)
+    expect(restoreWither({
+      ...serializeWither(airborne),
+      state: { ...airborne, phase: 'charging', chargeRemainingSecs: 2 },
+    })).toMatchObject({ phase: 'charging', chargeRemainingSecs: 2 })
+    expect(restoreWither({
+      ...serializeWither(airborne),
+      state: { ...airborne, phase: 'charging', chargeRemainingSecs: 0 },
+    })).toMatchObject({ phase: 'airborne', chargeRemainingSecs: 0 })
   })
 })
 

@@ -1,28 +1,23 @@
 /**
- * @nerima-games/mc-sim — the game-state hub.
+ * @nerima-games/mc-sim — Minecraft simulation state and gameplay rules.
  *
- * PRE-AUDIT FIRST CUT (叩き台). See README.md 現状.
- *
- * plan.md §8 names this repository's public API the top project risk: every one
- * of mc-render, mc-playground-kit, mx-gameplay, mx-redstone, mx-ui and
- * mx-multiplayer consumes it, so a change here propagates to six repositories
- * at once. The barrel is therefore deliberately narrow and deliberately
- * explicit — `export *` from a module is a promise to keep everything in that
- * module stable, and this file makes that promise only where it is meant.
- *
- * The two things this repository exists to own, above all else:
- *
- *   - `CameraPoseSnapshot` — mc-sim is the AUTHORITY, mc-render is a MIRROR.
- *     `PlayerService.cameraPose` is the only publisher; nothing here accepts a
- *     pose from outside. See domain/camera-pose.ts.
- *
- *   - The frame loop's lifecycle — daemon-forked, explicitly stopped, and
- *     re-entrant from the first commit. See application/game-loop.ts.
+ * The barrel exposes pure domain transitions, Effect services, save-format
+ * integration, and frame-stage registration owned by this package. Shared
+ * primitives and portable algorithms are imported directly from mc-kernel,
+ * mc-physics, mc-save, and mc-worldgen.
  */
 
 // --- Domain: pure values and transitions -----------------------------------
 export * from './domain/camera-pose'
 export * from './domain/block-targeting'
+export * from './domain/block-interaction'
+export * from './domain/brewing'
+export * from './domain/brewing-data'
+export * from './domain/enchantment'
+export * from './domain/enchantment-data'
+export * from './domain/enchantment-table'
+export * from './domain/enchantment-table-data'
+export * from './domain/save-data'
 export * from './domain/container-storage'
 export * from './domain/crafting'
 export * from './domain/crop'
@@ -34,9 +29,12 @@ export * from './domain/projectile'
 export * from './domain/player-storage'
 export * from './domain/frame-timing'
 export * from './domain/inventory'
+export * from './domain/hotbar'
 export * from './domain/recipe'
+export * from './domain/recipe-data'
 export * from './domain/settings'
 export * from './domain/smelting'
+export * from './domain/smelting-data'
 export * from './domain/statistics'
 export * from './domain/time-of-day'
 export * from './domain/vitals'
@@ -46,11 +44,13 @@ export * from './domain/wither'
 
 // --- Application: Effect services -------------------------------------------
 export * from './application/autosave'
+export * from './application/save-service'
 export * from './application/crop-service'
 export * from './application/entity-manager'
 export * from './application/equipment-service'
 export * from './application/game-loop'
 export * from './application/inventory-service'
+export * from './application/hotbar-service'
 export * from './application/player-service'
 export * from './application/settings-service'
 export * from './application/statistics-service'
@@ -67,10 +67,46 @@ export * from './application/weather-service'
 export * from './stages/registration'
 export * from './stages/stage-ids'
 
-// `domain/worldgen-vocabulary.ts` is a local mirror of
-// @nerima-games/mc-worldgen, and is withheld from the barrel for the same
-// reason: `Dimension` appears in `PlayerServiceApi.dimension`, `setDimension`
-// and `restore`, and a consumer takes that word from mc-worldgen — which owns
-// and publishes it — not from here. Two barrels exporting one closed union is
-// the 「二つの綴り」 failure plan.md §3.4 describes, and re-exporting it would be
-// this repository volunteering to be the second spelling.
+export {
+  ANVIL_MAX_CUSTOM_NAME_LENGTH,
+  ANVIL_REPAIR_BONUS_RATIO,
+  ANVIL_SNAPSHOT_VERSION,
+  ANVIL_TOO_EXPENSIVE_LEVEL,
+  AnvilCustomName,
+  AnvilEnchantmentId,
+  AnvilSnapshotString,
+  applyAnvil,
+  decodeAnvilSnapshot,
+  decodeAnvilSnapshotString,
+  encodeAnvilSnapshot,
+  isAnvilCustomName,
+  isAnvilEnchantmentId,
+  isAnvilSnapshotString,
+  nextAnvilRepairCost,
+  planAnvil,
+  snapshotAnvilState,
+} from '@nerima-games/mc-kernel'
+
+export type {
+  AnvilApplyResult,
+  AnvilDurability,
+  AnvilEnchantment,
+  AnvilEnchantmentRule,
+  AnvilInputStack,
+  AnvilItemPayload,
+  AnvilPlan,
+  AnvilRepairMaterialRule,
+  AnvilRejectionReason,
+  AnvilRuleSet,
+  AnvilSnapshot,
+  AnvilSnapshotEncodingResult,
+  AnvilSnapshotResult,
+  AnvilState,
+  AnvilValidationIssue,
+  CanonicalAnvilItemPayload,
+  CanonicalAnvilState,
+} from '@nerima-games/mc-kernel'
+
+// `Dimension` is intentionally not re-exported here. `PlayerServiceApi` uses
+// the type owned and published by mc-worldgen, so consumers import it from
+// that package instead of receiving a second spelling from this barrel.

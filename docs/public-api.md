@@ -233,7 +233,6 @@ type CropSnapshot = { readonly crops: ReadonlyArray<CropState> }
 type CropServiceApi = {
   readonly plant: (location: CropLocation, crop?: CropType, soil?: BlockType) => Effect.Effect<boolean>
   readonly cropAt: (location: CropLocation) => Effect.Effect<CropState | null>
-  readonly matureYieldAt: (location: CropLocation) => Effect.Effect<ItemStack | null>
   readonly matureYieldsAt: (location: CropLocation) => Effect.Effect<ReadonlyArray<ItemStack> | null>
   readonly remove: (location: CropLocation) => Effect.Effect<CropState | null>
   readonly advance: (delta: DeltaTimeSecs) => Effect.Effect<void>
@@ -247,7 +246,7 @@ type CropServiceApi = {
 `CROP_REGISTRY` が成熟時間、種、土壌、許可次元、成熟時の保証収穫量を一貫して定義する。
 wheat/potato は farmland、nether wart は soul sand を要求し、3 作物とも全次元で栽培できる。
 保証収穫量は mx-gameplay の乱数範囲の下限と一致し、wheat は wheat 1 + seeds 1、potato は 2、
-nether wart は 2。`matureYieldsAt` は全保証収穫物、互換APIの `matureYieldAt` は先頭の収穫物を返す。
+nether wart は 2。`matureYieldsAt` は全保証収穫物を返す。
 未成熟なら `null`。`plant` は土壌不一致または占有済み位置を上書きせず `false` を返し、
 `remove` は破壊前の状態を返す。
 
@@ -317,6 +316,8 @@ type InventoryServiceApi = {
   readonly snapshot: Effect.Effect<Inventory>
   readonly restore: (inventory: Inventory) => Effect.Effect<number>  // 戻り値 = 入らなかった数。§4-1
   readonly reset: Effect.Effect<void>
+  readonly getSlot: (slotIndex: number) => Effect.Effect<InventoryCarriedSlot>
+  readonly getHotbarSlots: Effect.Effect<ReadonlyArray<InventoryCarriedSlot>>
 
   // --- クラフト（§4.1） ---
   readonly recipes: Effect.Effect<RecipeTable>
@@ -356,13 +357,43 @@ type RemoveAtResult =
   すべての呼び出し側が握り潰すことになり、握り潰した瞬間にアイテムが消える。
 - **`ItemId` はもう無い。** mc-kernel が `ItemType`（閉じたリテラル union）を公開したので、
   暫定エイリアスは*付け替え*ではなく**削除**した（`domain/inventory.ts` のヘッダに理由）。
-  署名はすべて `ItemType` を取る。破壊的変更であり、`api-lock.md` に差分として出ている
-  （[versioning.md](./versioning.md)）。
+  署名はすべて `ItemType` を取る。これは公開型の破壊的変更なので、生成される宣言差分と
+  （[versioning.md](./versioning.md)）を同じ変更単位で確認する。
 - **`add` は採掘の継ぎ目でもある。** kernel の `dropOfBlockId(id, context?)` が返す
   `BlockDrop.item` は `ItemType` なので、`inventory.add(drop.item, drop.count)` が
   アダプタもキャストも無しで通る。**`addDrop(drop)` は足していない** —— 採掘は動詞であり
   mx-gameplay の責務（plan.md §2.3-1）で、ここに置くと mc-sim が `BlockDrop` /
   `HarvestContext` / 道具ゲートを写す羽目になる。
+
+### 4-0. `HotbarService` — 選択状態と9スロット投影
+
+参照実装の `packages/inventory/application/hotbar-service.ts` に対応する状態は、
+インベントリ本体へ混ぜず `HotbarService` が所有する。選択値は 0..8 にクランプし、
+スクロールは両端で循環する。スロット内容は `InventoryService.getHotbarSlots` を通して
+読み、同じインベントリの `HOTBAR_START`（27）から 9 スロットを返す。
+
+```typescript
+type HotbarServiceApi = {
+  readonly getSelectedSlot: Effect.Effect<number>
+  readonly setSelectedSlot: (slot: number) => Effect.Effect<void>
+  readonly scroll: (delta: number) => Effect.Effect<void>
+  readonly getSelectedItem: Effect.Effect<InventoryCarriedSlot>
+  readonly getSlots: Effect.Effect<ReadonlyArray<InventoryCarriedSlot>>
+  readonly update: (input: HotbarInput) => Effect.Effect<void>
+}
+```
+
+`HotbarServiceLayer` は `InventoryService` を要求する。ホストは入力イベントを
+`HotbarInput`（直接選択またはホイール差分）へ変換して `update` を呼び、キー割り当てや
+ポインタ入力そのものを mc-sim に持ち込まない。
+
+### 4-0-1. `SimulationSave` — セーブされる状態
+
+`domain/save-data.ts` の `SimulationSave` v2 は、セーブを跨ぐ状態を定義する。
+`player.selectedHotbarSlot`（0..8）と `statistics.counters` /
+`statistics.unlocked` を保存し、実績の registry / predicate は持たない。
+`saveSimulation` / `loadSimulation` / `listSimulationSaves` は `mc-save` の
+保存形式を利用する。v1 → v2 は保存形式の migration chain で初期選択 0 と空の統計台帳へ移行する。
 
 ### 4-1. `restore` はスロット数を再確立し、入らなかった数を返す
 
@@ -381,7 +412,7 @@ const normaliseInventory: (inventory: Inventory) => NormaliseOutcome
 ```
 
 - 長さは常に `INVENTORY_SLOT_COUNT`。短いセーブは詰め物をし、**長いセーブは末尾を切り捨てず再挿入**する。
-- `MAX_STACK_COUNT` 超のスロットは 1 スタックを残して余りを再挿入する。
+- アイテムごとの kernel stack limit 超のスロットは 1 スタックを残して余りを再挿入する。
 - 0 / 小数 / `NaN` のスタックは空スロットになる（小数は整数部が残る）。
 - **`ItemType` でない名前のスロットは捨て、`discarded` に数える**（新）。
 - 再挿入は `addItem` を通るので top-up 規則が効き、**どうしても入らない分は `leftover` として返る**。
@@ -441,7 +472,8 @@ const craftGrid:        (width, height, items: ReadonlyArray<ItemType | undefine
 const cellAt:           (grid: CraftGrid, x: number, y: number) => Slot
 const matchRecipe:      (table: RecipeTable, grid: CraftGrid) => RecipeMatch   // 全域・表順非依存
 const conflictsIn:      (table: RecipeTable) => ReadonlyArray<RecipeConflict>
-const STARTER_RECIPES:  RecipeTable                                            // 20 件（§4.1-7）
+// domain/recipe-data.ts
+const STARTER_RECIPES:  RecipeTable                                            // 現行 kernel で表現できる公式データ（§4.1-7）
 
 // domain/crafting.ts
 type CraftResult =
@@ -457,7 +489,7 @@ const craftFromGrid:  (inventory: Inventory, table: RecipeTable, grid: CraftGrid
 
 `mx-ui/domain/inventory-view-model.ts` の `CraftingSnapshot.result` は 3 値
 （`Match` / `NoMatch` / **`undefined` = mc-sim が答えていない**）で、
-「mc-sim に `Recipe` が無い（`api-lock.md` に存在しない）」ため実際に常時 `undefined` だった。
+「mc-sim に `Recipe` が無かった」ため実際に常時 `undefined` だった。
 クラフト画面の出力枠は毎回 `unknown` を描いていた。mx-ui がレシピを発明しなかったのは
 §2.3-1 の通り**正しい**ので、埋めるべき穴はこちら側にあった。
 
@@ -530,13 +562,16 @@ mx-ui は「移動」ではなく「予約」を描くことになる。
 先に空きを見ると「満杯だから作れない」と断ることになるが、それはまさにプレイヤーが
 場所を空けるためにクラフトする場面である。
 
-### 4.1-6 いま入れていないもの（型が繰り延べを見せる）
+### 4.1-6 現在の境界（型が繰り延べを見せる）
 
 | 繰り延べ | 型でどう見えるか |
 | --- | --- |
 | 材料タグ（「任意の板材」） | `Ingredient` が**メンバ 1 つの tagged union**。消費側は既に `_tag` で分岐しているので、`Tag` の追加は破壊的変更にならない。裸の `ItemType` にしていたら破壊的変更になっていた |
 | 1 セル複数個・残留アイテム（ケーキのバケツ） | 表現できない。黙って間違うのではなく**無い** |
-| かまど / 醸造 / 金床 / エンチャント | plan.md §7 の残り。グリッド形ではないので、ここには 1 つも無い |
+| かまど | `domain/smelting.ts` の純粋な遷移として実装済み |
+| 醸造 | `domain/brewing.ts` の純粋な遷移として `STARTER_BREWING_RECIPES` の4レシピを実装。現行 `mc-kernel` の `ItemType` 語彙で表現できない公式レシピは依存側の語彙拡張待ち |
+| 金床 | `@nerima-games/mc-kernel` の汎用 anvil API を `src/index.ts` から再公開し、`domain/enchantment.ts` が対応するバニラ規則集合を渡す |
+| エンチャント | `domain/enchantment-data.ts` に現行 `mc-kernel` の `ItemType` 語彙で表現できる 32 個の規則（最大レベル、適用先、競合）と、エンチャント本 / 同種アイテム別の金床コスト表を定義。`domain/enchantment-table-data.ts` / `domain/enchantment-table.ts` がテーブルのスロット計算・重み付き抽選・競合除去を提供し、語彙外の装備規則は `mc-kernel` の境界に残る |
 | shapeless の重なり合う述語 | `matchesShapeless` は既にバックトラッキング割当（ソートして比較ではない）。`Tag` が入った日に貪欲法が誤答する経路を最初から塞いである |
 | 複数個まとめてクラフト | `craft` は 1 回分 |
 
@@ -549,9 +584,9 @@ mx-ui は「移動」ではなく「予約」を描くことになる。
 
 **その場では mc-kernel に足させるのではなく、削った。** 理由は 3 つあった。
 
-1. **同じコミットでは足せない。** `ITEM_TYPES` はここにミラーしてあり、mc-dev-meta の
-   `pnpm check:mirrors` がミラーと kernel の実体を突き合わせる。ソースより先に進んだミラーは、
-   ミラーが防いでいるハザードそのものである。
+1. **語彙は所有パッケージから直接読む。** `ITEM_TYPES` と `ItemType` は
+   `@nerima-games/mc-kernel` が所有し、mc-sim にローカルミラーやミラー検査コマンドは置かない。
+   語彙の追加が必要な場合は、レシピ表から推測せず kernel 側の理由とともに依頼する。
 2. **mc-sim の都合で足すべきでもない。** ロスタを 8 個ふくらませるのは、tier-2 のレシピ表を根拠に
    tier-1 の語彙を決めることになる。それは本プロジェクトが 2 回退けてきた
    「推測されたロスタ」と同じ形をしている。**要求は出す。ただし発議は kernel 側の理由で行われる。**
@@ -576,39 +611,23 @@ kernel は要求した 8 個のうち **7 個**を `ITEM_TYPES` に入れた（�
 
 **`crafting_table` は要求したが入らなかった。** 上表の通りその行は同形の本家レシピに
 差し替え済みで、リテラルを必要とするものが何も無い。理由の無い語彙を足さないという判断であり、
-**この却下は正しい**。ミラー側（`domain/kernel-vocabulary.ts`）にも入れていない。
+**この却下は正しい**。mc-kernel の登録表にも不要な語彙を追加していない。
 
 #### 表がいま示すもの
 
-現在の `STARTER_RECIPES` は 20 件である。4 素材のクワ、ダイヤモンドのツルハシと、鉄のヘルメット /
-チェストプレート / レギンス / ブーツの 4 種は、いずれも本家と同じ shaped の配置で加わった。
+現在の `STARTER_RECIPES` は `domain/recipe-data.ts` が所有する公開データであり、
+現行 mc-kernel の `ItemType` 語彙で表現できる公式レシピだけを収録する。
+レシピの型・コンストラクタ・一致判定は `domain/recipe.ts`、インベントリへの原子的な適用は
+`domain/crafting.ts` が所有する。
 
-shapeless（材料 1 個 / 同一材料 2 個 / **相異なる 3 材料**）、shaped の平行移動（1x2 が 6 通り、
-2x2 が 4 通り）、**shaped の左右鏡像**（非対称な対角）、穴のあるパターン
-（3x3 の穴は「空であること」の要求）、「3x3 はプレイヤーの 2x2 グリッドから作れない」、
-そして**曖昧性規則**（shaped が shapeless に勝つ・表順非依存・`conflictsIn` が空）。
+shapeless、shaped の平行移動・左右鏡像・穴のあるパターン、3x3 グリッド制約、そして
+曖昧性規則（shaped が shapeless に勝つ・表順非依存）は、出荷データを使う
+`test/recipe.test.ts` と `test/crafting.test.ts` で検証する。曖昧性のためだけに必要な
+`mc-sim:stick-from-loose-planks` はテスト fixture に限定し、公開データには含めない。
 
-`test/recipe.test.ts` のローカル表（`MIRROR_TABLE` / `PERMUTATION_TABLE`）は**削除した**。
-出荷される表が両方の規則を動かすようになった以上、両者が試せることは同じであり、
-残せば「マッチャの被覆」と「ゲームが作れるもの」の 2 つの表を読み分ける負担だけが残る。
-鏡像の回帰テストは**向きが反転した**: 「出荷される shaped は全部左右対称なので、
-唯一の防衛線は上の 3 件である」から「出荷される shaped に非対称なものが**在る**ので、
-鏡像分岐を消すと本物のレシピが壊れる」へ。
-
-#### 復帰させたときに守った基準
-
-`STARTER_RECIPES` は `InventoryService.recipes` で mx-ui に渡る**公開データ**なので、
-その 1 行は「このゲームで何が作れるか」の主張である。
-削った当時、マッチャの性質を見せるために手近なアイテムで非対称レシピを捏造する選択肢は
-あって、退けられた。**戻す側でも基準は同じ**で、戻した 2 行はどちらも本家レシピである
-—— だからこそ kernel に要求する価値があった。
-
-残っている非本家の 1 行（`mc-sim:stick-from-loose-planks`）が例外なのは、
-それが示す性質が**この表自身の性質**（出荷される表が id タイブレークに頼らず曖昧性を解ける）
-だからである。なお 2 行の追加で新たな曖昧性は生じていない: `mc-sim:flint-and-steel` は
-`mc-sim:glowstone` と 2x2 の箱を共有するがセルが（鏡像込みで）異なり、
-`mc-sim:fire-charge` の材料多重集合は既存 2 件のどちらとも重ならない。
-`conflictsIn(STARTER_RECIPES)` は空のままで、それは**確認した結果**であって前提ではない。
+`conflictsIn(STARTER_RECIPES)` は空であることをテストで確認している。kernel に存在しない
+アイテムを必要とする公式レシピは、この表へ暗黙に追加せず、kernel の語彙拡張とレシピデータの
+追加を同じ変更として扱う。
 
 ## 4.2 着地衝撃通知
 
@@ -648,7 +667,7 @@ plan.md §3.8 の責務のうち、界面をまだ書いていないもの。**�
 | --- | --- | --- |
 | ~~`EntityManager`~~ | — | **§7 で設計済** |
 | 体力 / 空腹 / XP | `health-service.ts` / `hunger-service.ts` / `xp-service.ts` | mx-gameplay / mx-ui |
-| 実績 / 統計 | `achievement-service.ts` / `statistics-service.ts` | mx-ui |
+| 実績 / 統計 | `achievement-service.ts` / `statistics-service.ts` | mx-gameplay / mx-ui（統計の記録・保存は実装済み。実績 registry / predicate は mx-gameplay） |
 | 設定状態 | `packages/game/application/settings-service.ts` (107) + `.config.ts` (70) + `.schema.ts` (79) | mx-ui / mc-render |
 | ~~チャンクダーティ通知~~ | — | **mc-worldgen に移った。下記** |
 | ドロップ / 経験値オーブ | `dropped-item-service.ts` / `dropped-xp-orb-service.ts` | mx-gameplay / mc-render |
@@ -674,65 +693,35 @@ mc-render は plan.md §2.1 に既にある `render → worldgen` エッジで�
 詳細と、逆の選択のコストは `mc-worldgen/docs/public-api.md` §6。
 本リポジトリ側の判断根拠は [responsibility.md](./responsibility.md) §3.3。
 
-## 6. APIロック
+## 6. 公開面と配布物
 
-plan.md §6 Step 0-3 が初回コミットに求める「公開 API のレポートを diff レビュー」。
-**実装されている。** §9 の未決事項「API ロックファイルのツール選定
-（api-extractor 相当の Effect-TS 互換手段）」はこれで決着した。
+公開ソースの入口は `src/index.ts` であり、配布物の入口は `package.json` の `exports` が指す
+`dist/index.mjs` と `dist/index.d.ts` である。公開面の変更は、個別のロックファイルではなく
+ソース・パッケージ宣言・生成された配布物を同じ変更単位で確認する。
 
-| 項目 | 内容 |
+| 確認対象 | 実施内容 |
 | --- | --- |
-| 生成物 | リポジトリ直下の `api-lock.md`（公開宣言 70 件 + 参照されている非 export 宣言 17 件。コミット対象） |
-| 生成器 | `scripts/api-lock.ts`（16 リポジトリに byte-identical で vendor。`scripts/check-dependency-whitelist.ts` と同じ方式で、編集してよいのは `REPOSITORY_POLICY` だけ） |
-| 検査 | `pnpm api:check` — `api-lock.md` が実際の公開 API と食い違えば非ゼロ終了 |
-| 更新 | `pnpm api:update` |
-| 配線 | `pnpm verify` の `check:deps` と `test` の間、および CI の独立ステップ |
-| 追加依存 | **なし**（`typescript` は既に devDependency） |
+| 公開型 | `pnpm typecheck` で source / test / preview の型を検査し、`dist/index.d.ts` を生成する |
+| 実行時入口 | `pnpm build` で ESM バンドルを生成し、Node 24 から `dist/index.mjs` を import する |
+| Effect サービス | `Context.Tag` と `Layer` の組み合わせを、公開 source と型宣言で確認する |
+| 挙動 | `pnpm test` と `pnpm test:coverage` で純粋な遷移・サービス境界・統合シナリオを検査する |
+| 依存境界 | `package.json` の直接依存、静的 import、TypeScript の型検査で所有パッケージを確認する |
 
-理由と実測の正本は mc-kernel の `docs/versioning.md` §7（§7-1 なぜ api-extractor ではないのか、
-§7-2 仕組み、§7-3 決定性、§7-4 捕まえないもの、§7-5 運用）。ここでは mc-sim にとって何が変わったかだけ書く。
+### 6.1 Effect サービスの公開契約
 
-### 6.1 mc-sim がまさに api-extractor に見えないケースだった
+`PlayerService`、`InventoryService`、`TimeService` などの Effect サービスは、Tag の識別子と
+サービス値の型が一つの契約になる。`Context.Tag` / `Context.GenericTag` と `Layer` を直接公開し、
+呼び出し側が同じ Tag を解決できる形を維持する。サービスの内部実装を変更しても、公開される
+メソッド・戻り値・エラー型を変えない限り配布物の契約は変わらない。
 
-本ドキュメント §0 が決めた通り、新実装のサービスは `Context.Tag` + 明示的な `Layer` である。
-TypeScript の declaration emit はこれを 2 つに分けて出し、`api-lock.md` は両方を記録する:
+### 6.2 宣言と挙動の役割分担
 
-```ts
-class PlayerService extends PlayerService_base {
-}
-const PlayerService_base: Context.TagClass<PlayerService, "@nerima-games/mc-sim/PlayerService", PlayerServiceApi>;
-```
+宣言の破綻は `pnpm typecheck` と `pnpm build` が捕捉し、実行時のバンドル解決は Node 24 の
+公開入口 import で確認する。境界値、状態遷移、保存復元、サービス合成の回帰はテストが捕捉する。
+いずれか一方を公開 API の証拠にしない。
 
-`@microsoft/api-extractor` は後者を「forgotten export」として警告に落とし、前者の空の殻しかレポートに書かない。
-つまり **Tag 識別子文字列と束ねられた service 型 —— 契約そのもの —— が消える**。
-mc-kernel で実測したところ、Tag 識別子を改名してもレポートはバイト単位で同一だった。
-mc-sim にとってこれは致命的である。Tag 識別子は §3.2 の 6 リポジトリが `Layer` を解決する鍵であり、
-これが黙って変わると各リポジトリは単体では型検査を通ったまま、合成した瞬間に実行時で壊れる。
-自前の `scripts/api-lock.ts` は「公開面が参照している非 export の宣言」を第 2 節に取り込むので、
-`PlayerService_base` / `GameLoop_base` / `InventoryService_base` / `TimeService_base` が全部写る。
-
-api-extractor の名誉のために書いておくと、ノイズ耐性（関数本体の編集・非公開ヘルパの追加・
-barrel の並べ替え・devDependency の bump で diff が出ないこと）は api-extractor も全部通っていた。
-差が出たのは**検出側**だけである。
-
-### 6.2 plan.md §8 第 2 リスクに対する意味
-
-[architecture.md](./architecture.md) §3.2 が言う通り、mc-sim の API が揺れると 6 リポジトリに波及する。
-これまでその「揺れ」を検出する仕組みは無く、レビュアの注意力が唯一の防波堤だった。
-いまは `PlayerService` の Tag 文字列を書き換えれば `pnpm api:check` が
-`pnpm verify` の `test` より**前**の段で非ゼロで落ちる。リスクは緩和済みと言ってよい。
-
-`docs/versioning.md` §3 の「APIロックファイルが 4 週間変更されていない」も、
-`api-lock.md` が最後に変わったコミットから数えられるようになった。計測の起点が客観的な事実になっている。
-
-### 6.3 捕まえないもの
-
-- **挙動。** `clampPitch` の境界や `advance` の返り値が変わってもこのファイルは動かない。
-  DN-01 / DN-03 の回帰テストの仕事である（[testing.md](./testing.md)）。
-- **interface / 型リテラルのメンバ順。** tsc の emit 順（＝ソース順）を保つので、
-  `PlayerServiceApi` のメンバを並べ替えると API 変更でなくても diff になる。承認は 1 行で済む。
-
-公開面を変える PR は `pnpm api:update` の結果を**同じ PR に**含めること。差分がレビュー対象そのものである。
+公開面を変える変更では `src/index.ts`、`package.json` の `exports`、生成された
+`dist/index.d.ts` / `dist/index.mjs` の差分と、上表の検査結果を同じ変更単位でレビューする。
 
 ## 7. EntityManager —— エンティティ台帳
 
@@ -816,7 +805,7 @@ plan.md §7 の「状態管理は sim、AI/スポーン/ドロップのルール
 mx-gameplay の `CreeperFuse` は明示的に**ホストが保持して返す値**として設計されている
 （`creeper-fuse.ts`: 「No `Ref`, no map from entity to fuse [...] the CREEPER is
 saved state (mc-sim's)」）。したがって mc-sim は**名指しできない値**を持つ必要がある。
-mx-gameplay を import することはできない（逆向き＝循環で `pnpm check:deps` が落とす）し、
+mx-gameplay を import することはできない（逆向きの依存は循環になる）し、
 「これはクリーパーだから」と分岐することもできない（DN-11 の境界）。
 
 素直な綴り 2 通りはどちらも同じ方向に間違っている。
@@ -840,9 +829,9 @@ generic になれない。`Context.GenericTag<EntityManager, EntityManagerApi<S>
 すべての `R` に現れるのはこちら）と**サービス値型**（引数を持つ）。
 Effect は Tag を文字列キーで解決するので、どの具体化も同じ 1 つのサービスを指す。
 
-これは `test/kernel-mirror.test.ts` が守っている ClockPort のハザードとは**別物**である。
-あちらは**形の不一致**（1 フィールドのミラーの Layer が 2 フィールドの Tag を満たし、
-欠けたフィールドが `undefined` になる）。こちらはどの具体化もメソッドも引数も同一で、
+これは依存パッケージの型をローカルで再宣言することによる形の不一致とは**別物**である。
+ローカルのミラーを許すと、少ないフィールドの Layer が別の Tag を満たし、
+欠けたフィールドが `undefined` になる。こちらはどの具体化もメソッドも引数も同一で、
 違うのは **mc-sim が決して読まないフィールドの静的な型だけ**である。
 間違った `S` を選んだ消費者が得るのは「自分で誤って説明した値」であり、
 それは `unknown` 経由のキャストと同じ帰結で、違いは選択が 1 か所
@@ -855,8 +844,7 @@ Effect は Tag を文字列キーで解決するので、どの具体化も同�
 永続化境界で 2^53 の問題を持ち込まないためで、ブランドが付いているのは
 「無関係な文字列を数種類持っている」唯一のフィールドだからである。
 
-**kernel のミラー（`domain/kernel-vocabulary.ts`）には入れていない。** 同ファイルのヘッダが
-「ソースより**広い**ミラー」を危険な方向として名指しており、kernel の `identifiers.ts` に
+**kernel の語彙ミラーには入れていない。** kernel の `identifiers.ts` に
 エンティティ ID は無い。台帳が mc-sim のものである以上、その鍵も mc-sim のものである
 —— kernel が kernel 側の理由で公開する日までは（`ItemType` のときと同じ順序）。
 

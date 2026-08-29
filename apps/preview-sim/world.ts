@@ -7,7 +7,7 @@
  * There are TWO clocks here, and that is a finding, not a convenience
  * ---------------------------------------------------------------------------
  *
- * 1. `ClockPort` — mc-kernel's Port, mirrored in `domain/kernel-vocabulary.ts`.
+ * 1. `ClockPort` — mc-kernel's Port, imported directly from its public barrel.
  *    `PlayerService.cameraPose` is typed `Effect<…, never, ClockPort>` precisely
  *    so that the dependency is visible; application/player-service.ts:29-33 says
  *    the visible requirement is what stops someone "simplifying" it into a wall
@@ -22,16 +22,15 @@
  *
  * That second clock is NOT an oversight, and `application/autosave.ts` now
  * carries the reasoning: a Port READS AN INSTANT, a schedule SLEEPS FOR A
- * DURATION, and `ClockPort` is mirrored from mc-kernel and may not grow a
+ * DURATION, and `ClockPort` is owned by mc-kernel and may not grow a
  * `sleep`. Both clocks here are injected and both are deterministic; they are
  * simply two mechanisms, and this app is the place that shows they can
  * disagree.
  *
- * `scripts/check-dependency-whitelist.ts` cannot see the second one — it greps
- * for `Date.now()` / `new Date()` / `performance.now()`, and `Schedule.spaced`
- * reaches the platform clock through Effect's `Clock` service instead. The
- * `clock-divergence` scenario drives them apart on purpose; `probes.ts` states
- * the consequence.
+ * Import-based rules cannot see the second one because `Schedule.spaced` reaches
+ * the platform clock through Effect's `Clock` service instead. The deterministic
+ * test context and the `clock-divergence` scenario make that boundary observable;
+ * `probes.ts` states the consequence.
  *
  * ---------------------------------------------------------------------------
  * Why ManagedRuntime
@@ -63,20 +62,24 @@ import { makeStatisticsService } from '../../src/application/statistics-service'
 import { makeTimeService } from '../../src/application/time-service'
 import { makeVitalsService } from '../../src/application/vitals-service'
 import * as Camera from '../../src/domain/camera-pose'
-import { INVENTORY_SLOT_COUNT, type Inventory, type Slot } from '../../src/domain/inventory'
+import {
+  INVENTORY_SLOT_COUNT,
+  maxStackCountForItem,
+  type Inventory,
+  type Slot,
+} from '../../src/domain/inventory'
 import * as Settings from '../../src/domain/settings'
 import * as Statistics from '../../src/domain/statistics'
 import * as Vitals from '../../src/domain/vitals'
 import {
   ClockPort,
   EpochMillis,
-  MAX_STACK_COUNT,
   MonotonicTimeSecs,
   position,
   StackCount,
   type CameraPoseSnapshot,
   type ClockService,
-} from '../../src/domain/kernel-vocabulary'
+} from '@nerima-games/mc-kernel'
 import * as Time from '../../src/domain/time-of-day'
 import { scenarioFor, stepsAt, type ScenarioName, type ScriptedAction } from './script'
 
@@ -93,7 +96,8 @@ export type SlotView = {
   readonly index: number
   readonly item: string
   readonly count: number
-  /** True when the slot violates `StackCount`'s [0, 64] refinement. */
+  readonly maxStackCount: number
+  /** True when the slot violates its item's kernel stack limit. */
   readonly overfull: boolean
 }
 
@@ -237,11 +241,13 @@ const slotViews = (slots: ReadonlyArray<Slot>): ReadonlyArray<SlotView> => {
   const views: Array<SlotView> = []
   slots.forEach((slot, index) => {
     if (slot !== undefined) {
+      const maxStackCount = maxStackCountForItem(slot.item)
       views.push({
         index,
         item: slot.item,
         count: slot.count,
-        overfull: !(Number.isInteger(slot.count) && slot.count >= 0 && slot.count <= MAX_STACK_COUNT),
+        maxStackCount,
+        overfull: !(Number.isInteger(slot.count) && slot.count >= 0 && slot.count <= maxStackCount),
       })
     }
   })

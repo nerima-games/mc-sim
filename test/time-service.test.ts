@@ -17,7 +17,7 @@
  */
 import { describe, expect, it } from '@effect/vitest'
 import { Effect } from 'effect'
-import { DeltaTimeSecs } from '../src/domain/kernel-vocabulary'
+import { DeltaTimeSecs } from '@nerima-games/mc-kernel'
 import { INITIAL_TIME_STATE } from '../src/domain/time-of-day'
 import { makeTimeService } from '../src/application/time-service'
 
@@ -100,6 +100,16 @@ describe('REGRESSION: restore repairs a corrupt save instead of reporting perman
       const time = yield* makeTimeService()
 
       expect(yield* time.snapshot).toStrictEqual(INITIAL_TIME_STATE)
+    }),
+  )
+
+  it.effect('setDayLength changes the clock denominator', () =>
+    Effect.gen(function* () {
+      const time = yield* makeTimeService()
+
+      yield* time.setDayLength(300)
+
+      expect(yield* time.dayLengthSecs).toBe(300)
     }),
   )
 })
