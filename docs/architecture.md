@@ -105,7 +105,7 @@ Lint、ビルド、テストで継続的に検証する。共有語彙をこの�
 | 依存先 | 何をもらうか |
 | --- | --- |
 | `mc-kernel` | 共有語彙。**どのリポジトリからも import 可**。ただし `package.json#dependencies` への記載は必要 |
-| `mc-physics` | `step(state, world, dt)`、AABBクエリ、voxel-DDA レイキャスト |
+| `mc-physics` | `integrateBody` / `resolveBody` によるボディ積分と AABB 衝突解決、voxel-DDA レイキャスト、爆発・Primed TNT・projectile・frame-timing の re-export。個別シグネチャは [public-api.md](./public-api.md) を参照 |
 | `mc-save` | `defineFormat` / `StoragePort`。mc-sim は自分のセーブフォーマットをこれで**定義する側** |
 | `mc-worldgen` | `generateChunk` / `BiomeService` / `ChunkStore`（ブロックの読み書きとダーティ購読） |
 

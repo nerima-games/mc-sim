@@ -10,7 +10,7 @@ plan.md §3.8「設計注意（参照実装の実測知見）」の全項目を�
 | --- | --- | --- |
 | DN-01 | カメラ所有権の反転を元に戻さない | 済 |
 | DN-02 | ゲームループ・自動保存は `forkDaemon` + 明示 `stop()` + 再入可能 | 済 |
-| DN-03 | deltaTime クランプは `min(max(0.001, raw), 0.05)` | 済 |
+| DN-03 | deltaTime クランプ — mc-physics へ forward（手動同期義務は解消） | 済 |
 | DN-04 | `setDayLength → setTimeOfDay` の順 | 済 |
 | DN-05 | 自動保存は `Schedule.spaced`（`fixed` ではない） | 済 |
 | DN-06 | ブランデッドコンストラクタ必須 | 済（部分） |

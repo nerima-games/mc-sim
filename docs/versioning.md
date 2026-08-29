@@ -59,12 +59,15 @@ TypeScript ソースとして公開される依存は、`tsdown.config.ts` で�
 | 依存 | 現在の扱い |
 | --- | --- |
 | `effect` | `^3.22.1`。Effect の Context / Layer を共有するため同一 major を使う |
-| `mc-kernel` | `0.4.0` |
-| `mc-physics` | `0.1.7` |
+| `mc-kernel` | `0.5.0` |
+| `mc-physics` | `0.2.0` |
 | `mc-save` | `0.2.2` |
 | `mc-worldgen` | `0.1.14` |
 | TypeScript | `pnpm typecheck` は `@typescript/native` の TypeScript 7 を使用する。tsdown の宣言生成系が要求する TypeScript 6 の alias は依存境界として残す |
 | Vitest | `@effect/vitest` と互換な 3 系を使う |
+
+上表の値は最新の更新時点のスナップショットであり、正は常に `package.json#dependencies` である。
+版がずれて見える場合は本表ではなく `package.json` を信じること。
 
 依存を更新したら `pnpm install --frozen-lockfile`、`pnpm peers check`、`pnpm typecheck`、
 `pnpm build`、`pnpm test:coverage` を実行する。特に Effect と依存パッケージの major を

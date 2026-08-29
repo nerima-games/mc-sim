@@ -34,6 +34,9 @@
  * `MAX_FRAME_DELTA_SECS`, `FIRST_FRAME_DELTA_SECS`) are mc-sim's established
  * public surface — consumed by apps/preview-sim outside this change's scope —
  * so they stay, now as direct forwards to physics rather than reimplementations.
+ * `application/game-loop.ts` imports physics directly rather than going through this
+ * forward, so the remaining consumers of this module's `frameDeltaBetween` are
+ * apps/preview-sim and this module's own tests.
  */
 import { DeltaTimeSecs } from "@nerima-games/mc-kernel"
 import {

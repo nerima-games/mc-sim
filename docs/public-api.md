@@ -661,6 +661,13 @@ const resetLandingImpact: (state: SimFrameState) => Effect.Effect<void>
   通常の物理 stage を経由しない位置変更を行う呼び手は、同じ処理境界でこれを呼ぶ。
   stage 自身は mailbox の位置適用時と物理無効時に自動でリセットする。
 
+`SimPhysicsConfig.resolve`（= `@nerima-games/mc-physics` の `ResolveOptions`、
+`src/stages/registration.ts`）は mc-physics 0.2.0 で `isBlockSolid` を廃止し、必須の
+`blockPropertiesAt` と任意の `blockShapeAt` に置き換えた。`blockShapeAt` を渡すセルはそちらが
+全域的に支配し、形状が `null` でも `blockPropertiesAt` へフォールバックしない。ホストの旧
+`isBlockSolid` 相当の判定は `blockShapeAt` 側へ移す（`test/stage-registration.test.ts` の
+フィクスチャ参照）。
+
 ## 5. まだ設計していない公開API
 
 plan.md §3.8 の責務のうち、界面をまだ書いていないもの。**着手前に本書へ追記すること。**
@@ -1012,6 +1019,14 @@ type ExplosionBlockReader = (
   position: ExplosionBlockPosition,
 ) => ExplosionBlock | undefined
 
+type ExplosionLimits = {
+  readonly maxVisitedBlocks: number
+  readonly maxRaySteps: number
+  readonly maxAffectedEntities: number
+}
+
+declare const DEFAULT_EXPLOSION_LIMITS: ExplosionLimits
+
 declare const planExplosion: (request: ExplosionRequest) => ExplosionPlan
 
 type ExplosionCommit = (mutation: ExplosionMutation) => void
@@ -1034,6 +1049,9 @@ declare const applyExplosionPlan: (
 原子性とロールバックは具体的な保存先を所有するホストの責務であり、host は自分の
 `Ref.modify` や Effect の中から `commit` を直接呼ぶ（`Effect` の `E` / `R` はもう関与しない）。
 
+**`commit` は throw しないこと。** 型付き失敗チャネル（旧 `Effect` の `E`）は無くなったため、
+`commit` の内部で失敗しうる処理を行う呼び出し側は、その呼び出しを自前で `try`/`catch` すること。
+
 ### 8.1 Primed TNT
 
 `domain/primed-tnt.ts` も同じく `@nerima-games/mc-physics`（= mc-kernel）への re-export である。
@@ -1045,6 +1063,8 @@ type PrimedTntState =
   | { readonly kind: 'detonated' }
 
 declare const DEFAULT_TNT_FUSE_SECS = 4
+
+declare const MAX_TNT_FUSE_ADVANCE_SECS = 10
 
 declare const primeTnt: (fuseSecs?: number) => PrimedTntState
 
@@ -1070,6 +1090,9 @@ declare const applyPrimedTntPlan: (
 フィールドは、その呼び出しで実際に起爆した（`plan.explosion` が存在する）ときだけ含まれる。
 host は同じ更新単位（`Ref.modify` など）の中で `expected` を比較してから、
 TNT entity の更新または除去と block/entity effects を一括適用する。
+
+**`commit` は throw しないこと。** §8 と同じ理由で型付き失敗チャネルは無い。失敗しうる処理は
+呼び出し側が `try`/`catch` する。
 
 ## 9. Projectile
 
@@ -1113,6 +1136,8 @@ type Projectile =
   | { /* 同上のフィールド */ readonly state: 'despawned'; readonly reason: 'invalid' | 'lifetime' | 'world' | 'entity-hit' }
 
 type ProjectileStep = { readonly projectile: Projectile; readonly hit?: ProjectileHit }
+
+type ProjectileEntity = { readonly id: string; readonly bounds: AABB }
 
 declare const launchProjectile: (launch: ProjectileLaunch) => Projectile
 declare const stepProjectile: (
