@@ -1,5 +1,11 @@
 # @nerima-games/mc-sim
 
+## 0.2.1
+
+### Patch Changes
+
+- [#13](https://github.com/nerima-games/mc-sim/pull/13) [`a476ff4`](https://github.com/nerima-games/mc-sim/commit/a476ff4412110e9b18e8902e45b196886a0b1826) Thanks [@takeokunn](https://github.com/takeokunn)! - Pin mc-physics 0.2.1, whose tsc-emitted declarations restore the projectile API types that 0.2.0's bundled d.ts dropped; consumers type-checking mc-sim's declarations against mc-physics no longer see missing exports.
+
 ## 0.2.0
 
 ### Minor Changes
