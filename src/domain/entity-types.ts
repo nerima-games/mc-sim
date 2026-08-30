@@ -4,7 +4,7 @@ import { position } from '@nerima-games/mc-kernel'
 
 export type EntityId = string & Brand.Brand<'EntityId'>
 
-const entityId = Brand.refined<EntityId>(
+const entityId: Brand.Brand.Constructor<EntityId> = Brand.refined<EntityId>(
   (value) => typeof value === 'string' && value.trim().length > 0,
   (value) => Brand.error(`EntityId must be a non-blank string, received ${JSON.stringify(value)}`),
 )
@@ -12,7 +12,7 @@ export { entityId as EntityId }
 
 export type EntityKind = string & Brand.Brand<'EntityKind'>
 
-const entityKind = Brand.refined<EntityKind>(
+const entityKind: Brand.Brand.Constructor<EntityKind> = Brand.refined<EntityKind>(
   (value) => typeof value === 'string' && value.trim().length > 0,
   (value) => Brand.error(`EntityKind must be a non-blank string, received ${JSON.stringify(value)}`),
 )

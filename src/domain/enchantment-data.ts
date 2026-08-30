@@ -46,7 +46,7 @@ export type VanillaAnvilCost = Readonly<{
   book: number
 }>
 
-export const VANILLA_ENCHANTMENT_COSTS = {
+export const VANILLA_ENCHANTMENT_COSTS: Record<SupportedVanillaEnchantmentId, VanillaAnvilCost> = {
   aqua_affinity: { item: 4, book: 2 },
   bane_of_arthropods: { item: 2, book: 1 },
   binding_curse: { item: 8, book: 4 },
@@ -79,7 +79,7 @@ export const VANILLA_ENCHANTMENT_COSTS = {
   thorns: { item: 8, book: 4 },
   unbreaking: { item: 2, book: 1 },
   vanishing_curse: { item: 8, book: 4 },
-} as const satisfies Record<SupportedVanillaEnchantmentId, VanillaAnvilCost>
+} as const
 
 const ARMOR_ITEMS = [
   'iron_helmet',
@@ -190,7 +190,10 @@ const rulesForCostSource = (
     costPerLevel: VANILLA_ENCHANTMENT_COSTS[id][costSource],
   }))
 
-export const SUPPORTED_VANILLA_BOOK_ENCHANTMENT_RULES = rulesForCostSource('book')
-export const SUPPORTED_VANILLA_ITEM_ENCHANTMENT_RULES = rulesForCostSource('item')
+export const SUPPORTED_VANILLA_BOOK_ENCHANTMENT_RULES: ReadonlyArray<AnvilEnchantmentRule> =
+  rulesForCostSource('book')
+export const SUPPORTED_VANILLA_ITEM_ENCHANTMENT_RULES: ReadonlyArray<AnvilEnchantmentRule> =
+  rulesForCostSource('item')
 
-export const SUPPORTED_VANILLA_ENCHANTMENT_RULES = SUPPORTED_VANILLA_BOOK_ENCHANTMENT_RULES
+export const SUPPORTED_VANILLA_ENCHANTMENT_RULES: ReadonlyArray<AnvilEnchantmentRule> =
+  SUPPORTED_VANILLA_BOOK_ENCHANTMENT_RULES

@@ -19,5 +19,5 @@ export {
   ENTITY_ID_PREFIX,
   mintEntityId,
   serialOfEntityId,
-} from './entity-types'
-export * from './entity-operations'
+} from './entity-types.js'
+export * from './entity-operations.js'

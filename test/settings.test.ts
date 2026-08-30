@@ -306,6 +306,16 @@ describe('SettingsService', () => {
     }),
   )
 
+  it.effect('isValidSettings rejects a malformed keyBindings entry', () =>
+    Effect.sync(() => {
+      expect(isValidSettings(withSettings({ keyBindings: { '': 'KeyA' } }))).toBe(false)
+      expect(isValidSettings(withSettings({ keyBindings: { jump: '' } }))).toBe(false)
+      expect(
+        isValidSettings(withSettings({ keyBindings: { jump: 123 as unknown as string } })),
+      ).toBe(false)
+    }),
+  )
+
   it.effect('bindKey and unbindKey go through the Ref', () =>
     Effect.gen(function* () {
       const settings = yield* makeSettingsService()

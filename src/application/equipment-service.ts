@@ -1,5 +1,5 @@
 import { Context, Effect, Layer, Ref } from 'effect'
-import * as Equipment from '../domain/equipment'
+import * as Equipment from '../domain/equipment.js'
 
 export type EquipmentServiceApi = {
   readonly equip: (
@@ -31,10 +31,13 @@ const validationError = (path: string, reason: string): Equipment.EquipmentValid
   reason,
 })
 
-export class EquipmentService extends Context.Tag('@nerima-games/mc-sim/EquipmentService')<
+const EquipmentServiceBase: Context.TagClass<
   EquipmentService,
+  '@nerima-games/mc-sim/EquipmentService',
   EquipmentServiceApi
->() {}
+> = Context.Tag('@nerima-games/mc-sim/EquipmentService')<EquipmentService, EquipmentServiceApi>()
+
+export class EquipmentService extends EquipmentServiceBase {}
 
 export const makeEquipmentService = (): Effect.Effect<EquipmentServiceApi> =>
   Effect.map(Ref.make(Equipment.emptyEquipment()), (state) => ({

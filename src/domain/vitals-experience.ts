@@ -1,5 +1,5 @@
-import { type Vitals } from './vitals-model'
-import { clamp, delta } from './vitals-number'
+import { type Vitals } from './vitals-model.js'
+import { clamp, delta } from './vitals-number.js'
 
 export const experienceCostOfLevel = (level: number): number => {
   const atLevel = Math.max(0, Math.floor(delta(level)))

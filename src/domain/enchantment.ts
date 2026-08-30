@@ -15,19 +15,19 @@ import {
   SUPPORTED_VANILLA_ENCHANTMENT_RULES,
   SUPPORTED_VANILLA_ITEM_ENCHANTMENT_RULES,
   type SupportedVanillaEnchantmentId,
-} from './enchantment-data'
+} from './enchantment-data.js'
 
-export const SUPPORTED_VANILLA_BOOK_ANVIL_RULE_SET = {
+export const SUPPORTED_VANILLA_BOOK_ANVIL_RULE_SET: AnvilRuleSet = {
   enchantments: SUPPORTED_VANILLA_BOOK_ENCHANTMENT_RULES,
-} as const satisfies AnvilRuleSet
+} as const
 
-export const SUPPORTED_VANILLA_ITEM_ANVIL_RULE_SET = {
+export const SUPPORTED_VANILLA_ITEM_ANVIL_RULE_SET: AnvilRuleSet = {
   enchantments: SUPPORTED_VANILLA_ITEM_ENCHANTMENT_RULES,
-} as const satisfies AnvilRuleSet
+} as const
 
-export const SUPPORTED_VANILLA_ANVIL_RULE_SET = {
+export const SUPPORTED_VANILLA_ANVIL_RULE_SET: AnvilRuleSet = {
   enchantments: SUPPORTED_VANILLA_ENCHANTMENT_RULES,
-} as const satisfies AnvilRuleSet
+} as const
 
 const RULES_BY_ID = new Map(
   SUPPORTED_VANILLA_ENCHANTMENT_RULES.map((rule) => [rule.id, rule]),

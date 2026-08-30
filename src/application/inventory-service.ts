@@ -9,15 +9,15 @@
  * exactly what `Ref.modify` wants.
  */
 import { Context, Effect, Layer, Ref } from 'effect'
-import * as Container from '../domain/container-storage'
-import * as Craft from '../domain/crafting'
-import * as Eq from '../domain/equipment'
-import * as Hotbar from '../domain/hotbar'
-import * as Inv from '../domain/inventory'
+import * as Container from '../domain/container-storage.js'
+import * as Craft from '../domain/crafting.js'
+import * as Eq from '../domain/equipment.js'
+import * as Hotbar from '../domain/hotbar.js'
+import * as Inv from '../domain/inventory.js'
 import type { ItemType } from '@nerima-games/mc-kernel'
-import * as Storage from '../domain/player-storage'
-import * as Recipe from '../domain/recipe'
-import { STARTER_RECIPES } from '../domain/recipe-data'
+import * as Storage from '../domain/player-storage.js'
+import * as Recipe from '../domain/recipe.js'
+import { STARTER_RECIPES } from '../domain/recipe-data.js'
 import {
   carriedAt,
   carriedWithCount,
@@ -28,20 +28,20 @@ import {
   sameDurability,
   validCarried,
   withCarriedSlots,
-} from './inventory-interaction'
+} from './inventory-interaction.js'
 import type {
   InventoryCarriedSlot,
   InventoryCarriedStack,
   InventoryClick,
   InventoryClickResult,
-} from './inventory-interaction'
+} from './inventory-interaction.js'
 
 export type {
   InventoryCarriedSlot,
   InventoryCarriedStack,
   InventoryClick,
   InventoryClickResult,
-} from './inventory-interaction'
+} from './inventory-interaction.js'
 
 export type InventorySetSlotResult =
   | { readonly _tag: 'Updated'; readonly slot: InventoryCarriedSlot }
@@ -299,10 +299,13 @@ export type InventoryServiceApi = {
   readonly craft: (grid: Recipe.CraftGrid) => Effect.Effect<Craft.CraftResult>
 }
 
-export class InventoryService extends Context.Tag('@nerima-games/mc-sim/InventoryService')<
+const InventoryServiceBase: Context.TagClass<
   InventoryService,
+  '@nerima-games/mc-sim/InventoryService',
   InventoryServiceApi
->() {}
+> = Context.Tag('@nerima-games/mc-sim/InventoryService')<InventoryService, InventoryServiceApi>()
+
+export class InventoryService extends InventoryServiceBase {}
 
 type InventoryServiceState = {
   readonly player: Storage.PlayerStorage

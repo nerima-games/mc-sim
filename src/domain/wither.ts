@@ -2,7 +2,7 @@ import type { Position } from '@nerima-games/mc-kernel'
 
 export const WITHER_MAX_HEALTH = 300
 export const WITHER_SPAWN_CHARGE_SECS = 10
-export const WITHER_ARMOUR_THRESHOLD = WITHER_MAX_HEALTH / 2
+export const WITHER_ARMOUR_THRESHOLD: number = WITHER_MAX_HEALTH / 2
 export const WITHER_REGEN_PER_SEC = 1
 export const WITHER_FOLLOW_ACCELERATION = 6
 export const WITHER_MAX_SPEED = 5

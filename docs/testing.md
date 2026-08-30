@@ -23,11 +23,12 @@ Node のシナリオテストは CI で高速に走り、プレビューは `pnp
 | コマンド | 内容 |
 | --- | --- |
 | `pnpm typecheck` | build、test、preview の三つの TypeScript 境界を検査する |
-| `pnpm lint` | `src`、`test`、`apps` を oxlint で検査する |
-| `pnpm build` | `tsdown` で実行時バンドルを作り、TypeScript で宣言ファイルを出す |
+| `pnpm lint` | `src`、`test`、`apps` を oxlint で検査し、続けて `ast-grep scan` で構造的なルール（`no-type-assertion` など）を検査する |
+| `pnpm build` | `scripts/clean-dist.mjs` で `dist/` を消し、`tsc -p tsconfig.release.json` で `dist/` を生成する（`tsdown` バンドルは廃止） |
 | `pnpm test` | `test/**/*.test.ts` を Vitest で実行する |
 | `pnpm test:coverage` | V8 の文・分岐・関数・行カバレッジを検査する |
 | `pnpm verify` | 型検査、lint、通常テストを順に実行する |
+| `pnpm package:verify` | `pnpm build` の後、`scripts/verify-package.mjs` で公開 export の一覧と `pnpm pack` した archive の内容を検証する |
 | `pnpm preview` | 決定論シナリオを端末で確認する |
 
 `pnpm test:coverage` のしきい値は文・分岐・関数・行のすべて 100% である。カバレッジを
@@ -80,13 +81,13 @@ pnpm preview -- --stats
 
 ## 6. CI の順序
 
-CI は次の順序で実行する。
+CI（`.github/workflows/ci.yaml`）は `nix develop` の中で次の順序で実行する。
 
-1. Corepack を有効にして lockfile 固定インストールを行う。
-2. `pnpm typecheck` で build、test、preview の型境界を検査する。
-3. `pnpm build` で公開バンドルと宣言ファイルを生成する。
-4. `pnpm lint` でソース、テスト、プレビューを検査する。
-5. `pnpm test` で全テストを実行する。
-6. `pnpm test:coverage` で 100% のしきい値を確認する。
+1. GitHub Packages 認証を設定し、`pnpm install --frozen-lockfile` でインストールする。
+2. `pnpm verify`（`pnpm typecheck && pnpm lint && pnpm test` の 3 段）を実行する。
+3. `pull_request` かつ `release/*` ブランチでない場合のみ Changeset の有無を確認する。
+4. `pnpm test:coverage` で 100% のしきい値を確認する。
+5. `pnpm package:verify` で `dist/` を生成し、公開 export と pack した archive の内容を検証する。
+6. `pnpm audit` で依存の既知脆弱性を確認する。
 
 変更セットの確認はリリース運用の入力であり、実装の正しさを測るテストの代替ではない。

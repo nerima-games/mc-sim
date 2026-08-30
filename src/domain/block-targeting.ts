@@ -1,6 +1,6 @@
 import { type IsTargetable, voxelRaycast } from '@nerima-games/mc-physics'
 import { Option } from 'effect'
-import { EYE_LEVEL_OFFSET, forwardVector, type PlayerPose } from './camera-pose'
+import { EYE_LEVEL_OFFSET, forwardVector, type PlayerPose } from './camera-pose.js'
 import { position, type CameraPoseSnapshot, type Position } from '@nerima-games/mc-kernel'
 
 export type BlockTarget = {

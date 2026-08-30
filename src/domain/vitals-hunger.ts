@@ -6,8 +6,8 @@ import {
   MAX_EXHAUSTION,
   REGEN_HUNGER_THRESHOLD,
   type Vitals,
-} from './vitals-model'
-import { clamp, delta } from './vitals-number'
+} from './vitals-model.js'
+import { clamp, delta } from './vitals-number.js'
 
 export type FoodTickSignal = 'none' | 'regen' | 'starve'
 

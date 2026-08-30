@@ -1,8 +1,8 @@
 import { Context, Effect, Layer, Ref } from 'effect'
 import type { BlockType } from '@nerima-games/mc-kernel'
-import type { ItemStack } from '../domain/inventory'
+import type { ItemStack } from '../domain/inventory.js'
 import type { DeltaTimeSecs } from '@nerima-games/mc-kernel'
-import * as Crop from '../domain/crop'
+import * as Crop from '../domain/crop.js'
 
 export type CropServiceApi = {
   readonly plant: (
@@ -22,10 +22,10 @@ export type CropServiceApi = {
   readonly reset: Effect.Effect<void>
 }
 
-export class CropService extends Context.Tag('@nerima-games/mc-sim/CropService')<
-  CropService,
-  CropServiceApi
->() {}
+const CropServiceBase: Context.TagClass<CropService, '@nerima-games/mc-sim/CropService', CropServiceApi> =
+  Context.Tag('@nerima-games/mc-sim/CropService')<CropService, CropServiceApi>()
+
+export class CropService extends CropServiceBase {}
 
 const copyCrop = (crop: Crop.CropState): Crop.CropState => ({
   ...crop,

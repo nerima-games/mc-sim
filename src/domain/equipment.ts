@@ -1,4 +1,4 @@
-import type { ItemStack } from './inventory'
+import type { ItemStack } from './inventory.js'
 import { isItemType, type ItemType } from '@nerima-games/mc-kernel'
 
 export const EQUIPMENT_SLOTS = ['head', 'chest', 'legs', 'feet', 'offhand'] as const
@@ -33,7 +33,7 @@ export const EQUIPMENT_CATALOG = {
   stone_sword: { slot: 'offhand' },
   iron_sword: { slot: 'offhand' },
   diamond_sword: { slot: 'offhand' },
-} as const satisfies Partial<Record<ItemType, EquipmentDefinition>>
+} as const
 
 /** The single source of truth for per-item durability, independent of equipment slots. */
 export const ITEM_DURABILITY_CATALOG = {
@@ -57,7 +57,7 @@ export const ITEM_DURABILITY_CATALOG = {
   diamond_sword: { maxDurability: 1561 },
   bow: { maxDurability: 384 },
   fishing_rod: { maxDurability: 64 },
-} as const satisfies Partial<Record<ItemType, ItemDurabilityDefinition>>
+} as const
 
 export type EquippableItemType = keyof typeof EQUIPMENT_CATALOG
 export type DamageableItemType = keyof typeof ITEM_DURABILITY_CATALOG

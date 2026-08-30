@@ -7,7 +7,7 @@ import {
 import {
   enchantmentAppliesTo,
   enchantmentsConflict,
-} from './enchantment'
+} from './enchantment.js'
 import {
   ENCHANTMENT_TABLE_BOOK,
   ENCHANTMENT_TABLE_MAX_BOOKSHELVES,
@@ -17,8 +17,8 @@ import {
   type EnchantmentTableCost,
   type EnchantmentTableItem,
   type EnchantmentTableRuleId,
-} from './enchantment-table-data'
-import { SUPPORTED_VANILLA_ENCHANTMENT_IDS } from './enchantment-data'
+} from './enchantment-table-data.js'
+import { SUPPORTED_VANILLA_ENCHANTMENT_IDS } from './enchantment-data.js'
 
 export type EnchantmentTableRandom = Readonly<{
   readonly nextInt: (bound: number) => number

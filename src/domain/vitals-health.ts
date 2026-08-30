@@ -1,5 +1,5 @@
-import { type Damage, type Vitals } from './vitals-model'
-import { delta } from './vitals-number'
+import { type Damage, type Vitals } from './vitals-model.js'
+import { delta } from './vitals-number.js'
 
 export const isDead = (vitals: Vitals): boolean => vitals.healthPoints <= 0
 

@@ -1,9 +1,9 @@
-import * as Eq from './equipment'
-import * as Inv from './inventory'
+import * as Eq from './equipment.js'
+import * as Inv from './inventory.js'
 import { isItemType, StackCount } from '@nerima-games/mc-kernel'
-import type { ContainerStoredStack } from './container-storage'
+import type { ContainerStoredStack } from './container-storage.js'
 
-export const FLINT_AND_STEEL_MAX_DURABILITY =
+export const FLINT_AND_STEEL_MAX_DURABILITY: number =
   Eq.ITEM_DURABILITY_CATALOG.flint_and_steel.maxDurability
 
 export type PlayerStorage = {

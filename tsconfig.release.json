@@ -1,0 +1,13 @@
+{
+  // The sole emitting configuration. `pnpm build` runs this after
+  // scripts/clean-dist.mjs to produce dist/. Every other tsconfig in this
+  // repository is check-only (noEmit: true, inherited from tsconfig.base.json).
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "include": ["src/index.ts", "src/domain/**/*.ts", "src/application/**/*.ts", "src/stages/**/*.ts"],
+  "exclude": ["node_modules", "coverage", "dist", "test/**", "scripts/**", "**/*.test.ts", "**/*.spec.ts"]
+}

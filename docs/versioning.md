@@ -7,15 +7,17 @@
 | 項目 | 現在の方針 |
 | --- | --- |
 | バージョン | `0.1.42`。`0.x` のため破壊的変更は minor で表す |
-| 実行時入口 | `dist/index.mjs` |
+| 実行時入口 | `dist/index.js` |
 | 型入口 | `dist/index.d.ts` |
 | 配布対象 | `dist`、`README.md`、`LICENSE` |
-| Node / pnpm | Node 24 以上、pnpm 11 以上 |
+| Node / pnpm | Node 24 以上、pnpm 11.24.0 以上 |
 | 公開 API | `src/index.ts` を入口にし、build で成果物を検査する |
 
-`pnpm build` は `tsdown` で実行時バンドルを作り、TypeScript で宣言ファイルを出す。
-TypeScript ソースしか公開していない段階ではないため、公開物の import と型宣言の両方を
-検証対象にする。
+`pnpm build` は `scripts/clean-dist.mjs` で `dist/` を消してから、`tsc -p tsconfig.release.json`
+で `dist/` に JavaScript と宣言ファイルを直接生成する（`tsdown` によるバンドルは廃止した。
+バンドルは `exports` サブパスと declaration map を壊し、mirror/repoint ゲートが読む型の
+同一性を保証できないため）。TypeScript ソースしか公開していない段階ではないため、公開物の
+import と型宣言の両方を検証対象にする。
 
 ## 2. `0.x` の運用
 
@@ -32,10 +34,17 @@ TypeScript ソースしか公開していない段階ではないため、公開
 ### 2.1 保存形式の版管理
 
 `SIMULATION_SAVE_FORMAT` の現行 version は 2。v2 はホットバーの選択状態と
-統計台帳（カウンタ / unlocked ID）を保存する。v1 → v2 は `mc-save` の migration
-chain で初期選択 0 と空の台帳へ移行する。
+統計台帳（カウンタ / unlocked ID）を保存する。
+
+**`mc-save` 0.3.0 以降は migration chain を提供しない**（`mc-save` の README.md
+「旧版セーブを現行版へ自動変換する migration chain は提供しません」）。`loadFrom` は
+format の現行 version のみを要求し、それ以外の version で保存された envelope は
+`SaveDecodeError` として拒否される（サイレントな変換はしない）。v1 → v2 の自動移行は
+0.2.2 世代の `mc-save` にのみ存在した機能で、`mc-save` を 0.3.0 に上げた時点で
+`SIMULATION_SAVE_FORMAT` からも撤去した。移行コード自体は git 履歴に残る。
 
 これは既存の公開 API を温存する互換アダプターではなく、保存形式そのものの版管理である。
+現時点のセーブは 0.x の開発用セーブであり、v1 形式のセーブを読めなくすることは許容している。
 
 ## 3. 共有依存の直接利用
 
@@ -50,21 +59,32 @@ chain で初期選択 0 と空の台帳へ移行する。
 実行時に現れるためである。共有依存の更新は、上流パッケージの型・実行時挙動・このリポジトリ
 のテストを同時に確認する。
 
-TypeScript ソースとして公開される依存は、`tsdown.config.ts` で実行時バンドルに含める。
-これにより、公開バンドルを Node が直接 import したときに依存側の未変換 TypeScript を
-解決しようとしない。宣言ファイルでは依存の型を参照し、実行時と型の責務を分けている。
+**廃止（2026-08-30）**: 以前はここで `tsdown.config.ts` の `deps.alwaysBundle` により、TypeScript
+ソースとして公開される依存を実行時バンドルへ含めていた。ビルドが `tsc -p tsconfig.release.json`
+単体（バンドラなし）に切り替わったため、この節は成立しない。`dist/index.js` は依存の import
+文をそのまま emit するので、依存自身が `dist/` を公開していない場合、Node の ESM ローダーは
+`node_modules` 内の `.ts` を型除去できず（`ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`）、
+その依存への import で失敗する。
+
+**既知のブロッカー**: 執筆時点で `mc-worldgen@0.1.14`（本パッケージが固定している正確な
+バージョン）は `package.json` の `main`/`exports` が `./src/index.ts` を指す未ビルドの形の
+ままである（`mc-physics@0.2.0` と `mc-save@0.3.0` はどちらも Wave 0 済みで `dist/index.js`
+を指す）。このため `pnpm package:verify` の動的 import 検証は、mc-sim 自身のコードでは
+なくこの上流依存が原因で失敗する。`mc-worldgen` が自身の Wave 0 で `dist/` 公開に切り替わり、
+その新しいバージョンへ依存を更新するまで解消しない。修正は本リポジトリの今回の変更範囲外
+であり、依存更新を伴う別 PR の仕事である。
 
 ## 4. 依存バージョン
 
 | 依存 | 現在の扱い |
 | --- | --- |
-| `effect` | `^3.22.1`。Effect の Context / Layer を共有するため同一 major を使う |
+| `effect` | `3.22.1`（exact, `dependencies`）。Effect の Context / Layer を共有するため同一 major を使う |
 | `mc-kernel` | `0.5.0` |
 | `mc-physics` | `0.2.0` |
-| `mc-save` | `0.2.2` |
+| `mc-save` | `0.3.0` |
 | `mc-worldgen` | `0.1.14` |
-| TypeScript | `pnpm typecheck` は `@typescript/native` の TypeScript 7 を使用する。tsdown の宣言生成系が要求する TypeScript 6 の alias は依存境界として残す |
-| Vitest | `@effect/vitest` と互換な 3 系を使う |
+| TypeScript | `7.0.2`（exact）。`@typescript/native` / `typescript6` エイリアスは廃止した |
+| Vitest | `4.1.11`（exact）。`@effect/vitest` は `0.30.0` |
 
 上表の値は最新の更新時点のスナップショットであり、正は常に `package.json#dependencies` である。
 版がずれて見える場合は本表ではなく `package.json` を信じること。

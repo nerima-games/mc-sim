@@ -3,7 +3,7 @@ import type { ItemType } from '@nerima-games/mc-kernel'
 import {
   SUPPORTED_VANILLA_ENCHANTMENT_IDS,
   type SupportedVanillaEnchantmentId,
-} from './enchantment-data'
+} from './enchantment-data.js'
 
 export const ENCHANTMENT_TABLE_BOOK = 'book' as const
 export const ENCHANTMENT_TABLE_MAX_BOOKSHELVES = 15
@@ -24,7 +24,9 @@ export type VanillaEnchantmentTableRule = Readonly<{
   readonly treasureOnly: boolean
 }>
 
-export const VANILLA_ENCHANTMENT_TABLE_RULES = {
+export const VANILLA_ENCHANTMENT_TABLE_RULES: Readonly<
+  Record<SupportedVanillaEnchantmentId, VanillaEnchantmentTableRule>
+> = {
   aqua_affinity: {
     maxLevel: 1,
     weight: 2,
@@ -249,7 +251,7 @@ export const VANILLA_ENCHANTMENT_TABLE_RULES = {
     maxCost: { base: 50, perLevelAboveFirst: 0 },
     treasureOnly: true,
   },
-} as const satisfies Readonly<Record<SupportedVanillaEnchantmentId, VanillaEnchantmentTableRule>>
+} as const
 
 export const ENCHANTMENT_TABLE_ITEM_ENCHANTABILITY: Readonly<
   Partial<Record<EnchantmentTableItem, number>>

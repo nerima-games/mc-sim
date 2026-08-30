@@ -27,7 +27,7 @@
  * services when the resets differ.
  */
 import { Context, Effect, Layer, Ref } from 'effect'
-import * as Statistics from '../domain/statistics'
+import * as Statistics from '../domain/statistics.js'
 
 export type StatisticsServiceApi = {
   /** Whole record, for persistence and for mx-ui's statistics screen. */
@@ -59,10 +59,13 @@ export type StatisticsServiceApi = {
   readonly reset: Effect.Effect<void>
 }
 
-export class StatisticsService extends Context.Tag('@nerima-games/mc-sim/StatisticsService')<
+const StatisticsServiceBase: Context.TagClass<
   StatisticsService,
+  '@nerima-games/mc-sim/StatisticsService',
   StatisticsServiceApi
->() {}
+> = Context.Tag('@nerima-games/mc-sim/StatisticsService')<StatisticsService, StatisticsServiceApi>()
+
+export class StatisticsService extends StatisticsServiceBase {}
 
 /**
  * Build a StatisticsService over a fresh Ref.

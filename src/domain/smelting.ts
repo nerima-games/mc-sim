@@ -6,9 +6,9 @@ import {
   removeItem,
   type Inventory,
   type ItemStack,
-} from './inventory'
+} from './inventory.js'
 import { isItemType, type ItemType } from '@nerima-games/mc-kernel'
-import { STARTER_FUEL_RULES, STARTER_SMELTING_RECIPES } from './smelting-data'
+import { STARTER_FUEL_RULES, STARTER_SMELTING_RECIPES } from './smelting-data.js'
 
 export type SmeltingRecipe = {
   readonly id: string

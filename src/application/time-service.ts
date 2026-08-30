@@ -16,7 +16,7 @@
  */
 import { Context, Effect, Layer, Ref } from 'effect'
 import type { DeltaTimeSecs } from "@nerima-games/mc-kernel"
-import * as Time from '../domain/time-of-day'
+import * as Time from '../domain/time-of-day.js'
 
 export type TimeServiceApi = {
   /** Advance the world clock by one frame. The delta is supplied, never read. */
@@ -85,10 +85,10 @@ export type TimeServiceApi = {
   readonly restore: (state: Time.TimeState) => Effect.Effect<void>
 }
 
-export class TimeService extends Context.Tag('@nerima-games/mc-sim/TimeService')<
-  TimeService,
-  TimeServiceApi
->() {}
+const TimeServiceBase: Context.TagClass<TimeService, '@nerima-games/mc-sim/TimeService', TimeServiceApi> =
+  Context.Tag('@nerima-games/mc-sim/TimeService')<TimeService, TimeServiceApi>()
+
+export class TimeService extends TimeServiceBase {}
 
 /**
  * Build a TimeService over a fresh Ref.

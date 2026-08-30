@@ -1,7 +1,7 @@
 import type { ItemType } from '@nerima-games/mc-kernel'
 
 export const BREWING_TIME_SECS = 20
-export const BREWING_FUEL_ITEM = 'blaze_powder' satisfies ItemType
+export const BREWING_FUEL_ITEM: ItemType = 'blaze_powder'
 export const BREWING_FUEL_CHARGES = 20
 
 export type BrewingRecipe = {
@@ -36,4 +36,4 @@ export const STARTER_BREWING_RECIPES = [
     input: 'awkward_potion',
     output: 'potion_of_regeneration',
   },
-] as const satisfies ReadonlyArray<BrewingRecipe>
+] as const

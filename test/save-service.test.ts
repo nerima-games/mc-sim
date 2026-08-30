@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect, Option } from 'effect'
-import { InMemoryStorageLayer, saveEnvelope, StoragePort } from '@nerima-games/mc-save'
+import { InMemoryStorageLayer, saveEnvelope, sealSaveEnvelope, StoragePort } from '@nerima-games/mc-save'
 import {
   listSimulationSaves,
   loadSimulation,
@@ -78,12 +78,18 @@ describe('simulation save service', () => {
     }).pipe(Effect.provide(storage)),
   )
 
-  it.effect('migrates v1 saves to the v2 state shape', () =>
+  // mc-save 0.3.0 removed the migration chain (README.md "旧版セーブを現行版へ自動変換する
+  // migration chain は提供しません"): a save at any version other than the format's
+  // current version is a decode error, not something loadFrom silently upgrades.
+  // The old "migrates v1 saves to the v2 state shape" test asserted the opposite
+  // and is gone with the feature it pinned; this asserts the new contract on a
+  // properly SEALED (not just malformed) v1 envelope, so the rejection is shown
+  // to be about the version mismatch specifically, not a missing/invalid integrity.
+  it.effect('rejects a save written at a version older than the current format version', () =>
     Effect.gen(function* () {
       const key = simulationSaveKey('world:v1')
       const storagePort = yield* StoragePort
-      yield* storagePort.put(
-        key,
+      const v1Envelope = sealSaveEnvelope(
         saveEnvelope('@nerima-games/mc-sim/simulation', 1, {
           dimension: 'overworld',
           tick: 20,
@@ -93,19 +99,14 @@ describe('simulation save service', () => {
           },
         }),
       )
+      yield* storagePort.put(key, v1Envelope)
 
-      expect(yield* loadSimulation(key)).toStrictEqual(
-        Option.some({
-          dimension: 'overworld',
-          tick: 20,
-          player: {
-            position: { x: 0, y: 64, z: 0 },
-            inventory: [null],
-            selectedHotbarSlot: 0,
-          },
-          statistics: { counters: {}, unlocked: [] },
-        }),
-      )
+      const result = yield* Effect.either(loadSimulation(key))
+
+      expect(result._tag).toBe('Left')
+      if (result._tag === 'Left') {
+        expect(result.left._tag).toBe('SaveDecodeError')
+      }
     }).pipe(Effect.provide(storage)),
   )
 })

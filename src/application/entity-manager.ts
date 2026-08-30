@@ -86,8 +86,8 @@ import type {
   EntityStep,
   RosterRepair,
   SpawnRequest,
-} from '../domain/entity'
-import { countOfKind, despawnEntity, emptyRoster, findEntity, normaliseRoster, spawnEntity, sweepRoster } from '../domain/entity'
+} from '../domain/entity.js'
+import { countOfKind, despawnEntity, emptyRoster, findEntity, normaliseRoster, spawnEntity, sweepRoster } from '../domain/entity.js'
 
 export type EntityManagerApi<S> = {
   /**

@@ -1,9 +1,9 @@
 import { Context, Effect, Layer, Ref } from 'effect'
-import * as Hotbar from '../domain/hotbar'
+import * as Hotbar from '../domain/hotbar.js'
 import {
   InventoryService,
   type InventoryCarriedSlot,
-} from './inventory-service'
+} from './inventory-service.js'
 
 export type HotbarInput = {
   readonly selectedSlot?: number | undefined
@@ -19,10 +19,10 @@ export type HotbarServiceApi = {
   readonly update: (input: HotbarInput) => Effect.Effect<void>
 }
 
-export class HotbarService extends Context.Tag('@nerima-games/mc-sim/HotbarService')<
-  HotbarService,
-  HotbarServiceApi
->() {}
+const HotbarServiceBase: Context.TagClass<HotbarService, '@nerima-games/mc-sim/HotbarService', HotbarServiceApi> =
+  Context.Tag('@nerima-games/mc-sim/HotbarService')<HotbarService, HotbarServiceApi>()
+
+export class HotbarService extends HotbarServiceBase {}
 
 export const makeHotbarService = (
   initialSelection = 0,

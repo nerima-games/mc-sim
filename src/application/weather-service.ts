@@ -1,5 +1,5 @@
 import { Context, Effect, Layer, Ref } from 'effect'
-import * as Weather from '../domain/weather'
+import * as Weather from '../domain/weather.js'
 
 export type WeatherServiceApi = {
   /** Whole state for persistence and frame inbox publication. */
@@ -14,10 +14,10 @@ export type WeatherServiceApi = {
   readonly reset: Effect.Effect<void>
 }
 
-export class WeatherService extends Context.Tag('@nerima-games/mc-sim/WeatherService')<
-  WeatherService,
-  WeatherServiceApi
->() {}
+const WeatherServiceBase: Context.TagClass<WeatherService, '@nerima-games/mc-sim/WeatherService', WeatherServiceApi> =
+  Context.Tag('@nerima-games/mc-sim/WeatherService')<WeatherService, WeatherServiceApi>()
+
+export class WeatherService extends WeatherServiceBase {}
 
 export const makeWeatherService = (
   initial: Weather.WeatherState = Weather.INITIAL_WEATHER_STATE,

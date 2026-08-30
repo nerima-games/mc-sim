@@ -8,19 +8,19 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect } from 'effect'
 import { itemStack } from '../src/domain/inventory'
-import { ItemType } from '@nerima-games/mc-kernel'
+import type { ItemType } from '@nerima-games/mc-kernel'
 import {
   cellAt,
   conflictsIn,
-  CraftGrid,
   craftGrid,
   exactly,
   matchRecipe,
-  Recipe,
-  RecipePattern,
-  RecipeTable,
   shapedRecipe,
   shapelessRecipe,
+  type CraftGrid,
+  type Recipe,
+  type RecipePattern,
+  type RecipeTable,
 } from '../src/domain/recipe'
 import { STARTER_RECIPES } from '../src/domain/recipe-data'
 

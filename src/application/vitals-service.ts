@@ -34,7 +34,7 @@
  */
 import { Context, Effect, Layer, Ref } from 'effect'
 import type { DeltaTimeSecs } from "@nerima-games/mc-kernel"
-import * as Vitals from '../domain/vitals'
+import * as Vitals from '../domain/vitals.js'
 
 /**
  * The result of one blow.
@@ -93,10 +93,10 @@ export type VitalsServiceApi = {
   readonly reset: Effect.Effect<void>
 }
 
-export class VitalsService extends Context.Tag('@nerima-games/mc-sim/VitalsService')<
-  VitalsService,
-  VitalsServiceApi
->() {}
+const VitalsServiceBase: Context.TagClass<VitalsService, '@nerima-games/mc-sim/VitalsService', VitalsServiceApi> =
+  Context.Tag('@nerima-games/mc-sim/VitalsService')<VitalsService, VitalsServiceApi>()
+
+export class VitalsService extends VitalsServiceBase {}
 
 /**
  * Build a VitalsService over a fresh Ref.
