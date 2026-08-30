@@ -66,8 +66,8 @@ import { position } from "@nerima-games/mc-kernel"
  * (ts-minecraft/packages/entity/domain/camera-state.ts:12-13).
  */
 export const PITCH_EPSILON = 0.01
-export const PITCH_MAX_RADIANS = Math.PI / 2 - PITCH_EPSILON
-export const PITCH_MIN_RADIANS = -PITCH_MAX_RADIANS
+export const PITCH_MAX_RADIANS: number = Math.PI / 2 - PITCH_EPSILON
+export const PITCH_MIN_RADIANS: number = -PITCH_MAX_RADIANS
 
 /** Eye height above the player's feet origin, in blocks. */
 export const EYE_LEVEL_OFFSET = 1.62

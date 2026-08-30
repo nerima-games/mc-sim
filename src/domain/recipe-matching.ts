@@ -1,6 +1,6 @@
-import { ItemType } from '@nerima-games/mc-kernel'
+import type { ItemType } from '@nerima-games/mc-kernel'
 
-import { type ItemStack } from './inventory'
+import { type ItemStack } from './inventory.js'
 import {
   cellAt,
   ingredientMatches,
@@ -12,7 +12,7 @@ import {
   type RecipeTable,
   type ShapedRecipe,
   type ShapelessRecipe,
-} from './recipe-core'
+} from './recipe-core.js'
 
 type Bounds = {
   readonly minX: number

@@ -33,7 +33,7 @@
  * on the frame it cares about.
  */
 import { Context, Effect, Layer, Ref } from 'effect'
-import * as Settings from '../domain/settings'
+import * as Settings from '../domain/settings.js'
 
 export type SettingsServiceApi = {
   /** Every held value. Read on the frame a consumer wants to act on them. */
@@ -60,10 +60,13 @@ export type SettingsServiceApi = {
   readonly reset: Effect.Effect<void>
 }
 
-export class SettingsService extends Context.Tag('@nerima-games/mc-sim/SettingsService')<
+const SettingsServiceBase: Context.TagClass<
   SettingsService,
+  '@nerima-games/mc-sim/SettingsService',
   SettingsServiceApi
->() {}
+> = Context.Tag('@nerima-games/mc-sim/SettingsService')<SettingsService, SettingsServiceApi>()
+
+export class SettingsService extends SettingsServiceBase {}
 
 /**
  * Build a SettingsService over a fresh Ref.

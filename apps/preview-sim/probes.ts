@@ -523,8 +523,17 @@ const FOOTER: ReadonlyArray<string> = [
   '   pnpm preview --scenario obstacle-course      runs the course anyway, to show exactly that.',
 ]
 
-/** The whole report. */
-export const statsReport = Effect.gen(function* () {
+/**
+ * The whole report.
+ *
+ * `--isolatedDeclarations` requires an explicit type on any binding whose
+ * value reaches an export — including this private intermediate, since
+ * `export const statsReport` below is typed by referring to it. None of the
+ * four probes it yields from ever fails or leaves a requirement undischarged
+ * (`Effect.provide` below clears `TestContext`), so `Effect<ReadonlyArray<string>,
+ * never, never>` is exact, not a widened guess.
+ */
+const statsReportEffect: Effect.Effect<ReadonlyArray<string>, never, never> = Effect.gen(function* () {
   const parts = [
     ...HEADER,
     ...frameClampProbe(),
@@ -537,3 +546,5 @@ export const statsReport = Effect.gen(function* () {
   ]
   return parts.map(line)
 }).pipe(Effect.provide(TestContext.TestContext as Layer.Layer<never>))
+
+export const statsReport: Effect.Effect<ReadonlyArray<string>, never, never> = statsReportEffect

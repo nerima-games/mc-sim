@@ -79,7 +79,7 @@
  * design and now says how much: `secondsLostToClamp`.
  */
 import { Cause, Context, Effect, Fiber, Layer, Option, Queue, Ref } from 'effect'
-import { frameDeltaLossBetween } from '../domain/frame-timing'
+import { frameDeltaLossBetween } from '../domain/frame-timing.js'
 import { deltaTimeBetween as frameDeltaBetween } from '@nerima-games/mc-physics'
 import type { DeltaTimeSecs, MonotonicTimeSecs } from "@nerima-games/mc-kernel"
 
@@ -151,7 +151,10 @@ export type GameLoopApi = {
   readonly secondsLostToClamp: Effect.Effect<number>
 }
 
-export class GameLoop extends Context.Tag('@nerima-games/mc-sim/GameLoop')<GameLoop, GameLoopApi>() {}
+const GameLoopBase: Context.TagClass<GameLoop, '@nerima-games/mc-sim/GameLoop', GameLoopApi> =
+  Context.Tag('@nerima-games/mc-sim/GameLoop')<GameLoop, GameLoopApi>()
+
+export class GameLoop extends GameLoopBase {}
 
 /**
  * What a generation counted. Published by `GameLoopApi`, and the value `stop`

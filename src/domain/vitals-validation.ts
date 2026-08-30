@@ -4,8 +4,8 @@ import {
   EXHAUSTION_PER_POINT,
   FOOD_TICK_SECS,
   type Vitals,
-} from './vitals-model'
-import { clamp, settle } from './vitals-number'
+} from './vitals-model.js'
+import { clamp, settle } from './vitals-number.js'
 
 const isValidHealth = (vitals: Vitals): boolean =>
   Number.isFinite(vitals.maxHealthPoints) &&

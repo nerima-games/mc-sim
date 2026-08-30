@@ -102,12 +102,12 @@ import {
   type FallTrackingState,
   type ResolveOptions,
 } from '@nerima-games/mc-physics'
-import { InventoryService, InventoryServiceLayer } from '../application/inventory-service'
-import { CropService, CropServiceLayer, type CropServiceApi } from '../application/crop-service'
-import { PlayerService, PlayerServiceLayer, type PlayerServiceApi } from '../application/player-service'
-import { TimeService, TimeServiceLayer, type TimeServiceApi } from '../application/time-service'
+import { InventoryService, InventoryServiceLayer } from '../application/inventory-service.js'
+import { CropService, CropServiceLayer, type CropServiceApi } from '../application/crop-service.js'
+import { PlayerService, PlayerServiceLayer, type PlayerServiceApi } from '../application/player-service.js'
+import { TimeService, TimeServiceLayer, type TimeServiceApi } from '../application/time-service.js'
 import { position, type GameModule, type Position, type StageRegistration } from '@nerima-games/mc-kernel'
-import { SIM_STAGE_IDS } from './stage-ids'
+import { SIM_STAGE_IDS } from './stage-ids.js'
 
 export type MovementIntent = {
   readonly forward: number

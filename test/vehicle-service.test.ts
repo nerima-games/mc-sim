@@ -13,6 +13,18 @@ const baseVehicleItem = {
   yawRadians: 0,
 }
 
+describe('VehicleId and OccupantId reject a blank string', () => {
+  it('VehicleId throws on an empty or whitespace-only string', () => {
+    expect(() => VehicleId('')).toThrow()
+    expect(() => VehicleId('   ')).toThrow()
+  })
+
+  it('OccupantId throws on an empty or whitespace-only string', () => {
+    expect(() => OccupantId('')).toThrow()
+    expect(() => OccupantId('   ')).toThrow()
+  })
+})
+
 describe('VehicleService lifecycle', () => {
   it('spawns, updates, mounts, dismounts, and despawns vehicles', async () => {
     await Effect.runPromise(Effect.gen(function* () {

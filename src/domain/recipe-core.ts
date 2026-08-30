@@ -1,6 +1,6 @@
-import { ItemType } from '@nerima-games/mc-kernel'
+import type { ItemType } from '@nerima-games/mc-kernel'
 
-import { itemStack, type ItemStack, type Slot } from './inventory'
+import { itemStack, type ItemStack, type Slot } from './inventory.js'
 
 export type RecipeId = string
 

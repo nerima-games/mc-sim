@@ -12,7 +12,7 @@
   },
   "settings": {
     "typescript": {
-      "version": "6.0"
+      "version": "7.0"
     }
   },
   "plugins": [],
@@ -117,11 +117,15 @@
         "patterns": [
           {
             "group": [
-              "@nerima-games/*",
+              "@nerima-games/**",
               "!@nerima-games/mc-kernel",
+              "!@nerima-games/mc-kernel/**",
               "!@nerima-games/mc-physics",
+              "!@nerima-games/mc-physics/**",
               "!@nerima-games/mc-save",
-              "!@nerima-games/mc-worldgen"
+              "!@nerima-games/mc-save/**",
+              "!@nerima-games/mc-worldgen",
+              "!@nerima-games/mc-worldgen/**"
             ],
             "message": "mc-sim (Tier2, DEPENDENCY_POLICY.md) may depend only on mc-physics, mc-save, mc-worldgen, and mc-kernel. Propose a graph change (DEPENDENCY_POLICY.md §6) before adding this import."
           }

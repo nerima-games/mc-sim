@@ -97,7 +97,7 @@ export type AutoSaveStatus = 'saving' | 'saved' | 'error'
 export type AutoSaveStatusReporter = (status: AutoSaveStatus) => Effect.Effect<void>
 
 /** ts-minecraft/packages/app/application/main/session-autosave.ts:54. */
-export const AUTO_SAVE_INTERVAL = Duration.seconds(5)
+export const AUTO_SAVE_INTERVAL: Duration.Duration = Duration.seconds(5)
 
 /**
  * Status reporting is itself made total. A defect in the UI that renders the

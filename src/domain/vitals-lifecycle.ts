@@ -1,4 +1,4 @@
-import { SPAWN_SATURATION, type Vitals } from './vitals-model'
+import { SPAWN_SATURATION, type Vitals } from './vitals-model.js'
 
 export const respawn = (vitals: Vitals): Vitals => ({
   ...vitals,

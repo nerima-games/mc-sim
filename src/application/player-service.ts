@@ -13,7 +13,7 @@
  * measure the gap instead of silently drawing a stale pose.
  */
 import { Context, Effect, Layer, Ref } from 'effect'
-import * as Camera from '../domain/camera-pose'
+import * as Camera from '../domain/camera-pose.js'
 import type { CameraPoseSnapshot, Position } from "@nerima-games/mc-kernel"
 import { ClockPort, monotonicSecs } from "@nerima-games/mc-kernel"
 import type { Dimension } from '@nerima-games/mc-worldgen'
@@ -122,10 +122,10 @@ export type PlayerServiceApi = {
   readonly reset: Effect.Effect<void>
 }
 
-export class PlayerService extends Context.Tag('@nerima-games/mc-sim/PlayerService')<
-  PlayerService,
-  PlayerServiceApi
->() {}
+const PlayerServiceBase: Context.TagClass<PlayerService, '@nerima-games/mc-sim/PlayerService', PlayerServiceApi> =
+  Context.Tag('@nerima-games/mc-sim/PlayerService')<PlayerService, PlayerServiceApi>()
+
+export class PlayerService extends PlayerServiceBase {}
 
 export const makePlayerService = (
   initial: Camera.PlayerPose = Camera.INITIAL_PLAYER_POSE,

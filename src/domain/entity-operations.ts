@@ -5,7 +5,7 @@ import {
   NO_ENTITIES,
   repairState,
   serialOfEntityId,
-} from './entity-types'
+} from './entity-types.js'
 import type {
   BehaviourRepair,
   DespawnOutcome,
@@ -20,7 +20,7 @@ import type {
   SpawnOutcome,
   SpawnRequest,
   SweepOutcome,
-} from './entity-types'
+} from './entity-types.js'
 
 export const emptyRoster = <S>(): EntityRoster<S> => ({ entities: NO_ENTITIES, nextSerial: 0 })
 

@@ -29,9 +29,9 @@
  * it arrives as inventory state with its own drop-on-close rule — not as a
  * change to this function.
  */
-import { addItem, countOf, Inventory, ItemStack, removeItem } from './inventory'
-import { ItemType } from "@nerima-games/mc-kernel"
-import { CraftGrid, cellAt, matchRecipe, RecipeId, RecipeTable } from './recipe'
+import { addItem, countOf, removeItem, type Inventory, type ItemStack } from './inventory.js'
+import type { ItemType } from "@nerima-games/mc-kernel"
+import { cellAt, matchRecipe, type CraftGrid, type RecipeId, type RecipeTable } from './recipe.js'
 
 /**
  * What one craft costs: one item per occupied cell, summed per item id.

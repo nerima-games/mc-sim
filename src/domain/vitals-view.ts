@@ -1,5 +1,5 @@
-import { type Vitals, type VitalsView } from './vitals-model'
-import { experienceLevel, experienceProgress } from './vitals-experience'
+import { type Vitals, type VitalsView } from './vitals-model.js'
+import { experienceLevel, experienceProgress } from './vitals-experience.js'
 
 export const vitalsView = (vitals: Vitals): VitalsView => ({
   healthPoints: vitals.healthPoints,

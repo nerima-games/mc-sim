@@ -1,6 +1,6 @@
-import * as Eq from '../domain/equipment'
-import * as Inv from '../domain/inventory'
-import * as Storage from '../domain/player-storage'
+import * as Eq from '../domain/equipment.js'
+import * as Inv from '../domain/inventory.js'
+import * as Storage from '../domain/player-storage.js'
 
 export type InventoryCarriedStack = Inv.ItemStack & {
   readonly durability?: Eq.Durability | undefined

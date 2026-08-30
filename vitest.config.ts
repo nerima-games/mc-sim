@@ -1,18 +1,14 @@
 import { defineConfig } from 'vitest/config'
 
-export default defineConfig({
+const config: ReturnType<typeof defineConfig> = defineConfig({
   test: {
     environment: 'node',
     globals: false,
     pool: 'forks',
-    poolOptions: {
-      forks: {
-        maxForks: '50%',
-        minForks: 1,
-        isolate: true,
-        singleFork: false,
-      },
-    },
+    // vitest 4 removed poolOptions.forks.{maxForks,minForks,isolate,singleFork};
+    // maxWorkers/isolate are now top-level (matches kernel/physics's migration).
+    maxWorkers: '50%',
+    isolate: true,
     include: ['test/**/*.test.ts'],
     exclude: ['**/node_modules/**', '**/dist/**', '**/coverage/**', '**/.git/**'],
     testTimeout: 10000,
@@ -28,7 +24,7 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       enabled: false,
-      include: ['src/index.ts', 'src/domain/**/*.ts', 'src/application/**/*.ts', 'src/stages/**/*.ts'],
+      include: ['src/**/*.ts'],
       exclude: [
         '**/*.d.ts',
         '**/*.config.ts',
@@ -46,3 +42,5 @@ export default defineConfig({
     platform: 'node',
   },
 })
+
+export default config

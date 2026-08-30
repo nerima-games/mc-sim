@@ -1,7 +1,7 @@
-import { itemStack } from './inventory'
-import type { FuelRule, SmeltingRecipe } from './smelting'
+import { itemStack } from './inventory.js'
+import type { FuelRule, SmeltingRecipe } from './smelting.js'
 
-export const STARTER_SMELTING_RECIPES = [
+export const STARTER_SMELTING_RECIPES: ReadonlyArray<SmeltingRecipe> = [
   {
     id: 'mc-sim:iron-ingot',
     input: 'raw_iron',
@@ -98,9 +98,9 @@ export const STARTER_SMELTING_RECIPES = [
     output: itemStack('nether_brick', 1),
     cookDurationSecs: 10,
   },
-] satisfies ReadonlyArray<SmeltingRecipe>
+]
 
-export const STARTER_FUEL_RULES = [
+export const STARTER_FUEL_RULES: ReadonlyArray<FuelRule> = [
   { item: 'coal', burnDurationSecs: 80 },
   { item: 'coal_block', burnDurationSecs: 800 },
   { item: 'oak_log', burnDurationSecs: 15 },
@@ -120,4 +120,4 @@ export const STARTER_FUEL_RULES = [
   { item: 'bowl', burnDurationSecs: 5 },
   { item: 'wool', burnDurationSecs: 5 },
   { item: 'door', burnDurationSecs: 10 },
-] satisfies ReadonlyArray<FuelRule>
+]

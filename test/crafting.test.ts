@@ -16,11 +16,11 @@ import {
   countOf,
   emptyInventory,
   INVENTORY_SLOT_COUNT,
-  Inventory,
   itemStack,
+  type Inventory,
 } from '../src/domain/inventory'
-import { ItemType, MAX_STACK_COUNT } from '@nerima-games/mc-kernel'
-import { CraftGrid, craftGrid, shapelessRecipe } from '../src/domain/recipe'
+import { MAX_STACK_COUNT, type ItemType } from '@nerima-games/mc-kernel'
+import { craftGrid, shapelessRecipe, type CraftGrid } from '../src/domain/recipe'
 import { STARTER_RECIPES } from '../src/domain/recipe-data'
 
 const LEGEND: Readonly<Record<string, ItemType>> = {

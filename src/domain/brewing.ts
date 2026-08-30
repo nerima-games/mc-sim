@@ -6,8 +6,8 @@ import {
   BREWING_TIME_SECS,
   STARTER_BREWING_RECIPES,
   type BrewingRecipe,
-} from './brewing-data'
-import { itemStack, type ItemStack, type Slot } from './inventory'
+} from './brewing-data.js'
+import { itemStack, type ItemStack, type Slot } from './inventory.js'
 
 export const BREWING_BOTTLE_SLOTS = 3
 

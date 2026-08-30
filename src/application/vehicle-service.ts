@@ -11,7 +11,7 @@ import {
   type VehicleValidationError,
   type VehicleVelocity,
   validateVehicleSnapshot,
-} from '../domain/vehicle'
+} from '../domain/vehicle.js'
 
 export type VehicleOperationError = Readonly<{
   _tag: 'VehicleOperationError'
@@ -52,7 +52,10 @@ export type VehicleServiceApi = Readonly<{
   restore: (snapshot: unknown) => Effect.Effect<void, VehicleValidationError>
 }>
 
-export class VehicleService extends Context.Tag('@nerima-games/mc-sim/VehicleService')<VehicleService, VehicleServiceApi>() {}
+const VehicleServiceBase: Context.TagClass<VehicleService, '@nerima-games/mc-sim/VehicleService', VehicleServiceApi> =
+  Context.Tag('@nerima-games/mc-sim/VehicleService')<VehicleService, VehicleServiceApi>()
+
+export class VehicleService extends VehicleServiceBase {}
 
 export const makeVehicleService = (
   initial: unknown = emptyVehicleSnapshot(),

@@ -1,8 +1,8 @@
 import { type ItemType, isItemType } from '@nerima-games/mc-kernel'
 import { type Dimension } from '@nerima-games/mc-worldgen'
-import { defineFormat } from '@nerima-games/mc-save'
+import { defineFormat, type SaveFormat } from '@nerima-games/mc-save'
 import { Effect, Schema } from 'effect'
-import { HOTBAR_SIZE } from './hotbar'
+import { HOTBAR_SIZE } from './hotbar.js'
 
 const finiteNumber = Schema.Number.pipe(Schema.finite())
 const integer = Schema.Number.pipe(Schema.int())
@@ -45,7 +45,36 @@ const migrateV1ToV2 = (payload: unknown): Effect.Effect<unknown, string> => {
   })
 }
 
-export const SIMULATION_SAVE_SCHEMA = Schema.Struct({
+/**
+ * Hand-written to give `SIMULATION_SAVE_SCHEMA` an explicit type: with
+ * `isolatedDeclarations`, an exported `Schema.Struct(...)` call built from
+ * nested private `Schema.Struct`/`Schema.Union` helpers cannot be inferred
+ * without one. Matches `@nerima-games/mc-save`'s `SaveEnvelopeSchema`
+ * convention (a hand-written type paired with `Schema.Schema<T>`).
+ *
+ * Parameterized over the inventory slot's `item` field because decoded and
+ * encoded differ there: `itemType`'s `Schema.filter` type guard narrows the
+ * DECODED type to `ItemType`, but the wire/JSON form is a bare `string` before
+ * that guard runs.
+ */
+type SimulationSaveFor<Item> = {
+  readonly dimension: Dimension
+  readonly tick: number
+  readonly player: {
+    readonly position: { readonly x: number; readonly y: number; readonly z: number }
+    readonly inventory: ReadonlyArray<{ readonly item: Item; readonly count: number } | null>
+    readonly selectedHotbarSlot: number
+  }
+  readonly statistics: {
+    readonly counters: Record<string, number>
+    readonly unlocked: ReadonlyArray<string>
+  }
+}
+
+export type SimulationSave = SimulationSaveFor<ItemType>
+type SimulationSaveEncoded = SimulationSaveFor<string>
+
+export const SIMULATION_SAVE_SCHEMA: Schema.Schema<SimulationSave, SimulationSaveEncoded> = Schema.Struct({
   dimension,
   tick: integer.pipe(Schema.nonNegative()),
   player: Schema.Struct({
@@ -56,9 +85,7 @@ export const SIMULATION_SAVE_SCHEMA = Schema.Struct({
   statistics,
 })
 
-export type SimulationSave = Schema.Schema.Type<typeof SIMULATION_SAVE_SCHEMA>
-
-export const SIMULATION_SAVE_FORMAT = defineFormat({
+export const SIMULATION_SAVE_FORMAT: SaveFormat<SimulationSave, SimulationSaveEncoded> = defineFormat({
   name: '@nerima-games/mc-sim/simulation',
   version: 2,
   schema: SIMULATION_SAVE_SCHEMA,

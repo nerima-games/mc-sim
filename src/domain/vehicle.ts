@@ -3,14 +3,14 @@ import type { Position } from '@nerima-games/mc-kernel'
 import type { Dimension } from '@nerima-games/mc-worldgen'
 
 export type VehicleId = string & Brand.Brand<'VehicleId'>
-const vehicleId = Brand.refined<VehicleId>(
+const vehicleId: Brand.Brand.Constructor<VehicleId> = Brand.refined<VehicleId>(
   (value) => typeof value === 'string' && value.trim().length > 0,
   () => Brand.error('VehicleId must be a non-blank string'),
 )
 export { vehicleId as VehicleId }
 
 export type OccupantId = string & Brand.Brand<'VehicleOccupantId'>
-const occupantId = Brand.refined<OccupantId>(
+const occupantId: Brand.Brand.Constructor<OccupantId> = Brand.refined<OccupantId>(
   (value) => typeof value === 'string' && value.trim().length > 0,
   () => Brand.error('OccupantId must be a non-blank string'),
 )

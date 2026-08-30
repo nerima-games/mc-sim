@@ -1,10 +1,10 @@
-import { INVENTORY_SLOT_COUNT } from './inventory'
+import { INVENTORY_SLOT_COUNT } from './inventory.js'
 
 /** Number of selectable slots in the player's hotbar. */
 export const HOTBAR_SIZE = 9
 
 /** First inventory index occupied by the hotbar. */
-export const HOTBAR_START = INVENTORY_SLOT_COUNT - HOTBAR_SIZE
+export const HOTBAR_START: number = INVENTORY_SLOT_COUNT - HOTBAR_SIZE
 
 /** True when a value is an integer index within the selectable hotbar. */
 export const isHotbarIndex = (value: number): boolean =>

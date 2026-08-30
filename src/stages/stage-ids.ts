@@ -71,7 +71,7 @@ import { StageId } from "@nerima-games/mc-kernel"
  *   work that must happen exactly once per frame, and anything that must happen
  *   exactly once per frame is a stage by definition.
  */
-export const SIM_STAGE_IDS = {
+export const SIM_STAGE_IDS: Readonly<{ physics: StageId }> = {
   /**
    * Advance the authoritative simulation by one frame.
    *
@@ -120,7 +120,7 @@ export const SIM_STAGE_IDS = {
  * it stays meaningful when the object is empty, because what it asserts is that
  * nothing has been ADDED that names an experience module.
  */
-export const UPSTREAM_STAGE_IDS = {} as const satisfies Readonly<Record<string, StageId>>
+export const UPSTREAM_STAGE_IDS: Readonly<Record<string, StageId>> = {} as const
 
 /**
  * The `<repo>:` prefixes belonging to the four experience modules (plan.md

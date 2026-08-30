@@ -1,7 +1,7 @@
-import * as Eq from './equipment'
-import * as Inv from './inventory'
+import * as Eq from './equipment.js'
+import * as Inv from './inventory.js'
 import { isItemType, StackCount } from '@nerima-games/mc-kernel'
-import * as Player from './player-storage'
+import * as Player from './player-storage.js'
 
 export type ContainerKind = 'chest' | 'shulker_box' | 'dispenser' | 'dropper' | 'hopper'
 

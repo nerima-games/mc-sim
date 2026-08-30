@@ -5,11 +5,11 @@
  * module owns only the vanilla rows that this simulation can represent.
  */
 import {
-  RecipeTable,
   shapedRecipe,
   shapelessRecipe,
-} from './recipe'
-import { itemStack } from './inventory'
+  type RecipeTable,
+} from './recipe.js'
+import { itemStack } from './inventory.js'
 
 export const STARTER_RECIPES: RecipeTable = [
   shapelessRecipe('mc-sim:bone-meal', ['bone'], itemStack('bone_meal', 3)),

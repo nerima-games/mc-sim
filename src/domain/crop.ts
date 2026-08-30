@@ -1,8 +1,8 @@
 import type { BlockPosition, BlockType, ItemType } from '@nerima-games/mc-kernel'
-import { itemStack, type ItemStack } from './inventory'
+import { itemStack, type ItemStack } from './inventory.js'
 import type { Dimension } from '@nerima-games/mc-worldgen'
 
-export const CROP_TYPES = ['wheat_crop', 'potato_crop', 'nether_wart_crop'] as const satisfies ReadonlyArray<BlockType>
+export const CROP_TYPES = ['wheat_crop', 'potato_crop', 'nether_wart_crop'] as const
 
 export type CropType = (typeof CROP_TYPES)[number]
 
@@ -22,7 +22,7 @@ export type CropDefinition = {
 
 const ALL_DIMENSIONS = ['overworld', 'nether', 'end'] as const satisfies ReadonlyArray<Dimension>
 
-export const CROP_REGISTRY = {
+export const CROP_REGISTRY: Record<CropType, CropDefinition> = {
   wheat_crop: {
     crop: 'wheat_crop',
     maturitySecs: WHEAT_MATURITY_SECS,
@@ -47,7 +47,7 @@ export const CROP_REGISTRY = {
     dimensions: ALL_DIMENSIONS,
     guaranteedMatureYield: [itemStack('nether_wart', 2)],
   },
-} as const satisfies Record<CropType, CropDefinition>
+} as const
 
 export type CropLocation = {
   readonly dimension: Dimension

@@ -48,10 +48,10 @@ import {
 } from "@nerima-games/mc-physics"
 
 /** Lower clamp bound, seconds. Below this, rate computations divide by ~zero. */
-export const MIN_FRAME_DELTA_SECS = MIN_DELTA_SECS
+export const MIN_FRAME_DELTA_SECS: number = MIN_DELTA_SECS
 
 /** Upper clamp bound, seconds. A 20 fps floor; protects against tab-refocus jumps. */
-export const MAX_FRAME_DELTA_SECS = MAX_DELTA_SECS
+export const MAX_FRAME_DELTA_SECS: number = MAX_DELTA_SECS
 
 /** Delta used for the first frame, when no previous timestamp exists. One frame at 60 Hz. */
 export const FIRST_FRAME_DELTA_SECS: DeltaTimeSecs = DeltaTimeSecs(PHYSICS_FIRST_FRAME_DELTA_SECS)
@@ -68,7 +68,7 @@ export const FIRST_FRAME_DELTA_SECS: DeltaTimeSecs = DeltaTimeSecs(PHYSICS_FIRST
  * delta silently turns every downstream position into NaN and the resulting bug
  * surfaces thousands of frames later as an invisible player.
  */
-export const clampFrameDelta = clampDeltaTime
+export const clampFrameDelta: (rawDeltaSecs: number) => DeltaTimeSecs = clampDeltaTime
 
 /**
  * Delta between two monotonic readings, clamped.
@@ -76,7 +76,8 @@ export const clampFrameDelta = clampDeltaTime
  * Forwards to physics's `deltaTimeBetween`. `previousSecs === undefined` means
  * "this is the first frame". A real monotonic clock may legitimately read 0.
  */
-export const frameDeltaBetween = deltaTimeBetween
+export const frameDeltaBetween: (previousSecs: number | undefined, currentSecs: number) => DeltaTimeSecs =
+  deltaTimeBetween
 
 /**
  * Simulated time the upper clamp threw away, in seconds. Never negative.

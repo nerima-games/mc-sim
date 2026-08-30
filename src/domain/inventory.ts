@@ -32,9 +32,9 @@
  */
 import {
   isItemType,
-  ItemType,
   maxStackCountOfItem,
   StackCount,
+  type ItemType,
 } from '@nerima-games/mc-kernel'
 
 /*
