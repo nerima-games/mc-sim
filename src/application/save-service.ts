@@ -3,7 +3,6 @@ import {
   loadFrom,
   SaveKey,
   saveTo,
-  type MigrationError,
   type SaveDecodeError,
   type SaveListing,
   type SaveKey as SaveKeyType,
@@ -25,7 +24,7 @@ export const saveSimulation = (
 
 export const loadSimulation = (
   key: SaveKeyType,
-): Effect.Effect<Option.Option<SimulationSave>, StorageError | SaveDecodeError | MigrationError, StoragePort> =>
+): Effect.Effect<Option.Option<SimulationSave>, StorageError | SaveDecodeError, StoragePort> =>
   loadFrom(SIMULATION_SAVE_FORMAT, key)
 
 export const listSimulationSaves = (): Effect.Effect<SimulationSaveListing, StorageError, StoragePort> =>

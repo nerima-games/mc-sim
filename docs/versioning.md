@@ -34,10 +34,17 @@ import と型宣言の両方を検証対象にする。
 ### 2.1 保存形式の版管理
 
 `SIMULATION_SAVE_FORMAT` の現行 version は 2。v2 はホットバーの選択状態と
-統計台帳（カウンタ / unlocked ID）を保存する。v1 → v2 は `mc-save` の migration
-chain で初期選択 0 と空の台帳へ移行する。
+統計台帳（カウンタ / unlocked ID）を保存する。
+
+**`mc-save` 0.3.0 以降は migration chain を提供しない**（`mc-save` の README.md
+「旧版セーブを現行版へ自動変換する migration chain は提供しません」）。`loadFrom` は
+format の現行 version のみを要求し、それ以外の version で保存された envelope は
+`SaveDecodeError` として拒否される（サイレントな変換はしない）。v1 → v2 の自動移行は
+0.2.2 世代の `mc-save` にのみ存在した機能で、`mc-save` を 0.3.0 に上げた時点で
+`SIMULATION_SAVE_FORMAT` からも撤去した。移行コード自体は git 履歴に残る。
 
 これは既存の公開 API を温存する互換アダプターではなく、保存形式そのものの版管理である。
+現時点のセーブは 0.x の開発用セーブであり、v1 形式のセーブを読めなくすることは許容している。
 
 ## 3. 共有依存の直接利用
 
@@ -59,14 +66,13 @@ chain で初期選択 0 と空の台帳へ移行する。
 `node_modules` 内の `.ts` を型除去できず（`ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`）、
 その依存への import で失敗する。
 
-**既知のブロッカー**: 執筆時点で `mc-save@0.2.2` と `mc-worldgen@0.1.14`（本パッケージが固定して
-いる正確なバージョン）はどちらも `package.json` の `main`/`exports` が `./src/index.ts` を指す
-未ビルドの形のままである（`mc-physics@0.2.0` は Wave 0 済みで `dist/index.js` を指す）。
-このため `pnpm package:verify` の動的 import 検証は、mc-sim 自身のコードではなくこの2つの
-上流依存が原因で失敗する。`mc-save` と `mc-worldgen` がそれぞれの Wave 0 で `dist/` 公開に
-切り替わり、その新しいバージョンへ依存を更新するまで解消しない。W0-mc-sim はこの2パッケージの
-`@nerima-games/*` バージョンを変更しない方針のため、修正は本リポジトリの
-今回の変更範囲外であり、依存更新を伴う別 PR の仕事である。
+**既知のブロッカー**: 執筆時点で `mc-worldgen@0.1.14`（本パッケージが固定している正確な
+バージョン）は `package.json` の `main`/`exports` が `./src/index.ts` を指す未ビルドの形の
+ままである（`mc-physics@0.2.0` と `mc-save@0.3.0` はどちらも Wave 0 済みで `dist/index.js`
+を指す）。このため `pnpm package:verify` の動的 import 検証は、mc-sim 自身のコードでは
+なくこの上流依存が原因で失敗する。`mc-worldgen` が自身の Wave 0 で `dist/` 公開に切り替わり、
+その新しいバージョンへ依存を更新するまで解消しない。修正は本リポジトリの今回の変更範囲外
+であり、依存更新を伴う別 PR の仕事である。
 
 ## 4. 依存バージョン
 
@@ -75,7 +81,7 @@ chain で初期選択 0 と空の台帳へ移行する。
 | `effect` | `3.22.1`（exact, `dependencies`）。Effect の Context / Layer を共有するため同一 major を使う |
 | `mc-kernel` | `0.5.0` |
 | `mc-physics` | `0.2.0` |
-| `mc-save` | `0.2.2` |
+| `mc-save` | `0.3.0` |
 | `mc-worldgen` | `0.1.14` |
 | TypeScript | `7.0.2`（exact）。`@typescript/native` / `typescript6` エイリアスは廃止した |
 | Vitest | `4.1.11`（exact）。`@effect/vitest` は `0.30.0` |

@@ -1,7 +1,7 @@
 import { type ItemType, isItemType } from '@nerima-games/mc-kernel'
 import { type Dimension } from '@nerima-games/mc-worldgen'
 import { defineFormat, type SaveFormat } from '@nerima-games/mc-save'
-import { Effect, Schema } from 'effect'
+import { Schema } from 'effect'
 import { HOTBAR_SIZE } from './hotbar.js'
 
 const finiteNumber = Schema.Number.pipe(Schema.finite())
@@ -32,18 +32,6 @@ const statistics = Schema.Struct({
   counters: Schema.Record({ key: Schema.String, value: nonNegativeNumber }),
   unlocked: Schema.Array(Schema.String),
 })
-
-const asRecord = (value: unknown): Record<string, unknown> => Object(value) as Record<string, unknown>
-
-const migrateV1ToV2 = (payload: unknown): Effect.Effect<unknown, string> => {
-  const source = asRecord(payload)
-  const player = asRecord(source['player'])
-  return Effect.succeed({
-    ...source,
-    player: { ...player, selectedHotbarSlot: 0 },
-    statistics: { counters: {}, unlocked: [] },
-  })
-}
 
 /**
  * Hand-written to give `SIMULATION_SAVE_SCHEMA` an explicit type: with
@@ -89,11 +77,4 @@ export const SIMULATION_SAVE_FORMAT: SaveFormat<SimulationSave, SimulationSaveEn
   name: '@nerima-games/mc-sim/simulation',
   version: 2,
   schema: SIMULATION_SAVE_SCHEMA,
-  migrations: [
-    {
-      from: 1,
-      describe: 'persist hotbar selection and statistics ledger',
-      migrate: migrateV1ToV2,
-    },
-  ],
 })
