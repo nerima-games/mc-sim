@@ -1,5 +1,16 @@
 # @nerima-games/mc-sim
 
+## 0.4.2
+
+### Patch Changes
+
+- [#22](https://github.com/nerima-games/mc-sim/pull/22) [`1e6cdbb`](https://github.com/nerima-games/mc-sim/commit/1e6cdbbaa0675b6d7e891fde680d601332e4831e) Thanks [@takeokunn](https://github.com/takeokunn)! - Align internal pins to the current published versions
+  
+  - `@nerima-games/mc-physics` to 0.2.2
+  - `@nerima-games/mc-worldgen` to 0.3.2
+  Each of these upstream releases contained a pin change and no source change,
+  so no behaviour moves with this bump.
+
 ## 0.4.1
 
 ### Patch Changes
