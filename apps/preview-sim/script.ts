@@ -38,8 +38,7 @@
  * scenarios drive.
  */
 
-import type { ItemType } from '@nerima-games/mc-kernel'
-import type { Settings } from '../../src/domain/settings'
+import type { ItemType, Settings } from '@nerima-games/mc-kernel'
 import type { DamageCause, Vitals } from '../../src/domain/vitals'
 
 /** One scripted action, applied at the top of a frame, before the frame is submitted. */

@@ -68,7 +68,6 @@ import {
   type Inventory,
   type Slot,
 } from '../../src/domain/inventory'
-import * as Settings from '../../src/domain/settings'
 import * as Statistics from '../../src/domain/statistics'
 import * as Vitals from '../../src/domain/vitals'
 import {
@@ -79,6 +78,7 @@ import {
   StackCount,
   type CameraPoseSnapshot,
   type ClockService,
+  type Settings,
 } from '@nerima-games/mc-kernel'
 import * as Time from '../../src/domain/time-of-day'
 import { scenarioFor, stepsAt, type ScenarioName, type ScriptedAction } from './script'
@@ -181,7 +181,7 @@ export type WorldView = {
   readonly vitalsRepaired: number
   readonly deaths: number
   readonly statistics: Statistics.Statistics
-  readonly settings: Settings.Settings
+  readonly settings: Settings
   /** Settings writes the clamp had to move, counted at the call. */
   readonly settingsClamped: number
 
