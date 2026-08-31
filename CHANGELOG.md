@@ -1,5 +1,11 @@
 # @nerima-games/mc-sim
 
+## 0.4.0
+
+### Minor Changes
+
+- [#18](https://github.com/nerima-games/mc-sim/pull/18) [`0a476e2`](https://github.com/nerima-games/mc-sim/commit/0a476e27b636da89176f07bbf8bbaa09ce91f193) Thanks [@takeokunn](https://github.com/takeokunn)! - Adopt the kernel settings domain and delete this package own copy. The service method is renamed rebindKey to signal the new conflict-swap semantics; audio now defaults on, and a malformed value normalises to the default rather than to off.
+
 ## 0.3.0
 
 ### Minor Changes
