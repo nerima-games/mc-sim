@@ -1,5 +1,15 @@
 # @nerima-games/mc-sim
 
+## 0.3.0
+
+### Minor Changes
+
+- [#16](https://github.com/nerima-games/mc-sim/pull/16) [`6a3a2e6`](https://github.com/nerima-games/mc-sim/commit/6a3a2e69b4fd82b70b84fa85d317917023cbf2bc) Thanks [@takeokunn](https://github.com/takeokunn)! - Add the save coordinator (debounced writes with generation-consistent snapshot retry, at most one publish in flight) and the placement-consumption rule, both brought down from the composing app. The coordinator now takes its next batch and clears its running flag in one atomic update, closing a window where a request arriving between those two steps was lost.
+
+### Patch Changes
+
+- [#15](https://github.com/nerima-games/mc-sim/pull/15) [`6f50987`](https://github.com/nerima-games/mc-sim/commit/6f5098749dfc84cc13b3fd2580695c69c2b62ddf) Thanks [@takeokunn](https://github.com/takeokunn)! - Complete the org toolchain devDependency pin set: knip 6.33.0 (its verify gate arrives in Wave 3; the pin belongs to the Wave 0 table) plus @effect/vitest 0.30.0 where it was missing.
+
 ## 0.2.1
 
 ### Patch Changes
