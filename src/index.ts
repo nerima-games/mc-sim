@@ -33,7 +33,6 @@ export * from './domain/hotbar.js'
 export * from './domain/placement-consumption.js'
 export * from './domain/recipe.js'
 export * from './domain/recipe-data.js'
-export * from './domain/settings.js'
 export * from './domain/smelting.js'
 export * from './domain/smelting-data.js'
 export * from './domain/statistics.js'
@@ -112,3 +111,31 @@ export type {
 // `Dimension` is intentionally not re-exported here. `PlayerServiceApi` uses
 // the type owned and published by mc-worldgen, so consumers import it from
 // that package instead of receiving a second spelling from this barrel.
+
+// Settings moved to mc-kernel 0.7.0 (merged with mc-compose's PlayerSettingsV1
+// half of the same domain, see mc-kernel's CHANGELOG). `domain/settings.ts` no
+// longer exists here — `application/settings-service.ts` is the Ref wrapper
+// over kernel's rules, and this re-export keeps `Settings`/`DEFAULT_SETTINGS`/
+// etc. reachable from this barrel exactly as they were before the move, same
+// as the Anvil re-export above.
+export {
+  applySettings,
+  DEFAULT_SETTINGS,
+  GRAPHICS_QUALITIES,
+  isGraphicsQuality,
+  isValidSettings,
+  keyBindingFor,
+  MAX_FOV_DEGREES,
+  MAX_MOUSE_SENSITIVITY,
+  MAX_RENDER_DISTANCE,
+  MAX_VOLUME,
+  MIN_FOV_DEGREES,
+  MIN_MOUSE_SENSITIVITY,
+  MIN_RENDER_DISTANCE,
+  MIN_VOLUME,
+  normaliseSettings,
+  rebindKey,
+  unbindKey,
+} from '@nerima-games/mc-kernel'
+
+export type { GraphicsQuality, Settings } from '@nerima-games/mc-kernel'

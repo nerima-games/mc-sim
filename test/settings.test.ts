@@ -7,15 +7,15 @@ import {
 } from '../src/application/settings-service'
 import {
   applySettings,
-  bindKey,
   DEFAULT_SETTINGS,
   isGraphicsQuality,
   isValidSettings,
   keyBindingFor,
   normaliseSettings,
+  rebindKey,
   unbindKey,
   type Settings,
-} from '../src/domain/settings'
+} from '@nerima-games/mc-kernel'
 
 const withSettings = (patch: Partial<Settings>): Settings => ({ ...DEFAULT_SETTINGS, ...patch })
 
@@ -28,14 +28,20 @@ const withSettings = (patch: Partial<Settings>): Settings => ({ ...DEFAULT_SETTI
  * records what a duplicated day length cost when the two disagreed: the sky
  * jumped on world load, and only mc-sim's answer was saved.
  *
- * Named after the failure. If a `dayLength` field ever appears here, this goes
- * red before anybody has to notice the sky.
+ * The rules themselves moved to `@nerima-games/mc-kernel` 0.7.0 (this repo's
+ * own `domain/settings.ts` and mc-compose's independent `PlayerSettingsV1`
+ * copy were merged there), so this is now a regression test for the WIRING —
+ * that `SettingsService` round-trips exactly kernel's field set and adds
+ * nothing of its own — rather than for a ruleset this package still owns.
+ * If a `dayLength` field ever appears in what this service reports, this
+ * goes red before anybody has to notice the sky.
  */
 describe('REGRESSION: settings must not become a second owner of the day length', () => {
   it.effect('no field here names a day, a difficulty or a preset', () =>
     Effect.sync(() => {
       expect(Object.keys(DEFAULT_SETTINGS).sort()).toEqual([
         'audioEnabled',
+        'captionsEnabled',
         'fovDegrees',
         'graphicsQuality',
         'keyBindings',
@@ -51,7 +57,7 @@ describe('REGRESSION: settings must not become a second owner of the day length'
   it.effect('a patch naming a refused field cannot install one', () =>
     Effect.sync(() => {
       // `applySettings` rebuilds through `normaliseSettings`, which writes the
-      // nine fields it knows and nothing else. A save from a build that had more
+      // ten fields it knows and nothing else. A save from a build that had more
       // therefore cannot smuggle one back in.
       const patched = applySettings(DEFAULT_SETTINGS, {
         dayLengthSeconds: 1200,
@@ -63,29 +69,34 @@ describe('REGRESSION: settings must not become a second owner of the day length'
   )
 })
 
-describe('the defaults are the reference’s, transcription by transcription', () => {
-  it.effect('every fresh-user value is the one settings-service.ts:12-37 states', () =>
+/**
+ * These defaults are kernel's, not this repository's — `DEFAULT_SETTINGS` is
+ * imported, not defined here. What this repository still owns is the CLAIM
+ * that these are the values `makeSettingsService()` actually starts a player
+ * with, which is what the `SettingsService` describe block below re-checks
+ * end to end. Two values changed under mc-kernel 0.7.0's reconciliation
+ * against mc-compose's `PlayerSettingsV1` (the independent copy that shipped
+ * to real players): `audioEnabled` false→true (the browser autoplay gate
+ * already blocks a cold-open blast, so `false` bought no safety, only a
+ * silent-by-default game for anyone who never opens the settings menu) and
+ * `mouseSensitivity` 0.5→1 (the multiplier's identity value, matching
+ * vanilla Minecraft's own midpoint-is-unscaled sensitivity slider). Pinned
+ * here at their NEW values so a future accidental revert is caught, not
+ * because this repository re-derived either number.
+ */
+describe('the defaults are kernel’s reconciled values', () => {
+  it.effect('every fresh-user value is what mc-kernel’s DEFAULT_SETTINGS states', () =>
     Effect.sync(() => {
-      // Literals, per docs/testing.md §4.6 — a test reading the same constant
-      // as the code stays green when the constant is "tidied".
       expect(DEFAULT_SETTINGS.renderDistance).toBe(5)
       expect(DEFAULT_SETTINGS.fovDegrees).toBe(75)
       expect(DEFAULT_SETTINGS.graphicsQuality).toBe('medium')
-      expect(DEFAULT_SETTINGS.mouseSensitivity).toBe(0.5)
+      expect(DEFAULT_SETTINGS.audioEnabled).toBe(true)
+      expect(DEFAULT_SETTINGS.mouseSensitivity).toBe(1)
       expect(DEFAULT_SETTINGS.masterVolume).toBe(0.8)
       expect(DEFAULT_SETTINGS.musicVolume).toBe(0.55)
       expect(DEFAULT_SETTINGS.sfxVolume).toBe(1)
+      expect(DEFAULT_SETTINGS.captionsEnabled).toBe(true)
       expect(DEFAULT_SETTINGS.keyBindings).toEqual({})
-    }),
-  )
-
-  it.effect('audio is OFF by default, and the reason is a development one', () =>
-    Effect.sync(() => {
-      // settings.schema.ts:71-73 is emphatic about this, and its stated reason
-      // is that audio 「causes noise during development and testing」 — a claim
-      // about a dev loop, not about players. Pinned so the default is a decision
-      // somebody re-takes rather than one that ships by inertia.
-      expect(DEFAULT_SETTINGS.audioEnabled).toBe(false)
     }),
   )
 
@@ -161,17 +172,32 @@ describe('values are clamped into the reference’s ranges', () => {
     }),
   )
 
-  it.effect('REGRESSION: the string "false" must not become a true', () =>
+  /**
+   * REVISED under kernel's ruleset. mc-sim's own `normaliseSettings` used to
+   * treat `audioEnabled` specially — `settings.audioEnabled === true`, so ANY
+   * non-`true` value (including a malformed one) became `false`, regardless
+   * of the fresh-user default. Kernel's version does not special-case it: a
+   * malformed `audioEnabled` (any non-boolean) falls back to
+   * `DEFAULT_SETTINGS.audioEnabled` the same way every other malformed field
+   * falls back to its own default — verified against mc-kernel's OWN
+   * `test/settings.test.ts`, which pins `normaliseSettings({ audioEnabled:
+   * 'true', ... })` to `DEFAULT_SETTINGS.audioEnabled`, i.e. the same fallback
+   * for a malformed 'true' as for a malformed 'false'. Since the default is
+   * now `true`, a malformed value of EITHER string now normalises to `true`.
+   * This is kernel's considered, tested behaviour, not an oversight to patch
+   * around locally — re-adding a stricter local rule here is exactly the
+   * "second copy" this whole move exists to close. What still holds, and is
+   * pinned above, is that a WELL-FORMED `false` stays `false` — see
+   * `it.effect('update patches...')` below.
+   */
+  it.effect('a malformed audioEnabled falls back to the default, matching every other malformed field', () =>
     Effect.sync(() => {
-      // `Boolean('false')` is `true`. A stored NO turning into a YES is the one
-      // coercion that switches a setting on behalf of a player who switched it
-      // off, and a save file written by an older schema is exactly where a
-      // stringified boolean comes from.
       const repaired = normaliseSettings(
         withSettings({ audioEnabled: 'false' as unknown as boolean }),
       )
 
-      expect(repaired.audioEnabled).toBe(false)
+      expect(repaired.audioEnabled).toBe(DEFAULT_SETTINGS.audioEnabled)
+      expect(repaired.audioEnabled).toBe(true)
     }),
   )
 })
@@ -179,7 +205,7 @@ describe('values are clamped into the reference’s ranges', () => {
 describe('key bindings are overrides, not a roster', () => {
   it.effect('binding, reading and unbinding one action', () =>
     Effect.sync(() => {
-      const bound = bindKey(DEFAULT_SETTINGS, 'jump', 'Space')
+      const bound = rebindKey(DEFAULT_SETTINGS, 'jump', 'Space')
 
       expect(keyBindingFor(bound, 'jump')).toBe('Space')
       expect(keyBindingFor(bound, 'sneak')).toBeUndefined()
@@ -195,7 +221,7 @@ describe('key bindings are overrides, not a roster', () => {
 
   it.effect('unbinding one action keeps every OTHER rebind', () =>
     Effect.sync(() => {
-      const bound = bindKey(bindKey(DEFAULT_SETTINGS, 'jump', 'Space'), 'sneak', 'ShiftLeft')
+      const bound = rebindKey(rebindKey(DEFAULT_SETTINGS, 'jump', 'Space'), 'sneak', 'ShiftLeft')
 
       expect(unbindKey(bound, 'jump').keyBindings).toEqual({ sneak: 'ShiftLeft' })
     }),
@@ -203,8 +229,47 @@ describe('key bindings are overrides, not a roster', () => {
 
   it.effect('a blank action or code is refused rather than stored, by identity', () =>
     Effect.sync(() => {
-      expect(bindKey(DEFAULT_SETTINGS, '', 'Space')).toBe(DEFAULT_SETTINGS)
-      expect(bindKey(DEFAULT_SETTINGS, 'jump', '')).toBe(DEFAULT_SETTINGS)
+      expect(rebindKey(DEFAULT_SETTINGS, '', 'Space')).toBe(DEFAULT_SETTINGS)
+      expect(rebindKey(DEFAULT_SETTINGS, 'jump', '')).toBe(DEFAULT_SETTINGS)
+    }),
+  )
+
+  /**
+   * The behaviour change `rebindKey` brought in over the old `bindKey`: two
+   * actions can no longer collide on one physical code. The action being
+   * rebound takes the code; whichever OTHER action held that code receives
+   * the rebound action's OWN previous code — or, when the rebound action had
+   * none to give, is left unbound rather than defaulted, because kernel has
+   * no per-action default table to fall back to (see
+   * `application/settings-service.ts`'s header on why that is not a gap for
+   * THIS repository specifically: `keyBindings` was already a sparse
+   * override map before this move, never a dense one).
+   *
+   * `sneak` here is rebound while it has never been bound before (no previous
+   * code of its own to hand off), which is the case that leaves the donor
+   * (`jump`) unbound.
+   */
+  it.effect('REGRESSION: rebinding onto a code another action holds, with no previous code of its own, unbinds the donor', () =>
+    Effect.sync(() => {
+      const jumpBound = rebindKey(DEFAULT_SETTINGS, 'jump', 'Space')
+
+      const swapped = rebindKey(jumpBound, 'sneak', 'Space')
+
+      expect(keyBindingFor(swapped, 'sneak')).toBe('Space')
+      expect(keyBindingFor(swapped, 'jump')).toBeUndefined()
+      expect(swapped.keyBindings).toEqual({ sneak: 'Space' })
+    }),
+  )
+
+  it.effect('REGRESSION: a conflict swap where the rebound action HAD a previous code hands it to the donor', () =>
+    Effect.sync(() => {
+      const bothBound = rebindKey(rebindKey(DEFAULT_SETTINGS, 'jump', 'Space'), 'sneak', 'ShiftLeft')
+
+      // `sneak` already had 'ShiftLeft'; rebinding it onto 'Space' (currently
+      // `jump`'s) gives `jump` 'ShiftLeft' back rather than leaving it unbound.
+      const swapped = rebindKey(bothBound, 'sneak', 'Space')
+
+      expect(swapped.keyBindings).toEqual({ sneak: 'Space', jump: 'ShiftLeft' })
     }),
   )
 
@@ -212,7 +277,7 @@ describe('key bindings are overrides, not a roster', () => {
     Effect.sync(() => {
       // Merging would make removal impossible: the map is already the override
       // set, and an absent entry is what "keep the default" means.
-      const bound = bindKey(bindKey(DEFAULT_SETTINGS, 'jump', 'Space'), 'sneak', 'ShiftLeft')
+      const bound = rebindKey(rebindKey(DEFAULT_SETTINGS, 'jump', 'Space'), 'sneak', 'ShiftLeft')
       const replaced = applySettings(bound, { keyBindings: { jump: 'KeyJ' } })
 
       expect(replaced.keyBindings).toEqual({ jump: 'KeyJ' })
@@ -248,12 +313,17 @@ describe('SettingsService', () => {
     Effect.gen(function* () {
       const settings = yield* makeSettingsService()
 
-      const next = yield* settings.update({ renderDistance: 12, audioEnabled: true })
+      // A WELL-FORMED `false` (not a malformed value — see the "values are
+      // clamped" describe block above for that case) is exactly the thing
+      // `audioEnabled: settings.audioEnabled === true`-style logic exists to
+      // preserve, and kernel's normaliseSettings still does: `typeof x ===
+      // 'boolean' ? x : default` passes a real `false` straight through.
+      const next = yield* settings.update({ renderDistance: 12, audioEnabled: false })
 
       expect(next.renderDistance).toBe(12)
-      expect(next.audioEnabled).toBe(true)
+      expect(next.audioEnabled).toBe(false)
       expect(next.fovDegrees).toBe(75)
-      expect(next.mouseSensitivity).toBe(0.5)
+      expect(next.mouseSensitivity).toBe(1)
     }),
   )
 
@@ -301,7 +371,10 @@ describe('SettingsService', () => {
       expect(isValidSettings(restored)).toBe(true)
       expect(restored.renderDistance).toBe(16)
       expect(restored.fovDegrees).toBe(75)
-      expect(restored.audioEnabled).toBe(false)
+      // A malformed `audioEnabled` (a string, not a boolean) falls back to
+      // kernel's default — see the "a malformed audioEnabled falls back to
+      // the default" test above for why this is now `true`, not `false`.
+      expect(restored.audioEnabled).toBe(DEFAULT_SETTINGS.audioEnabled)
       expect(isValidSettings(fromDisk)).toBe(false)
     }),
   )
@@ -316,15 +389,30 @@ describe('SettingsService', () => {
     }),
   )
 
-  it.effect('bindKey and unbindKey go through the Ref', () =>
+  it.effect('rebindKey and unbindKey go through the Ref', () =>
     Effect.gen(function* () {
       const settings = yield* makeSettingsService()
 
-      yield* settings.bindKey('jump', 'Space')
+      yield* settings.rebindKey('jump', 'Space')
       expect(keyBindingFor(yield* settings.snapshot, 'jump')).toBe('Space')
 
       yield* settings.unbindKey('jump')
       expect(keyBindingFor(yield* settings.snapshot, 'jump')).toBeUndefined()
+    }),
+  )
+
+  it.effect('rebindKey swaps a conflicting action through the Ref too, not just in the pure rule', () =>
+    Effect.gen(function* () {
+      const settings = yield* makeSettingsService()
+
+      yield* settings.rebindKey('jump', 'Space')
+      // `sneak` has no previous code of its own, so this leaves `jump` unbound
+      // rather than defaulted — same case as the pure-rule REGRESSION test.
+      yield* settings.rebindKey('sneak', 'Space')
+
+      const snapshot = yield* settings.snapshot
+      expect(keyBindingFor(snapshot, 'sneak')).toBe('Space')
+      expect(keyBindingFor(snapshot, 'jump')).toBeUndefined()
     }),
   )
 
@@ -343,7 +431,7 @@ describe('SettingsService', () => {
       const settings = yield* makeSettingsService()
 
       yield* settings.update({ mouseSensitivity: 2.4, masterVolume: 0.2 })
-      yield* settings.bindKey('jump', 'Space')
+      yield* settings.rebindKey('jump', 'Space')
       yield* settings.reset
 
       // What reset does.
