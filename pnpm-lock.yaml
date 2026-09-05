@@ -18,8 +18,8 @@ importers:
         specifier: 0.2.2
         version: 0.2.2
       '@nerima-games/mc-save':
-        specifier: 0.4.1
-        version: 0.4.1
+        specifier: 0.4.2
+        version: 0.4.2
       '@nerima-games/mc-worldgen':
         specifier: 0.3.2
         version: 0.3.2
@@ -369,6 +369,10 @@ packages:
 
   '@nerima-games/mc-save@0.4.1':
     resolution: {integrity: sha512-bhqxFU51XGe8khixIXeGnDgDrVH83ahHPRXAbN6w5BasprAm9Z8wqN933Wdn0h0ER4lQ0vZi/6VA1tdbszJSoA==, tarball: https://npm.pkg.github.com/download/@nerima-games/mc-save/0.4.1/15cc97d1b6ca60ed23d5a84b5055fcab9622661d}
+    engines: {node: '>=24.0.0', pnpm: '>=11.24.0'}
+
+  '@nerima-games/mc-save@0.4.2':
+    resolution: {integrity: sha512-y+yfDC7Im9kvrm3TMcZlX2R9SbXhyBpWBrMM62AFM66bmkLl91m6LQ0nzX0gEW7wiPI6PJXo2ukTGnyKz5PjFw==, tarball: https://npm.pkg.github.com/download/@nerima-games/mc-save/0.4.2/ad4a61cfcbf13322f8fb6d46d5187f860b1e7557}
     engines: {node: '>=24.0.0', pnpm: '>=11.24.0'}
 
   '@nerima-games/mc-worldgen@0.3.2':
@@ -1560,6 +1564,11 @@ snapshots:
       effect: 3.22.1
 
   '@nerima-games/mc-save@0.4.1':
+    dependencies:
+      '@nerima-games/mc-kernel': 0.7.0
+      effect: 3.22.1
+
+  '@nerima-games/mc-save@0.4.2':
     dependencies:
       '@nerima-games/mc-kernel': 0.7.0
       effect: 3.22.1
