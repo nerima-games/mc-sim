@@ -51,7 +51,7 @@ mc-render / mc-playground-kit / mx-gameplay / mx-redstone / mx-ui / mx-multiplay
 | **セーブ/ロード境界の修復**（`normaliseTimeState` / `normaliseInventory`） | `domain/time-of-day.ts` / `domain/inventory.ts` | [public-api.md](./public-api.md) §2-2 / §4-1 |
 | **捨てたものを数える**（`framesDropped` / `secondsLostToClamp`） | `application/game-loop.ts` / `domain/frame-timing.ts` | [public-api.md](./public-api.md) §3-1 |
 | エンティティ台帳・体力・空腹・XP | `application/entity-manager.ts` / `domain/vitals-hunger.ts` | [responsibility.md](./responsibility.md) §3.4 |
-| 統計・設定・採掘・採取・乗り物 | `domain/statistics.ts` / `domain/settings.ts` / `application/*-service.ts` | [responsibility.md](./responsibility.md) §3 |
+| 統計・設定・採掘・採取・乗り物 | `domain/statistics.ts` / `application/*-service.ts` | [responsibility.md](./responsibility.md) §3 |
 | かまど・醸造（現行語彙の4レシピ）・金床 | `domain/smelting.ts` / `domain/brewing.ts` / mc-kernel の anvil API | [public-api.md](./public-api.md) |
 | **エンチャントテーブル** | `domain/enchantment-table-data.ts` / `domain/enchantment-table.ts` | スロット計算・重み付き抽選・競合除去・本の出力 |
 | セーブ/ロード・ブロック相互作用 | `application/save-service.ts` / `domain/block-interaction.ts` | [testing.md](./testing.md) |

@@ -387,8 +387,10 @@ mc-worldgen が barrel に出したので、`player-service.ts` はそこから�
 | `mx-multiplayer` | 同期すべき状態のスナップショットと適用 | スナップショット/復元の対称性 |
 
 **この 6 者への影響を評価せずに公開 API を変更しないこと。**
-`src/index.ts` の公開 export、`package.json` の `exports`、生成された `dist/index.d.ts` を
-レビュー対象にする。`pnpm typecheck` と `pnpm build` が宣言の破綻と配布物の生成を検査する。
-公開面を変える変更は同じ変更単位で宣言差分を確認すること —— その差分が、
+`src/index.ts` の公開 export、`package.json` の `exports`、生成された `dist/index.d.ts` と
+`dist/index.js` をレビュー対象にする。`pnpm typecheck` が宣言の破綻を、`pnpm build` が
+宣言と実行時入口の生成を検査し、Node 24 からの `dist/index.js` の import が実行時の解決と
+呼び出し可能な公開面を確かめる。公開面を変える変更は同じ変更単位で宣言と実行時入口の
+両方の差分を確認すること —— その差分が、
 上の表の「壊れると困るもの」に何が起きたかを 6 者に見せる唯一の場所である
 （[public-api.md](./public-api.md) §6）。

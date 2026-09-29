@@ -66,11 +66,11 @@ format の現行 version のみを要求し、それ以外の version で保存�
 `node_modules` 内の `.ts` を型除去できず（`ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`）、
 その依存への import で失敗する。
 
-**現在の状態**: 固定している依存（版数の正は `package.json#dependencies`）はどれも
-`main`/`exports` が `dist/index.js` を指し、`dist/` を公開している。上の失敗モードは今は
-起こらず、`pnpm package:verify` の動的 import 検証が疑うのは mc-sim 自身のコードだけである。
-ただしこれは固定された保証ではない。依存を追加・更新するたびに、その依存が `dist/` を
-公開していることを確かめ、`pnpm package:verify` を通す。
+**現在の状態**: 固定している依存はどれも、`dist/` に実行時ロード可能な JavaScript を
+公開している。上の失敗モードは今は起こらず、`pnpm package:verify` の動的 import 検証が
+疑うのは mc-sim 自身のコードだけである。ただしこれは固定された保証ではない。依存を
+追加・更新するたびに、その依存が `dist/` に JavaScript を公開していることを確かめ、
+`pnpm package:verify` を通す。
 
 ## 4. 依存バージョン
 
@@ -84,7 +84,7 @@ format の現行 version のみを要求し、それ以外の version で保存�
 | TypeScript | `7.0.2`（exact）。`@typescript/native` / `typescript6` エイリアスは廃止した |
 | Vitest | `4.1.11`（exact）。`@effect/vitest` は `0.30.0` |
 
-版数の正は常に `package.json#dependencies` であり、この表は依存の役割だけを示す。
+版数の正は常に `package.json` の `dependencies` と `devDependencies` であり、この表は依存の役割だけを示す。
 
 依存を更新したら `pnpm install --frozen-lockfile`、`pnpm peers check`、`pnpm typecheck`、
 `pnpm build`、`pnpm test:coverage` を実行する。特に Effect と依存パッケージの major を
