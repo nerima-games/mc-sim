@@ -1,5 +1,6 @@
 import {
   addItemStack,
+  countOf,
   itemStack,
   type Inventory,
   type ItemStack,
@@ -95,6 +96,10 @@ export const transferToFurnace = (
 ): FurnaceTransferOutcome => {
   if (!Number.isSafeInteger(count) || count <= 0) {
     return { inventory, furnace, result: { _tag: 'InvalidCount', count } }
+  }
+  const totalAvailable = countOf(inventory, item)
+  if (totalAvailable < count) {
+    return { inventory, furnace, result: { _tag: 'InsufficientItems', available: totalAvailable } }
   }
   const current = furnace[slot]
   if (current !== null && current.item !== item) {

@@ -178,9 +178,7 @@ describe('player storage', () => {
       })
       const unequipped = yield* service.storageSnapshot
       expect(unequipped.equipment.slots.offhand).toBeNull()
-      expect(unequipped.inventory.slots[4]).toStrictEqual({
-        ...itemStack('flint_and_steel', 1), durability: { current: 64, max: 64 },
-      })
+      expect(unequipped.inventory.slots[4]).toStrictEqual(itemStack('flint_and_steel', 1))
       expect(unequipped.inventoryDurability[4]).toStrictEqual({ current: 64, max: 64 })
     }),
   )
@@ -201,9 +199,7 @@ describe('player storage', () => {
         _tag: 'Unequipped', slotIndex: 4,
       })
       const unequipped = yield* service.storageSnapshot
-      expect(unequipped.inventory.slots[4]).toStrictEqual({
-        ...itemStack('iron_helmet', 1), durability: { current: 150, max: 165 },
-      })
+      expect(unequipped.inventory.slots[4]).toStrictEqual(itemStack('iron_helmet', 1))
       expect(unequipped.inventoryDurability[4]).toStrictEqual({ current: 150, max: 165 })
     }),
   )

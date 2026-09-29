@@ -503,6 +503,14 @@ describe('inventory-backed furnace progression', () => {
         _tag: 'Valid',
         state,
       })
+      const modifiedOutput = itemStack('iron_ingot', 1, {
+        components: { ...itemStack('iron_ingot', 1).components, repairCost: RepairCost(1) },
+      })
+      const modifiedState = furnaceWith({ output: modifiedOutput })
+      expect(validateFurnaceSnapshot(JSON.parse(JSON.stringify(modifiedState)))).toStrictEqual({
+        _tag: 'Valid',
+        state: modifiedState,
+      })
       expect(validateFurnaceSnapshot({ ...state, burnRemainingSecs: -1 })).toMatchObject({
         _tag: 'Invalid',
         error: { path: 'burnRemainingSecs' },

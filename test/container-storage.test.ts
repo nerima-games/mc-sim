@@ -653,7 +653,7 @@ describe('InventoryService chest integration', () => {
         containerSlot: 0,
         count: 3,
       })).toMatchObject({ _tag: 'Transferred', count: 3 })
-      expect((yield* service.snapshot).slots[0]).toStrictEqual({ ...itemStack('stone', 7), durability: null })
+      expect((yield* service.snapshot).slots[0]).toStrictEqual(itemStack('stone', 7))
       expect((yield* service.containerSnapshot('chest-a'))?.slots[0]).toStrictEqual({
         ...itemStack('stone', 3), durability: null,
       })
@@ -696,7 +696,6 @@ describe('InventoryService chest integration', () => {
       expect(player.inventory.slots[8]).toStrictEqual({
         ...bow,
         components: serializedComponents,
-        durability: { current: 365, max: 384 },
       })
       expect(player.inventoryDurability[8]).toStrictEqual({ current: 365, max: 384 })
     }),
