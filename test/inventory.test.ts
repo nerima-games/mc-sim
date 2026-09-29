@@ -2,6 +2,7 @@ import { describe, expect, it } from '@effect/vitest'
 import { Effect, Fiber } from 'effect'
 import {
   addItem,
+  addItemStack,
   countOf,
   emptyInventory,
   INVENTORY_SLOT_COUNT,
@@ -15,8 +16,9 @@ import {
   type Inventory,
 } from '../src/domain/inventory'
 import { containerIdAt } from '../src/domain/container-storage'
-import { isItemType, type ItemType, type StackCount } from '@nerima-games/mc-kernel'
+import { isItemType, RepairCost, type ItemType, type StackCount } from '@nerima-games/mc-kernel'
 import { makeInventoryService } from '../src/application/inventory-service'
+import { clickInventory } from '../src/application/inventory-interaction'
 import type { InventoryClick } from '../src/index'
 
 /**
@@ -75,6 +77,31 @@ describe('itemStack', () => {
       expect(() => itemStack('stone', 64)).not.toThrow()
     }),
   )
+})
+
+describe('clickInventory', () => {
+  it('swaps same-item stacks when resolved components differ', () => {
+    const stored = itemStack('iron_ingot', 1, {
+      components: { ...itemStack('iron_ingot', 1).components, repairCost: RepairCost(1) },
+    })
+    const carried = itemStack('iron_ingot', 1, {
+      components: { ...itemStack('iron_ingot', 1).components, repairCost: RepairCost(2) },
+    })
+    const result = clickInventory({ slots: [stored, ...emptyInventory().slots.slice(1)] }, {
+      _tag: 'LeftClick', slotIndex: 0, carried,
+    })
+    expect(result.result).toStrictEqual({ _tag: 'Swapped', carried: stored })
+    expect(result.inventory.slots[0]).toStrictEqual(carried)
+  })
+})
+
+describe('legacy stack fallback', () => {
+  it('uses item defaults when an untrusted stack has no resolved components', () => {
+    const legacy = { ...itemStack('stone', 1) }
+    Reflect.deleteProperty(legacy, 'components')
+    const result = addItemStack(emptyInventory(), legacy)
+    expect(result.inventory.slots[0]?.count).toBe(1)
+  })
 })
 
 describe('addItem', () => {

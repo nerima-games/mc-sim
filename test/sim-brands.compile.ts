@@ -20,7 +20,7 @@ const delta: DeltaTimeSecs = DeltaTimeSecs(0.05)
 const fixed: FixedDurationSecs = FixedDurationSecs(0.05)
 const tick: SimulationTick = SimulationTick(1)
 const blockAxis: BlockAxis = blockPosition(0, 0, 0).x
-const chunkAxis: ChunkAxisValue = chunkAxisFromKernel()
+const chunkAxis: ChunkAxisValue = ChunkAxis(0)
 
 const gameLoopInput: Parameters<GameLoopApi['submitFrame']>[0] = MonotonicTimeSecs(0)
 const timeAdvanceInput: Parameters<TimeServiceApi['advance']>[0] = delta
@@ -33,10 +33,6 @@ void item
 void addTick(tick, NonNegativeTickCount(1))
 void blockAxis
 void chunkAxis
-
-function chunkAxisFromKernel(): ChunkAxisValue {
-  return ChunkAxis(0)
-}
 
 // @ts-expect-error A fixed duration is not a per-frame delta.
 const wrongDelta: DeltaTimeSecs = fixed

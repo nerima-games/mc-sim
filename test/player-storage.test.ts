@@ -47,6 +47,22 @@ describe('player storage', () => {
     })
     expect(result._tag).toBe('Invalid')
   })
+  it('validates legacy inventory stacks and rejects invalid resolved components', () => {
+    const base = emptyPlayerStorage()
+    const legacy = {
+      ...base,
+      inventory: { slots: [{ item: 'stone', count: 2 }, ...Array.from({ length: 35 }, () => undefined)] },
+    }
+    expect(validatePlayerStorageSnapshot(legacy)._tag).toBe('Valid')
+    expect(validatePlayerStorageSnapshot({
+      ...legacy,
+      inventory: { slots: [{ item: 'stone', count: 65 }, ...Array.from({ length: 35 }, () => undefined)] },
+    })).toMatchObject({ _tag: 'Invalid', error: { path: 'storage.inventory.slots.0' } })
+    expect(validatePlayerStorageSnapshot({
+      ...base,
+      inventory: { slots: [{ ...itemStack('stone', 1), components: {} }, ...Array.from({ length: 35 }, () => undefined)] },
+    })).toMatchObject({ _tag: 'Invalid', error: { path: 'storage.inventory.slots.0' } })
+  })
   it('adds a damaged tool with its exact durability and copies the input', () => {
     const durability = { current: 17, max: FLINT_AND_STEEL_MAX_DURABILITY }
     const outcome = addStoredStack(emptyPlayerStorage(), {

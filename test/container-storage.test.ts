@@ -288,6 +288,26 @@ describe('container storage domain', () => {
     })
   })
 
+  it('validates legacy stored stacks without components and rejects their invalid counts', () => {
+    const slots = Array.from({ length: CHEST_CONTAINER_CAPACITY }, () => null) as Array<unknown>
+    slots[0] = { item: 'stone', count: 5, durability: null }
+    const valid = validateContainerStorageSnapshot({
+      version: CONTAINER_STORAGE_SNAPSHOT_VERSION,
+      containers: [{ id: 'legacy', kind: 'chest', slots }],
+    })
+    expect(valid._tag).toBe('Valid')
+    slots[0] = { item: 'stone', count: 65, durability: null }
+    expect(validateContainerStorageSnapshot({
+      version: CONTAINER_STORAGE_SNAPSHOT_VERSION,
+      containers: [{ id: 'legacy-overfull', kind: 'chest', slots }],
+    })).toMatchObject({ _tag: 'Invalid', error: { path: 'containerStorage.containers.0.slots.0' } })
+    slots[0] = { item: 'stone', count: 0, durability: null }
+    expect(validateContainerStorageSnapshot({
+      version: CONTAINER_STORAGE_SNAPSHOT_VERSION,
+      containers: [{ id: 'legacy-zero', kind: 'chest', slots }],
+    })).toMatchObject({ _tag: 'Invalid', error: { path: 'containerStorage.containers.0.slots.0' } })
+  })
+
   it('rejects a non-durable stored stack that carries a non-null durability', () => {
     const slots = Array.from({ length: CHEST_CONTAINER_CAPACITY }, () => null) as Array<unknown>
     slots[0] = { ...itemStack('stone', 1), durability: { current: 1, max: 1 } }

@@ -584,6 +584,50 @@ describe('inventory-backed furnace progression', () => {
 })
 
 describe('furnace boundary validation', () => {
+  it('rejects malformed component records and legacy malformed slots', () => {
+    const state = furnaceWith()
+    expect(validateFurnaceSnapshot({
+      ...state,
+      input: { ...itemStack('raw_iron', 1), components: { maxStackSize: 64 } },
+    })).toMatchObject({ _tag: 'Invalid', error: { path: 'input.components' } })
+    const malformed = { ...itemStack('raw_iron', 1) }
+    Reflect.deleteProperty(malformed, 'components')
+    expect(() => matchSmeltingRecipe([], malformed)).toThrow(RangeError)
+  })
+
+  it('rejects unavailable and incompatible transfer stacks', () => {
+    const legacy = { ...itemStack('raw_iron', 1) }
+    Reflect.deleteProperty(legacy, 'components')
+    const inventory = { slots: [legacy, ...emptyInventory().slots.slice(1)] }
+    expect(transferToFurnace(inventory, emptyFurnaceState(), 'input', 'raw_iron', 1).result).toMatchObject({
+      _tag: 'InsufficientItems', available: 0,
+    })
+    const modified = itemStack('raw_iron', 1, {
+      components: { ...itemStack('raw_iron', 1).components, repairCost: RepairCost(1) },
+    })
+    expect(transferToFurnace({ slots: [itemStack('raw_iron', 1), modified, ...emptyInventory().slots.slice(2)] },
+      emptyFurnaceState(), 'input', 'raw_iron', 2).result).toMatchObject({ _tag: 'InsufficientItems' })
+  })
+
+  it('rejects invalid fuel duration and malformed recipe output', () => {
+    expect(() => advanceFurnace(emptyFurnaceState(), 1, [], [{ item: 'coal', burnDurationSecs: 0 }])).toThrow(RangeError)
+    const malformed = { ...itemStack('iron_ingot', 1) }
+    Reflect.deleteProperty(malformed, 'components')
+    for (const recipe of STARTER_SMELTING_RECIPES.slice(0, 1)) {
+      expect(() => matchSmeltingRecipe([{ ...recipe, output: malformed }], null)).toThrow(RangeError)
+    }
+    expect(validateFurnaceSnapshot({ ...furnaceWith(), input: { ...itemStack('raw_iron', 1), components: null } })).toMatchObject({
+      _tag: 'Invalid', error: { path: 'input.components' },
+    })
+    expect(validateFurnaceSnapshot({
+      ...furnaceWith(),
+      input: { ...itemStack('raw_iron', 1), components: { maxStackSize: 'bad', repairCost: null, rarity: 'bad' } },
+    })).toMatchObject({ _tag: 'Invalid', error: { path: 'input.components' } })
+    const invalidRecipe = JSON.parse('{"id":"bad","input":"not-an-item","output":null,"cookDurationSecs":1}')
+    expect(() => matchSmeltingRecipe([invalidRecipe], null)).toThrow(RangeError)
+    const invalidFuel = JSON.parse('{"item":"not-an-item","burnDurationSecs":1}')
+    expect(() => advanceFurnace(emptyFurnaceState(), 1, [], [invalidFuel])).toThrow(RangeError)
+  })
   it.effect('persisted occupied slots reject counts outside their stack bounds', () =>
     Effect.sync(() => {
       const state = furnaceWith()

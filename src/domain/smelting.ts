@@ -186,6 +186,50 @@ const invalidSnapshot = (path: string, reason: string): FurnaceSnapshotValidatio
 const isValidDuration = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0
 
+const validateFurnaceSlot = (
+  value: Record<string, unknown>, name: 'input' | 'fuel' | 'output',
+): ItemStack | null | FurnaceSnapshotValidationResult => {
+  const slot = value[name]
+  if (slot === null) return null
+  if (!isRecord(slot) || Object.keys(slot).length !== 3 ||
+      !Object.hasOwn(slot, 'item') || !Object.hasOwn(slot, 'count') || !Object.hasOwn(slot, 'components')) {
+    return invalidSnapshot(name, 'expected null or a canonical ItemStack')
+  }
+  if (typeof slot['item'] !== 'string' || !isItemType(slot['item'])) {
+    return invalidSnapshot(`${name}.item`, 'expected a known item')
+  }
+  const savedComponents = slot['components']
+  if (!isRecord(savedComponents) ||
+      !Object.hasOwn(savedComponents, 'maxStackSize') ||
+      !Object.hasOwn(savedComponents, 'repairCost') ||
+      !Object.hasOwn(savedComponents, 'rarity')) {
+    return invalidSnapshot(`${name}.components`, 'expected valid resolved item components')
+  }
+  const components = { ...itemStack(slot['item'], 1).components, ...savedComponents }
+  if (!isItemComponents(components)) {
+    return invalidSnapshot(`${name}.components`, 'expected valid resolved item components')
+  }
+  const restored = { ...slot, components }
+  if (!isItemStack(restored)) {
+    return invalidSnapshot(`${name}.count`, 'expected a valid positive stack count')
+  }
+  return itemStack(restored.item, restored.count, { components: restored.components })
+}
+
+const validateFurnaceDurations = (
+  value: Record<string, unknown>,
+): { readonly cookElapsedSecs: number; readonly burnRemainingSecs: number } | FurnaceSnapshotValidationResult => {
+  let cookElapsedSecs = 0
+  let burnRemainingSecs = 0
+  for (const name of ['cookElapsedSecs', 'burnRemainingSecs'] as const) {
+    const duration = value[name]
+    if (!isValidDuration(duration)) return invalidSnapshot(name, 'expected a finite non-negative number')
+    if (name === 'cookElapsedSecs') cookElapsedSecs = duration
+    else burnRemainingSecs = duration
+  }
+  return { cookElapsedSecs, burnRemainingSecs }
+}
+
 /** Validate an untrusted JSON furnace snapshot before installing it in world state. */
 export const validateFurnaceSnapshot = (value: unknown): FurnaceSnapshotValidationResult => {
   if (!isRecord(value)) return invalidSnapshot('snapshot', 'expected an object')
@@ -194,56 +238,22 @@ export const validateFurnaceSnapshot = (value: unknown): FurnaceSnapshotValidati
     return invalidSnapshot('snapshot', `expected exactly { ${keys.join(', ')} }`)
   }
 
-  const slots: Record<'input' | 'fuel' | 'output', ItemStack | null> = {
-    input: null, fuel: null, output: null,
-  }
+  const slots: Record<'input' | 'fuel' | 'output', ItemStack | null> = { input: null, fuel: null, output: null }
   for (const name of ['input', 'fuel', 'output'] as const) {
-    const slot = value[name]
-    if (slot === null) continue
-    if (!isRecord(slot) || Object.keys(slot).length !== 3 ||
-        !Object.hasOwn(slot, 'item') || !Object.hasOwn(slot, 'count') || !Object.hasOwn(slot, 'components')) {
-      return invalidSnapshot(name, 'expected null or a canonical ItemStack')
-    }
-    if (typeof slot['item'] !== 'string' || !isItemType(slot['item'])) {
-      return invalidSnapshot(`${name}.item`, 'expected a known item')
-    }
-    const savedComponents = slot['components']
-    if (!isRecord(savedComponents) ||
-        !Object.hasOwn(savedComponents, 'maxStackSize') ||
-        !Object.hasOwn(savedComponents, 'repairCost') ||
-        !Object.hasOwn(savedComponents, 'rarity')) {
-      return invalidSnapshot(`${name}.components`, 'expected valid resolved item components')
-    }
-    // JSON omits canonical component keys whose values are undefined.
-    const components = { ...itemStack(slot['item'], 1).components, ...savedComponents }
-    if (!isItemComponents(components)) {
-      return invalidSnapshot(`${name}.components`, 'expected valid resolved item components')
-    }
-    const restored = { ...slot, components }
-    if (!isItemStack(restored)) {
-      return invalidSnapshot(`${name}.count`, 'expected a valid positive stack count')
-    }
-    slots[name] = itemStack(restored.item, restored.count, { components: restored.components })
+    const validated = validateFurnaceSlot(value, name)
+    if (validated !== null && '_tag' in validated) return validated
+    slots[name] = validated
   }
-
-  let cookElapsedSecs = 0
-  let burnRemainingSecs = 0
-  for (const name of ['cookElapsedSecs', 'burnRemainingSecs'] as const) {
-    const duration = value[name]
-    if (!isValidDuration(duration)) {
-      return invalidSnapshot(name, 'expected a finite non-negative number')
-    }
-    if (name === 'cookElapsedSecs') cookElapsedSecs = duration
-    else burnRemainingSecs = duration
-  }
+  const durations = validateFurnaceDurations(value)
+  if ('_tag' in durations) return durations
   return {
     _tag: 'Valid',
     state: {
       input: slots.input,
       fuel: slots.fuel,
       output: slots.output,
-      cookElapsedSecs,
-      burnRemainingSecs,
+      cookElapsedSecs: durations.cookElapsedSecs,
+      burnRemainingSecs: durations.burnRemainingSecs,
     },
   }
 }

@@ -256,4 +256,20 @@ describe('equipment domain', () => {
       })
     }),
   )
+
+  it('normalises a minimal canonical equipment item and rejects each malformed field', () => {
+    const base = emptyEquipment()
+    const durabilityValue = { current: 195, max: 195 }
+    expect(validateEquipmentSnapshot({
+      slots: { ...base.slots, feet: { item: 'iron_boots', count: 1, durability: durabilityValue } },
+    })._tag).toBe('Valid')
+    for (const item of [
+      1,
+      { item: 1, count: 1, durability: durabilityValue },
+      { item: 'iron_boots', count: 1, durability: { current: 0, max: 195 } },
+      { item: 'iron_boots', count: 2, durability: durabilityValue },
+    ]) {
+      expect(validateEquipmentSnapshot({ slots: { ...base.slots, feet: item } })._tag).toBe('Invalid')
+    }
+  })
 })

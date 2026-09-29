@@ -34,7 +34,6 @@ import {
   isItemType,
   isItemComponents,
   itemStack,
-  itemStackWithCount,
   itemStacksCanMerge,
   maxStackCountForItem,
   type ItemType,
@@ -149,22 +148,6 @@ export type AddOutcome = {
  * branding the input would reject the very case this function exists to spread
  * across slots.
  */
-export const addItem = (inventory: Inventory, item: ItemType, count: number): AddOutcome => {
-  if (!Number.isInteger(count) || count <= 0) {
-    // A rejected quantity is reported as leftover, because the caller turns
-    // leftover into dropped-item entities and 2.5 items asked for is 2.5 items
-    // not placed. `Math.max(0, NaN)` is NaN, though, and a NaN leftover is a
-    // number every caller downstream would believe — so a quantity that is not
-    // a quantity leaves nothing behind.
-    return { inventory, leftover: Number.isFinite(count) ? Math.max(0, count) : 0 }
-  }
-
-  return addStack(inventory, itemStack(item, 1), count)
-}
-
-export const addItemStack = (inventory: Inventory, stack: ItemStack): AddOutcome =>
-  addStack(inventory, stack, stack.count)
-
 const addStack = (inventory: Inventory, stack: ItemStack, count: number): AddOutcome => {
   const slots = [...inventory.slots]
   let remaining = count
@@ -189,12 +172,28 @@ const addStack = (inventory: Inventory, stack: ItemStack, count: number): AddOut
       continue
     }
     const accepted = Math.min(stackLimit(stack), remaining)
-    slots[index] = itemStackWithCount(stack, accepted)
+    slots[index] = derivedStack(stack, accepted)
     remaining -= accepted
   }
 
   return { inventory: { slots }, leftover: remaining }
 }
+
+export const addItem = (inventory: Inventory, item: ItemType, count: number): AddOutcome => {
+  if (!Number.isInteger(count) || count <= 0) {
+    // A rejected quantity is reported as leftover, because the caller turns
+    // leftover into dropped-item entities and 2.5 items asked for is 2.5 items
+    // not placed. `Math.max(0, NaN)` is NaN, though, and a NaN leftover is a
+    // number every caller downstream would believe — so a quantity that is not
+    // a quantity leaves nothing behind.
+    return { inventory, leftover: Number.isFinite(count) ? Math.max(0, count) : 0 }
+  }
+
+  return addStack(inventory, itemStack(item, 1), count)
+}
+
+export const addItemStack = (inventory: Inventory, stack: ItemStack): AddOutcome =>
+  addStack(inventory, stack, stack.count)
 
 export type RemoveOutcome = {
   readonly inventory: Inventory
