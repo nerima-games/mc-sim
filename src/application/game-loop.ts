@@ -80,8 +80,7 @@
  */
 import { Cause, Context, Effect, Fiber, Layer, Option, Queue, Ref } from 'effect'
 import { frameDeltaLossBetween } from '../domain/frame-timing.js'
-import { deltaTimeBetween as frameDeltaBetween } from '@nerima-games/mc-physics'
-import type { DeltaTimeSecs, MonotonicTimeSecs } from "@nerima-games/mc-kernel"
+import { frameDeltaBetween, type DeltaTimeSecs, type MonotonicTimeSecs } from '@nerima-games/mc-kernel'
 
 /**
  * Per-frame work.
@@ -243,7 +242,7 @@ export const makeGameLoop = (): Effect.Effect<GameLoopApi> =>
         const frames = yield* Ref.make(0)
         const dropped = yield* Ref.make(0)
         const lostSecs = yield* Ref.make(0)
-        const lastInstant = yield* Ref.make<number | undefined>(undefined)
+        const lastInstant = yield* Ref.make<MonotonicTimeSecs | undefined>(undefined)
 
         const processOneFrame = Queue.take(queue).pipe(
           Effect.flatMap((now) =>
@@ -253,7 +252,7 @@ export const makeGameLoop = (): Effect.Effect<GameLoopApi> =>
             // the loss to the wrong interval.
             Ref.modify(
               lastInstant,
-              (previous): [{ readonly dt: DeltaTimeSecs; readonly lostSecs: number }, number] => [
+              (previous): [{ readonly dt: DeltaTimeSecs; readonly lostSecs: number }, MonotonicTimeSecs] => [
                 { dt: frameDeltaBetween(previous, now), lostSecs: frameDeltaLossBetween(previous, now) },
                 now,
               ],

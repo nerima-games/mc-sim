@@ -25,6 +25,7 @@ import { autoSaveSchedule, startAutoSaveDaemon } from '../../src/application/aut
 import { makeGameLoop } from '../../src/application/game-loop'
 import { makeInventoryService } from '../../src/application/inventory-service'
 import { makeTimeService } from '../../src/application/time-service'
+import { itemStack } from '../../src/domain/inventory'
 import {
   clampFrameDelta,
   FIRST_FRAME_DELTA_SECS,
@@ -41,7 +42,7 @@ import {
   removeItem,
   type Inventory,
 } from '../../src/domain/inventory'
-import { MonotonicTimeSecs, type StackCount } from '@nerima-games/mc-kernel'
+import { MonotonicTimeSecs } from '@nerima-games/mc-kernel'
 import * as Time from '../../src/domain/time-of-day'
 import { clockFace, fixed, padStart, pad } from './style'
 
@@ -269,7 +270,7 @@ const inventoryProbe = Effect.gen(function* () {
 
   const overfull: Inventory = {
     slots: [
-      { item: 'stone', count: (200 as unknown) as StackCount },
+      itemStack('stone', 64),
       ...emptyInventory().slots.slice(1),
     ],
   }

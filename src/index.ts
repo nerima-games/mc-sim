@@ -109,7 +109,7 @@ export type {
 } from '@nerima-games/mc-kernel'
 
 // `Dimension` is intentionally not re-exported here. `PlayerServiceApi` uses
-// the type owned and published by mc-worldgen, so consumers import it from
+// the type owned and published by mc-kernel, so consumers import it from
 // that package instead of receiving a second spelling from this barrel.
 
 // Settings moved to mc-kernel 0.7.0 (merged with mc-compose's PlayerSettingsV1

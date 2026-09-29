@@ -138,7 +138,8 @@ Nix を使わない場合は Node.js 24 以上と pnpm 11（`corepack` 推奨）
   **`simModule` にはまだ入れていない**（§7-5 に理由）。
 - ~~体力・空腹・XP / 統計 / 設定状態~~ → **実装済み**（`domain/vitals.ts`、
   `domain/statistics.ts`、`application/settings-service.ts`）。統計台帳（カウンタ / unlocked ID）は
-  `SimulationSave` v2 に保存し、実績の registry / predicate は `mx-gameplay` 側の責務としてまだ別途必要。
+  `SimulationSave` v3（canonical `ItemStack` の `components` を含む）に保存し、実績の registry / predicate は
+  `mx-gameplay` 側の責務としてまだ別途必要。v1 / v2 の envelope や旧 stack shape は migration せず拒否する。
 - かまど / 醸造 / 金床 → **現行 `mc-kernel` 語彙の範囲を実装済み**（`domain/smelting.ts`、
   `domain/brewing.ts`、mc-kernel の anvil API）。醸造は `STARTER_BREWING_RECIPES` の4レシピを
   提供し、セーブ境界は `domain/save-data.ts` / `application/save-service.ts` にある。

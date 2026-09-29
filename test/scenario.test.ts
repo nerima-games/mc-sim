@@ -19,6 +19,7 @@ import { Effect, Layer, Ref } from 'effect'
 import { forwardVector, snapshotAgeSecs } from '../src/domain/camera-pose'
 import { DeltaTimeSecs, EpochMillis, MonotonicTimeSecs, position } from '@nerima-games/mc-kernel'
 import { craftGrid } from '../src/domain/recipe'
+import { itemStack } from '../src/domain/inventory'
 import { ClockPort, FixedClockLayer } from '@nerima-games/mc-kernel'
 import {
   InventoryService,
@@ -121,7 +122,7 @@ describe('deterministic scenario: spawn -> look -> mine -> assert', () => {
         expect(yield* inventory.craft(craftGrid(1, 1, ['oak_log']))).toStrictEqual({
           _tag: 'Crafted',
           recipeId: 'mc-sim:oak-planks',
-          output: { item: 'oak_planks', count: 4 },
+          output: itemStack('oak_planks', 4),
         })
         expect(yield* inventory.countOf('oak_log')).toBe(0)
         expect(yield* inventory.countOf('oak_planks')).toBe(4)
@@ -132,7 +133,7 @@ describe('deterministic scenario: spawn -> look -> mine -> assert', () => {
         expect(yield* inventory.craft(craftGrid(1, 2, ['oak_planks', 'oak_planks']))).toStrictEqual({
           _tag: 'Crafted',
           recipeId: 'mc-sim:stick',
-          output: { item: 'stick', count: 4 },
+          output: itemStack('stick', 4),
         })
         expect(yield* inventory.countOf('oak_planks')).toBe(2)
         expect(yield* inventory.countOf('stick')).toBe(4)

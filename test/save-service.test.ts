@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect, Option } from 'effect'
+import { itemComponentPatch, itemStack } from '@nerima-games/mc-kernel'
 import { InMemoryStorageLayer, saveEnvelope, sealSaveEnvelope, StoragePort } from '@nerima-games/mc-save'
 import {
   listSimulationSaves,
@@ -15,7 +16,7 @@ const save: SimulationSave = {
   player: {
     position: { x: 3.5, y: 64, z: -7.25 },
     inventory: [
-      { item: 'iron_ingot', count: 12 },
+      itemStack('iron_ingot', 12),
       null,
     ],
     selectedHotbarSlot: 2,
@@ -42,6 +43,35 @@ describe('simulation save service', () => {
     }).pipe(Effect.provide(storage)),
   )
 
+  it.effect('round-trips canonical components without changing their bytes', () =>
+    Effect.gen(function* () {
+      const key = simulationSaveKey('world:canonical')
+      const canonical = itemStack('book', 1, {
+        componentPatch: itemComponentPatch({ 'minecraft:lore': [{ text: 'canonical' }] }),
+      })
+      const value: SimulationSave = {
+        ...save,
+        player: { ...save.player, inventory: [canonical, null] },
+      }
+      const storagePort = yield* StoragePort
+
+      yield* saveSimulation(key, value)
+      const stored = yield* storagePort.get(key)
+      const loaded = yield* loadSimulation(key)
+
+      expect(Option.isSome(stored)).toBe(true)
+      expect(loaded).toStrictEqual(Option.some(value))
+      const firstPayload = JSON.stringify(Option.getOrThrow(stored).payload)
+      const loadedValue = Option.getOrThrow(loaded)
+      expect(loadedValue).toStrictEqual(value)
+
+      const secondKey = simulationSaveKey('world:canonical-copy')
+      yield* saveSimulation(secondKey, loadedValue)
+      const copied = yield* storagePort.get(secondKey)
+      expect(JSON.stringify(Option.getOrThrow(copied).payload)).toBe(firstPayload)
+    }).pipe(Effect.provide(storage)),
+  )
+
   it.effect('treats an absent key as a new world', () =>
     Effect.gen(function* () {
       expect(yield* loadSimulation(simulationSaveKey('world:missing'))).toStrictEqual(Option.none())
@@ -61,7 +91,7 @@ describe('simulation save service', () => {
 
       expect(result._tag).toBe('Left')
       if (result._tag === 'Left') {
-        expect(String(result.left.cause)).toContain('expected an item registered by mc-kernel')
+        expect(String(result.left.cause)).toContain('expected a canonical ItemStack from mc-kernel')
       }
     }).pipe(Effect.provide(storage)),
   )
@@ -81,25 +111,27 @@ describe('simulation save service', () => {
   // mc-save 0.3.0 removed the migration chain (README.md "旧版セーブを現行版へ自動変換する
   // migration chain は提供しません"): a save at any version other than the format's
   // current version is a decode error, not something loadFrom silently upgrades.
-  // The old "migrates v1 saves to the v2 state shape" test asserted the opposite
+  // The old migration test asserted the opposite
   // and is gone with the feature it pinned; this asserts the new contract on a
-  // properly SEALED (not just malformed) v1 envelope, so the rejection is shown
+  // properly SEALED (not just malformed) v2 envelope, so the rejection is shown
   // to be about the version mismatch specifically, not a missing/invalid integrity.
-  it.effect('rejects a save written at a version older than the current format version', () =>
+  it.effect('rejects a v2 save without implicitly adding canonical components', () =>
     Effect.gen(function* () {
-      const key = simulationSaveKey('world:v1')
+      const key = simulationSaveKey('world:v2')
       const storagePort = yield* StoragePort
-      const v1Envelope = sealSaveEnvelope(
-        saveEnvelope('@nerima-games/mc-sim/simulation', 1, {
+      const v2Envelope = sealSaveEnvelope(
+        saveEnvelope('@nerima-games/mc-sim/simulation', 2, {
           dimension: 'overworld',
           tick: 20,
           player: {
             position: { x: 0, y: 64, z: 0 },
-            inventory: [null],
+            inventory: [{ item: 'iron_ingot', count: 1 }],
+            selectedHotbarSlot: 0,
           },
+          statistics: { counters: {}, unlocked: [] },
         }),
       )
-      yield* storagePort.put(key, v1Envelope)
+      yield* storagePort.put(key, v2Envelope)
 
       const result = yield* Effect.either(loadSimulation(key))
 
@@ -109,4 +141,34 @@ describe('simulation save service', () => {
       }
     }).pipe(Effect.provide(storage)),
   )
+
+  it.effect.each([
+    ['missing', {}],
+    ['null', { components: null }],
+    ['invalid', { components: { maxStackSize: 'not-a-number' } }],
+  ] as const)('rejects a v3 inventory stack with %s components', ([kind, stack]) =>
+    Effect.gen(function* () {
+      const key = simulationSaveKey(`world:v3-${kind}-components`)
+      const storagePort = yield* StoragePort
+      const v3Envelope = sealSaveEnvelope(
+        saveEnvelope('@nerima-games/mc-sim/simulation', 3, {
+          dimension: 'overworld',
+          tick: 20,
+          player: {
+            position: { x: 0, y: 64, z: 0 },
+            inventory: [{ item: 'iron_ingot', count: 1, ...stack }],
+            selectedHotbarSlot: 0,
+          },
+          statistics: { counters: {}, unlocked: [] },
+        }),
+      )
+      yield* storagePort.put(key, v3Envelope)
+
+      const result = yield* Effect.either(loadSimulation(key))
+
+      expect(result._tag).toBe('Left')
+      if (result._tag === 'Left') expect(result.left._tag).toBe('SaveDecodeError')
+    }).pipe(Effect.provide(storage)),
+  )
+
 })

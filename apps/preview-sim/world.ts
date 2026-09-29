@@ -60,6 +60,7 @@ import { makePlayerService } from '../../src/application/player-service'
 import { makeSettingsService } from '../../src/application/settings-service'
 import { makeStatisticsService } from '../../src/application/statistics-service'
 import { makeTimeService } from '../../src/application/time-service'
+import { itemStack } from '../../src/domain/inventory'
 import { makeVitalsService } from '../../src/application/vitals-service'
 import * as Camera from '../../src/domain/camera-pose'
 import {
@@ -75,7 +76,6 @@ import {
   EpochMillis,
   MonotonicTimeSecs,
   position,
-  StackCount,
   type CameraPoseSnapshot,
   type ClockService,
   type Settings,
@@ -481,7 +481,7 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
         const incoming: Inventory = {
           slots: Array.from({ length: action.slots }, (_unused, index) =>
             index === 0 && action.stack !== undefined
-              ? { item: action.stack.item, count: action.stack.count as StackCount }
+              ? itemStack(action.stack.item, action.stack.count)
               : undefined,
           ),
         }

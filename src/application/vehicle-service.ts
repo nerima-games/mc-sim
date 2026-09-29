@@ -1,6 +1,5 @@
 import { Context, Effect, Layer, Ref } from 'effect'
-import type { Position } from '@nerima-games/mc-kernel'
-import type { Dimension } from '@nerima-games/mc-worldgen'
+import { isDimension, type Dimension, type Position } from '@nerima-games/mc-kernel'
 import {
   emptyVehicleSnapshot,
   type OccupantId,
@@ -27,7 +26,6 @@ const operationError = (reason: VehicleOperationError['reason']): VehicleOperati
 })
 const validVector = (value: Position | VehicleVelocity): boolean =>
   Number.isFinite(value.x) && Number.isFinite(value.y) && Number.isFinite(value.z)
-const validDimension = (value: Dimension): boolean => value === 'overworld' || value === 'nether' || value === 'end'
 const update = (
   snapshot: VehicleSnapshot, id: VehicleId, valid: boolean, transform: (vehicle: Vehicle) => Vehicle,
 ): readonly [Effect.Effect<void, VehicleOperationError>, VehicleSnapshot] => {
@@ -70,7 +68,7 @@ export const makeVehicleService = (
     return {
       vehicles: Ref.get(state).pipe(Effect.map((snapshot) => snapshot.vehicles)),
       spawn: (type, dimension, position, yawRadians = 0) => modify((snapshot) => {
-        if ((type !== 'boat' && type !== 'minecart') || !validDimension(dimension) || !validVector(position) || !Number.isFinite(yawRadians))
+        if ((type !== 'boat' && type !== 'minecart') || !isDimension(dimension) || !validVector(position) || !Number.isFinite(yawRadians))
           return [Effect.fail(operationError('invalid-transform')), snapshot]
         const vehicle: Vehicle = {
           id: VehicleId(`v:${snapshot.nextSerial}`), type, dimension, position,
@@ -105,11 +103,11 @@ export const makeVehicleService = (
       }),
       updateVelocity: (id, velocity) => modify((snapshot) => update(snapshot, id, validVector(velocity), (vehicle) => ({ ...vehicle, velocity }))),
       updateTransform: (id, dimension, position, yawRadians) => modify((snapshot) =>
-        update(snapshot, id, validDimension(dimension) && validVector(position) && Number.isFinite(yawRadians), (vehicle) => ({ ...vehicle, dimension, position, yawRadians }))),
+        update(snapshot, id, isDimension(dimension) && validVector(position) && Number.isFinite(yawRadians), (vehicle) => ({ ...vehicle, dimension, position, yawRadians }))),
       updateState: (id, next) => modify((snapshot) => update(
         snapshot,
         id,
-        validDimension(next.dimension)
+        isDimension(next.dimension)
           && validVector(next.position)
           && validVector(next.velocity)
           && Number.isFinite(next.yawRadians),

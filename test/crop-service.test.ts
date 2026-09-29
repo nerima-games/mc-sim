@@ -17,6 +17,7 @@ import {
   MonotonicTimeSecs,
 } from '@nerima-games/mc-kernel'
 import { makeSimStages } from '../src/stages/registration'
+import { itemStack } from '../src/domain/inventory'
 
 const location = (
   x: number,
@@ -94,7 +95,7 @@ describe('crop service', () => {
       yield* stages[0]?.run(DeltaTimeSecs(POTATO_MATURITY_SECS - 1)) ?? Effect.void
       expect(yield* crops.matureYieldsAt(planted)).toBeNull()
       yield* stages[0]?.run(DeltaTimeSecs(1)) ?? Effect.void
-      expect(yield* crops.matureYieldsAt(planted)).toStrictEqual([{ item: 'potato', count: 2 }])
+      expect(yield* crops.matureYieldsAt(planted)).toStrictEqual([itemStack('potato', 2)])
     }).pipe(Effect.provide(ServicesLayer), Effect.provide(FrozenClockLayer)),
   )
 

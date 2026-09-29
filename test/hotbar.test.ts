@@ -86,18 +86,16 @@ describe('HotbarService', () => {
       const hotbar = yield* HotbarService
       const slots = yield* hotbar.getSlots
       expect(slots).toHaveLength(HOTBAR_SIZE)
-      expect(slots[0]).toStrictEqual({ item: 'stone', count: 4 })
+      expect(slots[0]).toStrictEqual(itemStack('stone', 4))
       expect(slots[1]).toBeUndefined()
       expect(slots[8]).toStrictEqual({
-        item: 'wooden_pickaxe',
-        count: 1,
+        ...itemStack('wooden_pickaxe', 1),
         durability: { current: 59, max: 59 },
       })
-      expect(yield* hotbar.getSelectedItem).toStrictEqual({ item: 'stone', count: 4 })
+      expect(yield* hotbar.getSelectedItem).toStrictEqual(itemStack('stone', 4))
       yield* hotbar.setSelectedSlot(8)
       expect(yield* hotbar.getSelectedItem).toStrictEqual({
-        item: 'wooden_pickaxe',
-        count: 1,
+        ...itemStack('wooden_pickaxe', 1),
         durability: { current: 59, max: 59 },
       })
     }).pipe(Effect.provide(serviceLayer())),

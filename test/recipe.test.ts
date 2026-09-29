@@ -543,10 +543,7 @@ describe('the ambiguity rule', () => {
 
       expect(match._tag).toBe('Match')
       expect(matchedId(column, AMBIGUOUS_RECIPES)).toBe('mc-sim:stick')
-      expect(match._tag === 'Match' ? match.output : undefined).toStrictEqual({
-        item: 'stick',
-        count: 4,
-      })
+      expect(match._tag === 'Match' ? match.output : undefined).toStrictEqual(itemStack('stick', 4))
     }),
   )
 
@@ -569,10 +566,7 @@ describe('the ambiguity rule', () => {
       const diagonal = gridOf('P ', ' P')
       expect(matchedId(diagonal, AMBIGUOUS_RECIPES)).toBe('test:stick-from-loose-planks')
       const match = matchRecipe(AMBIGUOUS_RECIPES, diagonal)
-      expect(match._tag === 'Match' ? match.output : undefined).toStrictEqual({
-        item: 'stick',
-        count: 2,
-      })
+      expect(match._tag === 'Match' ? match.output : undefined).toStrictEqual(itemStack('stick', 2))
     }),
   )
 

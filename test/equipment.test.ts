@@ -85,15 +85,38 @@ describe('equipment domain', () => {
   it.effect('constructs only valid catalog equipment with canonical durability', () =>
     Effect.sync(() => {
       expect(equipmentItem(itemStack('iron_boots', 1))).toStrictEqual({
-        item: 'iron_boots', count: 1, durability: { current: 195, max: 195 },
+        ...itemStack('iron_boots', 1), durability: { current: 195, max: 195 },
       })
       expect(() => equipmentItem(itemStack('stone', 1))).toThrow(RangeError)
       expect(equipmentItem(itemStack('bow', 1))).toStrictEqual({
-        item: 'bow', count: 1, durability: { current: 384, max: 384 },
+        ...itemStack('bow', 1), durability: { current: 384, max: 384 },
       })
       expect(() => equipmentItem({ ...itemStack('stone', 2), item: 'iron_helmet' })).toThrow(RangeError)
       expect(() => equipmentItem(itemStack('iron_helmet', 1), null)).toThrow(RangeError)
       expect(() => equipmentItem(itemStack('iron_helmet', 1), durability(64, 64))).toThrow(RangeError)
+    }),
+  )
+
+  it.effect('rejects legacy equipment snapshots without resolved components', () =>
+    Effect.sync(() => {
+      const legacy = {
+        slots: {
+          head: { item: 'iron_helmet', count: 1, durability: { current: 165, max: 165 } },
+          chest: null,
+          legs: null,
+          feet: null,
+          offhand: null,
+        },
+      }
+
+      expect(validateEquipmentSnapshot(legacy)).toStrictEqual({
+        _tag: 'Invalid',
+        error: {
+          _tag: 'EquipmentValidationError',
+          path: 'equipment.slots.head',
+          reason: 'expected null or the slot-compatible item with count 1 and exact durability',
+        },
+      })
     }),
   )
 
@@ -215,12 +238,12 @@ describe('equipment domain', () => {
       expect(validateEquipmentSnapshot(JSON.parse(JSON.stringify(valid)))._tag).toBe('Valid')
 
       const invalidItems = [
-        { item: 'stone', count: 1, durability: null },
-        { item: 'iron_helmet', count: 1, durability: { current: 165, max: 165 } },
-        { item: 'iron_boots', count: 2, durability: { current: 195, max: 195 } },
-        { item: 'iron_boots', count: 1, durability: { current: 0, max: 195 } },
-        { item: 'iron_boots', count: 1, durability: { current: 194, max: 194 } },
-        { item: 'iron_boots', count: 1, durability: { current: 195, max: 195 }, extra: true },
+        { ...itemStack('stone', 1), durability: null },
+        { ...itemStack('iron_helmet', 1), durability: { current: 165, max: 165 } },
+        { ...itemStack('iron_boots', 1), count: 2, durability: { current: 195, max: 195 } },
+        { ...itemStack('iron_boots', 1), durability: { current: 0, max: 195 } },
+        { ...itemStack('iron_boots', 1), durability: { current: 194, max: 194 } },
+        { ...itemStack('iron_boots', 1), durability: { current: 195, max: 195 }, extra: true },
       ]
       for (const item of invalidItems) {
         const snapshot = { slots: { ...valid.slots, feet: item } }
@@ -249,10 +272,27 @@ describe('equipment domain', () => {
       const step4 = equip(step3, 'feet', equipmentItem(itemStack('iron_boots', 1))).equipment
       const fullyEquipped = equip(step4, 'offhand', flint()).equipment
 
-      expect(validateEquipmentSnapshot(JSON.parse(JSON.stringify(fullyEquipped)))).toStrictEqual({
+      const serialized = JSON.parse(JSON.stringify(fullyEquipped))
+      expect(validateEquipmentSnapshot(serialized)).toStrictEqual({
         _tag: 'Valid',
-        equipment: fullyEquipped,
+        equipment: serialized,
       })
     }),
   )
+
+  it('requires canonical equipment items and rejects each malformed field', () => {
+    const base = emptyEquipment()
+    const durabilityValue = { current: 195, max: 195 }
+    expect(validateEquipmentSnapshot({
+      slots: { ...base.slots, feet: { ...itemStack('iron_boots', 1), durability: durabilityValue } },
+    })._tag).toBe('Valid')
+    for (const item of [
+      1,
+      { item: 1, count: 1, durability: durabilityValue },
+      { item: 'iron_boots', count: 1, durability: { current: 0, max: 195 } },
+      { item: 'iron_boots', count: 2, durability: durabilityValue },
+    ]) {
+      expect(validateEquipmentSnapshot({ slots: { ...base.slots, feet: item } })._tag).toBe('Invalid')
+    }
+  })
 })

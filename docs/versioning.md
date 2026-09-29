@@ -33,31 +33,42 @@ import と型宣言の両方を検証対象にする。
 
 ### 2.1 保存形式の版管理
 
-`SIMULATION_SAVE_FORMAT` の現行 version は 2。v2 はホットバーの選択状態と
-統計台帳（カウンタ / unlocked ID）を保存する。
+`SIMULATION_SAVE_FORMAT` の現行 version は 3。v3 はホットバーの選択状態、
+統計台帳（カウンタ / unlocked ID）、および解決済み canonical `ItemStack` の
+`components` を保存する。v2 はホットバーの選択状態と統計台帳（カウンタ / unlocked ID）を保存する。
 
 **`mc-save` 0.3.0 以降は migration chain を提供しない**（`mc-save` の README.md
 「旧版セーブを現行版へ自動変換する migration chain は提供しません」）。`loadFrom` は
 format の現行 version のみを要求し、それ以外の version で保存された envelope は
-`SaveDecodeError` として拒否される（サイレントな変換はしない）。v1 → v2 の自動移行は
+`SaveDecodeError` として拒否される（サイレントな変換はしない）。v1 / v2 の自動移行は
 0.2.2 世代の `mc-save` にのみ存在した機能で、`mc-save` を 0.3.0 に上げた時点で
 `SIMULATION_SAVE_FORMAT` からも撤去した。移行コード自体は git 履歴に残る。
 
 これは既存の公開 API を温存する互換アダプターではなく、保存形式そのものの版管理である。
-現時点のセーブは 0.x の開発用セーブであり、v1 形式のセーブを読めなくすることは許容している。
+現時点のセーブは 0.x の開発用セーブであり、v1 / v2 形式のセーブを読めなくすることは許容している。
 
 ## 3. 共有依存の直接利用
 
 共有語彙は各パッケージが所有し、mc-sim は公開 API を直接 import する。
 
 - `mc-kernel` はアイテム、ブロック、時計、金床などを提供する。
-- `mc-worldgen` はディメンションなどのワールド生成型を提供する。
+- `mc-kernel` はディメンションなどの共有ゲーム語彙を提供する。
+- `mc-worldgen` はチャンクなどのワールド生成型を提供する。
 - `mc-save` は保存フォーマットを提供する。
 - `mc-physics` は物理の計算と型を提供する。
 
 ローカルの共有語彙ファイルは削除済みである。複製を残すと、型検査では見えない Tag や閉じた union のずれが
 実行時に現れるためである。共有依存の更新は、上流パッケージの型・実行時挙動・このリポジトリ
 のテストを同時に確認する。
+
+### 3.1 kernel 0.8 / physics 0.3 / save 0.5 の下流契約
+
+この package は kernel の canonical `ItemStack`（`item` / `count` / 解決済み `components`）と
+`ItemSlot` の `undefined` 空表現をそのまま境界に使う。`count: 0`、未解決の `componentPatch`、
+stack metadata の sidecar は保存・搬送しない。フレーム入力は `DeltaTimeSecs`、固定時間は
+`FixedDurationSecs`、論理 tick は `SimulationTick` として扱い、ブランドを plain `number` に戻さない。
+physics の delta 定数・save の declaration strictness は各 package の公開 API に従い、互換レイヤーを
+追加しない。worldgen の pin と live chunk read/edit 移行は後続変更で扱う。
 
 **廃止（2026-08-30）**: 以前はここで `tsdown.config.ts` の `deps.alwaysBundle` により、TypeScript
 ソースとして公開される依存を実行時バンドルへ含めていた。ビルドが `tsc -p tsconfig.release.json`

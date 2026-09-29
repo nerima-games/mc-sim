@@ -21,14 +21,14 @@ plan.md §2.3-1 の分類でいう **名詞**。
 | インベントリ | スタックの置き場、追加/削除/照会、クラフト、ホットバーの9スロット投影 | 実装済 `domain/inventory.ts` / `domain/crafting.ts` / `application/inventory-service.ts` |
 | ホットバー選択 | 選択スロットの保持、直接選択、スクロール、選択中アイテム | 実装済 `domain/hotbar.ts` / `application/hotbar-service.ts`。入力イベントの解釈はホスト側 |
 | 体力 / 空腹 / XP | 数値状態と遷移（「何がダメージを与えるか」は持たない） | 実装済 `domain/vitals.ts` / `application/vitals-service.ts`。§3.4 |
-| 実績 / 統計 | **記録**（画面は mx-ui） | 実装済 `domain/statistics.ts` / `application/statistics-service.ts`。セーブは `SimulationSave` v2。§3.5 |
-| 時間 | `TimeService`。tick カウンタ、昼夜、月齢 | 実装済 `application/time-service.ts` |
+| 実績 / 統計 | **記録**（画面は mx-ui） | 実装済 `domain/statistics.ts` / `application/statistics-service.ts`。セーブは `SimulationSave` v3。§3.5 |
+| 時間 | `TimeService`。tick カウンタ、昼夜、月齢。入力は kernel の `DeltaTimeSecs`、固定 tick の語彙は kernel に従う | 実装済 `application/time-service.ts` |
 | 作物 | `CropService`。次元 + `BlockPosition` ごとの植栽・成長・除去状態 | 実装済 `domain/crop.ts` / `application/crop-service.ts` |
 | 爆発計画 | seed・距離減衰・耐性・遮蔽から破壊対象と entity effect を純粋計算する。具体的な変更はホストの `commit` コールバックへ 1 回だけ渡す | 実装済 `domain/explosion.ts` / `domain/primed-tnt.ts`。mc-physics 0.2.0 以降は mc-kernel 実装への re-export であり、責務としての所有（何を計算するか）はここに残るが、実装（どう計算するか）は物理側にある。公開 API §8 |
 | ゲームループ | フレーム駆動、開始/停止、再入可能な初期化 | 実装済 `application/game-loop.ts` |
 | 自動保存 | いつ保存するか（何を書くかは mc-save のフォーマット定義） | 実装済 `application/autosave.ts` |
 | **stage 登録** | `sim:physics` 1 本。`after` 制約は **0 本**（§2.1） | 実装済 `stages/registration.ts` |
-| 設定状態 | グラフィックス / 音量 / 操作の**値の保持**（画面は mx-ui、適用は各所） | 実装済 `application/settings-service.ts`。型と規則は mc-kernel。§3.6 |
+| 設定状態 | グラフィックス / 音量 / 操作の**値の保持**（画面は mx-ui、適用は各所） | 実装済 `application/settings-service.ts`。型と規則は mc-kernel 0.8 の公開値モデル。§3.6 |
 | ~~チャンクダーティ通知~~ | **mc-worldgen に移った**（`ChunkStore.subscribeDirty`）。mc-sim は中継しない — §3.3 | — |
 | レシピ / クラフト状態 | レシピ表とクラフト結果の状態（画面は mx-ui） | 実装済 `domain/recipe-data.ts` / `domain/recipe.ts` / `domain/crafting.ts` / `application/inventory-service.ts`。§3.1 |
 
@@ -273,10 +273,11 @@ plan.md §2.3-1 の「採掘→インベントリに入る」は sim 経由、�
    （`achievement/achievement.ts:10-44`）。**世界に対する述語の表はルール表である。**
    mc-sim は `unlock` と言われて記録するだけで、レジストリも述語も持たない。
 
-保存境界は `domain/save-data.ts` の `SimulationSave` v2 である。
+保存境界は `domain/save-data.ts` の `SimulationSave` v3 である。
 `player.selectedHotbarSlot`（0..8）と `statistics.counters` /
-`statistics.unlocked` を保存する。v1 のセーブは `mc-save` の v1→v2 migration
-で初期選択 0 と空の台帳へ移行する。これは公開 API の互換アダプターではなく、保存形式の版管理である。
+`statistics.unlocked`、および inventory の canonical `ItemStack`（`components` 必須）を保存する。
+v1 / v2 の envelope と components を持たない旧 stack shape は `mc-save` の migration chain を使わず
+typed `SaveDecodeError` として拒否する。これは公開 API の互換アダプターではなく、保存形式の版管理である。
 
 **カウンタが名前付きフィールドではなく開いた map なのはなぜか。** 参照実装の
 `Statistics` は 8 つの名前付きフィールドを持つ（`statistics/statistics.ts:9-18`）が、

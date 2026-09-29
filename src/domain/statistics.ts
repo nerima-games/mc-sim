@@ -1,3 +1,7 @@
+import type { AchievementId, StatisticKey, Statistics } from '@nerima-games/mc-kernel'
+
+export type { AchievementId, StatisticKey, Statistics } from '@nerima-games/mc-kernel'
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
@@ -53,35 +57,6 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
  * learning the vocabulary, and this repository has twice decided that the
  * vocabulary is the more expensive thing to hold.
  */
-
-/**
- * What is being counted, as an opaque string.
- *
- * Not a union and not branded, for the reason `DamageCause` in
- * `domain/vitals.ts` is neither: a branded constructor would have to decide what
- * a valid key looks like, and mc-sim has no basis for that decision. Keys are
- * written by the tier that knows what happened and read by the screen that
- * displays it; mc-sim is the ledger in between and reads none of them.
- */
-export type StatisticKey = string
-
-/** An achievement's identity. Opaque here, for the same reason. */
-export type AchievementId = string
-
-export type Statistics = {
-  readonly counters: Readonly<Record<StatisticKey, number>>
-  /**
-   * Unlocked achievements, in UNLOCK ORDER.
-   *
-   * An array rather than a `Set`, and the order is the point: 「what did I just
-   * earn」 is what an achievement toast and a recently-unlocked list both need,
-   * and a `Set` re-serialised through a save file has no order to give back.
-   * Membership is therefore an O(n) scan, which is the right trade at this size
-   * — the reference's whole registry is a handful of entries, and the scan runs
-   * on unlock rather than per frame.
-   */
-  readonly unlocked: ReadonlyArray<AchievementId>
-}
 
 export const EMPTY_STATISTICS: Statistics = { counters: {}, unlocked: [] }
 

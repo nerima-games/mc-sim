@@ -1,5 +1,5 @@
 import type { ItemStack } from './inventory.js'
-import { isItemType, type ItemType } from '@nerima-games/mc-kernel'
+import { isItemStack, type ItemType } from '@nerima-games/mc-kernel'
 
 export const EQUIPMENT_SLOTS = ['head', 'chest', 'legs', 'feet', 'offhand'] as const
 
@@ -148,8 +148,8 @@ export const isDurability = (value: unknown): value is Durability => {
 }
 
 const isEquipmentItemShape = (value: unknown): value is EquipmentItem => {
-  if (!isRecord(value) || !hasExactKeys(value, ['item', 'count', 'durability'])) return false
-  return typeof value['item'] === 'string' && isItemType(value['item']) &&
+  if (!isRecord(value) || !hasExactKeys(value, ['item', 'count', 'components', 'durability'])) return false
+  return isItemStack({ item: value['item'], count: value['count'], components: value['components'] }) &&
     value['count'] === 1 &&
     (value['durability'] === null || isDurability(value['durability']))
 }

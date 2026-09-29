@@ -17,9 +17,10 @@ import {
   emptyInventory,
   INVENTORY_SLOT_COUNT,
   itemStack,
+  maxStackCountForItem,
   type Inventory,
 } from '../src/domain/inventory'
-import { MAX_STACK_COUNT, type ItemType } from '@nerima-games/mc-kernel'
+import type { ItemType } from '@nerima-games/mc-kernel'
 import { craftGrid, shapelessRecipe, type CraftGrid } from '../src/domain/recipe'
 import { STARTER_RECIPES } from '../src/domain/recipe-data'
 
@@ -131,7 +132,7 @@ describe('craftFromGrid', () => {
       expect(after.result).toStrictEqual({
         _tag: 'Crafted',
         recipeId: 'mc-sim:eye-of-ender',
-        output: { item: 'eye_of_ender', count: 1 },
+        output: itemStack('eye_of_ender', 1),
       })
       expect(countOf(after.inventory, 'ender_pearl')).toBe(0)
       expect(countOf(after.inventory, 'blaze_powder')).toBe(0)
@@ -162,7 +163,7 @@ describe('craftFromGrid', () => {
       expect(after.result).toStrictEqual({
         _tag: 'Crafted',
         recipeId: 'mc-sim:stick',
-        output: { item: 'stick', count: 4 },
+        output: itemStack('stick', 4),
       })
       expect(countOf(after.inventory, 'oak_planks')).toBe(8)
       expect(countOf(after.inventory, 'stick')).toBe(4)
@@ -180,7 +181,7 @@ describe('craftFromGrid', () => {
       expect(after.result).toStrictEqual({
         _tag: 'Crafted',
         recipeId: 'mc-sim:chest',
-        output: { item: 'chest', count: 1 },
+        output: itemStack('chest', 1),
       })
       expect(countOf(after.inventory, 'oak_planks')).toBe(2)
       expect(countOf(after.inventory, 'chest')).toBe(1)
@@ -205,14 +206,14 @@ describe('craftFromGrid', () => {
   it.effect('a chest craft with a full output inventory consumes nothing', () =>
     Effect.sync(() => {
       const before = stocked([
-        ['dirt', (INVENTORY_SLOT_COUNT - 1) * MAX_STACK_COUNT],
-        ['oak_planks', MAX_STACK_COUNT],
+        ['dirt', (INVENTORY_SLOT_COUNT - 1) * maxStackCountForItem('dirt')],
+        ['oak_planks', maxStackCountForItem('oak_planks')],
       ])
       const after = craftFromGrid(before, STARTER_RECIPES, gridOf('PPP', 'P P', 'PPP'))
 
       expect(after.result).toStrictEqual({ _tag: 'NoRoom' })
       expect(after.inventory).toBe(before)
-      expect(countOf(after.inventory, 'oak_planks')).toBe(MAX_STACK_COUNT)
+      expect(countOf(after.inventory, 'oak_planks')).toBe(maxStackCountForItem('oak_planks'))
       expect(countOf(after.inventory, 'chest')).toBe(0)
     }),
   )
@@ -228,7 +229,7 @@ describe('craftFromGrid', () => {
       expect(after.result).toStrictEqual({
         _tag: 'Crafted',
         recipeId: 'mc-sim:stone-pickaxe',
-        output: { item: 'stone_pickaxe', count: 1 },
+        output: itemStack('stone_pickaxe', 1),
       })
       expect(countOf(after.inventory, 'cobblestone')).toBe(0)
       expect(countOf(after.inventory, 'stick')).toBe(0)
@@ -259,16 +260,16 @@ describe('craftFromGrid', () => {
   it.effect('a stone pickaxe craft with a full output inventory consumes nothing', () =>
     Effect.sync(() => {
       const before = stocked([
-        ['dirt', (INVENTORY_SLOT_COUNT - 2) * MAX_STACK_COUNT],
-        ['cobblestone', MAX_STACK_COUNT],
-        ['stick', MAX_STACK_COUNT],
+        ['dirt', (INVENTORY_SLOT_COUNT - 2) * maxStackCountForItem('dirt')],
+        ['cobblestone', maxStackCountForItem('cobblestone')],
+        ['stick', maxStackCountForItem('stick')],
       ])
       const after = craftFromGrid(before, STARTER_RECIPES, gridOf('CCC', ' S ', ' S '))
 
       expect(after.result).toStrictEqual({ _tag: 'NoRoom' })
       expect(after.inventory).toBe(before)
-      expect(countOf(after.inventory, 'cobblestone')).toBe(MAX_STACK_COUNT)
-      expect(countOf(after.inventory, 'stick')).toBe(MAX_STACK_COUNT)
+      expect(countOf(after.inventory, 'cobblestone')).toBe(maxStackCountForItem('cobblestone'))
+      expect(countOf(after.inventory, 'stick')).toBe(maxStackCountForItem('stick'))
       expect(countOf(after.inventory, 'stone_pickaxe')).toBe(0)
     }),
   )
@@ -284,7 +285,7 @@ describe('craftFromGrid', () => {
       expect(after.result).toStrictEqual({
         _tag: 'Crafted',
         recipeId: 'mc-sim:iron-pickaxe',
-        output: { item: 'iron_pickaxe', count: 1 },
+        output: itemStack('iron_pickaxe', 1),
       })
       expect(countOf(after.inventory, 'iron_ingot')).toBe(0)
       expect(countOf(after.inventory, 'stick')).toBe(0)
@@ -315,16 +316,16 @@ describe('craftFromGrid', () => {
   it.effect('an iron pickaxe craft with a full output inventory consumes nothing', () =>
     Effect.sync(() => {
       const before = stocked([
-        ['dirt', (INVENTORY_SLOT_COUNT - 2) * MAX_STACK_COUNT],
-        ['iron_ingot', MAX_STACK_COUNT],
-        ['stick', MAX_STACK_COUNT],
+        ['dirt', (INVENTORY_SLOT_COUNT - 2) * maxStackCountForItem('dirt')],
+        ['iron_ingot', maxStackCountForItem('iron_ingot')],
+        ['stick', maxStackCountForItem('stick')],
       ])
       const after = craftFromGrid(before, STARTER_RECIPES, gridOf('III', ' S ', ' S '))
 
       expect(after.result).toStrictEqual({ _tag: 'NoRoom' })
       expect(after.inventory).toBe(before)
-      expect(countOf(after.inventory, 'iron_ingot')).toBe(MAX_STACK_COUNT)
-      expect(countOf(after.inventory, 'stick')).toBe(MAX_STACK_COUNT)
+      expect(countOf(after.inventory, 'iron_ingot')).toBe(maxStackCountForItem('iron_ingot'))
+      expect(countOf(after.inventory, 'stick')).toBe(maxStackCountForItem('stick'))
       expect(countOf(after.inventory, 'iron_pickaxe')).toBe(0)
     }),
   )
@@ -340,7 +341,7 @@ describe('craftFromGrid', () => {
       expect(after.result).toStrictEqual({
         _tag: 'Crafted',
         recipeId: 'mc-sim:diamond-pickaxe',
-        output: { item: 'diamond_pickaxe', count: 1 },
+        output: itemStack('diamond_pickaxe', 1),
       })
       expect(countOf(after.inventory, 'diamond')).toBe(0)
       expect(countOf(after.inventory, 'stick')).toBe(0)
@@ -371,16 +372,16 @@ describe('craftFromGrid', () => {
   it.effect('a diamond pickaxe craft with a full output inventory consumes nothing', () =>
     Effect.sync(() => {
       const before = stocked([
-        ['dirt', (INVENTORY_SLOT_COUNT - 2) * MAX_STACK_COUNT],
-        ['diamond', MAX_STACK_COUNT],
-        ['stick', MAX_STACK_COUNT],
+        ['dirt', (INVENTORY_SLOT_COUNT - 2) * maxStackCountForItem('dirt')],
+        ['diamond', maxStackCountForItem('diamond')],
+        ['stick', maxStackCountForItem('stick')],
       ])
       const after = craftFromGrid(before, STARTER_RECIPES, gridOf('MMM', ' S ', ' S '))
 
       expect(after.result).toStrictEqual({ _tag: 'NoRoom' })
       expect(after.inventory).toBe(before)
-      expect(countOf(after.inventory, 'diamond')).toBe(MAX_STACK_COUNT)
-      expect(countOf(after.inventory, 'stick')).toBe(MAX_STACK_COUNT)
+      expect(countOf(after.inventory, 'diamond')).toBe(maxStackCountForItem('diamond'))
+      expect(countOf(after.inventory, 'stick')).toBe(maxStackCountForItem('stick'))
       expect(countOf(after.inventory, 'diamond_pickaxe')).toBe(0)
     }),
   )
@@ -397,7 +398,7 @@ describe('craftFromGrid', () => {
         expect(after.result).toStrictEqual({
           _tag: 'Crafted',
           recipeId,
-          output: { item: output, count: 1 },
+          output: itemStack(output, 1),
         })
         expect(countOf(after.inventory, material)).toBe(0)
         expect(countOf(after.inventory, 'stick')).toBe(0)
@@ -415,7 +416,7 @@ describe('craftFromGrid', () => {
         expect(after.result).toStrictEqual({
           _tag: 'Crafted',
           recipeId,
-          output: { item: output, count: 1 },
+          output: itemStack(output, 1),
         })
         expect(countOf(after.inventory, 'iron_ingot')).toBe(0)
         expect(countOf(after.inventory, output)).toBe(1)
@@ -443,14 +444,14 @@ describe('craftFromGrid', () => {
     Effect.sync(() => {
       for (const { output, rows } of IRON_ARMOR_CRAFTS) {
         const before = stocked([
-          ['dirt', (INVENTORY_SLOT_COUNT - 1) * MAX_STACK_COUNT],
-          ['iron_ingot', MAX_STACK_COUNT],
+          ['dirt', (INVENTORY_SLOT_COUNT - 1) * maxStackCountForItem('dirt')],
+          ['iron_ingot', maxStackCountForItem('iron_ingot')],
         ])
         const after = craftFromGrid(before, STARTER_RECIPES, gridOf(...rows))
 
         expect(after.result).toStrictEqual({ _tag: 'NoRoom' })
         expect(after.inventory).toBe(before)
-        expect(countOf(after.inventory, 'iron_ingot')).toBe(MAX_STACK_COUNT)
+        expect(countOf(after.inventory, 'iron_ingot')).toBe(maxStackCountForItem('iron_ingot'))
         expect(countOf(after.inventory, output)).toBe(0)
       }
     }),
@@ -492,14 +493,14 @@ describe('craftFromGrid', () => {
       // not free the slot, and four sticks have nowhere to go. Consuming here
       // and failing to produce would delete two planks.
       const before = stocked([
-        ['dirt', (INVENTORY_SLOT_COUNT - 1) * MAX_STACK_COUNT],
-        ['oak_planks', MAX_STACK_COUNT],
+        ['dirt', (INVENTORY_SLOT_COUNT - 1) * maxStackCountForItem('dirt')],
+        ['oak_planks', maxStackCountForItem('oak_planks')],
       ])
       const after = craftFromGrid(before, STARTER_RECIPES, STICK_GRID)
 
       expect(after.result).toStrictEqual({ _tag: 'NoRoom' })
       expect(after.inventory).toBe(before)
-      expect(countOf(after.inventory, 'oak_planks')).toBe(MAX_STACK_COUNT)
+      expect(countOf(after.inventory, 'oak_planks')).toBe(maxStackCountForItem('oak_planks'))
       expect(countOf(after.inventory, 'stick')).toBe(0)
     }),
   )
@@ -510,7 +511,7 @@ describe('craftFromGrid', () => {
       // craft spends. Checking for room first would refuse this — which is
       // precisely when a player crafts: to make room.
       const before = stocked([
-        ['dirt', (INVENTORY_SLOT_COUNT - 1) * MAX_STACK_COUNT],
+        ['dirt', (INVENTORY_SLOT_COUNT - 1) * maxStackCountForItem('dirt')],
         ['oak_planks', 2],
       ])
       const after = craftFromGrid(before, STARTER_RECIPES, STICK_GRID)
@@ -569,7 +570,7 @@ describe('InventoryService.craft', () => {
       expect(yield* service.craft(gridOf('L'))).toStrictEqual({
         _tag: 'Crafted',
         recipeId: 'mc-sim:oak-planks',
-        output: { item: 'oak_planks', count: 4 },
+        output: itemStack('oak_planks', 4),
       })
       expect(yield* service.countOf('oak_log')).toBe(0)
       expect(yield* service.countOf('oak_planks')).toBe(4)

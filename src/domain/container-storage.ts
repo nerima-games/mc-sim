@@ -1,6 +1,6 @@
 import * as Eq from './equipment.js'
 import * as Inv from './inventory.js'
-import { isItemType, StackCount } from '@nerima-games/mc-kernel'
+import { isItemStack, isItemType, itemStacksCanMerge, maxStackCountForStack } from '@nerima-games/mc-kernel'
 import * as Player from './player-storage.js'
 
 export type ContainerKind = 'chest' | 'shulker_box' | 'dispenser' | 'dropper' | 'hopper'
@@ -8,7 +8,7 @@ export type ContainerKind = 'chest' | 'shulker_box' | 'dispenser' | 'dropper' | 
 export const CHEST_CONTAINER_CAPACITY = 27 as const
 export const DISPENSER_CONTAINER_CAPACITY = 9 as const
 export const HOPPER_CONTAINER_CAPACITY = 5 as const
-export const CONTAINER_STORAGE_SNAPSHOT_VERSION = 2 as const
+export const CONTAINER_STORAGE_SNAPSHOT_VERSION = 3 as const
 
 export type ContainerId = string
 
@@ -160,8 +160,16 @@ const copyDurability = (value: Eq.Durability | null): Eq.Durability | null =>
   value === null ? null : { ...value }
 
 const copyStack = (stack: ContainerStoredStack): ContainerStoredStack => ({
-  item: stack.item,
-  count: stack.count,
+  ...stack,
+  durability: copyDurability(stack.durability),
+})
+
+const coreStack = (stack: ContainerStoredStack): Inv.ItemStack => ({
+  item: stack.item, count: stack.count, components: stack.components,
+})
+
+const storedWithCount = (stack: ContainerStoredStack, count: number): ContainerStoredStack => ({
+  ...Inv.itemStack(stack.item, count, { components: stack.components }),
   durability: copyDurability(stack.durability),
 })
 
@@ -242,13 +250,17 @@ type SlotValidation =
 
 const validateStoredSlot = (slot: unknown, slotPath: string): SlotValidation => {
   if (slot === null) return { _tag: 'Slot', slot: null }
-  if (!isRecord(slot) || !hasExactKeys(slot, ['item', 'count', 'durability']) ||
+  if (!isRecord(slot) ||
+      !hasExactKeys(slot, ['item', 'count', 'components', 'durability']) ||
       typeof slot['item'] !== 'string' || !isItemType(slot['item']))
     return { _tag: 'Invalid', error: invalidError(slotPath, 'expected a valid stored item stack') }
   const count = slot['count']
-  if (typeof count !== 'number' || !Number.isSafeInteger(count) || count <= 0 ||
-      count > Inv.maxStackCountForItem(slot['item']))
+  if (typeof count !== 'number' || !Number.isSafeInteger(count) || count <= 0)
     return { _tag: 'Invalid', error: invalidError(slotPath, 'expected a valid stored item stack') }
+  const candidate = { item: slot['item'], count, components: slot['components'] }
+  if (!isItemStack(candidate))
+    return { _tag: 'Invalid', error: invalidError(slotPath, 'expected a valid stored item stack') }
+  const stack = Inv.itemStack(candidate.item, candidate.count, { components: candidate.components })
   const durability = slot['durability']
   if (Eq.isDamageableItemType(slot['item'])) {
     if (!Eq.isValidDurabilityForItem(slot['item'], durability))
@@ -258,12 +270,12 @@ const validateStoredSlot = (slot: unknown, slotPath: string): SlotValidation => 
       }
     return {
       _tag: 'Slot',
-      slot: { item: slot['item'], count: StackCount(count), durability: { ...durability } },
+      slot: { ...stack, durability: { ...durability } },
     }
   }
   if (durability !== null)
     return { _tag: 'Invalid', error: invalidError(`${slotPath}.durability`, 'non-durable item requires null') }
-  return { _tag: 'Slot', slot: { item: slot['item'], count: StackCount(count), durability: null } }
+  return { _tag: 'Slot', slot: { ...stack, durability: null } }
 }
 
 type ContainerCandidateValidation =
@@ -332,10 +344,8 @@ const validContainerSlot = (container: Container, slot: number): boolean =>
   Number.isInteger(slot) && slot >= 0 && slot < container.slots.length
 
 const hasValidStoredStackShape = (value: unknown): value is ContainerStoredStack =>
-  isRecord(value) && hasExactKeys(value, ['item', 'count', 'durability']) &&
-  typeof value['item'] === 'string' && isItemType(value['item']) &&
-  typeof value['count'] === 'number' && Number.isSafeInteger(value['count']) && value['count'] > 0 &&
-  value['count'] <= Inv.maxStackCountForItem(value['item'])
+  isRecord(value) && hasExactKeys(value, ['item', 'count', 'components', 'durability']) &&
+  isItemStack({ item: value['item'], count: value['count'], components: value['components'] })
 
 const hasValidStoredStackDurability = (stack: ContainerStoredStack): boolean =>
   Eq.isDamageableItemType(stack.item)
@@ -393,9 +403,9 @@ const validateTransferStacks = (
   if (count > source.count)
     return { _tag: 'Invalid', result: { _tag: 'InsufficientSource', available: source.count } }
   if (destination !== null &&
-      (destination.item !== source.item || destination.durability !== null || source.durability !== null))
+      (!itemStacksCanMerge(coreStack(destination), coreStack(source)) || destination.durability !== null || source.durability !== null))
     return { _tag: 'Invalid', result: { _tag: 'DestinationMismatch' } }
-  if ((destination?.count ?? 0) + count > Inv.maxStackCountForItem(source.item))
+  if ((destination?.count ?? 0) + count > maxStackCountForStack(source))
     return { _tag: 'Invalid', result: { _tag: 'DestinationFull' } }
   return { _tag: 'Valid', source, destination: destination === null ? null : destination }
 }
@@ -433,8 +443,7 @@ export const transferContainerItem = (
 
   const remaining = validSource.count - request.count
   const moved: ContainerStoredStack = {
-    item: validSource.item,
-    count: StackCount((validDestination?.count ?? 0) + request.count),
+    ...Inv.itemStack(validSource.item, (validDestination?.count ?? 0) + request.count, { components: validSource.components }),
     durability: copyDurability(validSource.durability),
   }
   const playerSlots = [...playerStorage.inventory.slots]
@@ -443,14 +452,14 @@ export const transferContainerItem = (
   if (playerIsSource) {
     playerSlots[request.playerSlot] = remaining === 0
       ? undefined
-      : Inv.itemStack(validSource.item, remaining)
+      : Inv.itemStack(validSource.item, remaining, { components: validSource.components })
     playerDurability[request.playerSlot] = remaining === 0 ? null : copyDurability(validSource.durability)
     containerSlots[request.containerSlot] = moved
   } else {
     containerSlots[request.containerSlot] = remaining === 0
       ? null
-      : { ...validSource, count: StackCount(remaining), durability: copyDurability(validSource.durability) }
-    playerSlots[request.playerSlot] = Inv.itemStack(moved.item, moved.count)
+      : storedWithCount(validSource, remaining)
+    playerSlots[request.playerSlot] = Inv.itemStack(moved.item, moved.count, { components: moved.components })
     playerDurability[request.playerSlot] = copyDurability(moved.durability)
   }
   const containers = [...containerStorage.containers]
@@ -496,14 +505,14 @@ export const extractContainerItem = (
   const remaining = source.count - request.count
   slots[request.containerSlot] = remaining === 0
     ? null
-    : { ...source, count: StackCount(remaining), durability: copyDurability(source.durability) }
+    : storedWithCount(source, remaining)
   const containers = [...storage.containers]
   containers[containerIndex] = { ...container, slots }
   return {
     storage: { containers },
     result: {
       _tag: 'Extracted',
-      stack: { item: source.item, count: StackCount(request.count), durability: copyDurability(source.durability) },
+      stack: storedWithCount(source, request.count),
     },
   }
 }
@@ -524,9 +533,9 @@ const validateMoveStacks = (source: unknown, destination: unknown, count: number
   if (count > source.count)
     return { _tag: 'Invalid', result: { _tag: 'InsufficientSource', available: source.count } }
   if (destination !== null &&
-      (destination.item !== source.item || destination.durability !== null || source.durability !== null))
+      (!itemStacksCanMerge(coreStack(destination), coreStack(source)) || destination.durability !== null || source.durability !== null))
     return { _tag: 'Invalid', result: { _tag: 'DestinationMismatch' } }
-  if ((destination?.count ?? 0) + count > Inv.maxStackCountForItem(source.item))
+  if ((destination?.count ?? 0) + count > maxStackCountForStack(source))
     return { _tag: 'Invalid', result: { _tag: 'DestinationFull' } }
   return { _tag: 'Valid', source, destination: destination === null ? null : destination }
 }
@@ -588,12 +597,8 @@ export const moveContainerItem = (
   const remaining = validSource.count - request.count
   sourceSlots[request.sourceSlot] = remaining === 0
     ? null
-    : { ...validSource, count: StackCount(remaining), durability: copyDurability(validSource.durability) }
-  destinationSlots[request.destinationSlot] = {
-    item: validSource.item,
-    count: StackCount((validDestination?.count ?? 0) + request.count),
-    durability: copyDurability(validSource.durability),
-  }
+    : storedWithCount(validSource, remaining)
+  destinationSlots[request.destinationSlot] = storedWithCount(validSource, (validDestination?.count ?? 0) + request.count)
   const updatedContainers = [...storage.containers]
   updatedContainers[sourceIndex] = { ...sourceContainer, slots: sourceSlots }
   if (sourceIndex !== destinationIndex)

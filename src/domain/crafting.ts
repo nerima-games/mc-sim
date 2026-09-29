@@ -29,7 +29,7 @@
  * it arrives as inventory state with its own drop-on-close rule — not as a
  * change to this function.
  */
-import { addItem, countOf, removeItem, type Inventory, type ItemStack } from './inventory.js'
+import { addItemStack, countOf, removeItem, type Inventory, type ItemStack } from './inventory.js'
 import type { ItemType } from "@nerima-games/mc-kernel"
 import { cellAt, matchRecipe, type CraftGrid, type RecipeId, type RecipeTable } from './recipe.js'
 
@@ -118,7 +118,7 @@ export const craftFromGrid = (inventory: Inventory, table: RecipeTable, grid: Cr
     charged = removeItem(charged, item, needed).inventory
   }
 
-  const produced = addItem(charged, match.output.item, match.output.count)
+  const produced = addItemStack(charged, match.output)
   if (produced.leftover > 0) {
     return { inventory, result: { _tag: 'NoRoom' } }
   }

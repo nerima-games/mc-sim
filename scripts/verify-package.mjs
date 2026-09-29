@@ -173,6 +173,7 @@ const expectedExports = [
   'addExhaustion',
   'addExperience',
   'addItem',
+  'addItemStack',
   'addStoredStack',
   'advance',
   'advanceBrewing',

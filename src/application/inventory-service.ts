@@ -26,6 +26,7 @@ import {
   isValidSlotIndex,
   sameCarried,
   sameDurability,
+  sameStackIgnoringCount,
   validCarried,
   withCarriedSlots,
 } from './inventory-interaction.js'
@@ -426,10 +427,10 @@ export const makeInventoryService = (
           }, { ...current, player: withCarriedSlots(current.player, carriedSlots) }]
         }
 
-        if (source.item === target.item &&
+        if (sameStackIgnoringCount(source, target) &&
             sameDurability(source.durability, target.durability) &&
-            target.count < Inv.maxStackCountForItem(target.item)) {
-          const moved = Math.min(source.count, Inv.maxStackCountForItem(target.item) - target.count)
+            target.count < target.components.maxStackSize) {
+          const moved = Math.min(source.count, target.components.maxStackSize - target.count)
           const remaining = source.count - moved
           carriedSlots[targetIndex] = carriedWithCount(target, target.count + moved)
           carriedSlots[sourceIndex] = remaining === 0 ? undefined : carriedWithCount(source, remaining)
@@ -457,15 +458,16 @@ export const makeInventoryService = (
         let remaining = Number(source.count)
         for (let index = first; index < last && remaining > 0; index += 1) {
           const target = carriedSlots[index]
-          if (target?.item !== source.item || !sameDurability(target.durability, source.durability)) continue
-          const accepted = Math.min(remaining, Inv.maxStackCountForItem(source.item) - target.count)
+          if (target === undefined || !sameStackIgnoringCount(target, source) ||
+              !sameDurability(target.durability, source.durability)) continue
+          const accepted = Math.min(remaining, target.components.maxStackSize - target.count)
           if (accepted <= 0) continue
           carriedSlots[index] = carriedWithCount(target, target.count + accepted)
           remaining -= accepted
         }
         for (let index = first; index < last && remaining > 0; index += 1) {
           if (carriedSlots[index] !== undefined) continue
-          const accepted = Math.min(remaining, Inv.maxStackCountForItem(source.item))
+          const accepted = Math.min(remaining, source.components.maxStackSize)
           carriedSlots[index] = carriedWithCount(source, accepted)
           remaining -= accepted
         }

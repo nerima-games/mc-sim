@@ -32,10 +32,16 @@
  */
 import {
   isItemType,
-  maxStackCountOfItem,
-  StackCount,
+  isItemComponents,
+  itemStack,
+  itemStacksCanMerge,
+  maxStackCountForItem,
   type ItemType,
+  type ItemStack,
 } from '@nerima-games/mc-kernel'
+
+export { itemStack, maxStackCountForItem }
+export type { ItemStack }
 
 /*
  * THERE IS NO `ItemId` HERE ANY MORE.
@@ -57,29 +63,6 @@ import {
 
 /** Number of slots in the player's main inventory, hotbar included. */
 export const INVENTORY_SLOT_COUNT = 36
-
-export type ItemStack = {
-  readonly item: ItemType
-  readonly count: StackCount
-}
-
-/**
- * Build a stack, branding the count.
- *
- * The brand is applied HERE rather than at every literal, so an out-of-range
- * count fails at the place that names it (a recipe output of 65, say) instead of
- * flowing into a slot as a bare number. Contrast `addItem(count: number)`, which
- * deliberately does NOT brand: see DN-06 in docs/design-notes.md.
- */
-/** Per-item stack limit from kernel's canonical item registry. */
-export const maxStackCountForItem = (item: ItemType): number => maxStackCountOfItem(item)
-
-export const itemStack = (item: ItemType, count: number): ItemStack => {
-  if (count > maxStackCountForItem(item)) {
-    throw new RangeError(`Invalid stack count for ${item}: ${String(count)}`)
-  }
-  return { item, count: StackCount(count) }
-}
 
 /**
  * How many items a slot holds, as a plain number, for a slot that may itself be
@@ -112,10 +95,12 @@ const heldCount = (stack: ItemStack): number =>
  * this clamp — `emptyInventory`, `addItem` and `normaliseInventory` are the
  * only constructors, and all three respect each item's kernel-defined limit.
  */
-const derivedStackCount = (item: ItemType, count: number): StackCount =>
-  StackCount(
-    Math.min(maxStackCountForItem(item), Math.max(0, Math.floor(count))),
-  )
+const stackLimit = (stack: ItemStack): number =>
+  isItemComponents(stack.components) ? stack.components.maxStackSize : maxStackCountForItem(stack.item)
+
+const derivedStack = (stack: ItemStack, count: number): ItemStack =>
+  itemStack(stack.item, Math.min(stackLimit(stack), Math.max(1, Math.floor(count))),
+    isItemComponents(stack.components) ? { components: stack.components } : {})
 
 /** A slot is either empty (`undefined`) or holds a stack. */
 export type Slot = ItemStack | undefined
@@ -163,6 +148,37 @@ export type AddOutcome = {
  * branding the input would reject the very case this function exists to spread
  * across slots.
  */
+const addStack = (inventory: Inventory, stack: ItemStack, count: number): AddOutcome => {
+  const slots = [...inventory.slots]
+  let remaining = count
+
+  for (let index = 0; index < slots.length && remaining > 0; index += 1) {
+    const slot = slots[index]
+    if (slot === undefined || !itemStacksCanMerge(slot, stack)) {
+      continue
+    }
+    const held = heldCount(slot)
+    const maxStackCount = stackLimit(slot)
+    if (held >= maxStackCount) {
+      continue
+    }
+    const accepted = Math.min(maxStackCount - held, remaining)
+    slots[index] = derivedStack(slot, held + accepted)
+    remaining -= accepted
+  }
+
+  for (let index = 0; index < slots.length && remaining > 0; index += 1) {
+    if (slots[index] !== undefined) {
+      continue
+    }
+    const accepted = Math.min(stackLimit(stack), remaining)
+    slots[index] = derivedStack(stack, accepted)
+    remaining -= accepted
+  }
+
+  return { inventory: { slots }, leftover: remaining }
+}
+
 export const addItem = (inventory: Inventory, item: ItemType, count: number): AddOutcome => {
   if (!Number.isInteger(count) || count <= 0) {
     // A rejected quantity is reported as leftover, because the caller turns
@@ -173,35 +189,11 @@ export const addItem = (inventory: Inventory, item: ItemType, count: number): Ad
     return { inventory, leftover: Number.isFinite(count) ? Math.max(0, count) : 0 }
   }
 
-  const slots = [...inventory.slots]
-  let remaining = count
-
-  for (let index = 0; index < slots.length && remaining > 0; index += 1) {
-    const slot = slots[index]
-    if (slot === undefined || slot.item !== item) {
-      continue
-    }
-    const held = heldCount(slot)
-    const maxStackCount = maxStackCountForItem(item)
-    if (held >= maxStackCount) {
-      continue
-    }
-    const accepted = Math.min(maxStackCount - held, remaining)
-    slots[index] = { item, count: StackCount(held + accepted) }
-    remaining -= accepted
-  }
-
-  for (let index = 0; index < slots.length && remaining > 0; index += 1) {
-    if (slots[index] !== undefined) {
-      continue
-    }
-    const accepted = Math.min(maxStackCountForItem(item), remaining)
-    slots[index] = { item, count: StackCount(accepted) }
-    remaining -= accepted
-  }
-
-  return { inventory: { slots }, leftover: remaining }
+  return addStack(inventory, itemStack(item, 1), count)
 }
+
+export const addItemStack = (inventory: Inventory, stack: ItemStack): AddOutcome =>
+  addStack(inventory, stack, stack.count)
 
 export type RemoveOutcome = {
   readonly inventory: Inventory
@@ -259,7 +251,7 @@ export const removeItemAt = (
   const slots = [...inventory.slots]
   slots[slotIndex] = remaining === 0
     ? undefined
-    : { item: expectedItem, count: derivedStackCount(expectedItem, remaining) }
+    : derivedStack(slot, remaining)
   return { inventory: { slots }, result: { _tag: 'Removed', removed: count } }
 }
 
@@ -290,7 +282,7 @@ export const removeItem = (inventory: Inventory, item: ItemType, count: number):
     const held = heldCount(slot)
     const taken = Math.min(held, remaining)
     const left = held - taken
-    slots[index] = left === 0 ? undefined : { item, count: derivedStackCount(item, left) }
+    slots[index] = left === 0 ? undefined : derivedStack(slot, left)
     remaining -= taken
   }
 
@@ -380,7 +372,7 @@ export const normaliseInventory = (inventory: Inventory): NormaliseOutcome => {
   const slots: Array<Slot> = Array.from({ length: INVENTORY_SLOT_COUNT }, () => undefined)
   // A plain count, NOT a `StackCount`: a spilled quantity may legitimately
   // exceed one stack, which is precisely the input `addItem` takes unbranded.
-  const spilled: Array<{ readonly item: ItemType; readonly count: number }> = []
+  const spilled: Array<{ readonly stack: ItemStack; readonly count: number }> = []
   let discarded = 0
 
   inventory.slots.forEach((slot, index) => {
@@ -396,22 +388,19 @@ export const normaliseInventory = (inventory: Inventory): NormaliseOutcome => {
       return
     }
     if (index >= INVENTORY_SLOT_COUNT) {
-      spilled.push({ item: slot.item, count: held })
+      spilled.push({ stack: derivedStack(slot, 1), count: held })
       return
     }
-    const maxStackCount = maxStackCountForItem(slot.item)
-    slots[index] = {
-      item: slot.item,
-      count: derivedStackCount(slot.item, Math.min(held, maxStackCount)),
-    }
+    const maxStackCount = stackLimit(slot)
+    slots[index] = derivedStack(slot, Math.min(held, maxStackCount))
     if (held > maxStackCount) {
-      spilled.push({ item: slot.item, count: held - maxStackCount })
+      spilled.push({ stack: derivedStack(slot, 1), count: held - maxStackCount })
     }
   })
 
   return spilled.reduce<NormaliseOutcome>(
     (carried, stack) => {
-      const outcome = addItem(carried.inventory, stack.item, stack.count)
+      const outcome = addStack(carried.inventory, stack.stack, stack.count)
       return {
         inventory: outcome.inventory,
         leftover: carried.leftover + outcome.leftover,
