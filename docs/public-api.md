@@ -174,12 +174,12 @@ setDayLength(Number(''))   // 設定欄を空にした
 | `0.75` | 日没（`DUSK`） |
 
 したがって**夜は 0/1 境界を中心とする半日**であり、`isNight` はそのまま
-`fraction < 0.25 || fraction > 0.75` である（`domain/time-of-day.ts:117-120`）。
+`fraction < 0.25 || fraction > 0.75` である（`domain/time-of-day.ts:257-260`）。
 
 これは参照実装の規約であり、**新規ワールドが `ticks: 7200 / dayLengthTicks: 24000` = 0.30 から始まる理由でもある。**
 真夜中（0）から始めると夜の Mob 一式が新規プレイヤーの上にスポーンし、
 日光に耐性のある敵対 Mob がリスポーン地点に居座って、ワールド生成直後に回復不能なデスループになる
-（`domain/time-of-day.ts:77-92` が参照実装のコメントごと記録している）。0.30 は「朝方」である。
+（`domain/time-of-day.ts:90-105` が参照実装のコメントごと記録している）。0.30 は「朝方」である。
 
 この規約に合わせているのは mc-sim だけではない。`mx-gameplay/domain/day-night.ts` の
 `isNight` は本リポジトリの述語を**文字単位で同一に**再掲している。
@@ -633,7 +633,7 @@ shapeless、shaped の平行移動・左右鏡像・穴のあるパターン、3
 
 `sim:physics` は mc-physics の積分と衝突解決を順に呼び、その境界でのみ分かる
 「空中から接地へ遷移した瞬間」を 1 フレームの値として公開する。落下距離の追跡自体は
-mc-physics 0.2.0 の `advanceFallTracking` / `FallTrackingState` に委譲しており（旧: `stages/registration.ts`
+mc-physics の `advanceFallTracking` / `FallTrackingState` に委譲しており（旧: `stages/registration.ts`
 内のインライン計算）、下記の公開契約（`LandingImpact` の形と `Some`/`None` の遷移条件）は変わっていない。
 
 ```typescript
@@ -662,7 +662,7 @@ const resetLandingImpact: (state: SimFrameState) => Effect.Effect<void>
   stage 自身は mailbox の位置適用時と物理無効時に自動でリセットする。
 
 `SimPhysicsConfig.resolve`（= `@nerima-games/mc-physics` の `ResolveOptions`、
-`src/stages/registration.ts`）は mc-physics 0.2.0 で `isBlockSolid` を廃止し、必須の
+`src/stages/registration.ts`）は mc-physics が `isBlockSolid` を廃止し、必須の
 `blockPropertiesAt` と任意の `blockShapeAt` に置き換えた。`blockShapeAt` を渡すセルはそちらが
 全域的に支配し、形状が `null` でも `blockPropertiesAt` へフォールバックしない。ホストの旧
 `isBlockSolid` 相当の判定は `blockShapeAt` 側へ移す（`test/stage-registration.test.ts` の
@@ -705,13 +705,13 @@ mc-render は plan.md §2.1 に既にある `render → worldgen` エッジで�
 ## 6. 公開面と配布物
 
 公開ソースの入口は `src/index.ts` であり、配布物の入口は `package.json` の `exports` が指す
-`dist/index.mjs` と `dist/index.d.ts` である。公開面の変更は、個別のロックファイルではなく
+`dist/index.js` と `dist/index.d.ts` である。公開面の変更は、個別のロックファイルではなく
 ソース・パッケージ宣言・生成された配布物を同じ変更単位で確認する。
 
 | 確認対象 | 実施内容 |
 | --- | --- |
-| 公開型 | `pnpm typecheck` で source / test / preview の型を検査し、`dist/index.d.ts` を生成する |
-| 実行時入口 | `pnpm build` で ESM バンドルを生成し、Node 24 から `dist/index.mjs` を import する |
+| 公開型 | `pnpm typecheck` で source / test / preview の 3 プロジェクトを型検査する。検査のみで emit はしない |
+| 実行時入口 | `pnpm build` が `dist/index.d.ts` と ESM 実行物を生成し、Node 24 から `dist/index.js` を import する |
 | Effect サービス | `Context.Tag` と `Layer` の組み合わせを、公開 source と型宣言で確認する |
 | 挙動 | `pnpm test` と `pnpm test:coverage` で純粋な遷移・サービス境界・統合シナリオを検査する |
 | 依存境界 | `package.json` の直接依存、静的 import、TypeScript の型検査で所有パッケージを確認する |
@@ -725,12 +725,12 @@ mc-render は plan.md §2.1 に既にある `render → worldgen` エッジで�
 
 ### 6.2 宣言と挙動の役割分担
 
-宣言の破綻は `pnpm typecheck` と `pnpm build` が捕捉し、実行時のバンドル解決は Node 24 の
+宣言の破綻は `pnpm typecheck` と `pnpm build` が捕捉し、実行時のモジュール解決は Node 24 の
 公開入口 import で確認する。境界値、状態遷移、保存復元、サービス合成の回帰はテストが捕捉する。
 いずれか一方を公開 API の証拠にしない。
 
 公開面を変える変更では `src/index.ts`、`package.json` の `exports`、生成された
-`dist/index.d.ts` / `dist/index.mjs` の差分と、上表の検査結果を同じ変更単位でレビューする。
+`dist/index.d.ts` / `dist/index.js` の差分と、上表の検査結果を同じ変更単位でレビューする。
 
 ## 7. EntityManager —— エンティティ台帳
 
@@ -995,7 +995,7 @@ mc-sim と一緒に到着する」と書いているものが `countOfKind` で�
 
 ## 8. 爆発計画
 
-**mc-physics 0.2.0（mc-kernel 0.5.0）採用に伴う破壊的変更。** `domain/explosion.ts` /
+**mc-physics への委譲に伴う破壊的変更。** `domain/explosion.ts` /
 `domain/primed-tnt.ts` は独自実装（xorshift ベースの破壊ハッシュ）を廃止し、
 `@nerima-games/mc-physics`（= mc-kernel 実装）への named re-export に置き換わった。
 本節は**この新 API を現状として**記述する。旧実装からの非互換点:

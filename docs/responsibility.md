@@ -28,7 +28,7 @@ plan.md §2.3-1 の分類でいう **名詞**。
 | ゲームループ | フレーム駆動、開始/停止、再入可能な初期化 | 実装済 `application/game-loop.ts` |
 | 自動保存 | いつ保存するか（何を書くかは mc-save のフォーマット定義） | 実装済 `application/autosave.ts` |
 | **stage 登録** | `sim:physics` 1 本。`after` 制約は **0 本**（§2.1） | 実装済 `stages/registration.ts` |
-| 設定状態 | グラフィックス / 音量 / 操作の**値の保持**（画面は mx-ui、適用は各所） | 実装済 `domain/settings.ts` / `application/settings-service.ts`。§3.6 |
+| 設定状態 | グラフィックス / 音量 / 操作の**値の保持**（画面は mx-ui、適用は各所） | 実装済 `application/settings-service.ts`。型と規則は mc-kernel。§3.6 |
 | ~~チャンクダーティ通知~~ | **mc-worldgen に移った**（`ChunkStore.subscribeDirty`）。mc-sim は中継しない — §3.3 | — |
 | レシピ / クラフト状態 | レシピ表とクラフト結果の状態（画面は mx-ui） | 実装済 `domain/recipe-data.ts` / `domain/recipe.ts` / `domain/crafting.ts` / `application/inventory-service.ts`。§3.1 |
 
@@ -288,28 +288,33 @@ plan.md §2.3-1 の「採掘→インベントリに入る」は sim 経由、�
 
 ### 3.6 設定状態 —— 値の保持だけを持つ
 
-`domain/settings.ts` / `application/settings-service.ts`。**実装済。**
-括弧の中（画面は mx-ui、適用は各所）が境界のすべてである。読んで何かを決めるフィールドは
-ここに属さない。参照実装の `GRAPHICS_PRESETS` / `resolvePreset`
+`application/settings-service.ts`。**実装済。** `Settings` の型と既定値・正規化・キー割当の
+規則は `@nerima-games/mc-kernel` が所有する。ここが持つのは保持している値とサービスの面だけで、
+読んで何かを決めるフィールドはここに属さない。括弧の中（画面は mx-ui、適用は各所）が境界の
+残りである。参照実装の `GRAPHICS_PRESETS` / `resolvePreset`
 （`settings-service.config.ts:26-70`）は `'high'` を 14 個のレンダラつまみ
 （THREE のピクセル型定数を含む）に変える表であり、それは**適用**で mc-render のものである。
 
-参照実装の `SettingsSchema` は 18 フィールド。ここには 9 つある。**断った 9 つのほうが有用である。**
+`Settings` は 10 フィールドで、`@nerima-games/mc-kernel` の宣言どおりに保持する。mc-sim は
+スキーマを定義しない。下の表は参照実装が持つ広い方の面のうち、**ここには入らないもの**の記録であり、
+選んだのではなく所有しないという主張である。
 
-| 断ったもの | 理由 |
+| ここが持たないもの | 理由 |
 | --- | --- |
 | **`dayLengthSeconds`**（schema:54） | **これが重要。** 日長は既に mc-sim が持っている —— `TimeState` の**分母**であり、`domain/time-of-day.ts` はそれを変えると何が起きるかを説明するために存在している。ここにも置けば **1 つのリポジトリの中に 1 つの数の所有者が 2 人**いることになる。`mx-gameplay/docs/architecture.md:142-148` が記録している失敗と同じ形である。参照実装はまさにこれをやっており、そのミッドセッション `setDayLength` が `domain/time-of-day.ts` 冒頭に名指しされている live bug である |
 | `difficulty`（schema:55） | peaceful は「敵性 Mob がスポーンしない」「空腹でダメージを受けない」であり、どちら向きにもルール |
-| `reducedMotion` / `uiScale` / `colorVisionMode` / `audioCaptionsEnabled`（schema:56-65） | 消費者が全部画面。mx-ui は `domain/accessibility.ts` と `domain/caption.ts` を既に持つ。本行が挙げる 3 分類に**表示**は無い |
+| `reducedMotion` / `uiScale` / `colorVisionMode`（schema:56-65） | 消費者が全部画面。mx-ui は `domain/accessibility.ts` と `domain/caption.ts` を既に持つ。字幕だけは `captionsEnabled` という名前で値だけをここに置き、表示は mx-ui の責務とする |
 | `adaptivePerformanceMode`（schema:70） | グラフィックスの値ではあるが、これが有効化するのは **`graphicsQuality` を実行時に下げる mc-render のアルゴリズム**である。フラグをここに置きつつ隣のフィールドをあちらが書き換えるのは、mc-sim が持つ値の第 2 の書き手を作ることである |
 | `ResolvedGraphics`（schema:14-46） | 14 個のレンダラつまみ。適用 |
 
-**デフォルト値は測定ではなく転記である。** `renderDistance: 5` は参照実装で
+**デフォルト値は測定ではなく転記である。** 既定値そのものは `@nerima-games/mc-kernel` が
+宣言しており、ここは受け取って公開する。`renderDistance: 5` は参照実装で
 「the perf floor measured in the parity doc」を根拠にしているが、その文書は mc-sim に無く、
 その測定は mc-sim では繰り返せない。`mx-gameplay/docs/responsibility.md` §5-4 が要求する最低条件
 （転記であることを定数の doc comment に明記する）をそのまま満たしてある。
-`audioEnabled: false` は特に読み返す価値がある —— 参照実装の根拠は
-「audio causes noise during development and testing」であり、**プレイヤーではなく開発ループについての主張**である。
+`audioEnabled` の既定は `true` である。mc-sim ではなく kernel 側の判断であり、参照実装が
+「audio causes noise during development and testing」を理由に `false` にしていたものを
+実プレイヤー向けに寄せた結果である。**開発ループについての主張ではなく、プレイヤーの既定**である。
 
 **`SettingsService.reset` はここだけ意味が違う。** 他の 5 サービスの `reset` は
 「このワールドを捨てる」だが、設定はワールドではない。ワールド teardown 経路に繋いだホストは、
