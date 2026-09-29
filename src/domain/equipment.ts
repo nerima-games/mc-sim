@@ -1,5 +1,5 @@
 import type { ItemStack } from './inventory.js'
-import { isItemType, type ItemType } from '@nerima-games/mc-kernel'
+import { isItemStack, isItemType, itemStack, type ItemType } from '@nerima-games/mc-kernel'
 
 export const EQUIPMENT_SLOTS = ['head', 'chest', 'legs', 'feet', 'offhand'] as const
 
@@ -148,8 +148,8 @@ export const isDurability = (value: unknown): value is Durability => {
 }
 
 const isEquipmentItemShape = (value: unknown): value is EquipmentItem => {
-  if (!isRecord(value) || !hasExactKeys(value, ['item', 'count', 'durability'])) return false
-  return typeof value['item'] === 'string' && isItemType(value['item']) &&
+  if (!isRecord(value) || !hasExactKeys(value, ['item', 'count', 'components', 'durability'])) return false
+  return isItemStack({ item: value['item'], count: value['count'], components: value['components'] }) &&
     value['count'] === 1 &&
     (value['durability'] === null || isDurability(value['durability']))
 }
@@ -325,13 +325,18 @@ export const validateEquipmentSnapshot = (value: unknown): EquipmentValidationRe
       validatedSlots[slot] = null
       continue
     }
-    if (!isEquipmentItem(item) || !isEquipmentItemForSlot(slot, item)) {
+    const canonical = isRecord(item) && hasExactKeys(item, ['item', 'count', 'durability']) &&
+      typeof item['item'] === 'string' && isItemType(item['item']) && item['count'] === 1 &&
+      isDurability(item['durability'])
+      ? { ...itemStack(item['item'], 1), durability: item['durability'] }
+      : item
+    if (!isEquipmentItem(canonical) || !isEquipmentItemForSlot(slot, canonical)) {
       return invalid(
         `equipment.slots.${slot}`,
         'expected null or the slot-compatible item with count 1 and exact durability',
       )
     }
-    validatedSlots[slot] = copyEquipmentItem(item)
+    validatedSlots[slot] = copyEquipmentItem(canonical)
   }
 
   return {

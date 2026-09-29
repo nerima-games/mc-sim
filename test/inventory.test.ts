@@ -15,7 +15,7 @@ import {
   type Inventory,
 } from '../src/domain/inventory'
 import { containerIdAt } from '../src/domain/container-storage'
-import { MAX_STACK_COUNT, type ItemType, type StackCount } from '@nerima-games/mc-kernel'
+import { isItemType, type ItemType, type StackCount } from '@nerima-games/mc-kernel'
 import { makeInventoryService } from '../src/application/inventory-service'
 import type { InventoryClick } from '../src/index'
 
@@ -31,7 +31,11 @@ import type { InventoryClick } from '../src/index'
  * anything, and mc-save hands its parse straight back.
  */
 const corruptSlot = (item: string, count: number): Inventory => ({
-  slots: [{ item: item as ItemType, count: count as StackCount }, ...emptyInventory().slots.slice(1)],
+  slots: [{
+    ...(isItemType(item) ? itemStack(item, 1) : itemStack('stone', 1)),
+    item: item as ItemType,
+    count: count as StackCount,
+  }, ...emptyInventory().slots.slice(1)],
 })
 
 /**
@@ -66,7 +70,7 @@ describe('itemStack', () => {
       // DN-06: the brand is applied HERE so an out-of-range count fails at the
       // place that names it (a recipe output of 65, say) instead of flowing
       // into a slot as a bare number.
-      expect(() => itemStack('stone', 65)).toThrow('Invalid stack count for stone: 65')
+      expect(() => itemStack('stone', 65)).toThrow('Item stack count for stone must be an integer in [1, 64], received 65')
       expect(() => itemStack('stone', 65)).toThrow(RangeError)
       expect(() => itemStack('stone', 64)).not.toThrow()
     }),
@@ -81,7 +85,7 @@ describe('addItem', () => {
       const one = addItem(emptyInventory(), 'stone', 10)
       const two = addItem(one.inventory, 'stone', 10)
 
-      expect(slotAt(two.inventory, 0)).toStrictEqual({ item: 'stone', count: 20 })
+      expect(slotAt(two.inventory, 0)).toStrictEqual(itemStack('stone', 20))
       expect(slotAt(two.inventory, 1)).toBeUndefined()
       expect(two.leftover).toBe(0)
     }),
@@ -91,9 +95,9 @@ describe('addItem', () => {
     Effect.sync(() => {
       const outcome = addItem(emptyInventory(), 'cobblestone', 130)
 
-      expect(slotAt(outcome.inventory, 0)).toStrictEqual({ item: 'cobblestone', count: MAX_STACK_COUNT })
-      expect(slotAt(outcome.inventory, 1)).toStrictEqual({ item: 'cobblestone', count: MAX_STACK_COUNT })
-      expect(slotAt(outcome.inventory, 2)).toStrictEqual({ item: 'cobblestone', count: 2 })
+      expect(slotAt(outcome.inventory, 0)).toStrictEqual(itemStack('cobblestone', maxStackCountForItem('cobblestone')))
+      expect(slotAt(outcome.inventory, 1)).toStrictEqual(itemStack('cobblestone', maxStackCountForItem('cobblestone')))
+      expect(slotAt(outcome.inventory, 2)).toStrictEqual(itemStack('cobblestone', 2))
       expect(countOf(outcome.inventory, 'cobblestone')).toBe(130)
       expect(outcome.leftover).toBe(0)
     }),
@@ -108,20 +112,20 @@ describe('addItem', () => {
       expect(maxStackCountForItem('bucket')).toBe(16)
 
       const arrows = addItem(emptyInventory(), 'arrow', 65)
-      expect(slotAt(arrows.inventory, 0)).toStrictEqual({ item: 'arrow', count: 64 })
-      expect(slotAt(arrows.inventory, 1)).toStrictEqual({ item: 'arrow', count: 1 })
+      expect(slotAt(arrows.inventory, 0)).toStrictEqual(itemStack('arrow', 64))
+      expect(slotAt(arrows.inventory, 1)).toStrictEqual(itemStack('arrow', 1))
 
       const bows = addItem(emptyInventory(), 'bow', 2)
-      expect(slotAt(bows.inventory, 0)).toStrictEqual({ item: 'bow', count: 1 })
-      expect(slotAt(bows.inventory, 1)).toStrictEqual({ item: 'bow', count: 1 })
+      expect(slotAt(bows.inventory, 0)).toStrictEqual(itemStack('bow', 1))
+      expect(slotAt(bows.inventory, 1)).toStrictEqual(itemStack('bow', 1))
 
       const rods = addItem(emptyInventory(), 'fishing_rod', 2)
-      expect(slotAt(rods.inventory, 0)).toStrictEqual({ item: 'fishing_rod', count: 1 })
-      expect(slotAt(rods.inventory, 1)).toStrictEqual({ item: 'fishing_rod', count: 1 })
+      expect(slotAt(rods.inventory, 0)).toStrictEqual(itemStack('fishing_rod', 1))
+      expect(slotAt(rods.inventory, 1)).toStrictEqual(itemStack('fishing_rod', 1))
 
       const buckets = addItem(emptyInventory(), 'bucket', 17)
-      expect(slotAt(buckets.inventory, 0)).toStrictEqual({ item: 'bucket', count: 16 })
-      expect(slotAt(buckets.inventory, 1)).toStrictEqual({ item: 'bucket', count: 1 })
+      expect(slotAt(buckets.inventory, 0)).toStrictEqual(itemStack('bucket', 16))
+      expect(slotAt(buckets.inventory, 1)).toStrictEqual(itemStack('bucket', 1))
     }),
   )
 
@@ -129,12 +133,12 @@ describe('addItem', () => {
     Effect.sync(() => {
       // A full inventory is a game state, not an error: mx-gameplay turns the
       // leftover into a dropped-item entity, which is what a player expects.
-      const full = addItem(emptyInventory(), 'dirt', INVENTORY_SLOT_COUNT * MAX_STACK_COUNT)
+      const full = addItem(emptyInventory(), 'dirt', INVENTORY_SLOT_COUNT * maxStackCountForItem('dirt'))
       expect(full.leftover).toBe(0)
 
       const overflow = addItem(full.inventory, 'dirt', 5)
       expect(overflow.leftover).toBe(5)
-      expect(countOf(overflow.inventory, 'dirt')).toBe(INVENTORY_SLOT_COUNT * MAX_STACK_COUNT)
+      expect(countOf(overflow.inventory, 'dirt')).toBe(INVENTORY_SLOT_COUNT * maxStackCountForItem('dirt'))
     }),
   )
 
@@ -178,7 +182,7 @@ describe('removeItem', () => {
       const taken = removeItem(stocked, 'stone', 36)
 
       expect(taken.removed).toBe(36)
-      expect(slotAt(taken.inventory, 0)).toStrictEqual({ item: 'stone', count: MAX_STACK_COUNT })
+      expect(slotAt(taken.inventory, 0)).toStrictEqual(itemStack('stone', maxStackCountForItem('stone')))
       expect(slotAt(taken.inventory, 1)).toBeUndefined()
     }),
   )
@@ -219,9 +223,9 @@ describe('removeItem', () => {
 describe('removeItemAt', () => {
   const selectedAndLaterStone = (): Inventory => ({
     slots: [
-      { item: 'stone', count: 3 as StackCount },
+      itemStack('stone', 3),
       undefined,
-      { item: 'stone', count: 5 as StackCount },
+      itemStack('stone', 5),
       ...emptyInventory().slots.slice(3),
     ],
   })
@@ -231,8 +235,8 @@ describe('removeItemAt', () => {
       const outcome = removeItemAt(selectedAndLaterStone(), 0, 'stone', 2)
 
       expect(outcome.result).toStrictEqual({ _tag: 'Removed', removed: 2 })
-      expect(slotAt(outcome.inventory, 0)).toStrictEqual({ item: 'stone', count: 1 })
-      expect(slotAt(outcome.inventory, 2)).toStrictEqual({ item: 'stone', count: 5 })
+      expect(slotAt(outcome.inventory, 0)).toStrictEqual(itemStack('stone', 1))
+      expect(slotAt(outcome.inventory, 2)).toStrictEqual(itemStack('stone', 5))
     }),
   )
 
@@ -242,7 +246,7 @@ describe('removeItemAt', () => {
 
       expect(outcome.result).toStrictEqual({ _tag: 'Removed', removed: 3 })
       expect(slotAt(outcome.inventory, 0)).toBeUndefined()
-      expect(slotAt(outcome.inventory, 2)).toStrictEqual({ item: 'stone', count: 5 })
+      expect(slotAt(outcome.inventory, 2)).toStrictEqual(itemStack('stone', 5))
     }),
   )
 
@@ -293,7 +297,7 @@ describe('removeItemAt', () => {
  * one of them is being guarded here.
  */
 describe('REGRESSION: the domain is total on a corrupt slot, and never dies inside a frame', () => {
-  it.effect('removeItem does not throw on a slot holding more than MAX_STACK_COUNT', () =>
+  it.effect('removeItem does not throw on a slot holding more than its stack limit', () =>
     Effect.sync(() => {
       const corrupt = corruptSlot('stone', 200)
 
@@ -305,7 +309,7 @@ describe('REGRESSION: the domain is total on a corrupt slot, and never dies insi
       // loses the surplus, which is why this is the total path and not the
       // sanctioned one: `normaliseInventory` is what accounts for it, and
       // `InventoryService.restore` runs it before a slot like this can exist.
-      expect(slotAt(taken.inventory, 0)).toStrictEqual({ item: 'stone', count: MAX_STACK_COUNT })
+      expect(slotAt(taken.inventory, 0)).toStrictEqual(itemStack('stone', maxStackCountForItem('stone')))
     }),
   )
 
@@ -314,7 +318,7 @@ describe('REGRESSION: the domain is total on a corrupt slot, and never dies insi
       const taken = removeItem(corruptSlot('diamond_sword', 65), 'diamond_sword', 1)
 
       expect(taken.removed).toBe(1)
-      expect(slotAt(taken.inventory, 0)).toStrictEqual({ item: 'diamond_sword', count: 1 })
+      expect(slotAt(taken.inventory, 0)).toStrictEqual(itemStack('diamond_sword', 1))
     }),
   )
 
@@ -337,7 +341,7 @@ describe('REGRESSION: the domain is total on a corrupt slot, and never dies insi
 
       const fractional = removeItem(corruptSlot('stone', 7.5), 'stone', 3)
       expect(fractional.removed).toBe(3)
-      expect(slotAt(fractional.inventory, 0)).toStrictEqual({ item: 'stone', count: 4 })
+      expect(slotAt(fractional.inventory, 0)).toStrictEqual(itemStack('stone', 4))
     }),
   )
 
@@ -351,7 +355,7 @@ describe('REGRESSION: the domain is total on a corrupt slot, and never dies insi
       // ...and it is full, so a top-up opens the next slot instead.
       const added = addItem(corruptSlot('stone', 200), 'stone', 10)
       expect(added.leftover).toBe(0)
-      expect(slotAt(added.inventory, 1)).toStrictEqual({ item: 'stone', count: 10 })
+      expect(slotAt(added.inventory, 1)).toStrictEqual(itemStack('stone', 10))
     }),
   )
 })
@@ -383,8 +387,8 @@ describe('REGRESSION: normaliseInventory re-establishes the slot count without l
       const long: Inventory = {
         slots: [
           ...emptyInventory().slots,
-          { item: 'gravel', count: 5 as StackCount },
-          { item: 'gravel', count: 3 as StackCount },
+          itemStack('gravel', 5),
+          itemStack('gravel', 3),
         ],
       }
       const repaired = normaliseInventory(long)
@@ -402,8 +406,8 @@ describe('REGRESSION: normaliseInventory re-establishes the slot count without l
       // Every one of the 200 is still there, now representable: 64 + 64 + 64 + 8.
       expect(countOf(repaired.inventory, 'stone')).toBe(200)
       expect(repaired.leftover).toBe(0)
-      expect(slotAt(repaired.inventory, 0)).toStrictEqual({ item: 'stone', count: 64 })
-      expect(slotAt(repaired.inventory, 3)).toStrictEqual({ item: 'stone', count: 8 })
+      expect(slotAt(repaired.inventory, 0)).toStrictEqual(itemStack('stone', 64))
+      expect(slotAt(repaired.inventory, 3)).toStrictEqual(itemStack('stone', 8))
     }),
   )
 
@@ -414,14 +418,14 @@ describe('REGRESSION: normaliseInventory re-establishes the slot count without l
       // does with `add`'s leftover — so it must not be swallowed here either.
       const crammed: Inventory = {
         slots: Array.from({ length: INVENTORY_SLOT_COUNT }, () => ({
-          item: 'dirt',
+          ...itemStack('dirt', 1),
           count: 100 as StackCount,
         })),
       }
       const repaired = normaliseInventory(crammed)
 
-      expect(countOf(repaired.inventory, 'dirt')).toBe(INVENTORY_SLOT_COUNT * MAX_STACK_COUNT)
-      expect(repaired.leftover).toBe(INVENTORY_SLOT_COUNT * (100 - MAX_STACK_COUNT))
+      expect(countOf(repaired.inventory, 'dirt')).toBe(INVENTORY_SLOT_COUNT * maxStackCountForItem('dirt'))
+      expect(repaired.leftover).toBe(INVENTORY_SLOT_COUNT * (100 - maxStackCountForItem('dirt')))
     }),
   )
 
@@ -431,10 +435,7 @@ describe('REGRESSION: normaliseInventory re-establishes the slot count without l
       expect(isEmpty(normaliseInventory(corruptSlot('stone', Number.NaN)).inventory)).toBe(true)
       expect(isEmpty(normaliseInventory(corruptSlot('stone', -4)).inventory)).toBe(true)
       // A fraction keeps its whole part rather than being discarded outright.
-      expect(slotAt(normaliseInventory(corruptSlot('stone', 7.5)).inventory, 0)).toStrictEqual({
-        item: 'stone',
-        count: 7,
-      })
+      expect(slotAt(normaliseInventory(corruptSlot('stone', 7.5)).inventory, 0)).toStrictEqual(itemStack('stone', 7))
     }),
   )
 
@@ -481,11 +482,11 @@ describe('REGRESSION: normaliseInventory re-establishes the slot count without l
     Effect.sync(() => {
       const mixed: Inventory = {
         slots: [
-          { item: 'stone' as ItemType, count: 5 as StackCount },
-          { item: 'NOT_AN_ITEM' as ItemType, count: 9 as StackCount },
+          itemStack('stone', 5),
+          { ...itemStack('stone', 9), item: 'NOT_AN_ITEM' as ItemType },
           // Upper-snake was mc-sim's own provisional spelling, so a save written
           // one commit ago says exactly this. It is not an item now.
-          { item: 'OAK_PLANKS' as ItemType, count: 3 as StackCount },
+          { ...itemStack('oak_planks', 3), item: 'OAK_PLANKS' as ItemType },
           ...emptyInventory().slots.slice(3),
         ],
       }
@@ -538,13 +539,13 @@ describe('REGRESSION: InventoryService.restore is the guarded path, and reports 
       const service = yield* makeInventoryService()
       const crammed: Inventory = {
         slots: Array.from({ length: INVENTORY_SLOT_COUNT }, () => ({
-          item: 'dirt',
+          ...itemStack('dirt', 1),
           count: 100 as StackCount,
         })),
       }
 
       expect(yield* service.restore(crammed)).toBe(INVENTORY_SLOT_COUNT * 36)
-      expect(yield* service.countOf('dirt')).toBe(INVENTORY_SLOT_COUNT * MAX_STACK_COUNT)
+      expect(yield* service.countOf('dirt')).toBe(INVENTORY_SLOT_COUNT * maxStackCountForItem('dirt'))
     }),
   )
 
@@ -573,10 +574,10 @@ describe('InventoryService slot operations', () => {
       const service = yield* makeInventoryService()
       const durability = { current: 3, max: 59 }
 
-      expect(yield* service.setSlot(0, { item: 'wooden_pickaxe', count: 1 as StackCount, durability })).toStrictEqual({
-        _tag: 'Updated', slot: { item: 'wooden_pickaxe', count: 1, durability },
+      expect(yield* service.setSlot(0, { ...itemStack('wooden_pickaxe', 1), durability })).toStrictEqual({
+        _tag: 'Updated', slot: { ...itemStack('wooden_pickaxe', 1), durability },
       })
-      expect(yield* service.getSlot(0)).toStrictEqual({ item: 'wooden_pickaxe', count: 1, durability })
+      expect(yield* service.getSlot(0)).toStrictEqual({ ...itemStack('wooden_pickaxe', 1), durability })
       expect(yield* service.setSlot(-1, undefined)).toStrictEqual({ _tag: 'InvalidSlot' })
     }),
   )
@@ -584,17 +585,17 @@ describe('InventoryService slot operations', () => {
   it.effect('moves, merges, and swaps complete stacks atomically', () =>
     Effect.gen(function* () {
       const service = yield* makeInventoryService()
-      yield* service.setSlot(0, { item: 'stone', count: 10 as StackCount })
-      yield* service.setSlot(1, { item: 'stone', count: 60 as StackCount })
+      yield* service.setSlot(0, itemStack('stone', 10))
+      yield* service.setSlot(1, itemStack('stone', 60))
       expect(yield* service.moveStack(0, 1)).toStrictEqual({
-        _tag: 'Merged', moved: 4, source: { item: 'stone', count: 6 }, target: { item: 'stone', count: 64 },
+        _tag: 'Merged', moved: 4, source: itemStack('stone', 6), target: itemStack('stone', 64),
       })
       expect(yield* service.moveStack(0, 2)).toStrictEqual({
-        _tag: 'Moved', moved: 6, source: undefined, target: { item: 'stone', count: 6 },
+        _tag: 'Moved', moved: 6, source: undefined, target: itemStack('stone', 6),
       })
-      yield* service.setSlot(3, { item: 'dirt', count: 2 as StackCount })
+      yield* service.setSlot(3, itemStack('dirt', 2))
       expect(yield* service.moveStack(2, 3)).toStrictEqual({
-        _tag: 'Swapped', moved: 6, source: { item: 'dirt', count: 2 }, target: { item: 'stone', count: 6 },
+        _tag: 'Swapped', moved: 6, source: itemStack('dirt', 2), target: itemStack('stone', 6),
       })
     }),
   )
@@ -602,18 +603,18 @@ describe('InventoryService slot operations', () => {
   it.effect('quick-moves into the opposite inventory range and sorts deterministically', () =>
     Effect.gen(function* () {
       const service = yield* makeInventoryService()
-      yield* service.setSlot(0, { item: 'stone', count: 10 as StackCount })
-      yield* service.setSlot(27, { item: 'stone', count: 60 as StackCount })
+      yield* service.setSlot(0, itemStack('stone', 10))
+      yield* service.setSlot(27, itemStack('stone', 60))
       expect(yield* service.quickMove(0)).toStrictEqual({
         _tag: 'Moved', moved: 10, source: undefined,
       })
-      expect(yield* service.getSlot(28)).toStrictEqual({ item: 'stone', count: 6 })
+      expect(yield* service.getSlot(28)).toStrictEqual(itemStack('stone', 6))
 
-      yield* service.setSlot(1, { item: 'dirt', count: 2 as StackCount })
+      yield* service.setSlot(1, itemStack('dirt', 2))
       expect(yield* service.sortInventory).toStrictEqual({ _tag: 'Sorted' })
-      expect(yield* service.getSlot(0)).toStrictEqual({ item: 'dirt', count: 2 })
-      expect(yield* service.getSlot(1)).toStrictEqual({ item: 'stone', count: 64 })
-      expect(yield* service.getSlot(2)).toStrictEqual({ item: 'stone', count: 6 })
+      expect(yield* service.getSlot(0)).toStrictEqual(itemStack('dirt', 2))
+      expect(yield* service.getSlot(1)).toStrictEqual(itemStack('stone', 64))
+      expect(yield* service.getSlot(2)).toStrictEqual(itemStack('stone', 6))
       expect(yield* service.sortInventory).toStrictEqual({ _tag: 'NoChange' })
     }),
   )
@@ -621,7 +622,7 @@ describe('InventoryService slot operations', () => {
   it.effect('getSlot resolves to undefined for an out-of-range index', () =>
     Effect.gen(function* () {
       const service = yield* makeInventoryService()
-      yield* service.setSlot(0, { item: 'stone', count: 5 as StackCount })
+      yield* service.setSlot(0, itemStack('stone', 5))
 
       expect(yield* service.getSlot(-1)).toBeUndefined()
       expect(yield* service.getSlot(INVENTORY_SLOT_COUNT)).toBeUndefined()
@@ -631,11 +632,11 @@ describe('InventoryService slot operations', () => {
   it.effect('setSlot rejects an invalid stack without touching state', () =>
     Effect.gen(function* () {
       const service = yield* makeInventoryService()
-      yield* service.setSlot(0, { item: 'stone', count: 5 as StackCount })
+      yield* service.setSlot(0, itemStack('stone', 5))
       const before = yield* service.snapshot
 
       expect(
-        yield* service.setSlot(1, { item: 'stone', count: (MAX_STACK_COUNT + 1) as StackCount }),
+        yield* service.setSlot(1, { ...itemStack('stone', 1), count: (maxStackCountForItem('stone') + 1) as StackCount }),
       ).toStrictEqual({ _tag: 'InvalidStack' })
       expect(yield* service.snapshot).toBe(before)
     }),
@@ -645,11 +646,11 @@ describe('InventoryService slot operations', () => {
     Effect.gen(function* () {
       const service = yield* makeInventoryService()
 
-      expect(yield* service.setSlot(0, { item: 'wooden_pickaxe', count: 1 as StackCount })).toStrictEqual({
-        _tag: 'Updated', slot: { item: 'wooden_pickaxe', count: 1 },
+      expect(yield* service.setSlot(0, itemStack('wooden_pickaxe', 1))).toStrictEqual({
+        _tag: 'Updated', slot: itemStack('wooden_pickaxe', 1),
       })
       expect(yield* service.getSlot(0)).toStrictEqual({
-        item: 'wooden_pickaxe', count: 1, durability: { current: 59, max: 59 },
+        ...itemStack('wooden_pickaxe', 1), durability: { current: 59, max: 59 },
       })
     }),
   )
@@ -657,24 +658,24 @@ describe('InventoryService slot operations', () => {
   it.effect('moveStack rejects invalid indices, no-ops on the same slot, and rejects an empty source', () =>
     Effect.gen(function* () {
       const service = yield* makeInventoryService()
-      yield* service.setSlot(0, { item: 'stone', count: 5 as StackCount })
+      yield* service.setSlot(0, itemStack('stone', 5))
 
       expect(yield* service.moveStack(-1, 0)).toStrictEqual({ _tag: 'InvalidSlot' })
       expect(yield* service.moveStack(0, INVENTORY_SLOT_COUNT)).toStrictEqual({ _tag: 'InvalidSlot' })
       expect(yield* service.moveStack(0, 0)).toStrictEqual({ _tag: 'NoChange' })
       expect(yield* service.moveStack(1, 2)).toStrictEqual({ _tag: 'EmptySlot' })
-      expect(yield* service.getSlot(0)).toStrictEqual({ item: 'stone', count: 5 })
+      expect(yield* service.getSlot(0)).toStrictEqual(itemStack('stone', 5))
     }),
   )
 
   it.effect('moveStack merge that exactly empties the source leaves it undefined, not a zero-count stack', () =>
     Effect.gen(function* () {
       const service = yield* makeInventoryService()
-      yield* service.setSlot(0, { item: 'stone', count: 4 as StackCount })
-      yield* service.setSlot(1, { item: 'stone', count: 60 as StackCount })
+      yield* service.setSlot(0, itemStack('stone', 4))
+      yield* service.setSlot(1, itemStack('stone', 60))
 
       expect(yield* service.moveStack(0, 1)).toStrictEqual({
-        _tag: 'Merged', moved: 4, source: undefined, target: { item: 'stone', count: 64 },
+        _tag: 'Merged', moved: 4, source: undefined, target: itemStack('stone', 64),
       })
       expect(yield* service.getSlot(0)).toBeUndefined()
     }),
@@ -688,16 +689,16 @@ describe('InventoryService slot operations', () => {
       // durability-carrying item is single-stack, so a swap (not a merge) is
       // the only externally observable outcome regardless.
       yield* service.setSlot(0, {
-        item: 'wooden_pickaxe', count: 1 as StackCount, durability: { current: 59, max: 59 },
+        ...itemStack('wooden_pickaxe', 1), durability: { current: 59, max: 59 },
       })
       yield* service.setSlot(1, {
-        item: 'wooden_pickaxe', count: 1 as StackCount, durability: { current: 59, max: 59 },
+        ...itemStack('wooden_pickaxe', 1), durability: { current: 59, max: 59 },
       })
 
       expect(yield* service.moveStack(0, 1)).toStrictEqual({
         _tag: 'Swapped', moved: 1,
-        source: { item: 'wooden_pickaxe', count: 1, durability: { current: 59, max: 59 } },
-        target: { item: 'wooden_pickaxe', count: 1, durability: { current: 59, max: 59 } },
+        source: { ...itemStack('wooden_pickaxe', 1), durability: { current: 59, max: 59 } },
+        target: { ...itemStack('wooden_pickaxe', 1), durability: { current: 59, max: 59 } },
       })
     }),
   )
@@ -714,12 +715,12 @@ describe('InventoryService slot operations', () => {
   it.effect('quickMove from the main inventory targets the hotbar range, not the main range again', () =>
     Effect.gen(function* () {
       const service = yield* makeInventoryService()
-      yield* service.setSlot(27, { item: 'stone', count: 5 as StackCount })
+      yield* service.setSlot(27, itemStack('stone', 5))
 
       expect(yield* service.quickMove(27)).toStrictEqual({
         _tag: 'Moved', moved: 5, source: undefined,
       })
-      expect(yield* service.getSlot(0)).toStrictEqual({ item: 'stone', count: 5 })
+      expect(yield* service.getSlot(0)).toStrictEqual(itemStack('stone', 5))
       expect(yield* service.getSlot(27)).toBeUndefined()
     }),
   )
@@ -728,56 +729,56 @@ describe('InventoryService slot operations', () => {
     Effect.gen(function* () {
       const service = yield* makeInventoryService()
       const durability = { current: 10, max: 59 }
-      yield* service.setSlot(27, { item: 'wooden_pickaxe', count: 1 as StackCount, durability })
+      yield* service.setSlot(27, { ...itemStack('wooden_pickaxe', 1), durability })
 
       expect(yield* service.quickMove(27)).toStrictEqual({
         _tag: 'Moved', moved: 1, source: undefined,
       })
-      expect(yield* service.getSlot(0)).toStrictEqual({ item: 'wooden_pickaxe', count: 1, durability })
+      expect(yield* service.getSlot(0)).toStrictEqual({ ...itemStack('wooden_pickaxe', 1), durability })
     }),
   )
 
   it.effect('quickMove skips an already-full matching stack and finds room further along', () =>
     Effect.gen(function* () {
       const service = yield* makeInventoryService()
-      yield* service.setSlot(0, { item: 'stone', count: 5 as StackCount })
-      yield* service.setSlot(27, { item: 'stone', count: MAX_STACK_COUNT as StackCount })
+      yield* service.setSlot(0, itemStack('stone', 5))
+      yield* service.setSlot(27, itemStack('stone', maxStackCountForItem('stone')))
 
       expect(yield* service.quickMove(0)).toStrictEqual({
         _tag: 'Moved', moved: 5, source: undefined,
       })
-      expect(yield* service.getSlot(27)).toStrictEqual({ item: 'stone', count: MAX_STACK_COUNT })
-      expect(yield* service.getSlot(28)).toStrictEqual({ item: 'stone', count: 5 })
+      expect(yield* service.getSlot(27)).toStrictEqual(itemStack('stone', maxStackCountForItem('stone')))
+      expect(yield* service.getSlot(28)).toStrictEqual(itemStack('stone', 5))
     }),
   )
 
   it.effect('quickMove reports NoChange when the opposite range has no room at all', () =>
     Effect.gen(function* () {
       const service = yield* makeInventoryService()
-      yield* service.setSlot(0, { item: 'stone', count: 5 as StackCount })
+      yield* service.setSlot(0, itemStack('stone', 5))
       for (let index = 27; index < INVENTORY_SLOT_COUNT; index += 1) {
-        yield* service.setSlot(index, { item: 'dirt', count: MAX_STACK_COUNT as StackCount })
+        yield* service.setSlot(index, itemStack('dirt', maxStackCountForItem('dirt')))
       }
 
       expect(yield* service.quickMove(0)).toStrictEqual({ _tag: 'NoChange' })
-      expect(yield* service.getSlot(0)).toStrictEqual({ item: 'stone', count: 5 })
+      expect(yield* service.getSlot(0)).toStrictEqual(itemStack('stone', 5))
     }),
   )
 
   it.effect('quickMove leaves a reduced stack behind when only part of it fits', () =>
     Effect.gen(function* () {
       const service = yield* makeInventoryService()
-      yield* service.setSlot(0, { item: 'stone', count: 10 as StackCount })
-      yield* service.setSlot(27, { item: 'stone', count: 60 as StackCount })
+      yield* service.setSlot(0, itemStack('stone', 10))
+      yield* service.setSlot(27, itemStack('stone', 60))
       for (let index = 28; index < INVENTORY_SLOT_COUNT; index += 1) {
-        yield* service.setSlot(index, { item: 'dirt', count: MAX_STACK_COUNT as StackCount })
+        yield* service.setSlot(index, itemStack('dirt', maxStackCountForItem('dirt')))
       }
 
       expect(yield* service.quickMove(0)).toStrictEqual({
-        _tag: 'Moved', moved: 4, source: { item: 'stone', count: 6 },
+        _tag: 'Moved', moved: 4, source: itemStack('stone', 6),
       })
-      expect(yield* service.getSlot(0)).toStrictEqual({ item: 'stone', count: 6 })
-      expect(yield* service.getSlot(27)).toStrictEqual({ item: 'stone', count: MAX_STACK_COUNT })
+      expect(yield* service.getSlot(0)).toStrictEqual(itemStack('stone', 6))
+      expect(yield* service.getSlot(27)).toStrictEqual(itemStack('stone', maxStackCountForItem('stone')))
     }),
   )
 
@@ -788,12 +789,12 @@ describe('InventoryService slot operations', () => {
       // `dirt` slot forces the comparator's `left.item > right.item` arm,
       // which a broken sign on that arm would leave silently unexercised.
       const service = yield* makeInventoryService()
-      yield* service.setSlot(0, { item: 'stone', count: 3 as StackCount })
-      yield* service.setSlot(1, { item: 'dirt', count: 2 as StackCount })
+      yield* service.setSlot(0, itemStack('stone', 3))
+      yield* service.setSlot(1, itemStack('dirt', 2))
 
       expect(yield* service.sortInventory).toStrictEqual({ _tag: 'Sorted' })
-      expect(yield* service.getSlot(0)).toStrictEqual({ item: 'dirt', count: 2 })
-      expect(yield* service.getSlot(1)).toStrictEqual({ item: 'stone', count: 3 })
+      expect(yield* service.getSlot(0)).toStrictEqual(itemStack('dirt', 2))
+      expect(yield* service.getSlot(1)).toStrictEqual(itemStack('stone', 3))
     }),
   )
 
@@ -813,10 +814,10 @@ describe('InventoryService slot operations', () => {
 
       expect(yield* service.extractOneContainerItemAt('overworld', position, 0)).toStrictEqual({
         _tag: 'Extracted',
-        stack: { item: 'stone', count: 1, durability: null },
+        stack: { ...itemStack('stone', 1), durability: null },
       })
       expect((yield* service.containerSnapshotAt('overworld', position))?.slots[0]).toStrictEqual({
-        item: 'stone', count: 4, durability: null,
+        ...itemStack('stone', 4), durability: null,
       })
     }),
   )
@@ -827,38 +828,38 @@ describe('InventoryService concurrency', () => {
     Effect.gen(function* () {
       const service = yield* makeInventoryService({
         slots: [
-          { item: 'stone', count: 60 as StackCount },
-          { item: 'dirt', count: 7 as StackCount },
+          itemStack('stone', 60),
+          itemStack('dirt', 7),
           ...emptyInventory().slots.slice(2),
         ],
       })
 
       const pickedUp = yield* service.click({ _tag: 'LeftClick', slotIndex: 0, carried: undefined })
-      expect(pickedUp).toStrictEqual({ _tag: 'PickedUp', carried: { item: 'stone', count: 60 } })
+      expect(pickedUp).toStrictEqual({ _tag: 'PickedUp', carried: itemStack('stone', 60) })
       expect(slotAt(yield* service.snapshot, 0)).toBeUndefined()
 
       expect(
         yield* service.click({ _tag: 'LeftClick', slotIndex: 0, carried: pickedUp.carried }),
       ).toStrictEqual({ _tag: 'Placed', carried: undefined })
-      expect(slotAt(yield* service.snapshot, 0)).toStrictEqual({ item: 'stone', count: 60 })
+      expect(slotAt(yield* service.snapshot, 0)).toStrictEqual(itemStack('stone', 60))
 
       expect(
         yield* service.click({
           _tag: 'LeftClick',
           slotIndex: 0,
-          carried: { item: 'stone', count: 10 as StackCount },
+          carried: itemStack('stone', 10),
         }),
-      ).toStrictEqual({ _tag: 'Merged', carried: { item: 'stone', count: 6 } })
-      expect(slotAt(yield* service.snapshot, 0)).toStrictEqual({ item: 'stone', count: MAX_STACK_COUNT })
+      ).toStrictEqual({ _tag: 'Merged', carried: itemStack('stone', 6) })
+      expect(slotAt(yield* service.snapshot, 0)).toStrictEqual(itemStack('stone', maxStackCountForItem('stone')))
 
       expect(
         yield* service.click({
           _tag: 'LeftClick',
           slotIndex: 1,
-          carried: { item: 'stone', count: 6 as StackCount },
+          carried: itemStack('stone', 6),
         }),
-      ).toStrictEqual({ _tag: 'Swapped', carried: { item: 'dirt', count: 7 } })
-      expect(slotAt(yield* service.snapshot, 1)).toStrictEqual({ item: 'stone', count: 6 })
+      ).toStrictEqual({ _tag: 'Swapped', carried: itemStack('dirt', 7) })
+      expect(slotAt(yield* service.snapshot, 1)).toStrictEqual(itemStack('stone', 6))
     }),
   )
 
@@ -868,28 +869,28 @@ describe('InventoryService concurrency', () => {
       yield* service.add('stone', 5)
 
       const pickedUp = yield* service.click({ _tag: 'RightClick', slotIndex: 0, carried: undefined })
-      expect(pickedUp).toStrictEqual({ _tag: 'PickedUp', carried: { item: 'stone', count: 3 } })
-      expect(slotAt(yield* service.snapshot, 0)).toStrictEqual({ item: 'stone', count: 2 })
+      expect(pickedUp).toStrictEqual({ _tag: 'PickedUp', carried: itemStack('stone', 3) })
+      expect(slotAt(yield* service.snapshot, 0)).toStrictEqual(itemStack('stone', 2))
 
       const placed = yield* service.click({ _tag: 'RightClick', slotIndex: 1, carried: pickedUp.carried })
-      expect(placed).toStrictEqual({ _tag: 'Placed', carried: { item: 'stone', count: 2 } })
-      expect(slotAt(yield* service.snapshot, 1)).toStrictEqual({ item: 'stone', count: 1 })
+      expect(placed).toStrictEqual({ _tag: 'Placed', carried: itemStack('stone', 2) })
+      expect(slotAt(yield* service.snapshot, 1)).toStrictEqual(itemStack('stone', 1))
 
       expect(
         yield* service.click({ _tag: 'RightClick', slotIndex: 1, carried: placed.carried }),
-      ).toStrictEqual({ _tag: 'Merged', carried: { item: 'stone', count: 1 } })
-      expect(slotAt(yield* service.snapshot, 1)).toStrictEqual({ item: 'stone', count: 2 })
+      ).toStrictEqual({ _tag: 'Merged', carried: itemStack('stone', 1) })
+      expect(slotAt(yield* service.snapshot, 1)).toStrictEqual(itemStack('stone', 2))
     }),
   )
 
   it.effect('right-clicking a single item empties its source slot', () =>
     Effect.gen(function* () {
       const service = yield* makeInventoryService()
-      yield* service.setSlot(0, { item: 'stone', count: 1 as StackCount })
+      yield* service.setSlot(0, itemStack('stone', 1))
 
       expect(yield* service.click({ _tag: 'RightClick', slotIndex: 0, carried: undefined })).toStrictEqual({
         _tag: 'PickedUp',
-        carried: { item: 'stone', count: 1 },
+        carried: itemStack('stone', 1),
       })
       expect(slotAt(yield* service.snapshot, 0)).toBeUndefined()
     }),
@@ -908,18 +909,18 @@ describe('InventoryService concurrency', () => {
   it.effect('right-click cannot place onto a mismatched or already-full slot', () =>
     Effect.gen(function* () {
       const service = yield* makeInventoryService()
-      yield* service.setSlot(0, { item: 'dirt', count: 3 as StackCount })
-      yield* service.setSlot(1, { item: 'stone', count: MAX_STACK_COUNT as StackCount })
+      yield* service.setSlot(0, itemStack('dirt', 3))
+      yield* service.setSlot(1, itemStack('stone', maxStackCountForItem('stone')))
 
-      const carried = { item: 'stone' as ItemType, count: 2 as StackCount }
+      const carried = itemStack('stone', 2)
       expect(yield* service.click({ _tag: 'RightClick', slotIndex: 0, carried })).toStrictEqual({
         _tag: 'NoChange', carried,
       })
       expect(yield* service.click({ _tag: 'RightClick', slotIndex: 1, carried })).toStrictEqual({
         _tag: 'NoChange', carried,
       })
-      expect(yield* service.getSlot(0)).toStrictEqual({ item: 'dirt', count: 3 })
-      expect(yield* service.getSlot(1)).toStrictEqual({ item: 'stone', count: MAX_STACK_COUNT })
+      expect(yield* service.getSlot(0)).toStrictEqual(itemStack('dirt', 3))
+      expect(yield* service.getSlot(1)).toStrictEqual(itemStack('stone', maxStackCountForItem('stone')))
     }),
   )
 
@@ -928,34 +929,34 @@ describe('InventoryService concurrency', () => {
       const service = yield* makeInventoryService()
 
       expect(
-        yield* service.click({ _tag: 'RightClick', slotIndex: 0, carried: { item: 'stone', count: 1 as StackCount } }),
+        yield* service.click({ _tag: 'RightClick', slotIndex: 0, carried: itemStack('stone', 1) }),
       ).toStrictEqual({ _tag: 'Placed', carried: undefined })
-      expect(yield* service.getSlot(0)).toStrictEqual({ item: 'stone', count: 1 })
+      expect(yield* service.getSlot(0)).toStrictEqual(itemStack('stone', 1))
     }),
   )
 
   it.effect('left-click merging onto an already-full stack reports NoChange', () =>
     Effect.gen(function* () {
       const service = yield* makeInventoryService()
-      yield* service.setSlot(0, { item: 'stone', count: MAX_STACK_COUNT as StackCount })
+      yield* service.setSlot(0, itemStack('stone', maxStackCountForItem('stone')))
 
-      const carried = { item: 'stone' as ItemType, count: 5 as StackCount }
+      const carried = itemStack('stone', 5)
       expect(yield* service.click({ _tag: 'LeftClick', slotIndex: 0, carried })).toStrictEqual({
         _tag: 'NoChange', carried,
       })
-      expect(yield* service.getSlot(0)).toStrictEqual({ item: 'stone', count: MAX_STACK_COUNT })
+      expect(yield* service.getSlot(0)).toStrictEqual(itemStack('stone', maxStackCountForItem('stone')))
     }),
   )
 
   it.effect('left-click merge that exactly empties the carried stack leaves nothing carried', () =>
     Effect.gen(function* () {
       const service = yield* makeInventoryService()
-      yield* service.setSlot(0, { item: 'stone', count: 60 as StackCount })
+      yield* service.setSlot(0, itemStack('stone', 60))
 
       expect(
-        yield* service.click({ _tag: 'LeftClick', slotIndex: 0, carried: { item: 'stone', count: 4 as StackCount } }),
+        yield* service.click({ _tag: 'LeftClick', slotIndex: 0, carried: itemStack('stone', 4) }),
       ).toStrictEqual({ _tag: 'Merged', carried: undefined })
-      expect(yield* service.getSlot(0)).toStrictEqual({ item: 'stone', count: MAX_STACK_COUNT })
+      expect(yield* service.getSlot(0)).toStrictEqual(itemStack('stone', maxStackCountForItem('stone')))
     }),
   )
 
@@ -965,12 +966,12 @@ describe('InventoryService concurrency', () => {
 
       const placed = yield* service.click({
         _tag: 'LeftClick', slotIndex: 0,
-        carried: { item: 'wooden_pickaxe', count: 1 as StackCount },
+        carried: itemStack('wooden_pickaxe', 1),
       })
 
       expect(placed).toStrictEqual({ _tag: 'Placed', carried: undefined })
       expect(yield* service.getSlot(0)).toStrictEqual({
-        item: 'wooden_pickaxe', count: 1, durability: { current: 59, max: 59 },
+        ...itemStack('wooden_pickaxe', 1), durability: { current: 59, max: 59 },
       })
     }),
   )
@@ -983,7 +984,7 @@ describe('InventoryService concurrency', () => {
       const invalidCount = {
         _tag: 'RightClick',
         slotIndex: 0,
-        carried: { item: 'stone', count: (MAX_STACK_COUNT + 1) as StackCount },
+        carried: { ...itemStack('stone', 1), count: (maxStackCountForItem('stone') + 1) as StackCount },
       } satisfies InventoryClick
 
       expect(yield* service.click({ _tag: 'LeftClick', slotIndex: -1, carried: undefined })).toStrictEqual({
@@ -1020,17 +1021,17 @@ describe('InventoryService concurrency', () => {
     Effect.gen(function* () {
       const service = yield* makeInventoryService({
         slots: [
-          { item: 'stone', count: 3 as StackCount },
-          { item: 'dirt', count: 4 as StackCount },
-          { item: 'stone', count: 5 as StackCount },
+          itemStack('stone', 3),
+          itemStack('dirt', 4),
+          itemStack('stone', 5),
           ...emptyInventory().slots.slice(3),
         ],
       })
 
       expect(yield* service.removeAt(0, 'stone', 2)).toStrictEqual({ _tag: 'Removed', removed: 2 })
       const afterRemoval = yield* service.snapshot
-      expect(slotAt(afterRemoval, 0)).toStrictEqual({ item: 'stone', count: 1 })
-      expect(slotAt(afterRemoval, 2)).toStrictEqual({ item: 'stone', count: 5 })
+      expect(slotAt(afterRemoval, 0)).toStrictEqual(itemStack('stone', 1))
+      expect(slotAt(afterRemoval, 2)).toStrictEqual(itemStack('stone', 5))
 
       expect(yield* service.removeAt(1, 'stone', 1)).toStrictEqual({
         _tag: 'ItemMismatch',
@@ -1096,7 +1097,7 @@ describe('InventoryService concurrency', () => {
     Effect.gen(function* () {
       const service = yield* makeInventoryService()
 
-      expect(yield* service.add('dirt', INVENTORY_SLOT_COUNT * MAX_STACK_COUNT)).toBe(0)
+      expect(yield* service.add('dirt', INVENTORY_SLOT_COUNT * maxStackCountForItem('dirt'))).toBe(0)
       expect(yield* service.add('dirt', 7)).toBe(7)
     }),
   )

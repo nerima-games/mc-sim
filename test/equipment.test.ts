@@ -85,11 +85,11 @@ describe('equipment domain', () => {
   it.effect('constructs only valid catalog equipment with canonical durability', () =>
     Effect.sync(() => {
       expect(equipmentItem(itemStack('iron_boots', 1))).toStrictEqual({
-        item: 'iron_boots', count: 1, durability: { current: 195, max: 195 },
+        ...itemStack('iron_boots', 1), durability: { current: 195, max: 195 },
       })
       expect(() => equipmentItem(itemStack('stone', 1))).toThrow(RangeError)
       expect(equipmentItem(itemStack('bow', 1))).toStrictEqual({
-        item: 'bow', count: 1, durability: { current: 384, max: 384 },
+        ...itemStack('bow', 1), durability: { current: 384, max: 384 },
       })
       expect(() => equipmentItem({ ...itemStack('stone', 2), item: 'iron_helmet' })).toThrow(RangeError)
       expect(() => equipmentItem(itemStack('iron_helmet', 1), null)).toThrow(RangeError)
@@ -215,12 +215,12 @@ describe('equipment domain', () => {
       expect(validateEquipmentSnapshot(JSON.parse(JSON.stringify(valid)))._tag).toBe('Valid')
 
       const invalidItems = [
-        { item: 'stone', count: 1, durability: null },
-        { item: 'iron_helmet', count: 1, durability: { current: 165, max: 165 } },
-        { item: 'iron_boots', count: 2, durability: { current: 195, max: 195 } },
-        { item: 'iron_boots', count: 1, durability: { current: 0, max: 195 } },
-        { item: 'iron_boots', count: 1, durability: { current: 194, max: 194 } },
-        { item: 'iron_boots', count: 1, durability: { current: 195, max: 195 }, extra: true },
+        { ...itemStack('stone', 1), durability: null },
+        { ...itemStack('iron_helmet', 1), durability: { current: 165, max: 165 } },
+        { ...itemStack('iron_boots', 1), count: 2, durability: { current: 195, max: 195 } },
+        { ...itemStack('iron_boots', 1), durability: { current: 0, max: 195 } },
+        { ...itemStack('iron_boots', 1), durability: { current: 194, max: 194 } },
+        { ...itemStack('iron_boots', 1), durability: { current: 195, max: 195 }, extra: true },
       ]
       for (const item of invalidItems) {
         const snapshot = { slots: { ...valid.slots, feet: item } }
@@ -249,9 +249,10 @@ describe('equipment domain', () => {
       const step4 = equip(step3, 'feet', equipmentItem(itemStack('iron_boots', 1))).equipment
       const fullyEquipped = equip(step4, 'offhand', flint()).equipment
 
-      expect(validateEquipmentSnapshot(JSON.parse(JSON.stringify(fullyEquipped)))).toStrictEqual({
+      const serialized = JSON.parse(JSON.stringify(fullyEquipped))
+      expect(validateEquipmentSnapshot(serialized)).toStrictEqual({
         _tag: 'Valid',
-        equipment: fullyEquipped,
+        equipment: serialized,
       })
     }),
   )

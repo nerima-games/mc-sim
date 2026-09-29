@@ -1,13 +1,18 @@
 import {
-  addItem,
-  countOf,
+  addItemStack,
   itemStack,
-  maxStackCountForItem,
-  removeItem,
   type Inventory,
   type ItemStack,
 } from './inventory.js'
-import { isItemType, type ItemType } from '@nerima-games/mc-kernel'
+import {
+  isItemComponents,
+  isItemStack,
+  isItemType,
+  itemStackWithCount,
+  itemStacksCanMerge,
+  maxStackCountForStack,
+  type ItemType,
+} from '@nerima-games/mc-kernel'
 import { STARTER_FUEL_RULES, STARTER_SMELTING_RECIPES } from './smelting-data.js'
 
 export type SmeltingRecipe = {
@@ -91,24 +96,39 @@ export const transferToFurnace = (
   if (!Number.isSafeInteger(count) || count <= 0) {
     return { inventory, furnace, result: { _tag: 'InvalidCount', count } }
   }
-  const available = countOf(inventory, item)
-  if (available < count) {
-    return { inventory, furnace, result: { _tag: 'InsufficientItems', available } }
-  }
   const current = furnace[slot]
   if (current !== null && current.item !== item) {
     return { inventory, furnace, result: { _tag: 'WrongItem', expected: current.item } }
   }
-  const capacity = maxStackCountForItem(item) - (current?.count ?? 0)
+  const selected = current ?? inventory.slots.findLast((held) => held?.item === item && isItemStack(held))
+  if (selected === undefined) {
+    return { inventory, furnace, result: { _tag: 'InsufficientItems', available: 0 } }
+  }
+  const available = inventory.slots.reduce(
+    (total, held) => total + (held !== undefined && itemStacksCanMerge(held, selected) ? held.count : 0),
+    0,
+  )
+  if (available < count) {
+    return { inventory, furnace, result: { _tag: 'InsufficientItems', available } }
+  }
+  const capacity = maxStackCountForStack(selected) - (current?.count ?? 0)
   if (capacity < count) {
     return { inventory, furnace, result: { _tag: 'NoRoom', available: capacity } }
   }
-  const removed = removeItem(inventory, item, count)
+  const slots = [...inventory.slots]
+  let remaining = count
+  for (let index = slots.length - 1; index >= 0 && remaining > 0; index -= 1) {
+    const held = slots[index]
+    if (held === undefined || !itemStacksCanMerge(held, selected)) continue
+    const taken = Math.min(held.count, remaining)
+    slots[index] = held.count === taken ? undefined : itemStackWithCount(held, held.count - taken)
+    remaining -= taken
+  }
   return {
-    inventory: removed.inventory,
+    inventory: { slots },
     furnace: {
       ...furnace,
-      [slot]: itemStack(item, (current?.count ?? 0) + count),
+      [slot]: itemStackWithCount(selected, (current?.count ?? 0) + count),
     },
     result: { _tag: 'Transferred', item, count },
   }
@@ -122,7 +142,7 @@ export const collectFurnaceOutput = (
   if (furnace.output === null) {
     return { inventory, furnace, result: { _tag: 'Empty' } }
   }
-  const inserted = addItem(inventory, furnace.output.item, furnace.output.count)
+  const inserted = addItemStack(inventory, furnace.output)
   if (inserted.leftover > 0) {
     return { inventory, furnace, result: { _tag: 'NoRoom' } }
   }
@@ -147,20 +167,7 @@ const assertNonNegativeFinite = (value: number, label: string): void => {
 
 const assertSlot = (slot: ItemStack | null, label: string): void => {
   if (slot === null) return
-  if (slot === undefined) {
-    throw new RangeError(`${label} must use null for an empty slot`)
-  }
-  if (!isItemType(slot.item)) {
-    throw new RangeError(`Invalid ${label} item: ${String(slot.item)}`)
-  }
-
-  if (
-    !Number.isInteger(slot.count) ||
-    slot.count <= 0 ||
-    slot.count > maxStackCountForItem(slot.item)
-  ) {
-    throw new RangeError(`Invalid ${label} stack count: ${String(slot.count)}`)
-  }
+  if (!isItemStack(slot)) throw new RangeError(`Invalid ${label} ItemStack`)
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -188,19 +195,30 @@ export const validateFurnaceSnapshot = (value: unknown): FurnaceSnapshotValidati
   for (const name of ['input', 'fuel', 'output'] as const) {
     const slot = value[name]
     if (slot === null) continue
-    if (!isRecord(slot) || Object.keys(slot).length !== 2 ||
-        !Object.hasOwn(slot, 'item') || !Object.hasOwn(slot, 'count')) {
-      return invalidSnapshot(name, 'expected null or exactly { item, count }')
+    if (!isRecord(slot) || Object.keys(slot).length !== 3 ||
+        !Object.hasOwn(slot, 'item') || !Object.hasOwn(slot, 'count') || !Object.hasOwn(slot, 'components')) {
+      return invalidSnapshot(name, 'expected null or a canonical ItemStack')
     }
     if (typeof slot['item'] !== 'string' || !isItemType(slot['item'])) {
       return invalidSnapshot(`${name}.item`, 'expected a known item')
     }
-    const count = slot['count']
-    if (typeof count !== 'number' || !Number.isSafeInteger(count) ||
-        count <= 0 || count > maxStackCountForItem(slot['item'])) {
+    const savedComponents = slot['components']
+    if (!isRecord(savedComponents) ||
+        !Object.hasOwn(savedComponents, 'maxStackSize') ||
+        !Object.hasOwn(savedComponents, 'repairCost') ||
+        !Object.hasOwn(savedComponents, 'rarity')) {
+      return invalidSnapshot(`${name}.components`, 'expected valid resolved item components')
+    }
+    // JSON omits canonical component keys whose values are undefined.
+    const components = { ...itemStack(slot['item'], 1).components, ...savedComponents }
+    if (!isItemComponents(components)) {
+      return invalidSnapshot(`${name}.components`, 'expected valid resolved item components')
+    }
+    const restored = { ...slot, components }
+    if (!isItemStack(restored)) {
       return invalidSnapshot(`${name}.count`, 'expected a valid positive stack count')
     }
-    slots[name] = itemStack(slot['item'], count)
+    slots[name] = itemStack(restored.item, restored.count, { components: restored.components })
   }
 
   let cookElapsedSecs = 0
@@ -242,17 +260,17 @@ const assertFuelRule = (rule: FuelRule): void => {
 }
 
 const decrementSlot = (slot: ItemStack): ItemStack | null =>
-  slot.count === 1 ? null : itemStack(slot.item, slot.count - 1)
+  slot.count === 1 ? null : itemStackWithCount(slot, slot.count - 1)
 
 const outputAccepts = (output: ItemStack | null, produced: ItemStack): boolean =>
   output === null ||
-  (output.item === produced.item &&
-    output.count + produced.count <= maxStackCountForItem(produced.item))
+  (itemStacksCanMerge(output, produced) &&
+    output.count + produced.count <= maxStackCountForStack(output))
 
 const addOutput = (output: ItemStack | null, produced: ItemStack): ItemStack =>
   output === null
-    ? itemStack(produced.item, produced.count)
-    : itemStack(output.item, output.count + produced.count)
+    ? produced
+    : itemStackWithCount(output, output.count + produced.count)
 
 export const matchSmeltingRecipe = (
   recipes: ReadonlyArray<SmeltingRecipe>,

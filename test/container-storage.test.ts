@@ -140,7 +140,7 @@ describe('container storage domain', () => {
       },
     }
     const sourceSlots = Array.from({ length: CHEST_CONTAINER_CAPACITY }, () => null) as Array<unknown>
-    sourceSlots[0] = { item: 'bow', count: 2, durability: { current: 384, max: 384 } }
+    sourceSlots[0] = { ...itemStack('bow', 1), count: 2, durability: { current: 384, max: 384 } }
     const invalidSource = {
       containers: [{ id: 'invalid-source', slots: sourceSlots }],
     } as unknown as ReturnType<typeof emptyContainerStorage>
@@ -153,7 +153,7 @@ describe('container storage domain', () => {
     }).result).toStrictEqual({ _tag: 'InvalidSourceStack' })
 
     const destinationSlots = Array.from({ length: CHEST_CONTAINER_CAPACITY }, () => null) as Array<unknown>
-    destinationSlots[0] = { item: 'stone', count: 65, durability: null }
+    destinationSlots[0] = { ...itemStack('stone', 1), count: 65, durability: null }
     const invalidDestination = {
       containers: [{ id: 'invalid-destination', slots: destinationSlots }],
     } as unknown as ReturnType<typeof emptyContainerStorage>
@@ -273,7 +273,7 @@ describe('container storage domain', () => {
 
   it('rejects a stored stack whose count exceeds its item max stack size', () => {
     const slots = Array.from({ length: CHEST_CONTAINER_CAPACITY }, () => null) as Array<unknown>
-    slots[0] = { item: 'stone', count: 999, durability: null }
+    slots[0] = { ...itemStack('stone', 1), count: 999, durability: null }
     const result = validateContainerStorageSnapshot({
       version: CONTAINER_STORAGE_SNAPSHOT_VERSION,
       containers: [{ id: 'overfull', kind: 'chest', slots }],
@@ -290,7 +290,7 @@ describe('container storage domain', () => {
 
   it('rejects a non-durable stored stack that carries a non-null durability', () => {
     const slots = Array.from({ length: CHEST_CONTAINER_CAPACITY }, () => null) as Array<unknown>
-    slots[0] = { item: 'stone', count: 1, durability: { current: 1, max: 1 } }
+    slots[0] = { ...itemStack('stone', 1), durability: { current: 1, max: 1 } }
     const result = validateContainerStorageSnapshot({
       version: CONTAINER_STORAGE_SNAPSHOT_VERSION,
       containers: [{ id: 'stone-chest', kind: 'chest', slots }],
@@ -307,14 +307,14 @@ describe('container storage domain', () => {
 
   it('accepts and round-trips a non-durable stored stack with a null durability', () => {
     const slots = Array.from({ length: CHEST_CONTAINER_CAPACITY }, () => null) as Array<unknown>
-    slots[0] = { item: 'stone', count: 5, durability: null }
+    slots[0] = { ...itemStack('stone', 5), durability: null }
     const result = validateContainerStorageSnapshot({
       version: CONTAINER_STORAGE_SNAPSHOT_VERSION,
       containers: [{ id: 'stone-chest', kind: 'chest', slots }],
     })
     expect(result._tag).toBe('Valid')
     if (result._tag !== 'Valid') return
-    expect(result.storage.containers[0]?.slots[0]).toStrictEqual({ item: 'stone', count: 5, durability: null })
+    expect(result.storage.containers[0]?.slots[0]).toStrictEqual({ ...itemStack('stone', 5), durability: null })
   })
 
   it('rejects a player slot holding a raw non-record value as an invalid source stack', () => {
@@ -386,7 +386,7 @@ describe('container storage domain', () => {
 
   it('reports InvalidSourceStack and InvalidSourceDurability for a malformed extract source', () => {
     const malformedShapeSlots = Array.from({ length: CHEST_CONTAINER_CAPACITY }, () => null) as Array<unknown>
-    malformedShapeSlots[0] = { item: 'stone', count: 65, durability: null }
+    malformedShapeSlots[0] = { ...itemStack('stone', 1), count: 65, durability: null }
     const malformedShapeStorage = {
       containers: [{ id: 'bad-shape', kind: 'chest' as const, slots: malformedShapeSlots }],
     } as unknown as ReturnType<typeof emptyContainerStorage>
@@ -395,7 +395,7 @@ describe('container storage domain', () => {
     }).result).toStrictEqual({ _tag: 'InvalidSourceStack' })
 
     const badDurabilitySlots = Array.from({ length: CHEST_CONTAINER_CAPACITY }, () => null) as Array<unknown>
-    badDurabilitySlots[0] = { item: 'bow', count: 1, durability: { current: 1, max: 1 } }
+    badDurabilitySlots[0] = { ...itemStack('bow', 1), durability: { current: 1, max: 1 } }
     const badDurabilityStorage = {
       containers: [{ id: 'bad-durability', kind: 'chest' as const, slots: badDurabilitySlots }],
     } as unknown as ReturnType<typeof emptyContainerStorage>
@@ -416,9 +416,9 @@ describe('container storage domain', () => {
     const outcome = extractContainerItem(storage, { containerId: 'source', containerSlot: 0, count: 2 })
     expect(outcome.result).toStrictEqual({
       _tag: 'Extracted',
-      stack: { item: 'stone', count: 2, durability: null },
+      stack: { ...itemStack('stone', 2), durability: null },
     })
-    expect(outcome.storage.containers[0]?.slots[0]).toStrictEqual({ item: 'stone', count: 3, durability: null })
+    expect(outcome.storage.containers[0]?.slots[0]).toStrictEqual({ ...itemStack('stone', 3), durability: null })
   })
 
   it('reports SourceContainerNotFound, InvalidSourceSlot, InvalidDestinationSlot, and InvalidCount for moveContainerItem', () => {
@@ -474,7 +474,7 @@ describe('container storage domain', () => {
     }).result).toStrictEqual({ _tag: 'EmptySource' })
 
     const malformedSourceSlots = Array.from({ length: CHEST_CONTAINER_CAPACITY }, () => null) as Array<unknown>
-    malformedSourceSlots[0] = { item: 'stone', count: 65, durability: null }
+    malformedSourceSlots[0] = { ...itemStack('stone', 1), count: 65, durability: null }
     const malformedSourceStorage = {
       containers: [
         { id: 'source', kind: 'chest' as const, slots: malformedSourceSlots },
@@ -487,7 +487,7 @@ describe('container storage domain', () => {
     }).result).toStrictEqual({ _tag: 'InvalidSourceStack' })
 
     const badSourceDurabilitySlots = Array.from({ length: CHEST_CONTAINER_CAPACITY }, () => null) as Array<unknown>
-    badSourceDurabilitySlots[0] = { item: 'bow', count: 1, durability: { current: 1, max: 1 } }
+    badSourceDurabilitySlots[0] = { ...itemStack('bow', 1), durability: { current: 1, max: 1 } }
     const badSourceDurabilityStorage = {
       containers: [
         { id: 'source', kind: 'chest' as const, slots: badSourceDurabilitySlots },
@@ -500,9 +500,9 @@ describe('container storage domain', () => {
     }).result).toStrictEqual({ _tag: 'InvalidSourceDurability' })
 
     const badDestinationSlots = Array.from({ length: CHEST_CONTAINER_CAPACITY }, () => null) as Array<unknown>
-    badDestinationSlots[0] = { item: 'stone', count: 65, durability: null }
+    badDestinationSlots[0] = { ...itemStack('stone', 1), count: 65, durability: null }
     const goodSourceSlots = Array.from({ length: CHEST_CONTAINER_CAPACITY }, () => null) as Array<unknown>
-    goodSourceSlots[0] = { item: 'stone', count: 1, durability: null }
+    goodSourceSlots[0] = { ...itemStack('stone', 1), durability: null }
     const badDestinationStorage = {
       containers: [
         { id: 'source', kind: 'chest' as const, slots: goodSourceSlots },
@@ -515,7 +515,7 @@ describe('container storage domain', () => {
     }).result).toStrictEqual({ _tag: 'InvalidDestinationStack' })
 
     const insufficientSourceSlots = Array.from({ length: CHEST_CONTAINER_CAPACITY }, () => null) as Array<unknown>
-    insufficientSourceSlots[0] = { item: 'stone', count: 1, durability: null }
+    insufficientSourceSlots[0] = { ...itemStack('stone', 1), durability: null }
     const insufficientStorage = {
       containers: [
         { id: 'source', kind: 'chest' as const, slots: insufficientSourceSlots },
@@ -542,8 +542,8 @@ describe('container storage domain', () => {
       destinationContainerId: 'chest-a', destinationSlot: 1, count: 2,
     })
     expect(outcome.result).toStrictEqual({ _tag: 'Moved', item: 'stone', count: 2 })
-    expect(outcome.storage.containers[0]?.slots[0]).toStrictEqual({ item: 'stone', count: 3, durability: null })
-    expect(outcome.storage.containers[0]?.slots[1]).toStrictEqual({ item: 'stone', count: 2, durability: null })
+    expect(outcome.storage.containers[0]?.slots[0]).toStrictEqual({ ...itemStack('stone', 3), durability: null })
+    expect(outcome.storage.containers[0]?.slots[1]).toStrictEqual({ ...itemStack('stone', 2), durability: null })
   })
 
   it('empties the source slot and merges into an existing destination stack on a full-count move', () => {
@@ -566,7 +566,7 @@ describe('container storage domain', () => {
     })
     expect(outcome.result).toStrictEqual({ _tag: 'Moved', item: 'stone', count: 2 })
     expect(outcome.storage.containers[0]?.slots[0]).toBeNull()
-    expect(outcome.storage.containers[1]?.slots[0]).toStrictEqual({ item: 'stone', count: 5, durability: null })
+    expect(outcome.storage.containers[1]?.slots[0]).toStrictEqual({ ...itemStack('stone', 5), durability: null })
   })
 })
 
@@ -602,7 +602,7 @@ describe('InventoryService chest integration', () => {
       })
 
       expect((yield* service.containerSnapshotAt('overworld', { x: 12, y: 64, z: -4 }))?.slots[0])
-        .toStrictEqual({ item: 'stone', count: 2, durability: null })
+        .toStrictEqual({ ...itemStack('stone', 2), durability: null })
       expect(yield* service.containerSnapshotAt('nether', { x: 12, y: 64, z: -4 })).toBeNull()
     }),
   )
@@ -641,9 +641,9 @@ describe('InventoryService chest integration', () => {
       })).toStrictEqual({
         _tag: 'Transferred', item: 'stone', count: 6, direction: 'PlayerToContainer',
       })
-      expect((yield* service.snapshot).slots[0]).toStrictEqual({ item: 'stone', count: 4 })
+      expect((yield* service.snapshot).slots[0]).toStrictEqual(itemStack('stone', 4))
       expect((yield* service.containerSnapshot('chest-a'))?.slots[0]).toStrictEqual({
-        item: 'stone', count: 6, durability: null,
+        ...itemStack('stone', 6), durability: null,
       })
 
       expect(yield* service.transferContainerItem({
@@ -653,9 +653,9 @@ describe('InventoryService chest integration', () => {
         containerSlot: 0,
         count: 3,
       })).toMatchObject({ _tag: 'Transferred', count: 3 })
-      expect((yield* service.snapshot).slots[0]).toStrictEqual({ item: 'stone', count: 7 })
+      expect((yield* service.snapshot).slots[0]).toStrictEqual({ ...itemStack('stone', 7), durability: null })
       expect((yield* service.containerSnapshot('chest-a'))?.slots[0]).toStrictEqual({
-        item: 'stone', count: 3, durability: null,
+        ...itemStack('stone', 3), durability: null,
       })
     }),
   )
@@ -676,7 +676,7 @@ describe('InventoryService chest integration', () => {
 
       const snapshot = yield* source.containerStorageSnapshot
       expect(snapshot.containers[0]?.slots[4]).toStrictEqual({
-        item: 'bow', count: 1, durability: { current: 365, max: 384 },
+        ...itemStack('bow', 1), durability: { current: 365, max: 384 },
       })
 
       const restored = yield* makeInventoryService()
@@ -689,7 +689,15 @@ describe('InventoryService chest integration', () => {
         count: 1,
       })).toMatchObject({ _tag: 'Transferred', item: 'bow' })
       const player = yield* restored.storageSnapshot
-      expect(player.inventory.slots[8]).toStrictEqual({ item: 'bow', count: 1 })
+      const bow = itemStack('bow', 1)
+      const serializedComponents = Object.fromEntries(
+        Object.entries(bow.components).filter(([, value]) => value !== undefined),
+      )
+      expect(player.inventory.slots[8]).toStrictEqual({
+        ...bow,
+        components: serializedComponents,
+        durability: { current: 365, max: 384 },
+      })
       expect(player.inventoryDurability[8]).toStrictEqual({ current: 365, max: 384 })
     }),
   )
@@ -787,7 +795,7 @@ describe('InventoryService chest integration', () => {
         containerId: 'dispenser', containerSlot: 0, count: 1,
       })).toStrictEqual({
         _tag: 'Extracted',
-        stack: { item: 'bow', count: 1, durability: { current: 365, max: 384 } },
+        stack: { ...itemStack('bow', 1), durability: { current: 365, max: 384 } },
       })
       expect((yield* service.containerSnapshot('dispenser'))?.slots[0]).toBeNull()
     }),
@@ -813,10 +821,10 @@ describe('InventoryService chest integration', () => {
         count: 1,
       })).toStrictEqual({ _tag: 'Moved', item: 'stone', count: 1 })
       expect((yield* service.containerSnapshot('source'))?.slots[0]).toStrictEqual({
-        item: 'stone', count: 2, durability: null,
+        ...itemStack('stone', 2), durability: null,
       })
       expect((yield* service.containerSnapshot('destination'))?.slots[0]).toStrictEqual({
-        item: 'stone', count: 1, durability: null,
+        ...itemStack('stone', 1), durability: null,
       })
     }),
   )
@@ -844,9 +852,9 @@ describe('InventoryService chest integration', () => {
         destinationSlot: 0,
       })).toStrictEqual({ _tag: 'Moved', item: 'stone', count: 1 })
       expect((yield* service.containerSnapshotAt(source.dimension, source.position))?.slots[0])
-        .toStrictEqual({ item: 'stone', count: 1, durability: null })
+        .toStrictEqual({ ...itemStack('stone', 1), durability: null })
       expect((yield* service.containerSnapshotAt(destination.dimension, destination.position))?.slots[0])
-        .toStrictEqual({ item: 'stone', count: 1, durability: null })
+        .toStrictEqual({ ...itemStack('stone', 1), durability: null })
     }),
   )
 
@@ -947,7 +955,7 @@ describe('InventoryService chest integration', () => {
           id: 'broken',
           kind: 'chest',
           slots: Array.from({ length: CHEST_CONTAINER_CAPACITY }, (_, index) => index === 0
-            ? { item: 'bow', count: 1, durability: { current: 999, max: 384 } }
+            ? { ...itemStack('bow', 1), durability: { current: 999, max: 384 } }
             : null),
         }],
       }
@@ -975,7 +983,7 @@ describe('InventoryService chest integration', () => {
       expect(yield* service.drainContainer('break-me')).toStrictEqual({
         _tag: 'Drained',
         items: [{
-          item: 'iron_boots', count: 1, durability: { current: 188, max: 195 },
+          ...itemStack('iron_boots', 1), durability: { current: 188, max: 195 },
         }],
       })
       expect(yield* service.drainContainer('break-me')).toStrictEqual({

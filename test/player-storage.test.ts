@@ -55,7 +55,7 @@ describe('player storage', () => {
     })
 
     expect(outcome.result).toStrictEqual({ _tag: 'Added', added: 1, leftover: null })
-    expect(outcome.storage.inventory.slots[0]).toStrictEqual({ item: 'flint_and_steel', count: 1 })
+    expect(outcome.storage.inventory.slots[0]).toStrictEqual(itemStack('flint_and_steel', 1))
     expect(outcome.storage.inventoryDurability[0]).toStrictEqual({
       current: 17,
       max: FLINT_AND_STEEL_MAX_DURABILITY,
@@ -84,9 +84,9 @@ describe('player storage', () => {
     expect(partial.result).toStrictEqual({
       _tag: 'Added',
       added: 4,
-      leftover: { item: 'stone', count: 6, durability: null },
+      leftover: { ...itemStack('stone', 6), durability: null },
     })
-    expect(partial.storage.inventory.slots[0]).toStrictEqual({ item: 'stone', count: 64 })
+    expect(partial.storage.inventory.slots[0]).toStrictEqual(itemStack('stone', 64))
 
     const noCapacity = storageFromInventory({
       slots: Array.from({ length: 36 }, () => itemStack('dirt', 64)),
@@ -98,7 +98,7 @@ describe('player storage', () => {
     expect(inventoryFull.result).toStrictEqual({
       _tag: 'Added',
       added: 0,
-      leftover: { item: 'stone', count: 10, durability: null },
+      leftover: { ...itemStack('stone', 10), durability: null },
     })
     expect(inventoryFull.storage).toBe(noCapacity)
   })
@@ -107,15 +107,15 @@ describe('player storage', () => {
     const storage = emptyPlayerStorage()
     const durability = { current: 17, max: FLINT_AND_STEEL_MAX_DURABILITY }
     const malformed: ReadonlyArray<unknown> = [
-      { item: 'stone', count: 1, durability: null, extra: true },
-      { item: 'not_an_item', count: 1, durability: null },
-      { item: 'stone', count: 0, durability: null },
-      { item: 'stone', count: 65, durability: null },
-      { item: 'flint_and_steel', count: 2, durability },
-      { item: 'stone', count: 1, durability },
-      { item: 'flint_and_steel', count: 1, durability: null },
-      { item: 'flint_and_steel', count: 1, durability: { current: 17, max: 65 } },
-      { item: 'flint_and_steel', count: 1, durability: { ...durability, extra: true } },
+      { ...itemStack('stone', 1), durability: null, extra: true },
+      { ...itemStack('stone', 1), item: 'not_an_item', durability: null },
+      { ...itemStack('stone', 1), count: 0, durability: null },
+      { ...itemStack('stone', 1), count: 65, durability: null },
+      { ...itemStack('flint_and_steel', 1), count: 2, durability },
+      { ...itemStack('stone', 1), durability },
+      { ...itemStack('flint_and_steel', 1), durability: null },
+      { ...itemStack('flint_and_steel', 1), durability: { current: 17, max: 65 } },
+      { ...itemStack('flint_and_steel', 1), durability: { ...durability, extra: true } },
     ]
 
     for (const stack of malformed) {
@@ -147,10 +147,10 @@ describe('player storage', () => {
 
       const snapshot = yield* service.storageSnapshot
       expect(snapshot.inventory.slots.slice(0, 4)).toStrictEqual([
-        { item: 'flint_and_steel', count: 1 },
-        { item: 'flint_and_steel', count: 1 },
-        { item: 'iron_helmet', count: 1 },
-        { item: 'iron_helmet', count: 1 },
+        itemStack('flint_and_steel', 1),
+        itemStack('flint_and_steel', 1),
+        itemStack('iron_helmet', 1),
+        itemStack('iron_helmet', 1),
       ])
       expect(snapshot.inventoryDurability.slice(0, 4)).toStrictEqual([
         { current: FLINT_AND_STEEL_MAX_DURABILITY, max: FLINT_AND_STEEL_MAX_DURABILITY },
@@ -170,7 +170,7 @@ describe('player storage', () => {
       const equipped = yield* service.storageSnapshot
       expect(equipped.inventory.slots[0]).toBeUndefined()
       expect(equipped.equipment.slots.offhand).toMatchObject({
-        item: 'flint_and_steel', count: 1, durability: { current: 64, max: 64 },
+        ...itemStack('flint_and_steel', 1), durability: { current: 64, max: 64 },
       })
 
       expect(yield* service.unequipToInventory('offhand', 4)).toMatchObject({
@@ -178,7 +178,9 @@ describe('player storage', () => {
       })
       const unequipped = yield* service.storageSnapshot
       expect(unequipped.equipment.slots.offhand).toBeNull()
-      expect(unequipped.inventory.slots[4]).toStrictEqual({ item: 'flint_and_steel', count: 1 })
+      expect(unequipped.inventory.slots[4]).toStrictEqual({
+        ...itemStack('flint_and_steel', 1), durability: { current: 64, max: 64 },
+      })
       expect(unequipped.inventoryDurability[4]).toStrictEqual({ current: 64, max: 64 })
     }),
   )
@@ -190,8 +192,7 @@ describe('player storage', () => {
 
       expect(yield* service.equipFromInventory(0, 'head')).toMatchObject({ _tag: 'Equipped' })
       expect((yield* service.storageSnapshot).equipment.slots.head).toStrictEqual({
-        item: 'iron_helmet',
-        count: 1,
+        ...itemStack('iron_helmet', 1),
         durability: { current: 165, max: 165 },
       })
 
@@ -200,7 +201,9 @@ describe('player storage', () => {
         _tag: 'Unequipped', slotIndex: 4,
       })
       const unequipped = yield* service.storageSnapshot
-      expect(unequipped.inventory.slots[4]).toStrictEqual({ item: 'iron_helmet', count: 1 })
+      expect(unequipped.inventory.slots[4]).toStrictEqual({
+        ...itemStack('iron_helmet', 1), durability: { current: 150, max: 165 },
+      })
       expect(unequipped.inventoryDurability[4]).toStrictEqual({ current: 150, max: 165 })
     }),
   )
@@ -265,9 +268,9 @@ describe('player storage', () => {
       })
 
       const after = yield* service.storageSnapshot
-      expect(after.inventory.slots[0]).toStrictEqual({ item: 'bow', count: 1 })
+      expect(after.inventory.slots[0]).toStrictEqual(itemStack('bow', 1))
       expect(after.inventoryDurability[0]).toStrictEqual({ current: 383, max: 384 })
-      expect(after.inventory.slots[1]).toStrictEqual({ item: 'arrow', count: 1 })
+      expect(after.inventory.slots[1]).toStrictEqual(itemStack('arrow', 1))
     }),
   )
 
@@ -414,7 +417,7 @@ describe('player storage', () => {
       if (picked._tag !== 'PickedUp') return
       yield* service.click({ _tag: 'LeftClick', slotIndex: 3, carried: picked.carried })
       const after = yield* service.storageSnapshot
-      expect(after.inventory.slots[3]).toStrictEqual({ item: 'iron_boots', count: 1 })
+      expect(after.inventory.slots[3]).toStrictEqual(itemStack('iron_boots', 1))
       expect(after.inventoryDurability[3]).toStrictEqual({ current: 188, max: 195 })
       expect((yield* Effect.either(service.restoreStorage(after)))._tag).toBe('Right')
     }),
@@ -451,7 +454,7 @@ describe('player storage', () => {
 
       const after = yield* service.storageSnapshot
       expect(after.equipment.slots.head).toStrictEqual({
-        item: 'iron_helmet', count: 1, durability: { current: 165, max: 165 },
+        ...itemStack('iron_helmet', 1), durability: { current: 165, max: 165 },
       })
       expect(after.inventoryDurability[0]).toStrictEqual({ current: 188, max: 195 })
       expect(after.inventoryDurability[1]).toStrictEqual({ current: 240, max: 240 })
@@ -463,9 +466,9 @@ describe('player storage', () => {
     const first = addStoredStack(emptyPlayerStorage(), { ...itemStack('flint_and_steel', 1), durability }).storage
     const second = addStoredStack(first, { ...itemStack('flint_and_steel', 1), durability }).storage
 
-    expect(second.inventory.slots[0]).toStrictEqual({ item: 'flint_and_steel', count: 1 })
+    expect(second.inventory.slots[0]).toStrictEqual(itemStack('flint_and_steel', 1))
     expect(second.inventoryDurability[0]).toStrictEqual({ current: 40, max: FLINT_AND_STEEL_MAX_DURABILITY })
-    expect(second.inventory.slots[1]).toStrictEqual({ item: 'flint_and_steel', count: 1 })
+    expect(second.inventory.slots[1]).toStrictEqual(itemStack('flint_and_steel', 1))
     expect(second.inventoryDurability[1]).toStrictEqual({ current: 40, max: FLINT_AND_STEEL_MAX_DURABILITY })
   })
 
@@ -525,10 +528,10 @@ describe('player storage', () => {
     const outcome = equipFromInventory(corrupted, 0, 'head')
     expect(outcome.result).toStrictEqual({
       _tag: 'Equipped',
-      item: { item: 'iron_helmet', count: 1, durability: { current: 165, max: 165 } },
+      item: { ...itemStack('iron_helmet', 1), durability: { current: 165, max: 165 } },
     })
     expect(outcome.storage.equipment.slots.head).toStrictEqual({
-      item: 'iron_helmet', count: 1, durability: { current: 165, max: 165 },
+      ...itemStack('iron_helmet', 1), durability: { current: 165, max: 165 },
     })
   })
 
@@ -780,7 +783,7 @@ describe('player storage', () => {
         expect(yield* service.consumeAndDamageAt({
           consume: { item: 'arrow', count: 1 },
           damage: { location: { _tag: 'Inventory', slotIndex: 0 }, expectedItem: 'stone', amount: 1 },
-        })).toStrictEqual({ _tag: 'NotDamageable', item: { item: 'stone', count: 5 } })
+        })).toStrictEqual({ _tag: 'NotDamageable', item: itemStack('stone', 5) })
         expect(yield* service.storageSnapshot).toStrictEqual(before)
       }),
   )
@@ -799,7 +802,7 @@ describe('player storage', () => {
       })
 
       const after = yield* service.storageSnapshot
-      expect(after.inventory.slots[0]).toStrictEqual({ item: 'bow', count: 1 })
+      expect(after.inventory.slots[0]).toStrictEqual(itemStack('bow', 1))
       expect(after.inventoryDurability[0]).toStrictEqual({ current: 383, max: 384 })
       expect(after.inventory.slots[1]).toBeUndefined()
     }),
@@ -923,7 +926,7 @@ describe('player storage', () => {
         inventory: {
           ...valid.inventory,
           slots: valid.inventory.slots.map((slot, index) =>
-            (index === 0 ? { item: 'stone', count: 0 } : slot)),
+            (index === 0 ? { ...itemStack('stone', 1), count: 0 } : slot)),
         },
       }
 

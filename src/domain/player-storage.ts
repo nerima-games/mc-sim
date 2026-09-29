@@ -1,6 +1,6 @@
 import * as Eq from './equipment.js'
 import * as Inv from './inventory.js'
-import { isItemType, StackCount } from '@nerima-games/mc-kernel'
+import { isItemStack, isItemType, itemStackEqualsIgnoringCount, itemStackWithCount, itemStacksCanMerge, maxStackCountForStack } from '@nerima-games/mc-kernel'
 import type { ContainerStoredStack } from './container-storage.js'
 
 export const FLINT_AND_STEEL_MAX_DURABILITY: number =
@@ -110,14 +110,13 @@ const sameDurability = (
   : right !== null && left !== undefined && left.current === right.current && left.max === right.max
 
 const isValidStoredStack = (value: unknown): value is ContainerStoredStack => {
-  if (!isRecord(value) || !hasExactKeys(value, ['item', 'count', 'durability'])) return false
-  if (typeof value['item'] !== 'string' || !isItemType(value['item'])) return false
-  const count = value['count']
-  if (typeof count !== 'number' || !Number.isSafeInteger(count) || count <= 0 ||
-      count > Inv.maxStackCountForItem(value['item'])) return false
-  return Eq.isDamageableItemType(value['item'])
-    ? count === 1 && Eq.isValidDurabilityForItem(value['item'], value['durability'])
-    : value['durability'] === null
+  if (!isRecord(value) || !hasExactKeys(value, ['item', 'count', 'components', 'durability'])) return false
+  const durability = value['durability']
+  const candidate = { item: value['item'], count: value['count'], components: value['components'] }
+  if (!isItemStack(candidate) || !isItemType(candidate.item)) return false
+  return Eq.isDamageableItemType(candidate.item)
+    ? candidate.count === 1 && Eq.isValidDurabilityForItem(candidate.item, durability)
+    : durability === null
 }
 
 export const emptyPlayerStorage = (): PlayerStorage => ({
@@ -142,7 +141,8 @@ export const withInventory = (storage: PlayerStorage, inventory: Inv.Inventory):
     if (slot === undefined) return null
     const previous = storage.inventory.slots[index]
     const previousDurability = storage.inventoryDurability[index]
-    return previous?.item === slot.item && Eq.isValidDurabilityForItem(slot.item, previousDurability)
+    return previous !== undefined && itemStackEqualsIgnoringCount(previous, slot) &&
+      Eq.isValidDurabilityForItem(slot.item, previousDurability)
       ? copyDurability(previousDurability)
       : Eq.durabilityForItem(slot.item)
   }),
@@ -157,16 +157,18 @@ export const addStoredStack = (
 
   const slots = [...storage.inventory.slots]
   const inventoryDurability = [...storage.inventoryDurability]
-  const maxStackCount = Inv.maxStackCountForItem(stack.item)
+  const maxStackCount = maxStackCountForStack(stack)
   let remaining: number = stack.count
 
   for (let index = 0; index < slots.length && remaining > 0; index += 1) {
     const slot = slots[index]
-    if (slot === undefined || slot.item !== stack.item ||
+    if (slot === undefined || !itemStacksCanMerge(slot, {
+      item: stack.item, count: stack.count, components: stack.components,
+    }) ||
         !sameDurability(inventoryDurability[index], stack.durability) ||
         !Number.isSafeInteger(slot.count) || slot.count <= 0 || slot.count >= maxStackCount) continue
     const accepted = Math.min(maxStackCount - slot.count, remaining)
-    slots[index] = { item: stack.item, count: StackCount(slot.count + accepted) }
+    slots[index] = itemStackWithCount(slot, slot.count + accepted)
     inventoryDurability[index] = copyDurability(stack.durability)
     remaining -= accepted
   }
@@ -174,7 +176,7 @@ export const addStoredStack = (
   for (let index = 0; index < slots.length && remaining > 0; index += 1) {
     if (slots[index] !== undefined) continue
     const accepted = Math.min(maxStackCount, remaining)
-    slots[index] = { item: stack.item, count: StackCount(accepted) }
+    slots[index] = Inv.itemStack(stack.item, accepted, { components: stack.components })
     inventoryDurability[index] = copyDurability(stack.durability)
     remaining -= accepted
   }
@@ -182,7 +184,7 @@ export const addStoredStack = (
   const added = stack.count - remaining
   const leftover = remaining === 0
     ? null
-    : { item: stack.item, count: StackCount(remaining), durability: copyDurability(stack.durability) }
+    : { ...Inv.itemStack(stack.item, remaining, { components: stack.components }), durability: copyDurability(stack.durability) }
   return {
     storage: added === 0
       ? storage
@@ -245,7 +247,7 @@ export const unequipToInventory = (
     return { storage, result: { _tag: 'OccupiedInventorySlot' } }
 
   const slots = [...storage.inventory.slots]
-  slots[slotIndex] = { item: item.item, count: item.count }
+  slots[slotIndex] = itemStackWithCount(item, item.count)
   const inventoryDurability = [...storage.inventoryDurability]
   inventoryDurability[slotIndex] = copyDurability(item.durability)
   return {
@@ -434,13 +436,21 @@ const validateInventorySlotEntry = (
       return { _tag: 'Invalid', error: invalidError(`storage.inventoryDurability.${index}`, 'empty slot requires null') }
     return { _tag: 'Slot', slot: undefined, durability: null }
   }
-  if (!isRecord(slot) || !hasExactKeys(slot, ['item', 'count']) ||
+  if (!isRecord(slot) ||
+      !(hasExactKeys(slot, ['item', 'count']) || hasExactKeys(slot, ['item', 'count', 'components'])) ||
       typeof slot['item'] !== 'string' || !isItemType(slot['item']))
     return { _tag: 'Invalid', error: invalidError(`storage.inventory.slots.${index}`, 'expected a valid item stack') }
   const count = slot['count']
-  if (typeof count !== 'number' || !Number.isSafeInteger(count) || count <= 0 ||
-      count > Inv.maxStackCountForItem(slot['item']))
+  if (typeof count !== 'number' || !Number.isSafeInteger(count) || count <= 0)
     return { _tag: 'Invalid', error: invalidError(`storage.inventory.slots.${index}`, 'expected a valid item stack') }
+  const candidate = { item: slot['item'], count, components: slot['components'] }
+  if (Object.hasOwn(slot, 'components') && !isItemStack(candidate))
+    return { _tag: 'Invalid', error: invalidError(`storage.inventory.slots.${index}`, 'expected a valid item stack') }
+  if (!Object.hasOwn(slot, 'components') && count > Inv.maxStackCountForItem(slot['item']))
+    return { _tag: 'Invalid', error: invalidError(`storage.inventory.slots.${index}`, 'expected a valid item stack') }
+  const stack = isItemStack(candidate)
+    ? Inv.itemStack(candidate.item, candidate.count, { components: candidate.components })
+    : Inv.itemStack(slot['item'], count)
   if (Eq.isDamageableItemType(slot['item'])) {
     if (!Eq.isValidDurabilityForItem(slot['item'], durability))
       return {
@@ -452,13 +462,13 @@ const validateInventorySlotEntry = (
       }
     return {
       _tag: 'Slot',
-      slot: { item: slot['item'], count: StackCount(count) },
+      slot: stack,
       durability: { ...durability },
     }
   }
   if (durability !== null)
     return { _tag: 'Invalid', error: invalidError(`storage.inventoryDurability.${index}`, 'non-durable item requires null') }
-  return { _tag: 'Slot', slot: { item: slot['item'], count: StackCount(count) }, durability: null }
+  return { _tag: 'Slot', slot: stack, durability: null }
 }
 
 /** Strictly validate persistence data, including item/slot compatibility. */

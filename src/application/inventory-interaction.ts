@@ -1,6 +1,7 @@
 import * as Eq from '../domain/equipment.js'
 import * as Inv from '../domain/inventory.js'
 import * as Storage from '../domain/player-storage.js'
+import { isItemStack, itemStackWithCount, itemStackEqualsIgnoringCount } from '@nerima-games/mc-kernel'
 
 export type InventoryCarriedStack = Inv.ItemStack & {
   readonly durability?: Eq.Durability | undefined
@@ -35,8 +36,7 @@ export type InventoryClickOutcome = {
 
 export const validCarried = (carried: InventoryCarriedSlot): boolean =>
   carried === undefined ||
-  (Number.isInteger(carried.count) && carried.count > 0 &&
-    carried.count <= Inv.maxStackCountForItem(carried.item) &&
+  (isItemStack({ item: carried.item, count: carried.count, components: carried.components }) &&
     (Eq.isDamageableItemType(carried.item)
       ? carried.durability === undefined ||
         Eq.isValidDurabilityForItem(carried.item, carried.durability)
@@ -48,6 +48,14 @@ export const sameDurability = (
 ): boolean => left === right || (left !== null && left !== undefined && right !== null && right !== undefined &&
   left.current === right.current && left.max === right.max)
 
+export const sameStackIgnoringCount = (
+  left: InventoryCarriedStack,
+  right: InventoryCarriedStack,
+): boolean => itemStackEqualsIgnoringCount(
+  { item: left.item, count: left.count, components: left.components },
+  { item: right.item, count: right.count, components: right.components },
+)
+
 export const copyCarried = (carried: InventoryCarriedSlot): InventoryCarriedSlot => carried === undefined
   ? undefined
   : {
@@ -56,7 +64,7 @@ export const copyCarried = (carried: InventoryCarriedSlot): InventoryCarriedSlot
     }
 
 export const carriedWithCount = (carried: InventoryCarriedStack, count: number): InventoryCarriedStack => ({
-  ...Inv.itemStack(carried.item, count),
+  ...Inv.itemStack(carried.item, count, { components: carried.components }),
   ...(carried.durability === undefined ? {} : { durability: { ...carried.durability } }),
 })
 
@@ -84,7 +92,7 @@ export const withCarriedSlots = (
   slots: ReadonlyArray<InventoryCarriedSlot>,
 ): Storage.PlayerStorage => ({
   ...player,
-  inventory: { slots: slots.map((slot) => slot === undefined ? undefined : { item: slot.item, count: slot.count }) },
+  inventory: { slots: slots.map((slot) => slot === undefined ? undefined : Inv.itemStack(slot.item, slot.count, { components: slot.components })) },
   inventoryDurability: slots.map(durabilityForCarried),
 })
 
@@ -92,7 +100,9 @@ export const isValidSlotIndex = (index: number): boolean =>
   Number.isInteger(index) && index >= 0 && index < Inv.INVENTORY_SLOT_COUNT
 
 export const sameCarried = (left: InventoryCarriedSlot, right: InventoryCarriedSlot): boolean =>
-  left?.item === right?.item && left?.count === right?.count &&
+  (left === undefined || right === undefined
+    ? left === right
+    : left.count === right.count && sameStackIgnoringCount(left, right)) &&
   sameDurability(left?.durability, right?.durability)
 
 const clickInventoryLeft = (
@@ -110,27 +120,34 @@ const clickInventoryLeft = (
   }
   if (slot === undefined) {
     const slots = [...inventory.slots]
-    slots[click.slotIndex] = Inv.itemStack(click.carried.item, click.carried.count)
+    slots[click.slotIndex] = Inv.itemStack(click.carried.item, click.carried.count, { components: click.carried.components })
     return { inventory: { slots }, result: { _tag: 'Placed', carried: undefined } }
   }
   if (slot.item !== click.carried.item) {
     const slots = [...inventory.slots]
-    slots[click.slotIndex] = Inv.itemStack(click.carried.item, click.carried.count)
+    slots[click.slotIndex] = Inv.itemStack(click.carried.item, click.carried.count, { components: click.carried.components })
     return { inventory: { slots }, result: { _tag: 'Swapped', carried: slot } }
   }
 
-  const accepted = Math.min(Inv.maxStackCountForItem(slot.item) - slot.count, click.carried.count)
+  if (!itemStackEqualsIgnoringCount(slot, {
+    item: click.carried.item, count: click.carried.count, components: click.carried.components,
+  })) {
+    const slots = [...inventory.slots]
+    slots[click.slotIndex] = Inv.itemStack(click.carried.item, click.carried.count, { components: click.carried.components })
+    return { inventory: { slots }, result: { _tag: 'Swapped', carried: slot } }
+  }
+  const accepted = Math.min(slot.components.maxStackSize - slot.count, click.carried.count)
   if (accepted <= 0) {
     return { inventory, result: { _tag: 'NoChange', carried: click.carried } }
   }
   const slots = [...inventory.slots]
-  slots[click.slotIndex] = Inv.itemStack(slot.item, slot.count + accepted)
+  slots[click.slotIndex] = itemStackWithCount(slot, slot.count + accepted)
   const remaining = click.carried.count - accepted
   return {
     inventory: { slots },
     result: {
       _tag: 'Merged',
-      carried: remaining === 0 ? undefined : Inv.itemStack(click.carried.item, remaining),
+      carried: remaining === 0 ? undefined : carriedWithCount(click.carried, remaining),
     },
   }
 }
@@ -147,25 +164,27 @@ const clickInventoryRight = (
     const pickedUp = Math.ceil(slot.count / 2)
     const remaining = slot.count - pickedUp
     const slots = [...inventory.slots]
-    slots[click.slotIndex] = remaining === 0 ? undefined : Inv.itemStack(slot.item, remaining)
+    slots[click.slotIndex] = remaining === 0 ? undefined : itemStackWithCount(slot, remaining)
     return {
       inventory: { slots },
-      result: { _tag: 'PickedUp', carried: Inv.itemStack(slot.item, pickedUp) },
+      result: { _tag: 'PickedUp', carried: itemStackWithCount(slot, pickedUp) },
     }
   }
 
   if (slot !== undefined &&
-      (slot.item !== click.carried.item || slot.count >= Inv.maxStackCountForItem(slot.item))) {
+      (!itemStackEqualsIgnoringCount(slot, {
+        item: click.carried.item, count: click.carried.count, components: click.carried.components,
+      }) || slot.count >= slot.components.maxStackSize)) {
     return { inventory, result: { _tag: 'NoChange', carried: click.carried } }
   }
   const slots = [...inventory.slots]
-  slots[click.slotIndex] = Inv.itemStack(click.carried.item, (slot?.count ?? 0) + 1)
+  slots[click.slotIndex] = Inv.itemStack(click.carried.item, (slot?.count ?? 0) + 1, { components: click.carried.components })
   const remaining = click.carried.count - 1
   return {
     inventory: { slots },
     result: {
       _tag: slot === undefined ? 'Placed' : 'Merged',
-      carried: remaining === 0 ? undefined : Inv.itemStack(click.carried.item, remaining),
+      carried: remaining === 0 ? undefined : carriedWithCount(click.carried, remaining),
     },
   }
 }
