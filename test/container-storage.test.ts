@@ -36,10 +36,9 @@ describe('container storage domain', () => {
     expect(duplicate.storage).toBe(created.storage)
   })
 
-  it('strictly rejects duplicate ids, malformed slots, and unknown snapshot versions', () => {
+  it('strictly rejects duplicate ids and malformed slots', () => {
     const created = createContainer(emptyContainerStorage(), 'chest-a').storage
     const snapshot = snapshotContainerStorage(created)
-    expect(validateContainerStorageSnapshot({ ...snapshot, version: 3 })._tag).toBe('Invalid')
     expect(validateContainerStorageSnapshot({
       ...snapshot,
       containers: [...snapshot.containers, snapshot.containers[0]],
@@ -211,19 +210,21 @@ describe('container storage domain', () => {
     })
   })
 
-  it('rejects an unsupported snapshot version before reading candidates', () => {
-    const result = validateContainerStorageSnapshot({
-      version: 1,
-      containers: [{ id: 'unsupported', kind: 'chest', slots: [] }],
-    })
-    expect(result).toStrictEqual({
-      _tag: 'Invalid',
-      error: {
-        _tag: 'ContainerStorageValidationError',
-        path: 'containerStorage.version',
-        reason: `expected ${CONTAINER_STORAGE_SNAPSHOT_VERSION}`,
-      },
-    })
+  it('rejects version 2 and older snapshots before reading candidates', () => {
+    for (const version of [1, 2]) {
+      const result = validateContainerStorageSnapshot({
+        version,
+        containers: [{ id: 'unsupported', kind: 'chest', slots: [] }],
+      })
+      expect(result).toStrictEqual({
+        _tag: 'Invalid',
+        error: {
+          _tag: 'ContainerStorageValidationError',
+          path: 'containerStorage.version',
+          reason: `expected ${CONTAINER_STORAGE_SNAPSHOT_VERSION}`,
+        },
+      })
+    }
   })
 
   it('rejects a candidate with an id that is not a non-empty trimmed string', () => {

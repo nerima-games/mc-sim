@@ -8,7 +8,7 @@ export type ContainerKind = 'chest' | 'shulker_box' | 'dispenser' | 'dropper' | 
 export const CHEST_CONTAINER_CAPACITY = 27 as const
 export const DISPENSER_CONTAINER_CAPACITY = 9 as const
 export const HOPPER_CONTAINER_CAPACITY = 5 as const
-export const CONTAINER_STORAGE_SNAPSHOT_VERSION = 2 as const
+export const CONTAINER_STORAGE_SNAPSHOT_VERSION = 3 as const
 
 export type ContainerId = string
 
