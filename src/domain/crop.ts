@@ -1,7 +1,5 @@
-import type { BlockPosition, BlockType, ItemType } from '@nerima-games/mc-kernel'
-import { blockPosition } from '@nerima-games/mc-kernel/domain/coordinates'
+import { blockPosition, DIMENSIONS, isDimension, type BlockPosition, type BlockType, type Dimension, type ItemType } from '@nerima-games/mc-kernel'
 import { itemStack, type ItemStack } from './inventory.js'
-import type { Dimension } from '@nerima-games/mc-worldgen'
 
 export const CROP_TYPES = ['wheat_crop', 'potato_crop', 'nether_wart_crop'] as const
 
@@ -21,7 +19,7 @@ export type CropDefinition = {
   readonly guaranteedMatureYield: ReadonlyArray<ItemStack>
 }
 
-const ALL_DIMENSIONS = ['overworld', 'nether', 'end'] as const satisfies ReadonlyArray<Dimension>
+const ALL_DIMENSIONS = DIMENSIONS
 
 export const CROP_REGISTRY: Record<CropType, CropDefinition> = {
   wheat_crop: {
@@ -120,9 +118,6 @@ const hasExactKeys = (value: Record<string, unknown>, expected: ReadonlyArray<st
   const actual = Object.keys(value)
   return actual.length === expected.length && expected.every((key) => Object.hasOwn(value, key))
 }
-
-const isDimension = (value: unknown): value is Dimension =>
-  value === 'overworld' || value === 'nether' || value === 'end'
 
 const invalid = (path: string, reason: string): CropValidationResult => ({
   _tag: 'Invalid',

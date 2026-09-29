@@ -1,5 +1,4 @@
-import { type ItemType, isItemType } from '@nerima-games/mc-kernel'
-import { type Dimension } from '@nerima-games/mc-worldgen'
+import { DIMENSIONS, type Dimension, type ItemType, isItemType, type Statistics } from '@nerima-games/mc-kernel'
 import { defineFormat, type SaveFormat } from '@nerima-games/mc-save'
 import { Schema } from 'effect'
 import { HOTBAR_SIZE } from './hotbar.js'
@@ -13,8 +12,7 @@ const itemType = Schema.String.pipe(
   }),
 )
 
-const dimensions = ['overworld', 'nether', 'end'] as const satisfies ReadonlyArray<Dimension>
-const dimension = Schema.Literal(...dimensions)
+const dimension = Schema.Literal(...DIMENSIONS)
 const position = Schema.Struct({
   x: finiteNumber,
   y: finiteNumber,
@@ -53,10 +51,7 @@ type SimulationSaveFor<Item> = {
     readonly inventory: ReadonlyArray<{ readonly item: Item; readonly count: number } | null>
     readonly selectedHotbarSlot: number
   }
-  readonly statistics: {
-    readonly counters: Record<string, number>
-    readonly unlocked: ReadonlyArray<string>
-  }
+  readonly statistics: Statistics
 }
 
 export type SimulationSave = SimulationSaveFor<ItemType>

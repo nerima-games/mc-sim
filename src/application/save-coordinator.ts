@@ -21,7 +21,8 @@
  * Effect-based and none of them uses `Promise` (see `application/autosave.ts`
  * for the sibling scheduling module this pairs with).
  */
-import { chunkSnapshotOf, type Chunk, type Dimension } from '@nerima-games/mc-worldgen'
+import { chunkSnapshotOf, type Chunk } from '@nerima-games/mc-worldgen'
+import type { Dimension } from '@nerima-games/mc-kernel'
 import { Data, Deferred, Effect, Ref } from 'effect'
 import type { YieldableError } from 'effect/Cause'
 

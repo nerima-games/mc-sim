@@ -1,47 +1,23 @@
-import { Brand } from 'effect'
-import type { Position } from '@nerima-games/mc-kernel'
-import type { Dimension } from '@nerima-games/mc-worldgen'
+import {
+  isDimension,
+  OccupantId,
+  VehicleId,
+  type Vehicle,
+  type VehicleSnapshot,
+  type VehicleValidationError,
+  type VehicleValidationResult,
+  type Position,
+} from '@nerima-games/mc-kernel'
 
-export type VehicleId = string & Brand.Brand<'VehicleId'>
-const vehicleId: Brand.Brand.Constructor<VehicleId> = Brand.refined<VehicleId>(
-  (value) => typeof value === 'string' && value.trim().length > 0,
-  () => Brand.error('VehicleId must be a non-blank string'),
-)
-export { vehicleId as VehicleId }
-
-export type OccupantId = string & Brand.Brand<'VehicleOccupantId'>
-const occupantId: Brand.Brand.Constructor<OccupantId> = Brand.refined<OccupantId>(
-  (value) => typeof value === 'string' && value.trim().length > 0,
-  () => Brand.error('OccupantId must be a non-blank string'),
-)
-export { occupantId as OccupantId }
-
-export type VehicleType = 'boat' | 'minecart'
-export type VehicleVelocity = Readonly<{ x: number; y: number; z: number }>
-export type Vehicle = Readonly<{
-  id: VehicleId
-  type: VehicleType
-  dimension: Dimension
-  position: Position
-  velocity: VehicleVelocity
-  yawRadians: number
-  occupant?: OccupantId | undefined
-}>
-
-export type VehicleSnapshot = Readonly<{
-  vehicles: ReadonlyArray<Vehicle>
-  nextSerial: number
-}>
-
-export type VehicleValidationError = Readonly<{
-  _tag: 'VehicleValidationError'
-  path: string
-  reason: string
-}>
-
-export type VehicleValidationResult =
-  | Readonly<{ _tag: 'Valid'; snapshot: VehicleSnapshot }>
-  | Readonly<{ _tag: 'Invalid'; error: VehicleValidationError }>
+export { OccupantId, VehicleId } from '@nerima-games/mc-kernel'
+export type {
+  VehicleType,
+  VehicleVelocity,
+  Vehicle,
+  VehicleSnapshot,
+  VehicleValidationError,
+  VehicleValidationResult,
+} from '@nerima-games/mc-kernel'
 
 const invalidError = (path: string, reason: string): VehicleValidationError => ({
   _tag: 'VehicleValidationError', path, reason,
@@ -56,9 +32,6 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value)
 const vector = (value: unknown): value is Position =>
   isRecord(value) && finite(value['x']) && finite(value['y']) && finite(value['z'])
-const dimension = (value: unknown): value is Dimension =>
-  value === 'overworld' || value === 'nether' || value === 'end'
-
 type VehicleItemValidation =
   | { readonly _tag: 'Invalid'; readonly error: VehicleValidationError }
   | { readonly _tag: 'Valid'; readonly serial: number | undefined; readonly vehicle: Vehicle }
@@ -77,7 +50,7 @@ const validateVehicleItem = (
   const serial = serialMatch === null ? undefined : Number(serialMatch[1])
   if (item['type'] !== 'boat' && item['type'] !== 'minecart')
     return { _tag: 'Invalid', error: invalidError(`${path}.type`, 'must be boat or minecart') }
-  if (!dimension(item['dimension']))
+  if (!isDimension(item['dimension']))
     return { _tag: 'Invalid', error: invalidError(`${path}.dimension`, 'must be a supported dimension') }
   if (!vector(item['position']))
     return { _tag: 'Invalid', error: invalidError(`${path}.position`, 'must contain finite coordinates') }
@@ -97,13 +70,13 @@ const validateVehicleItem = (
     _tag: 'Valid',
     serial,
     vehicle: {
-      id: vehicleId(id),
+      id: VehicleId(id),
       type: item['type'],
       dimension: item['dimension'],
       position: item['position'],
       velocity: item['velocity'],
       yawRadians: item['yawRadians'],
-      ...(occupant === undefined ? {} : { occupant: occupantId(occupant) }),
+      ...(occupant === undefined ? {} : { occupant: OccupantId(occupant) }),
     },
   }
 }

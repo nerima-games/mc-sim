@@ -14,14 +14,13 @@
  */
 import { Context, Effect, Layer, Ref } from 'effect'
 import * as Camera from '../domain/camera-pose.js'
-import type { CameraPoseSnapshot, Position } from "@nerima-games/mc-kernel"
+import type { CameraPoseSnapshot, Dimension, Position } from "@nerima-games/mc-kernel"
 import { ClockPort, monotonicSecs } from "@nerima-games/mc-kernel"
-import type { Dimension } from '@nerima-games/mc-worldgen'
 
 /**
  * The dimension a fresh world starts in.
  *
- * mc-sim's OWN decision rather than a transcription — mc-worldgen owns the word
+ * mc-sim's OWN decision rather than a transcription — mc-kernel owns the word
  * `Dimension`, not the answer to "where does a new player appear". It is
  * exported because `reset`'s meaning is otherwise unobservable from outside: a
  * caller that wants to assert what a re-entrant world load produced needs the
@@ -57,7 +56,7 @@ export type PlayerServiceApi = {
    * by name, and this is the member it named.
    *
    * mc-sim NEVER READS THIS VALUE. Nothing here branches on it; the type is
-   * imported directly from mc-worldgen.
+   * imported directly from mc-kernel.
    */
   readonly dimension: Effect.Effect<Dimension>
   /** Rotate the view. Pitch is clamped; yaw is not wrapped. */

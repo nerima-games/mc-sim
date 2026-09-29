@@ -6,38 +6,20 @@ import {
   dropOfBlockId,
   isPlaceableItem,
   resolvedBlockOfId,
-  type BlockDrop,
-  type BlockId,
-  type BlockType,
   type HarvestContext,
   type ItemType,
+  type BlockBreakDecision,
+  type BlockPlacementDecision,
+  type PlaceableBlock,
+  type ResolvedBlock,
 } from '@nerima-games/mc-kernel'
+
+export type { BlockBreakDecision, BlockPlacementDecision, PlaceableBlock } from '@nerima-games/mc-kernel'
 
 // mc-kernel exposes hardness and piston capability, but not a semantic
 // "unbreakable" flag; keep the vanilla sentinel policy at this boundary.
 const BEDROCK_HARDNESS = 100
 const UNBREAKABLE_HARDNESS = 9000
-
-type ResolvedBlock = NonNullable<ReturnType<typeof resolvedBlockOfId>>
-
-export type BlockBreakDecision =
-  | { readonly kind: 'blocked'; readonly reason: 'unknown' | 'air' | 'unbreakable' }
-  | {
-      readonly kind: 'broken'
-      readonly id: BlockId
-      readonly type: BlockType
-      readonly drop?: BlockDrop
-      readonly experience: number
-    }
-
-export type BlockPlacementDecision =
-  | { readonly kind: 'rejected'; readonly reason: 'unknown-block' | 'air' | 'unsupported' }
-  | { readonly kind: 'placed'; readonly id: BlockId; readonly type: BlockType }
-
-export type PlaceableBlock = {
-  readonly id: BlockId
-  readonly type: BlockType
-}
 
 const isUnbreakable = (block: ResolvedBlock): boolean =>
   block.properties.hardness >= UNBREAKABLE_HARDNESS ||
