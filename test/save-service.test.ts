@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect, Option } from 'effect'
-import { itemStack } from '@nerima-games/mc-kernel'
+import { itemComponentPatch, itemStack } from '@nerima-games/mc-kernel'
 import { InMemoryStorageLayer, saveEnvelope, sealSaveEnvelope, StoragePort } from '@nerima-games/mc-save'
 import {
   listSimulationSaves,
@@ -46,7 +46,9 @@ describe('simulation save service', () => {
   it.effect('round-trips canonical components without changing their bytes', () =>
     Effect.gen(function* () {
       const key = simulationSaveKey('world:canonical')
-      const canonical = itemStack('iron_ingot', 12)
+      const canonical = itemStack('book', 1, {
+        componentPatch: itemComponentPatch({ 'minecraft:lore': [{ text: 'canonical' }] }),
+      })
       const value: SimulationSave = {
         ...save,
         player: { ...save.player, inventory: [canonical, null] },
@@ -139,4 +141,5 @@ describe('simulation save service', () => {
       }
     }).pipe(Effect.provide(storage)),
   )
+
 })

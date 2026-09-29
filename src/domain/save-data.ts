@@ -21,24 +21,28 @@ const valueWithUndefined = (value: unknown): unknown => {
       .map(([key, entry]) => [key, entry === null ? undefined : valueWithUndefined(entry)]),
   )
 }
-const nullableCanonicalItemStack = Schema.Unknown.pipe(
-  Schema.filter((value): value is ItemStack => isItemStack(value) || isItemStack(valueWithUndefined(value)), {
-    message: () => 'expected a canonical ItemStack from mc-kernel',
-  }),
-)
 const valueWithNull = (value: unknown): unknown => {
   if (Array.isArray(value)) return value.map(valueWithNull)
   if (typeof value !== 'object' || value === null) return value
   return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, entry === undefined ? null : valueWithNull(entry)]))
 }
-const itemStack = Schema.transform(Schema.Unknown, nullableCanonicalItemStack, {
+const wireItemStack = Schema.Struct({
+  item: Schema.String,
+  count: Schema.Number,
+  components: Schema.Unknown,
+})
+const itemStack = Schema.transform(Schema.Unknown, Schema.Unknown, {
   decode: (value) => {
-    const canonical = valueWithUndefined(value)
-    if (!isItemStack(canonical)) throw new TypeError('expected a canonical ItemStack from mc-kernel')
+    const canonical = Schema.decodeUnknownSync(wireItemStack)(valueWithUndefined(value))
     return itemStackFromUnknown(canonical.item, canonical.count, { components: canonical.components })
   },
   encode: (value) => valueWithNull(value),
-})
+  strict: true,
+}).pipe(
+  Schema.filter((value): value is ItemStack => isItemStack(value), {
+    message: () => 'expected a canonical ItemStack from mc-kernel',
+  }),
+)
 
 const dimension = Schema.Literal(...DIMENSIONS)
 const position = Schema.Struct({

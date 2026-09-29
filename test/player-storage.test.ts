@@ -614,6 +614,20 @@ describe('player storage', () => {
     expect(outcome.storage).toBe(withStoneAtOne)
   })
 
+  it('returns the unequipped item when moving equipment into an empty slot', () => {
+    const equipped = equipFromInventory(
+      addStoredStack(emptyPlayerStorage(), {
+        ...itemStack('iron_helmet', 1),
+        durability: { current: 165, max: 165 },
+      }).storage,
+      0, 'head',
+    ).storage
+
+    expect(unequipToInventory(equipped, 'head', 1).result).toMatchObject({
+      _tag: 'Unequipped', slotIndex: 1,
+    })
+  })
+
   it('rejects a non-integer or non-positive damage amount, leaving storage untouched', () => {
     const storage = addStoredStack(emptyPlayerStorage(), {
       ...itemStack('flint_and_steel', 1),
@@ -640,6 +654,20 @@ describe('player storage', () => {
     const outcome = damageAt(storage, { _tag: 'Equipment', slot: 'offhand' }, 1)
     expect(outcome.result).toStrictEqual({ _tag: 'Empty' })
     expect(outcome.storage).toBe(storage)
+  })
+
+  it('damages an equipped item through the pure storage transition', () => {
+    const equipped = equipFromInventory(
+      addStoredStack(emptyPlayerStorage(), {
+        ...itemStack('iron_helmet', 1),
+        durability: { current: 165, max: 165 },
+      }).storage,
+      0, 'head',
+    ).storage
+
+    expect(damageAt(equipped, { _tag: 'Equipment', slot: 'head' }, 15).result).toMatchObject({
+      _tag: 'Damaged', applied: 15,
+    })
   })
 
   it('reports InvalidLocation for an inventory location with a bad tag or an out-of-range slot index', () => {

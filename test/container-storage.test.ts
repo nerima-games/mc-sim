@@ -305,6 +305,11 @@ describe('container storage domain', () => {
       version: CONTAINER_STORAGE_SNAPSHOT_VERSION,
       containers: [{ id: 'legacy-zero', kind: 'chest', slots }],
     })).toMatchObject({ _tag: 'Invalid', error: { path: 'containerStorage.containers.0.slots.0' } })
+    slots[0] = { ...itemStack('stone', 1), count: 0, durability: null }
+    expect(validateContainerStorageSnapshot({
+      version: CONTAINER_STORAGE_SNAPSHOT_VERSION,
+      containers: [{ id: 'canonical-zero', kind: 'chest', slots }],
+    })).toMatchObject({ _tag: 'Invalid', error: { path: 'containerStorage.containers.0.slots.0' } })
   })
 
   it('rejects a non-durable stored stack that carries a non-null durability', () => {

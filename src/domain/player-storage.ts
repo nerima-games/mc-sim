@@ -250,14 +250,11 @@ export const unequipToInventory = (
   slots[slotIndex] = Inv.itemStack(item.item, item.count, { components: item.components })
   const inventoryDurability = [...storage.inventoryDurability]
   inventoryDurability[slotIndex] = copyDurability(item.durability)
-  return {
-    storage: {
-      inventory: { slots },
-      equipment: Eq.unequip(storage.equipment, equipmentSlot).equipment,
-      inventoryDurability,
-    },
-    result: { _tag: 'Unequipped', item, slotIndex },
+  const nextStorage = {
+    inventory: { slots }, equipment: Eq.unequip(storage.equipment, equipmentSlot).equipment, inventoryDurability,
   }
+  const result: UnequipToInventoryResult = { _tag: 'Unequipped', item, slotIndex }
+  return { storage: nextStorage, result }
 }
 
 export const damageAt = (
