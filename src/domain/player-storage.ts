@@ -247,7 +247,7 @@ export const unequipToInventory = (
     return { storage, result: { _tag: 'OccupiedInventorySlot' } }
 
   const slots = [...storage.inventory.slots]
-  slots[slotIndex] = itemStackWithCount(item, item.count)
+  slots[slotIndex] = Inv.itemStack(item.item, item.count, { components: item.components })
   const inventoryDurability = [...storage.inventoryDurability]
   inventoryDurability[slotIndex] = copyDurability(item.durability)
   return {

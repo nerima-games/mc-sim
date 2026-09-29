@@ -464,7 +464,7 @@ export const transferContainerItem = (
     containerSlots[request.containerSlot] = remaining === 0
       ? null
       : storedWithCount(validSource, remaining)
-    playerSlots[request.playerSlot] = moved
+    playerSlots[request.playerSlot] = Inv.itemStack(moved.item, moved.count, { components: moved.components })
     playerDurability[request.playerSlot] = copyDurability(moved.durability)
   }
   const containers = [...containerStorage.containers]
