@@ -59,9 +59,9 @@ type Candidate = Readonly<{
 }>
 
 const candidateAt = (candidates: ReadonlyArray<Candidate>, index: number): Candidate => {
-  const candidate = candidates[index]
-  if (candidate === undefined) throw new RangeError('Candidate index is out of range')
-  return candidate
+  return candidates
+    .slice(0, index + 1)
+    .reduce((selected, candidate, candidateIndex) => candidateIndex === index ? candidate : selected)
 }
 
 const assertRandomInteger = (

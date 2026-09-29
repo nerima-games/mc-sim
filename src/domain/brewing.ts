@@ -116,8 +116,8 @@ const brewOnce = (
     const bottles = state.bottles.map((bottle) =>
     bottle?.item === recipe.input ? itemStack(recipe.output, bottle.count) : bottle,
     )
-    const [first, second, third] = bottles
-    const result: [Slot, Slot, Slot] = [first ?? undefined, second ?? undefined, third ?? undefined]
+    const result: [Slot, Slot, Slot] = [undefined, undefined, undefined]
+    for (const [index, bottle] of bottles.entries()) result[index] = bottle
     return result
   })(),
 })

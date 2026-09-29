@@ -30,6 +30,7 @@ describe('VehicleService lifecycle', () => {
     await Effect.runPromise(Effect.gen(function* () {
       const service = yield* makeVehicleService()
       const vehicle = yield* service.spawn('boat', 'overworld', position(1, 64, 2), Math.PI / 2)
+      const secondVehicle = yield* service.spawn('minecart', 'overworld', position(2, 64, 2))
       expect(vehicle.id).toBe('v:0')
       yield* service.updateVelocity(vehicle.id, { x: 1, y: 0, z: -1 })
       yield* service.updateTransform(vehicle.id, 'nether', position(3, 70, 4), Math.PI)
@@ -44,6 +45,7 @@ describe('VehicleService lifecycle', () => {
       yield* service.dismount(vehicle.id, OccupantId('player:1'))
       expect((yield* service.vehicles)[0]?.occupant).toBeUndefined()
       expect(yield* service.despawn(vehicle.id)).toBe(true)
+      expect(yield* service.despawn(secondVehicle.id)).toBe(true)
       expect(yield* service.despawn(vehicle.id)).toBe(false)
     }))
   })

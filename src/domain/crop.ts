@@ -1,4 +1,5 @@
 import type { BlockPosition, BlockType, ItemType } from '@nerima-games/mc-kernel'
+import { blockPosition } from '@nerima-games/mc-kernel/domain/coordinates'
 import { itemStack, type ItemStack } from './inventory.js'
 import type { Dimension } from '@nerima-games/mc-worldgen'
 
@@ -79,10 +80,6 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 export const isCropType = (value: unknown): value is CropType =>
   typeof value === 'string' && CROP_TYPES.some((crop) => crop === value)
 
-const isBlockPosition = (value: unknown): value is BlockPosition =>
-  isRecord(value) &&
-  typeof value['x'] === 'number' && typeof value['y'] === 'number' && typeof value['z'] === 'number'
-
 
 export const cropDefinitionFor = (crop: CropType): CropDefinition => CROP_REGISTRY[crop]
 
@@ -157,7 +154,7 @@ export const validateCropSnapshot = (value: unknown): CropValidationResult => {
     }
 
     const { x, y, z } = candidate['position']
-    if (![x, y, z].every((axis) => typeof axis === 'number' && Number.isSafeInteger(axis))) {
+    if ([x, y, z].some((axis) => typeof axis !== 'number' || !Number.isSafeInteger(axis))) {
       return invalid(`${path}.position`, 'coordinates must be safe integers')
     }
     const growthSecs = candidate['growthSecs']
@@ -166,8 +163,7 @@ export const validateCropSnapshot = (value: unknown): CropValidationResult => {
       return invalid(`${path}.growthSecs`, 'growth must be finite and within the crop maturity range')
     }
 
-    const position = { x, y, z }
-    if (!isBlockPosition(position)) return invalid(`${path}.position`, 'invalid block position')
+    const position = blockPosition(Number(x), Number(y), Number(z))
     const crop: CropState = {
       dimension: candidate['dimension'],
       position,

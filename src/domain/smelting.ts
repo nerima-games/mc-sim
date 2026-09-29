@@ -171,6 +171,9 @@ const invalidSnapshot = (path: string, reason: string): FurnaceSnapshotValidatio
   error: { _tag: 'FurnaceSnapshotValidationError', path, reason },
 })
 
+const isValidDuration = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value) && value >= 0
+
 /** Validate an untrusted JSON furnace snapshot before installing it in world state. */
 export const validateFurnaceSnapshot = (value: unknown): FurnaceSnapshotValidationResult => {
   if (!isRecord(value)) return invalidSnapshot('snapshot', 'expected an object')
@@ -179,6 +182,9 @@ export const validateFurnaceSnapshot = (value: unknown): FurnaceSnapshotValidati
     return invalidSnapshot('snapshot', `expected exactly { ${keys.join(', ')} }`)
   }
 
+  const slots: Record<'input' | 'fuel' | 'output', ItemStack | null> = {
+    input: null, fuel: null, output: null,
+  }
   for (const name of ['input', 'fuel', 'output'] as const) {
     const slot = value[name]
     if (slot === null) continue
@@ -194,39 +200,27 @@ export const validateFurnaceSnapshot = (value: unknown): FurnaceSnapshotValidati
         count <= 0 || count > maxStackCountForItem(slot['item'])) {
       return invalidSnapshot(`${name}.count`, 'expected a valid positive stack count')
     }
+    slots[name] = itemStack(slot['item'], count)
   }
 
+  let cookElapsedSecs = 0
+  let burnRemainingSecs = 0
   for (const name of ['cookElapsedSecs', 'burnRemainingSecs'] as const) {
     const duration = value[name]
-    if (typeof duration !== 'number' || !Number.isFinite(duration) || duration < 0) {
+    if (!isValidDuration(duration)) {
       return invalidSnapshot(name, 'expected a finite non-negative number')
     }
-  }
-
-  const durationValue = (name: 'cookElapsedSecs' | 'burnRemainingSecs'): number => {
-    const duration = value[name]
-    if (typeof duration !== 'number' || !Number.isFinite(duration) || duration < 0) {
-      throw new RangeError(`Validated furnace duration is malformed: ${name}`)
-    }
-    return duration
-  }
-
-  const slotValue = (slot: unknown): ItemStack | null => {
-    if (slot === null) return null
-    if (!isRecord(slot) || typeof slot['item'] !== 'string' || !isItemType(slot['item']) ||
-        typeof slot['count'] !== 'number') {
-      throw new RangeError('Validated furnace slot is malformed')
-    }
-    return itemStack(slot['item'], slot['count'])
+    if (name === 'cookElapsedSecs') cookElapsedSecs = duration
+    else burnRemainingSecs = duration
   }
   return {
     _tag: 'Valid',
     state: {
-      input: slotValue(value['input']),
-      fuel: slotValue(value['fuel']),
-      output: slotValue(value['output']),
-      cookElapsedSecs: durationValue('cookElapsedSecs'),
-      burnRemainingSecs: durationValue('burnRemainingSecs'),
+      input: slots.input,
+      fuel: slots.fuel,
+      output: slots.output,
+      cookElapsedSecs,
+      burnRemainingSecs,
     },
   }
 }

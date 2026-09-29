@@ -48,6 +48,14 @@ describe('container storage domain', () => {
       ...snapshot,
       containers: [{ id: 'chest-a', slots: [] }],
     })._tag).toBe('Invalid')
+    expect(validateContainerStorageSnapshot({
+      ...snapshot,
+      containers: [{
+        id: 'chest-a',
+        kind: 'chest',
+        slots: [{}, ...Array.from({ length: CHEST_CONTAINER_CAPACITY - 1 }, () => null)],
+      }],
+    })._tag).toBe('Invalid')
   })
 
   it('uses kind-specific capacities in the current snapshot format', () => {

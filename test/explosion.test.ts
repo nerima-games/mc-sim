@@ -28,6 +28,43 @@ const entity = (id: string, x: number, y: number, z: number): Entity<null> => ({
 })
 
 describe('planExplosion', () => {
+  it('matches the origin/main literal oracle for a seeded block explosion', () => {
+    const result = planExplosion({
+      center: position(0.5, 0.5, 0.5),
+      radius: 4,
+      seed: 7,
+      blocks: world([['2,0,0', 1], ['0,0,0', 0]]),
+      entities: [],
+    })
+    expect({
+      destroyedBlocks: result.destroyedBlocks,
+      visitedBlocks: result.visitedBlocks,
+      truncated: result.truncated,
+      entityEffects: result.entityEffects,
+    }).toStrictEqual({
+      destroyedBlocks: [{ x: 0, y: 0, z: 0 }, { x: 2, y: 0, z: 0 }],
+      visitedBlocks: 257,
+      truncated: false,
+      entityEffects: [],
+    })
+  })
+
+  it('matches the origin/main literal oracle for seeded entity exposure', () => {
+    const result = planExplosion({
+      center: position(0.5, 0.5, 0.5),
+      radius: 4,
+      seed: 3,
+      blocks: world([]),
+      entities: [entity('golden:1', 2.5, 0, 0.5)],
+    })
+    expect(result.entityEffects).toStrictEqual([{
+      damage: 7.068801948175713,
+      exposure: 0.6666666666666666,
+      id: 'golden:1',
+      knockback: { x: 0.3203871171272801, y: 0.06407742342545601, z: 0 },
+    }])
+  })
+
   it('is deterministic for a seed and lets the seed vary marginal blocks', () => {
     const blocks = world([['2,0,0', 1]])
     const request = { center: position(0.5, 0.5, 0.5), radius: 4, seed: 7, blocks, entities: [] }

@@ -321,9 +321,7 @@ const targetDurabilityAt = (
 ): Eq.Durability | null | undefined =>
   location._tag === 'Inventory'
     ? storage.inventoryDurability[location.slotIndex]
-    : Eq.isEquipmentSlot(location.slot)
-      ? storage.equipment.slots[location.slot]?.durability
-      : undefined
+    : storage.equipment.slots[location.slot]?.durability
 
 type ConsumablePlan = { readonly available: number; readonly excludedSlot: number }
 

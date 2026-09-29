@@ -34,10 +34,9 @@ const update = (
   if (!valid) return [Effect.fail(operationError('invalid-transform')), snapshot]
   const index = snapshot.vehicles.findIndex((vehicle) => vehicle.id === id)
   if (index < 0) return [Effect.fail(operationError('not-found')), snapshot]
-  const vehicles = snapshot.vehicles.slice()
-  const vehicle = vehicles[index]
-  if (vehicle === undefined) return [Effect.fail(operationError('not-found')), snapshot]
-  vehicles[index] = transform(vehicle)
+  const vehicles = snapshot.vehicles.map((vehicle, vehicleIndex) =>
+    vehicleIndex === index ? transform(vehicle) : vehicle,
+  )
   return [Effect.void, { ...snapshot, vehicles }]
 }
 
@@ -88,21 +87,20 @@ export const makeVehicleService = (
         if (index < 0) return [Effect.fail(operationError('not-found')), snapshot]
         if (snapshot.vehicles.some((vehicle) => vehicle.occupant === occupant)) return [Effect.fail(operationError('duplicate-occupant')), snapshot]
         if (snapshot.vehicles[index]?.occupant !== undefined) return [Effect.fail(operationError('occupied')), snapshot]
-        const vehicles = snapshot.vehicles.slice()
-        const vehicle = vehicles[index]
-        if (vehicle === undefined) return [Effect.fail(operationError('not-found')), snapshot]
-        vehicles[index] = { ...vehicle, occupant }
+        const vehicles = snapshot.vehicles.map((vehicle, vehicleIndex) =>
+          vehicleIndex === index ? { ...vehicle, occupant } : vehicle,
+        )
         return [Effect.void, { ...snapshot, vehicles }]
       }),
       dismount: (id, occupant) => modify((snapshot) => {
         const index = snapshot.vehicles.findIndex((vehicle) => vehicle.id === id)
         if (index < 0) return [Effect.fail(operationError('not-found')), snapshot]
         if (snapshot.vehicles[index]?.occupant !== occupant) return [Effect.fail(operationError('occupant-mismatch')), snapshot]
-        const vehicles = snapshot.vehicles.slice()
-        const vehicleAtIndex = vehicles[index]
-        if (vehicleAtIndex === undefined) return [Effect.fail(operationError('not-found')), snapshot]
-        const { occupant: _occupant, ...vehicle } = vehicleAtIndex
-        vehicles[index] = vehicle
+        const vehicles = snapshot.vehicles.map((vehicle, vehicleIndex) => {
+          if (vehicleIndex !== index) return vehicle
+          const { occupant: _occupant, ...withoutOccupant } = vehicle
+          return withoutOccupant
+        })
         return [Effect.void, { ...snapshot, vehicles }]
       }),
       updateVelocity: (id, velocity) => modify((snapshot) => update(snapshot, id, validVector(velocity), (vehicle) => ({ ...vehicle, velocity }))),
