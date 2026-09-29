@@ -47,13 +47,15 @@ describe('player storage', () => {
     })
     expect(result._tag).toBe('Invalid')
   })
-  it('validates legacy inventory stacks and rejects invalid resolved components', () => {
+  it('rejects legacy inventory stacks and invalid resolved components', () => {
     const base = emptyPlayerStorage()
     const legacy = {
       ...base,
       inventory: { slots: [{ item: 'stone', count: 2 }, ...Array.from({ length: 35 }, () => undefined)] },
     }
-    expect(validatePlayerStorageSnapshot(legacy)._tag).toBe('Valid')
+    expect(validatePlayerStorageSnapshot(legacy)).toMatchObject({
+      _tag: 'Invalid', error: { path: 'storage.inventory.slots.0' },
+    })
     expect(validatePlayerStorageSnapshot({
       ...legacy,
       inventory: { slots: [{ item: 'stone', count: 65 }, ...Array.from({ length: 35 }, () => undefined)] },
@@ -952,6 +954,31 @@ describe('player storage', () => {
         })
       }
       expect(yield* service.storageSnapshot).toStrictEqual(valid)
+    }),
+  )
+
+  it.effect('rejects legacy inventory stacks without resolved components', () =>
+    Effect.gen(function* () {
+      const service = yield* makeInventoryService()
+      const valid = yield* service.storageSnapshot
+      const legacy = {
+        ...valid,
+        inventory: {
+          ...valid.inventory,
+          slots: valid.inventory.slots.map((slot, index) =>
+            (index === 0 ? { item: 'stone', count: 1 } : slot)),
+        },
+      }
+
+      const result = yield* Effect.either(service.restoreStorage(legacy))
+      expect(result._tag).toBe('Left')
+      if (result._tag === 'Left') {
+        expect(result.left).toStrictEqual({
+          _tag: 'PlayerStorageValidationError',
+          path: 'storage.inventory.slots.0',
+          reason: 'expected a valid item stack',
+        })
+      }
     }),
   )
 

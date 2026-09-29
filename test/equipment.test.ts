@@ -97,6 +97,29 @@ describe('equipment domain', () => {
     }),
   )
 
+  it.effect('rejects legacy equipment snapshots without resolved components', () =>
+    Effect.sync(() => {
+      const legacy = {
+        slots: {
+          head: { item: 'iron_helmet', count: 1, durability: { current: 165, max: 165 } },
+          chest: null,
+          legs: null,
+          feet: null,
+          offhand: null,
+        },
+      }
+
+      expect(validateEquipmentSnapshot(legacy)).toStrictEqual({
+        _tag: 'Invalid',
+        error: {
+          _tag: 'EquipmentValidationError',
+          path: 'equipment.slots.head',
+          reason: 'expected null or the slot-compatible item with count 1 and exact durability',
+        },
+      })
+    }),
+  )
+
   it.effect('rejects arbitrary items and slot mismatches without changing equipment', () =>
     Effect.sync(() => {
       const initial = emptyEquipment()
@@ -257,11 +280,11 @@ describe('equipment domain', () => {
     }),
   )
 
-  it('normalises a minimal canonical equipment item and rejects each malformed field', () => {
+  it('requires canonical equipment items and rejects each malformed field', () => {
     const base = emptyEquipment()
     const durabilityValue = { current: 195, max: 195 }
     expect(validateEquipmentSnapshot({
-      slots: { ...base.slots, feet: { item: 'iron_boots', count: 1, durability: durabilityValue } },
+      slots: { ...base.slots, feet: { ...itemStack('iron_boots', 1), durability: durabilityValue } },
     })._tag).toBe('Valid')
     for (const item of [
       1,

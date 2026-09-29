@@ -1,5 +1,5 @@
 import type { ItemStack } from './inventory.js'
-import { isItemStack, isItemType, itemStack, type ItemType } from '@nerima-games/mc-kernel'
+import { isItemStack, type ItemType } from '@nerima-games/mc-kernel'
 
 export const EQUIPMENT_SLOTS = ['head', 'chest', 'legs', 'feet', 'offhand'] as const
 
@@ -325,18 +325,13 @@ export const validateEquipmentSnapshot = (value: unknown): EquipmentValidationRe
       validatedSlots[slot] = null
       continue
     }
-    const canonical = isRecord(item) && hasExactKeys(item, ['item', 'count', 'durability']) &&
-      typeof item['item'] === 'string' && isItemType(item['item']) && item['count'] === 1 &&
-      isDurability(item['durability'])
-      ? { ...itemStack(item['item'], 1), durability: item['durability'] }
-      : item
-    if (!isEquipmentItem(canonical) || !isEquipmentItemForSlot(slot, canonical)) {
+    if (!isEquipmentItem(item) || !isEquipmentItemForSlot(slot, item)) {
       return invalid(
         `equipment.slots.${slot}`,
         'expected null or the slot-compatible item with count 1 and exact durability',
       )
     }
-    validatedSlots[slot] = copyEquipmentItem(canonical)
+    validatedSlots[slot] = copyEquipmentItem(item)
   }
 
   return {

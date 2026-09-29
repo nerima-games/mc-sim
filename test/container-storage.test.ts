@@ -288,14 +288,13 @@ describe('container storage domain', () => {
     })
   })
 
-  it('validates legacy stored stacks without components and rejects their invalid counts', () => {
+  it('rejects legacy stored stacks without components and invalid counts', () => {
     const slots = Array.from({ length: CHEST_CONTAINER_CAPACITY }, () => null) as Array<unknown>
     slots[0] = { item: 'stone', count: 5, durability: null }
-    const valid = validateContainerStorageSnapshot({
+    expect(validateContainerStorageSnapshot({
       version: CONTAINER_STORAGE_SNAPSHOT_VERSION,
       containers: [{ id: 'legacy', kind: 'chest', slots }],
-    })
-    expect(valid._tag).toBe('Valid')
+    })).toMatchObject({ _tag: 'Invalid', error: { path: 'containerStorage.containers.0.slots.0' } })
     slots[0] = { item: 'stone', count: 65, durability: null }
     expect(validateContainerStorageSnapshot({
       version: CONTAINER_STORAGE_SNAPSHOT_VERSION,
@@ -718,6 +717,31 @@ describe('InventoryService chest integration', () => {
         components: serializedComponents,
       })
       expect(player.inventoryDurability[8]).toStrictEqual({ current: 365, max: 384 })
+    }),
+  )
+
+  it.effect('rejects legacy container stacks without resolved components', () =>
+    Effect.gen(function* () {
+      const service = yield* makeInventoryService()
+      yield* service.createContainer('legacy-test')
+      const valid = yield* service.containerStorageSnapshot
+      const legacy = {
+        ...valid,
+        containers: valid.containers.map((container, index) => index === 0
+          ? { ...container, slots: container.slots.map((slot, slotIndex) =>
+            slotIndex === 0 ? { item: 'stone', count: 1, durability: null } : slot) }
+          : container),
+      }
+
+      const result = yield* Effect.either(service.restoreContainerStorage(legacy))
+      expect(result._tag).toBe('Left')
+      if (result._tag === 'Left') {
+        expect(result.left).toStrictEqual({
+          _tag: 'ContainerStorageValidationError',
+          path: 'containerStorage.containers.0.slots.0',
+          reason: 'expected a valid stored item stack',
+        })
+      }
     }),
   )
 

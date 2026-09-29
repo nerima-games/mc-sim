@@ -437,20 +437,16 @@ const validateInventorySlotEntry = (
     return { _tag: 'Slot', slot: undefined, durability: null }
   }
   if (!isRecord(slot) ||
-      !(hasExactKeys(slot, ['item', 'count']) || hasExactKeys(slot, ['item', 'count', 'components'])) ||
+      !hasExactKeys(slot, ['item', 'count', 'components']) ||
       typeof slot['item'] !== 'string' || !isItemType(slot['item']))
     return { _tag: 'Invalid', error: invalidError(`storage.inventory.slots.${index}`, 'expected a valid item stack') }
   const count = slot['count']
   if (typeof count !== 'number' || !Number.isSafeInteger(count) || count <= 0)
     return { _tag: 'Invalid', error: invalidError(`storage.inventory.slots.${index}`, 'expected a valid item stack') }
   const candidate = { item: slot['item'], count, components: slot['components'] }
-  if (Object.hasOwn(slot, 'components') && !isItemStack(candidate))
+  if (!isItemStack(candidate))
     return { _tag: 'Invalid', error: invalidError(`storage.inventory.slots.${index}`, 'expected a valid item stack') }
-  if (!Object.hasOwn(slot, 'components') && count > Inv.maxStackCountForItem(slot['item']))
-    return { _tag: 'Invalid', error: invalidError(`storage.inventory.slots.${index}`, 'expected a valid item stack') }
-  const stack = isItemStack(candidate)
-    ? Inv.itemStack(candidate.item, candidate.count, { components: candidate.components })
-    : Inv.itemStack(slot['item'], count)
+  const stack = Inv.itemStack(candidate.item, candidate.count, { components: candidate.components })
   if (Eq.isDamageableItemType(slot['item'])) {
     if (!Eq.isValidDurabilityForItem(slot['item'], durability))
       return {

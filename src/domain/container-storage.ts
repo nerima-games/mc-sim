@@ -251,21 +251,16 @@ type SlotValidation =
 const validateStoredSlot = (slot: unknown, slotPath: string): SlotValidation => {
   if (slot === null) return { _tag: 'Slot', slot: null }
   if (!isRecord(slot) ||
-      !(hasExactKeys(slot, ['item', 'count', 'durability']) ||
-        hasExactKeys(slot, ['item', 'count', 'components', 'durability'])) ||
+      !hasExactKeys(slot, ['item', 'count', 'components', 'durability']) ||
       typeof slot['item'] !== 'string' || !isItemType(slot['item']))
     return { _tag: 'Invalid', error: invalidError(slotPath, 'expected a valid stored item stack') }
   const count = slot['count']
   if (typeof count !== 'number' || !Number.isSafeInteger(count) || count <= 0)
     return { _tag: 'Invalid', error: invalidError(slotPath, 'expected a valid stored item stack') }
   const candidate = { item: slot['item'], count, components: slot['components'] }
-  if (Object.hasOwn(slot, 'components') && !isItemStack(candidate))
+  if (!isItemStack(candidate))
     return { _tag: 'Invalid', error: invalidError(slotPath, 'expected a valid stored item stack') }
-  if (!Object.hasOwn(slot, 'components') && count > Inv.maxStackCountForItem(slot['item']))
-    return { _tag: 'Invalid', error: invalidError(slotPath, 'expected a valid stored item stack') }
-  const stack = isItemStack(candidate)
-    ? Inv.itemStack(candidate.item, candidate.count, { components: candidate.components })
-    : Inv.itemStack(slot['item'], count)
+  const stack = Inv.itemStack(candidate.item, candidate.count, { components: candidate.components })
   const durability = slot['durability']
   if (Eq.isDamageableItemType(slot['item'])) {
     if (!Eq.isValidDurabilityForItem(slot['item'], durability))
