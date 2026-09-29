@@ -22,13 +22,13 @@ plan.md §2.3-1 の分類でいう **名詞**。
 | ホットバー選択 | 選択スロットの保持、直接選択、スクロール、選択中アイテム | 実装済 `domain/hotbar.ts` / `application/hotbar-service.ts`。入力イベントの解釈はホスト側 |
 | 体力 / 空腹 / XP | 数値状態と遷移（「何がダメージを与えるか」は持たない） | 実装済 `domain/vitals.ts` / `application/vitals-service.ts`。§3.4 |
 | 実績 / 統計 | **記録**（画面は mx-ui） | 実装済 `domain/statistics.ts` / `application/statistics-service.ts`。セーブは `SimulationSave` v2。§3.5 |
-| 時間 | `TimeService`。tick カウンタ、昼夜、月齢 | 実装済 `application/time-service.ts` |
+| 時間 | `TimeService`。tick カウンタ、昼夜、月齢。入力は kernel の `DeltaTimeSecs`、固定 tick の語彙は kernel に従う | 実装済 `application/time-service.ts` |
 | 作物 | `CropService`。次元 + `BlockPosition` ごとの植栽・成長・除去状態 | 実装済 `domain/crop.ts` / `application/crop-service.ts` |
 | 爆発計画 | seed・距離減衰・耐性・遮蔽から破壊対象と entity effect を純粋計算する。具体的な変更はホストの `commit` コールバックへ 1 回だけ渡す | 実装済 `domain/explosion.ts` / `domain/primed-tnt.ts`。mc-physics 0.2.0 以降は mc-kernel 実装への re-export であり、責務としての所有（何を計算するか）はここに残るが、実装（どう計算するか）は物理側にある。公開 API §8 |
 | ゲームループ | フレーム駆動、開始/停止、再入可能な初期化 | 実装済 `application/game-loop.ts` |
 | 自動保存 | いつ保存するか（何を書くかは mc-save のフォーマット定義） | 実装済 `application/autosave.ts` |
 | **stage 登録** | `sim:physics` 1 本。`after` 制約は **0 本**（§2.1） | 実装済 `stages/registration.ts` |
-| 設定状態 | グラフィックス / 音量 / 操作の**値の保持**（画面は mx-ui、適用は各所） | 実装済 `application/settings-service.ts`。型と規則は mc-kernel。§3.6 |
+| 設定状態 | グラフィックス / 音量 / 操作の**値の保持**（画面は mx-ui、適用は各所） | 実装済 `application/settings-service.ts`。型と規則は mc-kernel 0.8 の公開値モデル。§3.6 |
 | ~~チャンクダーティ通知~~ | **mc-worldgen に移った**（`ChunkStore.subscribeDirty`）。mc-sim は中継しない — §3.3 | — |
 | レシピ / クラフト状態 | レシピ表とクラフト結果の状態（画面は mx-ui） | 実装済 `domain/recipe-data.ts` / `domain/recipe.ts` / `domain/crafting.ts` / `application/inventory-service.ts`。§3.1 |
 

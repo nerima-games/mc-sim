@@ -59,6 +59,15 @@ format の現行 version のみを要求し、それ以外の version で保存�
 実行時に現れるためである。共有依存の更新は、上流パッケージの型・実行時挙動・このリポジトリ
 のテストを同時に確認する。
 
+### 3.1 kernel 0.8 / physics 0.3 / save 0.5 の下流契約
+
+この package は kernel の canonical `ItemStack`（`item` / `count` / 解決済み `components`）と
+`ItemSlot` の `undefined` 空表現をそのまま境界に使う。`count: 0`、未解決の `componentPatch`、
+stack metadata の sidecar は保存・搬送しない。フレーム入力は `DeltaTimeSecs`、固定時間は
+`FixedDurationSecs`、論理 tick は `SimulationTick` として扱い、ブランドを plain `number` に戻さない。
+physics の delta 定数・save の declaration strictness は各 package の公開 API に従い、互換レイヤーを
+追加しない。worldgen の pin と live chunk read/edit 移行は後続変更で扱う。
+
 **廃止（2026-08-30）**: 以前はここで `tsdown.config.ts` の `deps.alwaysBundle` により、TypeScript
 ソースとして公開される依存を実行時バンドルへ含めていた。ビルドが `tsc -p tsconfig.release.json`
 単体（バンドラなし）に切り替わったため、この節は成立しない。`dist/index.js` は依存の import

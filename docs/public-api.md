@@ -1,5 +1,18 @@
 # 公開API
 
+## 0.1 依存する共有契約
+
+本 package は `mc-kernel` の canonical `ItemStack`、`ItemSlot`、時間 brand、座標 brand、設定・統計の
+値モデルを直接利用する。inventory、crafting、drop、save の境界で空 slot は `undefined`、stack は
+解決済み `components` を含む `item` / `count` / `components` の形だけを受け渡し、`count: 0` や
+未解決 patch の互換 shape は公開しない。`mc-physics` は frame delta の clamp と物理計算、
+`mc-save` は envelope/codec の共通基盤を所有する。
+
+`DeltaTimeSecs` と `FixedDurationSecs`、`SimulationTick` と plain `number`、`BlockAxis` と
+`ChunkAxis` は相互変換せず、それぞれの公開 API の境界で constructor または validator を通す。
+`mc-worldgen` の `Dimension` と live chunk の所有権は変更せず、worldgen pin と read/edit vocabulary
+の移行は後続変更に残す。
+
 plan.md §3.8 は主要な公開APIを「`tick(input, dt)`、各状態サービスの読み書き、チャンクダーティ通知」
 と書いている。本書はそれを、**参照実装の実コードと突き合わせて**具体化したもの。
 パスはすべて `takeokunn/ts-minecraft` リポジトリルート相対。
