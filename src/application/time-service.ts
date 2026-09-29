@@ -15,7 +15,7 @@
  * computes `justDied` inside the same step so the death signal fires once.
  */
 import { Context, Effect, Layer, Ref } from 'effect'
-import type { DeltaTimeSecs } from "@nerima-games/mc-kernel"
+import { FixedDurationSecs, type DeltaTimeSecs } from '@nerima-games/mc-kernel'
 import * as Time from '../domain/time-of-day.js'
 
 export type TimeServiceApi = {
@@ -24,7 +24,7 @@ export type TimeServiceApi = {
   /** Position within the current day, in [0, 1). */
   readonly timeOfDay: Effect.Effect<number>
   /** Day length in seconds. */
-  readonly dayLengthSecs: Effect.Effect<number>
+  readonly dayLengthSecs: Effect.Effect<FixedDurationSecs>
   /** Which of the eight moon phases tonight is. */
   readonly moonPhase: Effect.Effect<number>
   readonly isNight: Effect.Effect<boolean>
@@ -112,7 +112,7 @@ export const makeTimeService = (
   Effect.map(Ref.make(Time.normaliseTimeState(initial)), (state) => ({
     advance: (dt) => Ref.update(state, (current) => Time.advance(current, dt)),
     timeOfDay: Ref.get(state).pipe(Effect.map(Time.timeOfDay)),
-    dayLengthSecs: Ref.get(state).pipe(Effect.map(Time.dayLengthSecs)),
+    dayLengthSecs: Ref.get(state).pipe(Effect.map((current) => FixedDurationSecs(Time.dayLengthSecs(current)))),
     moonPhase: Ref.get(state).pipe(Effect.map(Time.moonPhase)),
     isNight: Ref.get(state).pipe(Effect.map(Time.isNight)),
     setDayLength: (seconds) => Ref.update(state, (current) => Time.setDayLength(current, seconds)),
