@@ -32,7 +32,7 @@ import {
   WARN,
   type Style,
 } from './style'
-import { MAX_FRAME_DELTA_SECS, MIN_FRAME_DELTA_SECS } from '../../src/domain/frame-timing'
+import { MAX_FRAME_DELTA_SECS, MIN_FRAME_DELTA_SECS } from '@nerima-games/mc-kernel'
 import { INVENTORY_SLOT_COUNT } from '../../src/domain/inventory'
 import { MAX_RENDER_DISTANCE } from '@nerima-games/mc-kernel'
 import { MOON_PHASE_COUNT, TICKS_PER_SECOND } from '../../src/domain/time-of-day'

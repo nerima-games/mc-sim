@@ -49,7 +49,7 @@ mx-gameplay・mx-redstone・mx-ui・mc-render の 4 者が `after: [StageId('sim
 
 | もの | 判定 | 理由 |
 | --- | --- | --- |
-| `application/game-loop.ts` | stage では**ない** | stage を**呼ぶ**側。順序表から組み立てた `FrameHandler` を駆動する |
+| `application/game-loop.ts` | stage では**ない** | stage を**呼ぶ**側。固定 step accumulator で `FrameHandler` を駆動し、tick / 補間 / overload を公開する |
 | `application/autosave.ts` | stage では**ない** | `Schedule.spaced` の daemon。フレームではなく**時間**で動く。毎フレーム保存は別物であって小さい版ではない |
 | ワールドを 1 フレーム進める | **stage** | 「フレーム毎にちょうど 1 回」であり、それは stage の定義そのもの |
 

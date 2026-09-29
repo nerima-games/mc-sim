@@ -17,7 +17,7 @@ import { SCENARIO_NAMES, type ScenarioName } from './script'
  * A literal, not a clock read. The stepper synthesises the monotonic instants it
  * feeds to `GameLoop.submitFrame`, so this number is the entire definition of
  * "one frame" here: 60 fps means each step advances the injected clock by
- * 1/60 s. `domain/frame-timing.ts` calls 0.016 "one frame at 60 Hz" for the same
+ * 1/60 s. `@nerima-games/mc-kernel` calls 0.016 "one frame at 60 Hz" for the same
  * reason, and the two agreeing is not a coincidence — it is what makes the very
  * first frame's `FIRST_FRAME_DELTA_SECS` indistinguishable from the second's
  * measured delta, which is the point of that constant.

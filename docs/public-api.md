@@ -305,18 +305,30 @@ snapshot は位置キー順で決定論的に並び、JSON で往復できる。
 ## 3. GameLoop
 
 ```typescript
-type FrameHandler = (dt: DeltaTimeSecs) => Effect.Effect<void>
+type FrameHandler = (dt: DeltaTimeSecs, tick?: SimulationTick) => Effect.Effect<void>
 
 type GameLoopApi = {
   readonly start: (handler: FrameHandler) => Effect.Effect<void>   // 再入可能
+  readonly pause: Effect.Effect<void>
+  readonly resume: Effect.Effect<void>                             // resume時に余りを破棄
   readonly submitFrame: (at: MonotonicTimeSecs) => Effect.Effect<void>
   readonly stop: Effect.Effect<void>                                // 冪等・非ブロッキング
   readonly isRunning: Effect.Effect<boolean>
   readonly framesProcessed: Effect.Effect<number>    // stop を跨いで読める。§3-1
   readonly framesDropped: Effect.Effect<number>      // dropping queue が拒否した数。§3-1
   readonly secondsLostToClamp: Effect.Effect<number> // clamp が捨てたシミュレーション時間。§3-1
+  readonly simulationTick: Effect.Effect<SimulationTick>
+  readonly interpolationFraction: Effect.Effect<InterpolationFraction>
+  readonly overloaded: Effect.Effect<boolean>
 }
 ```
+
+`submitFrame` の delta は kernel の `frameDeltaBetween` で clamp された後、固定幅の
+`physicsSubstepDuration`（0.025 秒）単位で accumulator に加算される。1 frame で実行できる
+固定 step は 5 回までで、超過分は捨てて `overloaded` を `true` にする。tick は kernel の
+`SimulationTick` で管理し、余りから `interpolationFraction` を計算する。pause 中は accumulator
+と tick を進めず、resume は残余を 0 に戻して spiral of death を作らない。既定の catch-up
+上限 5 は 0.025 秒の step を 0.125 秒まで処理する値である。
 
 ### 3-1. 捨てたものは数える
 
@@ -328,7 +340,7 @@ type GameLoopApi = {
   **引き算では復元できない**: submitted は呼び出し側の数字であり、processed は
   キューに残っている分だけ遅れる。だから offer の位置で数える。
 - clamp の上限を超えた時間は世界に届かず、誰も返さない（背景タブ 30 秒で 29.95 秒）。
-  `domain/frame-timing.ts` の `frameDeltaLossSecs` が量を定義し、ループが世代ごとに合算する。
+  kernel の `frameDeltaLossSecs` が量を定義し、ループが世代ごとに合算する。
   **下限側は数えない**。あちらは経過より*多く*時間を渡す側で、1 フレームで頭打ちになり、
   損失として符号付きで足すと本物のギャップと相殺して 0 に見えてしまう。
 

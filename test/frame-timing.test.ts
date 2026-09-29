@@ -2,10 +2,9 @@
  * REGRESSION: the delta-time clamp is exactly
  * `Math.min(Math.max(0.001, raw), 0.05)`.
  *
- * `domain/frame-timing.ts` now forwards these three numbers and the clamp
- * function from `@nerima-games/mc-physics` rather than hand-copying them, so
- * this pins the CONSUMED values rather than a reimplementation — it fails if
- * the physics dependency ever ships a different clamp.
+ * `@nerima-games/mc-kernel` owns these numbers and the clamp, so this pins the
+ * CONSUMED values rather than a reimplementation — it fails if the kernel ever
+ * ships a different clamp.
  *
  * The bounds are asserted as literals, not as arithmetic on the constants,
  * because the point is that these three numbers were measured rather than
@@ -23,7 +22,7 @@ import {
   frameDeltaLossSecs,
   MAX_FRAME_DELTA_SECS,
   MIN_FRAME_DELTA_SECS,
-} from '../src/domain/frame-timing'
+} from '@nerima-games/mc-kernel'
 
 describe('clampFrameDelta', () => {
   it.effect('the three constants are the reference implementation values, literally', () =>

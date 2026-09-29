@@ -33,7 +33,7 @@ import {
   frameDeltaLossSecs,
   MAX_FRAME_DELTA_SECS,
   MIN_FRAME_DELTA_SECS,
-} from '../../src/domain/frame-timing'
+} from '@nerima-games/mc-kernel'
 import {
   emptyInventory,
   INVENTORY_SLOT_COUNT,
@@ -95,9 +95,9 @@ const frameClampProbe = (): ReadonlyArray<string> => {
     `   frameDeltaBetween(undefined, 5) = ${String(frameDeltaBetween(undefined, MonotonicTimeSecs(5)))}  (first frame)`,
     `   frameDeltaBetween(10, 5)        = ${String(frameDeltaBetween(10, MonotonicTimeSecs(5)))}  (clock ran BACKWARDS; simulated time still moves forward)`,
     '',
-    '   SIM-5 FIXED. The fourth column is new: domain/frame-timing.ts exports frameDeltaLossSecs,',
+    '   SIM-5 FIXED. The fourth column is provided by mc-kernel as frameDeltaLossSecs,',
     '   and application/game-loop.ts sums it across a generation as GameLoopApi.secondsLostToClamp.',
-    '   The clamp is unchanged — it is the design working, see domain/frame-timing.ts:19-23 — but',
+    '   The clamp is unchanged — it is the design working, owned by mc-kernel — but',
     '   the 29.95 s a 30-second background tab costs is now a number a session can report instead',
     '   of one only this table could compute.',
     '',

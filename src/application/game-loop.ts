@@ -78,9 +78,24 @@
  * applies to the delta clamp one level down, which discards simulated time by
  * design and now says how much: `secondsLostToClamp`.
  */
-import { Cause, Context, Effect, Fiber, Layer, Option, Queue, Ref } from 'effect'
-import { frameDeltaLossBetween } from '../domain/frame-timing.js'
-import { frameDeltaBetween, type DeltaTimeSecs, type MonotonicTimeSecs } from '@nerima-games/mc-kernel'
+import { Cause, Context, Effect, Either, Fiber, Layer, Option, Queue, Ref } from 'effect'
+import {
+  DeltaTimeSecs,
+  InterpolationFraction,
+  SimulationTick,
+  frameDeltaBetween,
+  frameDeltaLossBetween,
+  physicsSubstepDuration,
+  tickDuration,
+  type MonotonicTimeSecs,
+} from '@nerima-games/mc-kernel'
+import {
+  advance as advanceFixedStep,
+  initialFixedStepAccumulator,
+  pause as pauseFixedStep,
+  resume as resumeFixedStep,
+  type FixedStepAccumulator,
+} from '../domain/fixed-step.js'
 
 /**
  * Per-frame work.
@@ -90,7 +105,7 @@ import { frameDeltaBetween, type DeltaTimeSecs, type MonotonicTimeSecs } from '@
  * decide what to do about it itself. Defects still escape, and the loop logs
  * them — see `Effect.catchAllCause` below.
  */
-export type FrameHandler = (dt: DeltaTimeSecs) => Effect.Effect<void>
+export type FrameHandler = (dt: DeltaTimeSecs, tick?: SimulationTick) => Effect.Effect<void>
 
 /** Frames the dropping queue will hold before it starts discarding. */
 export const FRAME_QUEUE_CAPACITY = 60
@@ -101,6 +116,8 @@ export type GameLoopApi = {
    * the previous loop is torn down first and the frame clock restarts.
    */
   readonly start: (handler: FrameHandler) => Effect.Effect<void>
+  readonly pause: Effect.Effect<void>
+  readonly resume: Effect.Effect<void>
   /** Offer a frame instant. A no-op when the loop is stopped. */
   readonly submitFrame: (at: MonotonicTimeSecs) => Effect.Effect<void>
   /** Stop and detach everything. Never blocks on a slow fiber. Idempotent. */
@@ -137,7 +154,7 @@ export type GameLoopApi = {
   /**
    * Simulated seconds the delta clamp discarded, summed over the generation.
    *
-   * `domain/frame-timing.ts` clamps a delta to 0.05 s so that a backgrounded
+   * `@nerima-games/mc-kernel` clamps a delta to 0.05 s so that a backgrounded
    * tab cannot teleport the player through a collider. The time above the clamp
    * is simply not delivered to the world and nothing repays it — one 30-second
    * background tab costs 29.95 s of in-game time — so a session drifts behind
@@ -148,6 +165,9 @@ export type GameLoopApi = {
    * `framesProcessed`.
    */
   readonly secondsLostToClamp: Effect.Effect<number>
+  readonly simulationTick: Effect.Effect<SimulationTick>
+  readonly interpolationFraction: Effect.Effect<InterpolationFraction>
+  readonly overloaded: Effect.Effect<boolean>
 }
 
 const GameLoopBase: Context.TagClass<GameLoop, '@nerima-games/mc-sim/GameLoop', GameLoopApi> =
@@ -173,6 +193,7 @@ type Generation = {
   readonly frames: Ref.Ref<number>
   readonly dropped: Ref.Ref<number>
   readonly lostSecs: Ref.Ref<number>
+  readonly fixedStep: Ref.Ref<FixedStepAccumulator>
 }
 
 const countersOf = (generation: Generation): Effect.Effect<Counters> =>
@@ -196,6 +217,9 @@ export const makeGameLoop = (): Effect.Effect<GameLoopApi> =>
     // this holds a READING of that state, taken once at teardown, and never a
     // handle a straggling daemon could write through.
     const lastCountersRef = yield* Ref.make(NO_FRAMES)
+    const simulationTickRef = yield* Ref.make(SimulationTick(0))
+    const interpolationFractionRef = yield* Ref.make(InterpolationFraction(0))
+    const overloadedRef = yield* Ref.make(false)
 
     const stop: Effect.Effect<void> = Effect.gen(function* () {
       yield* Ref.set(runningRef, false)
@@ -235,6 +259,9 @@ export const makeGameLoop = (): Effect.Effect<GameLoopApi> =>
 
         // A new run reports its own numbers from zero, not the previous run's.
         yield* Ref.set(lastCountersRef, NO_FRAMES)
+        yield* Ref.set(simulationTickRef, SimulationTick(0))
+        yield* Ref.set(interpolationFractionRef, InterpolationFraction(0))
+        yield* Ref.set(overloadedRef, false)
 
         // Fresh state for this generation. A straggling previous daemon holds
         // references to the PREVIOUS queue and refs, and can do no harm here.
@@ -243,6 +270,9 @@ export const makeGameLoop = (): Effect.Effect<GameLoopApi> =>
         const dropped = yield* Ref.make(0)
         const lostSecs = yield* Ref.make(0)
         const lastInstant = yield* Ref.make<MonotonicTimeSecs | undefined>(undefined)
+        const fixedStep = yield* Ref.make(
+          initialFixedStepAccumulator(SimulationTick(0), tickDuration),
+        )
 
         const processOneFrame = Queue.take(queue).pipe(
           Effect.flatMap((now) =>
@@ -264,19 +294,45 @@ export const makeGameLoop = (): Effect.Effect<GameLoopApi> =>
               : Ref.update(lostSecs, (total) => total + frame.lostSecs),
           ),
           Effect.flatMap((frame) =>
-            handler(frame.dt).pipe(
-              // catchAllCause, not catchAll: a thrown exception inside a stage
-              // surfaces as Cause.Die, which catchAll would miss and let kill
-              // the loop. Logging the whole Cause is what makes a defect
-              // visible at all — plan.md §3.8's Effect conventions.
-              Effect.catchAllCause((cause) => Effect.logError(`Frame error: ${Cause.pretty(cause)}`)),
+            Ref.get(fixedStep).pipe(
+              Effect.flatMap((current) => {
+                const advanced = advanceFixedStep(current, frame.dt)
+                const next = Either.getOrThrow(advanced)
+                return Ref.set(fixedStep, next.state).pipe(
+                  Effect.zipRight(Ref.set(simulationTickRef, next.state.tick)),
+                  Effect.zipRight(Ref.set(interpolationFractionRef, next.interpolationFraction)),
+                  Effect.zipRight(Ref.set(overloadedRef, next.overloaded)),
+                  Effect.zipRight(
+                    Effect.forEach(
+                      Array.from(
+                        { length: Number(next.ticks) },
+                        (_, index) =>
+                          SimulationTick(
+                            Number(next.state.tick) - Number(next.ticks) + index + 1,
+                          ),
+                      ),
+                      (tick) =>
+                        handler(DeltaTimeSecs(Number(physicsSubstepDuration)), tick).pipe(
+                          // catchAllCause, not catchAll: a thrown exception inside a stage
+                          // surfaces as Cause.Die, which catchAll would miss and let kill
+                          // the loop. Logging the whole Cause is what makes a defect
+                          // visible at all — plan.md §3.8's Effect conventions.
+                          Effect.catchAllCause((cause) =>
+                            Effect.logError(`Frame error: ${Cause.pretty(cause)}`),
+                          ),
+                          Effect.tap(() => Ref.update(frames, (count) => count + 1)),
+                        ),
+                      { discard: true },
+                    ),
+                  ),
+                )
+              }),
             ),
           ),
-          Effect.flatMap(() => Ref.update(frames, (count) => count + 1)),
           Effect.forever,
         )
 
-        yield* Ref.set(generationRef, Option.some({ queue, frames, dropped, lostSecs }))
+        yield* Ref.set(generationRef, Option.some({ queue, frames, dropped, lostSecs, fixedStep }))
         yield* Ref.set(runningRef, true)
         const fiber = yield* Effect.forkDaemon(processOneFrame)
         yield* Ref.set(fiberRef, Option.some(fiber))
@@ -295,6 +351,12 @@ export const makeGameLoop = (): Effect.Effect<GameLoopApi> =>
 
     return {
       start,
+      pause: withGeneration(Effect.void, (generation) =>
+        Ref.update(generation.fixedStep, pauseFixedStep),
+      ),
+      resume: withGeneration(Effect.void, (generation) =>
+        Ref.update(generation.fixedStep, resumeFixedStep),
+      ),
       submitFrame: (at) =>
         withGeneration<void>(Effect.void, (generation) =>
           Effect.flatMap(Queue.offer(generation.queue, at), (accepted) =>
@@ -309,6 +371,9 @@ export const makeGameLoop = (): Effect.Effect<GameLoopApi> =>
       framesProcessed: Effect.map(counters, (current) => current.framesProcessed),
       framesDropped: Effect.map(counters, (current) => current.framesDropped),
       secondsLostToClamp: Effect.map(counters, (current) => current.secondsLostToClamp),
+      simulationTick: Ref.get(simulationTickRef),
+      interpolationFraction: Ref.get(interpolationFractionRef),
+      overloaded: Ref.get(overloadedRef),
     }
   })
 

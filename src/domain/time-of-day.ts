@@ -184,7 +184,7 @@ export const isValidTimeState = (state: TimeState): boolean =>
  * Repair a state read from persistence into one every reader can answer for.
  *
  * REPAIRS, RATHER THAN REJECTS, and the choice is the same one
- * `domain/frame-timing.ts` makes about a raw frame delta: the input may be out
+ * `@nerima-games/mc-kernel` makes about a raw frame delta: the input may be out
  * of range because it crossed a version boundary or was truncated, and the
  * simulation wants a world it can run rather than a throw at the boundary.
  * `TimeService.restore` is on the world-load path and has no error channel to
