@@ -595,6 +595,14 @@ describe('furnace boundary validation', () => {
     expect(() => matchSmeltingRecipe([], malformed)).toThrow(RangeError)
   })
 
+  it('rejects malformed slots passed directly to advanceFurnace', () => {
+    for (const slot of ['input', 'fuel', 'output'] as const) {
+      const malformed = { ...itemStack(slot === 'fuel' ? 'coal' : 'raw_iron', 1) }
+      Reflect.deleteProperty(malformed, 'components')
+      expect(() => advanceFurnace({ ...furnaceWith(), [slot]: malformed }, 1)).toThrow(RangeError)
+    }
+  })
+
   it('rejects unavailable and incompatible transfer stacks', () => {
     const legacy = { ...itemStack('raw_iron', 1) }
     Reflect.deleteProperty(legacy, 'components')
