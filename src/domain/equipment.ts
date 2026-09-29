@@ -316,7 +316,9 @@ export const validateEquipmentSnapshot = (value: unknown): EquipmentValidationRe
     return invalid('equipment.slots', 'expected exactly head, chest, legs, feet, and offhand')
   }
 
-  const validatedSlots = {} as Record<EquipmentSlot, ValidEquipmentItem | null>
+  const validatedSlots: Record<EquipmentSlot, ValidEquipmentItem | null> = {
+    head: null, chest: null, legs: null, feet: null, offhand: null,
+  }
   for (const slot of EQUIPMENT_SLOTS) {
     const item = slots[slot]
     if (item === null) {

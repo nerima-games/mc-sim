@@ -668,21 +668,21 @@ const resetLandingImpact: (state: SimFrameState) => Effect.Effect<void>
 `isBlockSolid` 相当の判定は `blockShapeAt` 側へ移す（`test/stage-registration.test.ts` の
 フィクスチャ参照）。
 
-## 5. まだ設計していない公開API
+## 5. 公開サービスと GameModule
 
-plan.md §3.8 の責務のうち、界面をまだ書いていないもの。**着手前に本書へ追記すること。**
+この節は、実装済みのサービスとモジュール境界を一覧化する。未実装の責務を公開 API として約束しない。
 
 | 領域 | 参照実装 | 主な消費者 |
 | --- | --- | --- |
 | ~~`EntityManager`~~ | — | **§7 で設計済** |
-| 体力 / 空腹 / XP | `health-service.ts` / `hunger-service.ts` / `xp-service.ts` | mx-gameplay / mx-ui |
-| 実績 / 統計 | `achievement-service.ts` / `statistics-service.ts` | mx-gameplay / mx-ui（統計の記録・保存は実装済み。実績 registry / predicate は mx-gameplay） |
-| 設定状態 | `packages/game/application/settings-service.ts` (107) + `.config.ts` (70) + `.schema.ts` (79) | mx-ui / mc-render |
+| 体力 / 空腹 / XP | `VitalsService` (`src/application/vitals-service.ts`) | mx-gameplay / mx-ui |
+| 実績 / 統計 | `StatisticsService` (`src/application/statistics-service.ts`) | mx-gameplay / mx-ui |
+| 設定状態 | `SettingsService` (`src/application/settings-service.ts`) | mx-ui / mc-render |
 | ~~チャンクダーティ通知~~ | — | **mc-worldgen に移った。下記** |
-| ドロップ / 経験値オーブ | `dropped-item-service.ts` / `dropped-xp-orb-service.ts` | mx-gameplay / mc-render |
+| ドロップ / 経験値オーブ | mx-gameplay のルール層 | mx-gameplay / mc-render |
 | ~~レシピ~~ | — | **§4.1 で設計済** |
-| かまど / チェスト / 装備 | `packages/inventory/application/` の各 service | mx-ui / mx-gameplay |
-| `GameModule` の実体 | — | mc-compose |
+| かまど / チェスト / 装備 | `InventoryService` / `EquipmentService` | mx-ui / mx-gameplay |
+| `GameModule` | `src/stages/registration.ts` の `simModule` | mc-compose |
 
 ### チャンクダーティ通知は mc-worldgen のものになった
 

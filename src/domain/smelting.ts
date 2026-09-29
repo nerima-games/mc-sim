@@ -189,11 +189,9 @@ export const validateFurnaceSnapshot = (value: unknown): FurnaceSnapshotValidati
     if (typeof slot['item'] !== 'string' || !isItemType(slot['item'])) {
       return invalidSnapshot(`${name}.item`, 'expected a known item')
     }
-    if (
-      !Number.isSafeInteger(slot['count']) ||
-      (slot['count'] as number) <= 0 ||
-      (slot['count'] as number) > maxStackCountForItem(slot['item'])
-    ) {
+    const count = slot['count']
+    if (typeof count !== 'number' || !Number.isSafeInteger(count) ||
+        count <= 0 || count > maxStackCountForItem(slot['item'])) {
       return invalidSnapshot(`${name}.count`, 'expected a valid positive stack count')
     }
   }
@@ -205,14 +203,30 @@ export const validateFurnaceSnapshot = (value: unknown): FurnaceSnapshotValidati
     }
   }
 
+  const durationValue = (name: 'cookElapsedSecs' | 'burnRemainingSecs'): number => {
+    const duration = value[name]
+    if (typeof duration !== 'number' || !Number.isFinite(duration) || duration < 0) {
+      throw new RangeError(`Validated furnace duration is malformed: ${name}`)
+    }
+    return duration
+  }
+
+  const slotValue = (slot: unknown): ItemStack | null => {
+    if (slot === null) return null
+    if (!isRecord(slot) || typeof slot['item'] !== 'string' || !isItemType(slot['item']) ||
+        typeof slot['count'] !== 'number') {
+      throw new RangeError('Validated furnace slot is malformed')
+    }
+    return itemStack(slot['item'], slot['count'])
+  }
   return {
     _tag: 'Valid',
     state: {
-      input: value['input'] as ItemStack | null,
-      fuel: value['fuel'] as ItemStack | null,
-      output: value['output'] as ItemStack | null,
-      cookElapsedSecs: value['cookElapsedSecs'] as number,
-      burnRemainingSecs: value['burnRemainingSecs'] as number,
+      input: slotValue(value['input']),
+      fuel: slotValue(value['fuel']),
+      output: slotValue(value['output']),
+      cookElapsedSecs: durationValue('cookElapsedSecs'),
+      burnRemainingSecs: durationValue('burnRemainingSecs'),
     },
   }
 }

@@ -1,3 +1,6 @@
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
 /**
  * Statistics and achievements: the RECORD, and nothing that decides what to
  * record.
@@ -151,8 +154,8 @@ export const unlock = (statistics: Statistics, id: AchievementId): Statistics =>
 export const normaliseStatistics = (statistics: Statistics): Statistics => {
   const source: unknown = statistics.counters
   const counters: Record<StatisticKey, number> = {}
-  if (typeof source === 'object' && source !== null) {
-    for (const [key, value] of Object.entries(source as Record<string, unknown>)) {
+  if (isRecord(source)) {
+    for (const [key, value] of Object.entries(source)) {
       const count = typeof value === 'number' ? Math.max(0, delta(value)) : 0
       if (count > 0) {
         counters[key] = count
@@ -183,7 +186,7 @@ export const isValidStatistics = (statistics: Statistics): boolean => {
   }
 
   return (
-    Object.values(counters as Record<string, unknown>).every(
+    Object.values(counters).every(
       (value) => typeof value === 'number' && Number.isFinite(value) && value > 0,
     ) &&
     statistics.unlocked.every(

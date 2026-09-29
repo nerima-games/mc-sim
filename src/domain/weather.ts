@@ -14,13 +14,16 @@ export const INITIAL_WEATHER_STATE: WeatherState = {
   remainingSecs: 600,
 }
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
 export const isWeather = (value: unknown): value is Weather =>
   typeof value === 'string' && WEATHERS.some((weather) => weather === value)
 
 export const isValidWeatherState = (value: unknown): value is WeatherState => {
-  if (typeof value !== 'object' || value === null) return false
+  if (!isRecord(value)) return false
 
-  const state = value as Record<string, unknown>
+  const state = value
   return (
     isWeather(state['weather']) &&
     typeof state['remainingSecs'] === 'number' &&
@@ -31,9 +34,9 @@ export const isValidWeatherState = (value: unknown): value is WeatherState => {
 
 /** Repair state entering from construction or persistence without making a world unloadable. */
 export const normaliseWeatherState = (value: unknown): WeatherState => {
-  if (typeof value !== 'object' || value === null) return INITIAL_WEATHER_STATE
+  if (!isRecord(value)) return INITIAL_WEATHER_STATE
 
-  const state = value as Record<string, unknown>
+  const state = value
   return {
     weather: isWeather(state['weather']) ? state['weather'] : INITIAL_WEATHER_STATE.weather,
     remainingSecs:

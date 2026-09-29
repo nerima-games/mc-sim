@@ -104,7 +104,8 @@ const matchesShapeless = (recipe: ShapelessRecipe, grid: CraftGrid): boolean => 
     if (index === recipe.ingredients.length) {
       return true
     }
-    const ingredient = recipe.ingredients[index]!
+    const ingredient = recipe.ingredients[index]
+    if (ingredient === undefined) return false
     for (let candidate = 0; candidate < items.length; candidate += 1) {
       const item = items[candidate]
       if (taken[candidate] === true || item === undefined || !ingredientMatches(ingredient, item)) {

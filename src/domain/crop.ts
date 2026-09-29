@@ -73,8 +73,16 @@ export type CropValidationResult =
   | { readonly _tag: 'Valid'; readonly snapshot: CropSnapshot }
   | { readonly _tag: 'Invalid'; readonly error: CropValidationError }
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
 export const isCropType = (value: unknown): value is CropType =>
   typeof value === 'string' && CROP_TYPES.some((crop) => crop === value)
+
+const isBlockPosition = (value: unknown): value is BlockPosition =>
+  isRecord(value) &&
+  typeof value['x'] === 'number' && typeof value['y'] === 'number' && typeof value['z'] === 'number'
+
 
 export const cropDefinitionFor = (crop: CropType): CropDefinition => CROP_REGISTRY[crop]
 
@@ -110,9 +118,6 @@ export const advanceCrop = (crop: CropState, deltaSecs: number): CropState => {
 
 export const advanceCropByBoneMeal = (crop: CropState): CropState =>
   advanceCrop(crop, BONE_MEAL_GROWTH_SECS)
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
 
 const hasExactKeys = (value: Record<string, unknown>, expected: ReadonlyArray<string>): boolean => {
   const actual = Object.keys(value)
@@ -161,9 +166,11 @@ export const validateCropSnapshot = (value: unknown): CropValidationResult => {
       return invalid(`${path}.growthSecs`, 'growth must be finite and within the crop maturity range')
     }
 
+    const position = { x, y, z }
+    if (!isBlockPosition(position)) return invalid(`${path}.position`, 'invalid block position')
     const crop: CropState = {
       dimension: candidate['dimension'],
-      position: { x, y, z } as BlockPosition,
+      position,
       crop: candidate['crop'],
       growthSecs,
     }

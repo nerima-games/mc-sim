@@ -285,7 +285,7 @@ export const isEnchantmentTableRuleId = (
   value: unknown,
 ): value is EnchantmentTableRuleId =>
   typeof value === 'string' &&
-  (SUPPORTED_VANILLA_ENCHANTMENT_IDS as readonly string[]).includes(value)
+  SUPPORTED_VANILLA_ENCHANTMENT_IDS.some((id) => id === value)
 
 export const enchantmentTableRuleFor = (
   id: EnchantmentTableRuleId,

@@ -6,7 +6,7 @@
 
 | 項目 | 現在の方針 |
 | --- | --- |
-| バージョン | `0.1.42`。`0.x` のため破壊的変更は minor で表す |
+| バージョン | `package.json#version` を正とする。`0.x` のため破壊的変更は minor で表す |
 | 実行時入口 | `dist/index.js` |
 | 型入口 | `dist/index.d.ts` |
 | 配布対象 | `dist`、`README.md`、`LICENSE` |
@@ -79,15 +79,14 @@ format の現行 version のみを要求し、それ以外の version で保存�
 | 依存 | 現在の扱い |
 | --- | --- |
 | `effect` | `3.22.1`（exact, `dependencies`）。Effect の Context / Layer を共有するため同一 major を使う |
-| `mc-kernel` | `0.5.0` |
-| `mc-physics` | `0.2.0` |
-| `mc-save` | `0.3.0` |
-| `mc-worldgen` | `0.1.14` |
+| `mc-kernel` | `package.json#dependencies` |
+| `mc-physics` | `package.json#dependencies` |
+| `mc-save` | `package.json#dependencies` |
+| `mc-worldgen` | `package.json#dependencies` |
 | TypeScript | `7.0.2`（exact）。`@typescript/native` / `typescript6` エイリアスは廃止した |
 | Vitest | `4.1.11`（exact）。`@effect/vitest` は `0.30.0` |
 
-上表の値は最新の更新時点のスナップショットであり、正は常に `package.json#dependencies` である。
-版がずれて見える場合は本表ではなく `package.json` を信じること。
+版数の正は常に `package.json#dependencies` であり、この表は依存の役割だけを示す。
 
 依存を更新したら `pnpm install --frozen-lockfile`、`pnpm peers check`、`pnpm typecheck`、
 `pnpm build`、`pnpm test:coverage` を実行する。特に Effect と依存パッケージの major を

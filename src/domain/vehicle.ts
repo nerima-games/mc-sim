@@ -61,7 +61,7 @@ const dimension = (value: unknown): value is Dimension =>
 
 type VehicleItemValidation =
   | { readonly _tag: 'Invalid'; readonly error: VehicleValidationError }
-  | { readonly _tag: 'Valid'; readonly serial: number | undefined }
+  | { readonly _tag: 'Valid'; readonly serial: number | undefined; readonly vehicle: Vehicle }
 
 /** `ids` and `occupants` accumulate across every item in the snapshot, so both are mutated in place. */
 const validateVehicleItem = (
@@ -93,27 +93,41 @@ const validateVehicleItem = (
       return { _tag: 'Invalid', error: invalidError(`${path}.occupant`, 'must occupy at most one vehicle') }
     occupants.add(occupant)
   }
-  return { _tag: 'Valid', serial }
+  return {
+    _tag: 'Valid',
+    serial,
+    vehicle: {
+      id: vehicleId(id),
+      type: item['type'],
+      dimension: item['dimension'],
+      position: item['position'],
+      velocity: item['velocity'],
+      yawRadians: item['yawRadians'],
+      ...(occupant === undefined ? {} : { occupant: occupantId(occupant) }),
+    },
+  }
 }
 
 export const validateVehicleSnapshot = (value: unknown): VehicleValidationResult => {
   if (!isRecord(value) || !Array.isArray(value['vehicles'])) return invalid('snapshot.vehicles', 'must be an array')
   const vehicles = value['vehicles']
   const nextSerial = value['nextSerial']
-  if (!Number.isSafeInteger(nextSerial) || (nextSerial as number) < 0)
+  if (typeof nextSerial !== 'number' || !Number.isSafeInteger(nextSerial) || nextSerial < 0)
     return invalid('snapshot.nextSerial', 'must be a non-negative safe integer')
 
   const ids = new Set<string>()
   const occupants = new Set<string>()
+  const validatedVehicles: Array<Vehicle> = []
   let highestSerial = -1
   for (let index = 0; index < vehicles.length; index += 1) {
     const validated = validateVehicleItem(vehicles[index], `snapshot.vehicles[${index}]`, ids, occupants)
     if (validated._tag === 'Invalid') return { _tag: 'Invalid', error: validated.error }
     if (validated.serial !== undefined) highestSerial = Math.max(highestSerial, validated.serial)
+    validatedVehicles.push(validated.vehicle)
   }
-  if ((nextSerial as number) <= highestSerial)
+  if (nextSerial <= highestSerial)
     return invalid('snapshot.nextSerial', 'must be greater than every minted vehicle id')
-  return { _tag: 'Valid', snapshot: value as VehicleSnapshot }
+  return { _tag: 'Valid', snapshot: { vehicles: validatedVehicles, nextSerial } }
 }
 
 export const emptyVehicleSnapshot = (): VehicleSnapshot => ({ vehicles: [], nextSerial: 0 })

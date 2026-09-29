@@ -5,7 +5,7 @@ import {
   emptyVehicleSnapshot,
   type OccupantId,
   type Vehicle,
-  type VehicleId,
+  VehicleId,
   type VehicleSnapshot,
   type VehicleType,
   type VehicleValidationError,
@@ -35,7 +35,9 @@ const update = (
   const index = snapshot.vehicles.findIndex((vehicle) => vehicle.id === id)
   if (index < 0) return [Effect.fail(operationError('not-found')), snapshot]
   const vehicles = snapshot.vehicles.slice()
-  vehicles[index] = transform(vehicles[index]!)
+  const vehicle = vehicles[index]
+  if (vehicle === undefined) return [Effect.fail(operationError('not-found')), snapshot]
+  vehicles[index] = transform(vehicle)
   return [Effect.void, { ...snapshot, vehicles }]
 }
 
@@ -72,7 +74,7 @@ export const makeVehicleService = (
         if ((type !== 'boat' && type !== 'minecart') || !validDimension(dimension) || !validVector(position) || !Number.isFinite(yawRadians))
           return [Effect.fail(operationError('invalid-transform')), snapshot]
         const vehicle: Vehicle = {
-          id: `v:${snapshot.nextSerial}` as VehicleId, type, dimension, position,
+          id: VehicleId(`v:${snapshot.nextSerial}`), type, dimension, position,
           velocity: { x: 0, y: 0, z: 0 }, yawRadians,
         }
         return [Effect.succeed(vehicle), { vehicles: [...snapshot.vehicles, vehicle], nextSerial: snapshot.nextSerial + 1 }]
@@ -87,7 +89,9 @@ export const makeVehicleService = (
         if (snapshot.vehicles.some((vehicle) => vehicle.occupant === occupant)) return [Effect.fail(operationError('duplicate-occupant')), snapshot]
         if (snapshot.vehicles[index]?.occupant !== undefined) return [Effect.fail(operationError('occupied')), snapshot]
         const vehicles = snapshot.vehicles.slice()
-        vehicles[index] = { ...vehicles[index]!, occupant }
+        const vehicle = vehicles[index]
+        if (vehicle === undefined) return [Effect.fail(operationError('not-found')), snapshot]
+        vehicles[index] = { ...vehicle, occupant }
         return [Effect.void, { ...snapshot, vehicles }]
       }),
       dismount: (id, occupant) => modify((snapshot) => {
@@ -95,7 +99,9 @@ export const makeVehicleService = (
         if (index < 0) return [Effect.fail(operationError('not-found')), snapshot]
         if (snapshot.vehicles[index]?.occupant !== occupant) return [Effect.fail(operationError('occupant-mismatch')), snapshot]
         const vehicles = snapshot.vehicles.slice()
-        const { occupant: _occupant, ...vehicle } = vehicles[index]!
+        const vehicleAtIndex = vehicles[index]
+        if (vehicleAtIndex === undefined) return [Effect.fail(operationError('not-found')), snapshot]
+        const { occupant: _occupant, ...vehicle } = vehicleAtIndex
         vehicles[index] = vehicle
         return [Effect.void, { ...snapshot, vehicles }]
       }),
