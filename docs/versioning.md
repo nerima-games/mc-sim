@@ -33,25 +33,27 @@ import と型宣言の両方を検証対象にする。
 
 ### 2.1 保存形式の版管理
 
-`SIMULATION_SAVE_FORMAT` の現行 version は 2。v2 はホットバーの選択状態と
-統計台帳（カウンタ / unlocked ID）を保存する。
+`SIMULATION_SAVE_FORMAT` の現行 version は 3。v3 はホットバーの選択状態、
+統計台帳（カウンタ / unlocked ID）、および解決済み canonical `ItemStack` の
+`components` を保存する。v2 はホットバーの選択状態と統計台帳（カウンタ / unlocked ID）を保存する。
 
 **`mc-save` 0.3.0 以降は migration chain を提供しない**（`mc-save` の README.md
 「旧版セーブを現行版へ自動変換する migration chain は提供しません」）。`loadFrom` は
 format の現行 version のみを要求し、それ以外の version で保存された envelope は
-`SaveDecodeError` として拒否される（サイレントな変換はしない）。v1 → v2 の自動移行は
+`SaveDecodeError` として拒否される（サイレントな変換はしない）。v1 / v2 の自動移行は
 0.2.2 世代の `mc-save` にのみ存在した機能で、`mc-save` を 0.3.0 に上げた時点で
 `SIMULATION_SAVE_FORMAT` からも撤去した。移行コード自体は git 履歴に残る。
 
 これは既存の公開 API を温存する互換アダプターではなく、保存形式そのものの版管理である。
-現時点のセーブは 0.x の開発用セーブであり、v1 形式のセーブを読めなくすることは許容している。
+現時点のセーブは 0.x の開発用セーブであり、v1 / v2 形式のセーブを読めなくすることは許容している。
 
 ## 3. 共有依存の直接利用
 
 共有語彙は各パッケージが所有し、mc-sim は公開 API を直接 import する。
 
 - `mc-kernel` はアイテム、ブロック、時計、金床などを提供する。
-- `mc-worldgen` はディメンションなどのワールド生成型を提供する。
+- `mc-kernel` はディメンションなどの共有ゲーム語彙を提供する。
+- `mc-worldgen` はチャンクなどのワールド生成型を提供する。
 - `mc-save` は保存フォーマットを提供する。
 - `mc-physics` は物理の計算と型を提供する。
 

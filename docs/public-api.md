@@ -10,8 +10,44 @@
 
 `DeltaTimeSecs` と `FixedDurationSecs`、`SimulationTick` と plain `number`、`BlockAxis` と
 `ChunkAxis` は相互変換せず、それぞれの公開 API の境界で constructor または validator を通す。
-`mc-worldgen` の `Dimension` と live chunk の所有権は変更せず、worldgen pin と read/edit vocabulary
-の移行は後続変更に残す。
+`Dimension` は `mc-kernel` が所有し、player、crop、vehicle、save coordinator の公開境界で
+同じ型を使う。`mc-worldgen` は `Chunk` と live chunk の所有者であり、worldgen pin と
+read/edit vocabulary の移行は後続変更に残す。
+
+## 0.2 今回の release declaration 差分
+
+`origin/main` と release declaration を比較した公開差分は次の 13 ファイルに現れる。
+
+| declaration | 公開契約の変更 |
+| --- | --- |
+| `application/game-loop.d.ts` | frame delta の kernel brand を使用 |
+| `application/inventory-interaction.d.ts` | canonical stack 比較の `sameStackIgnoringCount` を追加 |
+| `application/player-service.d.ts` | `Dimension` の所有元を `mc-kernel` に変更 |
+| `application/save-coordinator.d.ts` | `DimensionChunk.dimension` を kernel の `Dimension` に変更 |
+| `application/time-service.d.ts` | `dayLengthSecs: Effect<FixedDurationSecs>` に変更 |
+| `application/vehicle-service.d.ts` | vehicle の `Dimension` を kernel から利用 |
+| `domain/block-interaction.d.ts` | `BlockBreakDecision` / `BlockPlacementDecision` / `PlaceableBlock` を kernel から再輸出 |
+| `domain/crop.d.ts` | crop location の `Dimension` を kernel に変更 |
+| `domain/frame-timing.d.ts` | frame clamp / interval の所有元を kernel に変更し、mc-sim の名前を維持 |
+| `domain/inventory.d.ts` | canonical `ItemStack`、`itemStack`、`maxStackCountForItem`、`addItemStack` を公開 |
+| `domain/save-data.d.ts` | `Statistics` を kernel の型に変更し、save stack は canonical shape |
+| `domain/statistics.d.ts` | `Statistics` / `StatisticKey` / `AchievementId` を kernel から再輸出 |
+| `domain/vehicle.d.ts` | vehicle の型・ID・validator result を kernel から再輸出 |
+
+宣言差分に含まれる import 表記の変更は実行時 API ではなく、上表の型所有権変更に伴う生成結果である。
+
+### 0.2.1 canonical ItemStack と inventory
+
+`ItemStack` は `mc-kernel` の解決済み型であり、`components` を必ず持つ。mc-sim の inventory、
+crafting、drop、save の境界で stack を生成・比較・分割するときは、kernel の `itemStack`、
+`itemStackWithCount`、`itemStackEqualsIgnoringCount`、`itemStacksCanMerge` を使う。
+`addItemStack(inventory, stack)` は stack の components を維持して空き slot と既存 stack に追加し、
+入らなかった数量を `AddOutcome.leftover` に返す。`addItem(item, count)` は components を持たない
+通常の item 追加のための convenience API である。
+
+旧 `{ item, count }` を `itemStack` で後付け canonical 化する repair 経路は公開契約に含まれない。
+player / container / equipment snapshot の untrusted input は decoder / validator 境界で canonical
+shape を検証し、旧 shape は Invalid 系の結果として拒否する。
 
 plan.md §3.8 は主要な公開APIを「`tick(input, dt)`、各状態サービスの読み書き、チャンクダーティ通知」
 と書いている。本書はそれを、**参照実装の実コードと突き合わせて**具体化したもの。
@@ -102,7 +138,7 @@ type PlayerServiceApi = {
 type TimeServiceApi = {
   readonly advance: (dt: DeltaTimeSecs) => Effect.Effect<void>
   readonly timeOfDay: Effect.Effect<number>          // [0, 1)。0 = 真夜中。§2-0
-  readonly dayLengthSecs: Effect.Effect<number>
+  readonly dayLengthSecs: Effect.Effect<FixedDurationSecs>
   readonly moonPhase: Effect.Effect<number>          // 0..7
   readonly isNight: Effect.Effect<boolean>
   readonly setDayLength: (seconds: number) => Effect.Effect<void>
@@ -402,11 +438,13 @@ type HotbarServiceApi = {
 
 ### 4-0-1. `SimulationSave` — セーブされる状態
 
-`domain/save-data.ts` の `SimulationSave` v2 は、セーブを跨ぐ状態を定義する。
+`domain/save-data.ts` の `SimulationSave` v3 は、セーブを跨ぐ状態を定義する。
 `player.selectedHotbarSlot`（0..8）と `statistics.counters` /
 `statistics.unlocked` を保存し、実績の registry / predicate は持たない。
-`saveSimulation` / `loadSimulation` / `listSimulationSaves` は `mc-save` の
-保存形式を利用する。v1 → v2 は保存形式の migration chain で初期選択 0 と空の統計台帳へ移行する。
+player inventory は解決済み canonical `ItemStack`（`item` / `count` / `components`）を wire に
+保持する。`saveSimulation` / `loadSimulation` / `listSimulationSaves` は `mc-save` の保存形式を
+利用する。migration chain は提供しないため、v1 と v2 の envelope、components を持たない旧 stack
+は `SaveDecodeError` で拒否する。v3 への暗黙変換、初期選択 0 や空の統計台帳の補完は行わない。
 
 ### 4-1. `restore` はスロット数を再確立し、入らなかった数を返す
 
