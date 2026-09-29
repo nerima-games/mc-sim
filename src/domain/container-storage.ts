@@ -243,9 +243,11 @@ type SlotValidation =
 const validateStoredSlot = (slot: unknown, slotPath: string): SlotValidation => {
   if (slot === null) return { _tag: 'Slot', slot: null }
   if (!isRecord(slot) || !hasExactKeys(slot, ['item', 'count', 'durability']) ||
-      typeof slot['item'] !== 'string' || !isItemType(slot['item']) ||
-      !Number.isSafeInteger(slot['count']) || (slot['count'] as number) <= 0 ||
-      (slot['count'] as number) > Inv.maxStackCountForItem(slot['item']))
+      typeof slot['item'] !== 'string' || !isItemType(slot['item']))
+    return { _tag: 'Invalid', error: invalidError(slotPath, 'expected a valid stored item stack') }
+  const count = slot['count']
+  if (typeof count !== 'number' || !Number.isSafeInteger(count) || count <= 0 ||
+      count > Inv.maxStackCountForItem(slot['item']))
     return { _tag: 'Invalid', error: invalidError(slotPath, 'expected a valid stored item stack') }
   const durability = slot['durability']
   if (Eq.isDamageableItemType(slot['item'])) {
@@ -256,12 +258,12 @@ const validateStoredSlot = (slot: unknown, slotPath: string): SlotValidation => 
       }
     return {
       _tag: 'Slot',
-      slot: { item: slot['item'], count: StackCount(slot['count'] as number), durability: { ...durability } },
+      slot: { item: slot['item'], count: StackCount(count), durability: { ...durability } },
     }
   }
   if (durability !== null)
     return { _tag: 'Invalid', error: invalidError(`${slotPath}.durability`, 'non-durable item requires null') }
-  return { _tag: 'Slot', slot: { item: slot['item'], count: StackCount(slot['count'] as number), durability: null } }
+  return { _tag: 'Slot', slot: { item: slot['item'], count: StackCount(count), durability: null } }
 }
 
 type ContainerCandidateValidation =
@@ -332,8 +334,8 @@ const validContainerSlot = (container: Container, slot: number): boolean =>
 const hasValidStoredStackShape = (value: unknown): value is ContainerStoredStack =>
   isRecord(value) && hasExactKeys(value, ['item', 'count', 'durability']) &&
   typeof value['item'] === 'string' && isItemType(value['item']) &&
-  Number.isSafeInteger(value['count']) && (value['count'] as number) > 0 &&
-  (value['count'] as number) <= Inv.maxStackCountForItem(value['item'])
+  typeof value['count'] === 'number' && Number.isSafeInteger(value['count']) && value['count'] > 0 &&
+  value['count'] <= Inv.maxStackCountForItem(value['item'])
 
 const hasValidStoredStackDurability = (stack: ContainerStoredStack): boolean =>
   Eq.isDamageableItemType(stack.item)
@@ -410,12 +412,12 @@ export const transferContainerItem = (
     return failure(playerStorage, containerStorage, { _tag: 'InvalidPlayerSlot' })
   if (!Number.isSafeInteger(request.count) || request.count <= 0)
     return failure(playerStorage, containerStorage, { _tag: 'InvalidCount' })
-  const containerIndex = containerStorage.containers.findIndex(
-    (container) => container.id === request.containerId,
+  const container = containerStorage.containers.find(
+    (candidate) => candidate.id === request.containerId,
   )
-  if (containerIndex < 0)
+  if (container === undefined)
     return failure(playerStorage, containerStorage, { _tag: 'ContainerNotFound' })
-  const container = containerStorage.containers[containerIndex]!
+  const containerIndex = containerStorage.containers.indexOf(container)
   if (!validContainerSlot(container, request.containerSlot))
     return failure(playerStorage, containerStorage, { _tag: 'InvalidContainerSlot' })
 
@@ -474,9 +476,9 @@ export const extractContainerItem = (
   storage: ContainerStorage,
   request: ContainerExtractRequest,
 ): ContainerExtractOutcome => {
-  const containerIndex = storage.containers.findIndex((container) => container.id === request.containerId)
-  if (containerIndex < 0) return { storage, result: { _tag: 'ContainerNotFound' } }
-  const container = storage.containers[containerIndex]!
+  const container = storage.containers.find((candidate) => candidate.id === request.containerId)
+  if (container === undefined) return { storage, result: { _tag: 'ContainerNotFound' } }
+  const containerIndex = storage.containers.indexOf(container)
   if (!validContainerSlot(container, request.containerSlot))
     return { storage, result: { _tag: 'InvalidContainerSlot' } }
   if (!Number.isSafeInteger(request.count) || request.count <= 0)
@@ -541,14 +543,14 @@ type MoveContainersLookup =
   | ({ readonly _tag: 'Valid' } & MoveContainers)
 
 const lookupMoveContainers = (storage: ContainerStorage, request: ContainerMoveRequest): MoveContainersLookup => {
-  const sourceIndex = storage.containers.findIndex((container) => container.id === request.sourceContainerId)
-  if (sourceIndex < 0) return { _tag: 'Invalid', result: { _tag: 'SourceContainerNotFound' } }
-  const destinationIndex = storage.containers.findIndex(
+  const sourceContainer = storage.containers.find((container) => container.id === request.sourceContainerId)
+  if (sourceContainer === undefined) return { _tag: 'Invalid', result: { _tag: 'SourceContainerNotFound' } }
+  const sourceIndex = storage.containers.indexOf(sourceContainer)
+  const destinationContainer = storage.containers.find(
     (container) => container.id === request.destinationContainerId,
   )
-  if (destinationIndex < 0) return { _tag: 'Invalid', result: { _tag: 'DestinationContainerNotFound' } }
-  const sourceContainer = storage.containers[sourceIndex]!
-  const destinationContainer = storage.containers[destinationIndex]!
+  if (destinationContainer === undefined) return { _tag: 'Invalid', result: { _tag: 'DestinationContainerNotFound' } }
+  const destinationIndex = storage.containers.indexOf(destinationContainer)
   if (!validContainerSlot(sourceContainer, request.sourceSlot))
     return { _tag: 'Invalid', result: { _tag: 'InvalidSourceSlot' } }
   if (!validContainerSlot(destinationContainer, request.destinationSlot))
@@ -557,7 +559,13 @@ const lookupMoveContainers = (storage: ContainerStorage, request: ContainerMoveR
     return { _tag: 'Invalid', result: { _tag: 'InvalidCount' } }
   if (sourceIndex === destinationIndex && request.sourceSlot === request.destinationSlot)
     return { _tag: 'Invalid', result: { _tag: 'DestinationMismatch' } }
-  return { _tag: 'Valid', sourceIndex, destinationIndex, sourceContainer, destinationContainer }
+  return {
+    _tag: 'Valid',
+    sourceIndex: storage.containers.indexOf(sourceContainer),
+    destinationIndex: storage.containers.indexOf(destinationContainer),
+    sourceContainer,
+    destinationContainer,
+  }
 }
 
 /** Move exactly `count` items between two containers, changing both or neither. */
@@ -601,9 +609,9 @@ export const drainContainer = (
   storage: ContainerStorage,
   id: ContainerId,
 ): DrainContainerOutcome => {
-  const index = storage.containers.findIndex((container) => container.id === id)
-  if (index < 0) return { storage, result: { _tag: 'ContainerNotFound' } }
-  const container = storage.containers[index]!
+  const container = storage.containers.find((candidate) => candidate.id === id)
+  if (container === undefined) return { storage, result: { _tag: 'ContainerNotFound' } }
+  const index = storage.containers.indexOf(container)
   return {
     storage: { containers: storage.containers.filter((_, candidate) => candidate !== index) },
     result: {

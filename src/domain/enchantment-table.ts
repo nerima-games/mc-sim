@@ -58,6 +58,12 @@ type Candidate = Readonly<{
   readonly weight: number
 }>
 
+const candidateAt = (candidates: ReadonlyArray<Candidate>, index: number): Candidate => {
+  return candidates
+    .slice(0, index + 1)
+    .reduce((selected, candidate, candidateIndex) => candidateIndex === index ? candidate : selected)
+}
+
 const assertRandomInteger = (
   random: EnchantmentTableRandom,
   bound: number,
@@ -99,7 +105,10 @@ const powerAtSlot = (power: number, slot: EnchantmentTableSlot, bookshelfCount: 
   return powers[slot]
 }
 
-const lapisCostAtSlot = (slot: EnchantmentTableSlot): 1 | 2 | 3 => (slot + 1) as 1 | 2 | 3
+const lapisCostAtSlot = (slot: EnchantmentTableSlot): 1 | 2 | 3 => {
+  const costs: readonly [1, 2, 3] = [1, 2, 3]
+  return costs[slot]
+}
 
 export const enchantmentTableCostAtLevel = (
   cost: EnchantmentTableCost,
@@ -160,13 +169,14 @@ const weightedCandidate = (
   let candidateIndex = 0
   while (
     candidateIndex < candidates.length - 1 &&
-    remainingWeight >= candidates[candidateIndex]!.weight
+    remainingWeight >= candidateAt(candidates, candidateIndex).weight
   ) {
-    remainingWeight -= candidates[candidateIndex]!.weight
+    remainingWeight -= candidateAt(candidates, candidateIndex).weight
     candidateIndex += 1
   }
-  return candidates[candidateIndex]!
+  return candidateAt(candidates, candidateIndex)
 }
+
 
 const selectEnchantments = (
   candidates: ReadonlyArray<Candidate>,
@@ -233,10 +243,11 @@ export const generateEnchantmentTableOffers = ({
     EnchantmentTableOffer | undefined,
   ] = [undefined, undefined, undefined]
   for (let slot = 0; slot < ENCHANTMENT_TABLE_SLOT_COUNT; slot += 1) {
-    offers[slot as EnchantmentTableSlot] = offerAtSlot(
+    assertEnchantmentTableSlot(slot)
+    offers[slot] = offerAtSlot(
       item,
       bookshelfCount,
-      slot as EnchantmentTableSlot,
+      slot,
       random,
     )
   }

@@ -1,4 +1,5 @@
 import type { BlockPosition, BlockType, ItemType } from '@nerima-games/mc-kernel'
+import { blockPosition } from '@nerima-games/mc-kernel/domain/coordinates'
 import { itemStack, type ItemStack } from './inventory.js'
 import type { Dimension } from '@nerima-games/mc-worldgen'
 
@@ -73,8 +74,12 @@ export type CropValidationResult =
   | { readonly _tag: 'Valid'; readonly snapshot: CropSnapshot }
   | { readonly _tag: 'Invalid'; readonly error: CropValidationError }
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
 export const isCropType = (value: unknown): value is CropType =>
   typeof value === 'string' && CROP_TYPES.some((crop) => crop === value)
+
 
 export const cropDefinitionFor = (crop: CropType): CropDefinition => CROP_REGISTRY[crop]
 
@@ -110,9 +115,6 @@ export const advanceCrop = (crop: CropState, deltaSecs: number): CropState => {
 
 export const advanceCropByBoneMeal = (crop: CropState): CropState =>
   advanceCrop(crop, BONE_MEAL_GROWTH_SECS)
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
 
 const hasExactKeys = (value: Record<string, unknown>, expected: ReadonlyArray<string>): boolean => {
   const actual = Object.keys(value)
@@ -152,7 +154,7 @@ export const validateCropSnapshot = (value: unknown): CropValidationResult => {
     }
 
     const { x, y, z } = candidate['position']
-    if (![x, y, z].every((axis) => typeof axis === 'number' && Number.isSafeInteger(axis))) {
+    if ([x, y, z].some((axis) => typeof axis !== 'number' || !Number.isSafeInteger(axis))) {
       return invalid(`${path}.position`, 'coordinates must be safe integers')
     }
     const growthSecs = candidate['growthSecs']
@@ -161,9 +163,10 @@ export const validateCropSnapshot = (value: unknown): CropValidationResult => {
       return invalid(`${path}.growthSecs`, 'growth must be finite and within the crop maturity range')
     }
 
+    const position = blockPosition(Number(x), Number(y), Number(z))
     const crop: CropState = {
       dimension: candidate['dimension'],
-      position: { x, y, z } as BlockPosition,
+      position,
       crop: candidate['crop'],
       growthSecs,
     }

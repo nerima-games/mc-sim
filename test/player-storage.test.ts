@@ -6,18 +6,47 @@ import * as Eq from '../src/domain/equipment'
 import { emptyInventory, itemStack } from '../src/domain/inventory'
 import {
   addStoredStack,
+  consumeAndDamageAt,
   damageAt,
   emptyPlayerStorage,
   equipFromInventory,
   FLINT_AND_STEEL_MAX_DURABILITY,
   storageFromInventory,
   unequipToInventory,
+  validatePlayerStorageSnapshot,
 } from '../src/domain/player-storage'
 import type { PlayerStorage, StorageLocation } from '../src/domain/player-storage'
 
 const bytes = (value: unknown): string => JSON.stringify(value)
 
 describe('player storage', () => {
+  it('keeps the transition total when a location changes between boundary checks', () => {
+    const storage = storageFromInventory({
+      slots: [itemStack('bow', 1), itemStack('stone', 1), ...Array.from({ length: 34 }, () => undefined)],
+    })
+    let reads = 0
+    const location = {
+      get _tag(): 'Inventory' | 'Bogus' {
+        reads += 1
+        return reads >= 4 ? 'Bogus' : 'Inventory'
+      },
+      slotIndex: 0,
+    } as unknown as StorageLocation
+    const outcome = consumeAndDamageAt(storage, {
+      consume: { item: 'stone', count: 1 },
+      damage: { location, expectedItem: 'bow', amount: 1 },
+    })
+    expect(outcome.result._tag).toBe('NotDamageable')
+  })
+
+  it('rejects a malformed inventory slot at the persistence boundary', () => {
+    const result = validatePlayerStorageSnapshot({
+      inventory: { slots: [{}, ...Array.from({ length: 35 }, () => undefined)] },
+      inventoryDurability: Array.from({ length: 36 }, () => null),
+      equipment: { slots: { head: null, chest: null, legs: null, feet: null, offhand: null } },
+    })
+    expect(result._tag).toBe('Invalid')
+  })
   it('adds a damaged tool with its exact durability and copies the input', () => {
     const durability = { current: 17, max: FLINT_AND_STEEL_MAX_DURABILITY }
     const outcome = addStoredStack(emptyPlayerStorage(), {

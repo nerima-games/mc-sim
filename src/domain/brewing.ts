@@ -112,9 +112,14 @@ const brewOnce = (
   ...state,
   ingredient: consumeIngredient(ingredient),
   fuelCharges: state.fuelCharges - 1,
-  bottles: state.bottles.map((bottle) =>
+  bottles: (() => {
+    const bottles = state.bottles.map((bottle) =>
     bottle?.item === recipe.input ? itemStack(recipe.output, bottle.count) : bottle,
-  ) as [Slot, Slot, Slot],
+    )
+    const result: [Slot, Slot, Slot] = [undefined, undefined, undefined]
+    for (const [index, bottle] of bottles.entries()) result[index] = bottle
+    return result
+  })(),
 })
 
 export const advanceBrewing = (

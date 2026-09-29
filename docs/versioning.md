@@ -6,7 +6,7 @@
 
 | 項目 | 現在の方針 |
 | --- | --- |
-| バージョン | `0.1.42`。`0.x` のため破壊的変更は minor で表す |
+| バージョン | `package.json#version` を正とする。`0.x` のため破壊的変更は minor で表す |
 | 実行時入口 | `dist/index.js` |
 | 型入口 | `dist/index.d.ts` |
 | 配布対象 | `dist`、`README.md`、`LICENSE` |
@@ -66,28 +66,25 @@ format の現行 version のみを要求し、それ以外の version で保存�
 `node_modules` 内の `.ts` を型除去できず（`ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`）、
 その依存への import で失敗する。
 
-**既知のブロッカー**: 執筆時点で `mc-worldgen@0.1.14`（本パッケージが固定している正確な
-バージョン）は `package.json` の `main`/`exports` が `./src/index.ts` を指す未ビルドの形の
-ままである（`mc-physics@0.2.0` と `mc-save@0.3.0` はどちらも Wave 0 済みで `dist/index.js`
-を指す）。このため `pnpm package:verify` の動的 import 検証は、mc-sim 自身のコードでは
-なくこの上流依存が原因で失敗する。`mc-worldgen` が自身の Wave 0 で `dist/` 公開に切り替わり、
-その新しいバージョンへ依存を更新するまで解消しない。修正は本リポジトリの今回の変更範囲外
-であり、依存更新を伴う別 PR の仕事である。
+**現在の状態**: 固定している依存はどれも、`dist/` に実行時ロード可能な JavaScript を
+公開している。上の失敗モードは今は起こらず、`pnpm package:verify` の動的 import 検証が
+疑うのは mc-sim 自身のコードだけである。ただしこれは固定された保証ではない。依存を
+追加・更新するたびに、その依存が `dist/` に JavaScript を公開していることを確かめ、
+`pnpm package:verify` を通す。
 
 ## 4. 依存バージョン
 
 | 依存 | 現在の扱い |
 | --- | --- |
 | `effect` | `3.22.1`（exact, `dependencies`）。Effect の Context / Layer を共有するため同一 major を使う |
-| `mc-kernel` | `0.5.0` |
-| `mc-physics` | `0.2.0` |
-| `mc-save` | `0.3.0` |
-| `mc-worldgen` | `0.1.14` |
+| `mc-kernel` | `package.json#dependencies` |
+| `mc-physics` | `package.json#dependencies` |
+| `mc-save` | `package.json#dependencies` |
+| `mc-worldgen` | `package.json#dependencies` |
 | TypeScript | `7.0.2`（exact）。`@typescript/native` / `typescript6` エイリアスは廃止した |
 | Vitest | `4.1.11`（exact）。`@effect/vitest` は `0.30.0` |
 
-上表の値は最新の更新時点のスナップショットであり、正は常に `package.json#dependencies` である。
-版がずれて見える場合は本表ではなく `package.json` を信じること。
+版数の正は常に `package.json` の `dependencies` と `devDependencies` であり、この表は依存の役割だけを示す。
 
 依存を更新したら `pnpm install --frozen-lockfile`、`pnpm peers check`、`pnpm typecheck`、
 `pnpm build`、`pnpm test:coverage` を実行する。特に Effect と依存パッケージの major を
@@ -102,7 +99,7 @@ format の現行 version のみを要求し、それ以外の version で保存�
 3. `pnpm test`
 4. `pnpm test:coverage`
 5. `pnpm build`
-6. `node --input-type=module` で `dist/index.mjs` を import し、代表的な公開 API を呼ぶ
+6. `node --input-type=module` で `dist/index.js` を import し、代表的な公開 API を呼ぶ
 7. `pnpm pack --dry-run` で `dist` とドキュメントだけが配布対象であることを確認する
 
 変更セットや publish の実行はリリース担当の明示的な判断で行う。検証で見つかった

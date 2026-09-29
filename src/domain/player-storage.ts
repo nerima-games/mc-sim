@@ -111,11 +111,12 @@ const sameDurability = (
 
 const isValidStoredStack = (value: unknown): value is ContainerStoredStack => {
   if (!isRecord(value) || !hasExactKeys(value, ['item', 'count', 'durability'])) return false
-  if (typeof value['item'] !== 'string' || !isItemType(value['item']) ||
-      !Number.isSafeInteger(value['count']) || (value['count'] as number) <= 0 ||
-      (value['count'] as number) > Inv.maxStackCountForItem(value['item'])) return false
+  if (typeof value['item'] !== 'string' || !isItemType(value['item'])) return false
+  const count = value['count']
+  if (typeof count !== 'number' || !Number.isSafeInteger(count) || count <= 0 ||
+      count > Inv.maxStackCountForItem(value['item'])) return false
   return Eq.isDamageableItemType(value['item'])
-    ? (value['count'] as number) === 1 && Eq.isValidDurabilityForItem(value['item'], value['durability'])
+    ? count === 1 && Eq.isValidDurabilityForItem(value['item'], value['durability'])
     : value['durability'] === null
 }
 
@@ -157,7 +158,7 @@ export const addStoredStack = (
   const slots = [...storage.inventory.slots]
   const inventoryDurability = [...storage.inventoryDurability]
   const maxStackCount = Inv.maxStackCountForItem(stack.item)
-  let remaining = stack.count as number
+  let remaining: number = stack.count
 
   for (let index = 0; index < slots.length && remaining > 0; index += 1) {
     const slot = slots[index]
@@ -320,7 +321,7 @@ const targetDurabilityAt = (
 ): Eq.Durability | null | undefined =>
   location._tag === 'Inventory'
     ? storage.inventoryDurability[location.slotIndex]
-    : storage.equipment.slots[location.slot]!.durability
+    : storage.equipment.slots[location.slot]?.durability
 
 type ConsumablePlan = { readonly available: number; readonly excludedSlot: number }
 
@@ -400,7 +401,10 @@ export const consumeAndDamageAt = (
     request.damage.location,
     request.damage.amount,
   )
-  const appliedDamage = damaged.result as AppliedDamageResult
+  if (damaged.result._tag !== 'Damaged' && damaged.result._tag !== 'Broken') {
+    return { storage, result: { _tag: 'NotDamageable', item: target } }
+  }
+  const appliedDamage: AppliedDamageResult = damaged.result
   return {
     storage: damaged.storage,
     result: {
@@ -431,9 +435,11 @@ const validateInventorySlotEntry = (
     return { _tag: 'Slot', slot: undefined, durability: null }
   }
   if (!isRecord(slot) || !hasExactKeys(slot, ['item', 'count']) ||
-      typeof slot['item'] !== 'string' || !isItemType(slot['item']) ||
-      !Number.isSafeInteger(slot['count']) || (slot['count'] as number) <= 0 ||
-      (slot['count'] as number) > Inv.maxStackCountForItem(slot['item']))
+      typeof slot['item'] !== 'string' || !isItemType(slot['item']))
+    return { _tag: 'Invalid', error: invalidError(`storage.inventory.slots.${index}`, 'expected a valid item stack') }
+  const count = slot['count']
+  if (typeof count !== 'number' || !Number.isSafeInteger(count) || count <= 0 ||
+      count > Inv.maxStackCountForItem(slot['item']))
     return { _tag: 'Invalid', error: invalidError(`storage.inventory.slots.${index}`, 'expected a valid item stack') }
   if (Eq.isDamageableItemType(slot['item'])) {
     if (!Eq.isValidDurabilityForItem(slot['item'], durability))
@@ -446,13 +452,13 @@ const validateInventorySlotEntry = (
       }
     return {
       _tag: 'Slot',
-      slot: { item: slot['item'], count: StackCount(slot['count'] as number) },
+      slot: { item: slot['item'], count: StackCount(count) },
       durability: { ...durability },
     }
   }
   if (durability !== null)
     return { _tag: 'Invalid', error: invalidError(`storage.inventoryDurability.${index}`, 'non-durable item requires null') }
-  return { _tag: 'Slot', slot: { item: slot['item'], count: StackCount(slot['count'] as number) }, durability: null }
+  return { _tag: 'Slot', slot: { item: slot['item'], count: StackCount(count) }, durability: null }
 }
 
 /** Strictly validate persistence data, including item/slot compatibility. */

@@ -20,9 +20,9 @@
 `mc-noise` は **import できない**（`mc-worldgen` 経由の推移依存に過ぎないため）。
 `mc-render` は下流なので当然依存しない。`mc-playground-kit` には実行時にも devDependency にも依存しない。
 
-現在は `@nerima-games/mc-kernel@0.5.0`、`@nerima-games/mc-physics@0.2.0`、
-`@nerima-games/mc-save@0.2.2`、`@nerima-games/mc-worldgen@0.1.14`、`effect` を
-直接依存として宣言している。mc-kernel と mc-worldgen の語彙はローカルに複製せず、
+現在は `@nerima-games/mc-kernel`、`@nerima-games/mc-physics`、`@nerima-games/mc-save`、
+`@nerima-games/mc-worldgen`、`effect` を直接依存として宣言している（版数の正は
+`package.json#dependencies`）。mc-kernel と mc-worldgen の語彙はローカルに複製せず、
 各パッケージの公開 API を直接 import する。mc-physics 0.2.0 以降、爆発・Primed TNT・
 frame-timing クランプの独自実装（xorshift ベースの破壊パターン、手動同期していた定数）は
 廃止し、physics（= kernel）実装への named re-export に置き換えた。詳細は
@@ -91,7 +91,7 @@ Nix を使わない場合は Node.js 24 以上と pnpm 11（`corepack` 推奨）
 | `pnpm test` | vitest（`@effect/vitest` の `it.effect` が主 API、`environment: 'node'`） |
 | `pnpm test:watch` | vitest watch |
 | `pnpm test:coverage` | V8 カバレッジ計測。statements / branches / functions / lines の閾値は 100% |
-| `pnpm build` | tsdown の実行バンドルと TypeScript declaration を `dist/` に生成 |
+| `pnpm build` | `scripts/clean-dist.mjs` で `dist/` を消し、`tsc -p tsconfig.release.json` で実行時 JavaScript と TypeScript declaration を `dist/` に生成（`tsdown` バンドルは廃止） |
 | `pnpm verify` | `typecheck && lint && test` |
 
 ## 現状
@@ -113,7 +113,7 @@ Nix を使わない場合は Node.js 24 以上と pnpm 11（`corepack` 推奨）
 | レシピ表とクラフトの原子性 | `domain/recipe-data.ts` / `domain/recipe.ts` / `domain/crafting.ts` | DN-07 / DN-11 |
 | 次元・ブロック座標ごとの作物状態 | `domain/crop.ts` / `application/crop-service.ts` | JSON-safe snapshot と deterministic tick |
 | **エンティティ台帳（`EntityManager`）** | `domain/entity.ts` / `application/entity-manager.ts` | DN-07 / DN-09 / DN-11。[公開API §7](./docs/public-api.md) |
-| **爆発計画** | `domain/explosion.ts`（mc-physics 0.2.0 = mc-kernel 実装への re-export） | seed・遮蔽・耐性・距離減衰を純粋計算し、全変更を同期の `commit` コールバックへ 1 回だけ渡す。[公開API §8](./docs/public-api.md) |
+| **爆発計画** | `domain/explosion.ts`（mc-physics = mc-kernel 実装への re-export） | seed・遮蔽・耐性・距離減衰を純粋計算し、全変更を同期の `commit` コールバックへ 1 回だけ渡す。[公開API §8](./docs/public-api.md) |
 | **TNT fuse 統合** | `domain/primed-tnt.ts`（同上） | fuse snapshot を最大 10 秒ずつ純粋に進め、`PrimedTntState` は `kind: 'primed' \| 'detonated'` で判別する。detonation と爆発 mutation を同期の `commit` コールバックへ 1 回だけ渡す。[公開API §8.1](./docs/public-api.md) |
 | **`sim:physics` の登録と着地衝撃通知** | `stages/registration.ts` / `stages/stage-ids.ts` | [責務 §2.1](./docs/responsibility.md) / [公開API §4.2](./docs/public-api.md) |
 
@@ -137,7 +137,7 @@ Nix を使わない場合は Node.js 24 以上と pnpm 11（`corepack` 推奨）
   [`docs/public-api.md`](./docs/public-api.md) §7。
   **`simModule` にはまだ入れていない**（§7-5 に理由）。
 - ~~体力・空腹・XP / 統計 / 設定状態~~ → **実装済み**（`domain/vitals.ts`、
-  `domain/statistics.ts`、`domain/settings.ts`）。統計台帳（カウンタ / unlocked ID）は
+  `domain/statistics.ts`、`application/settings-service.ts`）。統計台帳（カウンタ / unlocked ID）は
   `SimulationSave` v2 に保存し、実績の registry / predicate は `mx-gameplay` 側の責務としてまだ別途必要。
 - かまど / 醸造 / 金床 → **現行 `mc-kernel` 語彙の範囲を実装済み**（`domain/smelting.ts`、
   `domain/brewing.ts`、mc-kernel の anvil API）。醸造は `STARTER_BREWING_RECIPES` の4レシピを

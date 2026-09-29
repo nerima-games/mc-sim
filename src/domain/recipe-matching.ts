@@ -100,26 +100,28 @@ const matchesShapeless = (recipe: ShapelessRecipe, grid: CraftGrid): boolean => 
   }
 
   const taken: Array<boolean> = items.map(() => false)
-  const assign = (index: number): boolean => {
-    if (index === recipe.ingredients.length) {
+  const assign = (ingredients: ReadonlyArray<ShapelessRecipe['ingredients'][number]>): boolean => {
+    if (ingredients.length === 0) {
       return true
     }
-    const ingredient = recipe.ingredients[index]!
-    for (let candidate = 0; candidate < items.length; candidate += 1) {
+    const remainingIngredients = ingredients.slice(1)
+    for (const ingredient of ingredients.slice(0, 1)) {
+      for (let candidate = 0; candidate < items.length; candidate += 1) {
       const item = items[candidate]
       if (taken[candidate] === true || item === undefined || !ingredientMatches(ingredient, item)) {
         continue
       }
       taken[candidate] = true
-      if (assign(index + 1)) {
+      if (assign(remainingIngredients)) {
         return true
       }
       taken[candidate] = false
+      }
     }
     return false
   }
 
-  return assign(0)
+  return assign(recipe.ingredients)
 }
 
 const matchesGrid = (recipe: Recipe, grid: CraftGrid): boolean =>

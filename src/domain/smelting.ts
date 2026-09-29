@@ -171,6 +171,9 @@ const invalidSnapshot = (path: string, reason: string): FurnaceSnapshotValidatio
   error: { _tag: 'FurnaceSnapshotValidationError', path, reason },
 })
 
+const isValidDuration = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value) && value >= 0
+
 /** Validate an untrusted JSON furnace snapshot before installing it in world state. */
 export const validateFurnaceSnapshot = (value: unknown): FurnaceSnapshotValidationResult => {
   if (!isRecord(value)) return invalidSnapshot('snapshot', 'expected an object')
@@ -179,6 +182,9 @@ export const validateFurnaceSnapshot = (value: unknown): FurnaceSnapshotValidati
     return invalidSnapshot('snapshot', `expected exactly { ${keys.join(', ')} }`)
   }
 
+  const slots: Record<'input' | 'fuel' | 'output', ItemStack | null> = {
+    input: null, fuel: null, output: null,
+  }
   for (const name of ['input', 'fuel', 'output'] as const) {
     const slot = value[name]
     if (slot === null) continue
@@ -189,30 +195,32 @@ export const validateFurnaceSnapshot = (value: unknown): FurnaceSnapshotValidati
     if (typeof slot['item'] !== 'string' || !isItemType(slot['item'])) {
       return invalidSnapshot(`${name}.item`, 'expected a known item')
     }
-    if (
-      !Number.isSafeInteger(slot['count']) ||
-      (slot['count'] as number) <= 0 ||
-      (slot['count'] as number) > maxStackCountForItem(slot['item'])
-    ) {
+    const count = slot['count']
+    if (typeof count !== 'number' || !Number.isSafeInteger(count) ||
+        count <= 0 || count > maxStackCountForItem(slot['item'])) {
       return invalidSnapshot(`${name}.count`, 'expected a valid positive stack count')
     }
+    slots[name] = itemStack(slot['item'], count)
   }
 
+  let cookElapsedSecs = 0
+  let burnRemainingSecs = 0
   for (const name of ['cookElapsedSecs', 'burnRemainingSecs'] as const) {
     const duration = value[name]
-    if (typeof duration !== 'number' || !Number.isFinite(duration) || duration < 0) {
+    if (!isValidDuration(duration)) {
       return invalidSnapshot(name, 'expected a finite non-negative number')
     }
+    if (name === 'cookElapsedSecs') cookElapsedSecs = duration
+    else burnRemainingSecs = duration
   }
-
   return {
     _tag: 'Valid',
     state: {
-      input: value['input'] as ItemStack | null,
-      fuel: value['fuel'] as ItemStack | null,
-      output: value['output'] as ItemStack | null,
-      cookElapsedSecs: value['cookElapsedSecs'] as number,
-      burnRemainingSecs: value['burnRemainingSecs'] as number,
+      input: slots.input,
+      fuel: slots.fuel,
+      output: slots.output,
+      cookElapsedSecs,
+      burnRemainingSecs,
     },
   }
 }
