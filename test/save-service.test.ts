@@ -142,4 +142,33 @@ describe('simulation save service', () => {
     }).pipe(Effect.provide(storage)),
   )
 
+  it.effect.each([
+    ['missing', {}],
+    ['null', { components: null }],
+    ['invalid', { components: { maxStackSize: 'not-a-number' } }],
+  ] as const)('rejects a v3 inventory stack with %s components', ([kind, stack]) =>
+    Effect.gen(function* () {
+      const key = simulationSaveKey(`world:v3-${kind}-components`)
+      const storagePort = yield* StoragePort
+      const v3Envelope = sealSaveEnvelope(
+        saveEnvelope('@nerima-games/mc-sim/simulation', 3, {
+          dimension: 'overworld',
+          tick: 20,
+          player: {
+            position: { x: 0, y: 64, z: 0 },
+            inventory: [{ item: 'iron_ingot', count: 1, ...stack }],
+            selectedHotbarSlot: 0,
+          },
+          statistics: { counters: {}, unlocked: [] },
+        }),
+      )
+      yield* storagePort.put(key, v3Envelope)
+
+      const result = yield* Effect.either(loadSimulation(key))
+
+      expect(result._tag).toBe('Left')
+      if (result._tag === 'Left') expect(result.left._tag).toBe('SaveDecodeError')
+    }).pipe(Effect.provide(storage)),
+  )
+
 })

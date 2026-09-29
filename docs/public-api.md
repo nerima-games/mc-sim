@@ -445,6 +445,8 @@ player inventory は解決済み canonical `ItemStack`（`item` / `count` / `com
 保持する。`saveSimulation` / `loadSimulation` / `listSimulationSaves` は `mc-save` の保存形式を
 利用する。migration chain は提供しないため、v1 と v2 の envelope、components を持たない旧 stack
 は `SaveDecodeError` で拒否する。v3 への暗黙変換、初期選択 0 や空の統計台帳の補完は行わない。
+container snapshot も components 必須の shape に合わせて version 3 とし、version 2 以下は
+migration せず typed `Invalid` として拒否する。
 
 ### 4-1. `restore` はスロット数を再確立し、入らなかった数を返す
 

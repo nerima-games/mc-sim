@@ -1,6 +1,5 @@
 import {
   DIMENSIONS,
-  itemStackFromUnknown,
   isItemStack,
   type Dimension,
   type ItemStack,
@@ -17,8 +16,7 @@ const valueWithUndefined = (value: unknown): unknown => {
   if (Array.isArray(value)) return value.map(valueWithUndefined)
   if (typeof value !== 'object' || value === null) return value
   return Object.fromEntries(
-    Object.entries(value)
-      .map(([key, entry]) => [key, entry === null ? undefined : valueWithUndefined(entry)]),
+    Object.entries(value).map(([key, entry]) => [key, entry === null ? undefined : valueWithUndefined(entry)]),
   )
 }
 const valueWithNull = (value: unknown): unknown => {
@@ -33,8 +31,12 @@ const wireItemStack = Schema.Struct({
 })
 const itemStack = Schema.transform(Schema.Unknown, Schema.Unknown, {
   decode: (value) => {
-    const canonical = Schema.decodeUnknownSync(wireItemStack)(valueWithUndefined(value))
-    return itemStackFromUnknown(canonical.item, canonical.count, { components: canonical.components })
+    const canonical = Schema.decodeUnknownSync(wireItemStack)(value)
+    const withCanonicalComponents = {
+      ...canonical,
+      components: valueWithUndefined(canonical.components),
+    }
+    return withCanonicalComponents
   },
   encode: (value) => valueWithNull(value),
   strict: true,

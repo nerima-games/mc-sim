@@ -17,6 +17,8 @@
   v1 / v2 の envelope と、components を持たない旧 stack shape は暗黙修復せず
   `SaveDecodeError` で拒否します。player / container / equipment の snapshot でも旧
   `{ item, count }` shape を受理しません。
+- container snapshot は components 必須の shape に合わせて version 3 に上げ、v1 / v2 の
+  snapshot は migration せず typed `Invalid` として拒否します。
 
 この変更は 0.x の公開型・保存形式を変更するため minor release です。release declaration の
 差分は `application/game-loop.d.ts`、`application/inventory-interaction.d.ts`、
