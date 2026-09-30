@@ -4,31 +4,14 @@
 
 ### Minor Changes
 
-- [#33](https://github.com/nerima-games/mc-sim/pull/33) [`42ba2a5`](https://github.com/nerima-games/mc-sim/commit/42ba2a58fc3c9c022c87ed0c0187d5e77f55acc0) Thanks [@takeokunn](https://github.com/takeokunn)! - `mc-kernel` 0.8.0、`mc-physics` 0.3.0、`mc-save` 0.5.0 の公開契約へ移行します。
+- [#33](https://github.com/nerima-games/mc-sim/pull/33) [`42ba2a5`](https://github.com/nerima-games/mc-sim/commit/42ba2a58fc3c9c022c87ed0c0187d5e77f55acc0) Thanks [@takeokunn](https://github.com/takeokunn)! - Migrate to the public contracts of `mc-kernel` 0.8.0, `mc-physics` 0.3.0, and `mc-save` 0.5.0.
 
-  - inventory の `ItemStack` は kernel 所有の解決済み canonical shape（`item` / `count` /
-    `components`）になり、`itemStack`、`maxStackCountForItem`、`addItemStack` を kernel の
-    型・実装へ委譲します。空 slot は `undefined`、`count: 0`、未解決 component patch、
-    durability の sidecar は公開 stack shape に含めません。
-  - `TimeServiceApi.dayLengthSecs` は `Effect.Effect<number>` から
-    `Effect.Effect<FixedDurationSecs>` になります。`Dimension` は `mc-worldgen` ではなく
-    `mc-kernel` が所有します。`Statistics` と `StatisticKey` / `AchievementId`、vehicle の
-    型と ID、block-interaction の decision 型も kernel 所有型を再輸出します。crop、player、
-    save coordinator、vehicle の dimension 引数も同じ kernel 型を使います。
-  - `save` の wire schema は version 3 とし、canonical `ItemStack` の `components` を保存します。
-    v1 / v2 の envelope と、components を持たない旧 stack shape は暗黙修復せず
-    `SaveDecodeError` で拒否します。player / container / equipment の snapshot でも旧
-    `{ item, count }` shape を受理しません。
-  - container snapshot は components 必須の shape に合わせて version 3 に上げ、v1 / v2 の
-    snapshot は migration せず typed `Invalid` として拒否します。
+  - Inventory `ItemStack` now uses the kernel-owned canonical shape (`item` / `count` / `components`), and `itemStack`, `maxStackCountForItem`, and `addItemStack` delegate to the kernel types and implementations. Empty slots are `undefined`; `count: 0`, unresolved component patches, and durability sidecars are not part of the public stack shape.
+  - `TimeServiceApi.dayLengthSecs` changes from `Effect.Effect<number>` to `Effect.Effect<FixedDurationSecs>`. `Dimension` is owned by `mc-kernel` rather than `mc-worldgen`. `Statistics`, `StatisticKey` / `AchievementId`, vehicle types and IDs, and block-interaction decision types are re-exported from kernel-owned types. Crop, player, save coordinator, and vehicle dimension arguments use the same kernel type.
+  - The `save` wire schema is now version 3 and stores canonical `ItemStack` `components`. v1 / v2 envelopes and legacy stack shapes without components are rejected with `SaveDecodeError` rather than being implicitly repaired. Player, container, and equipment snapshots also reject the legacy `{ item, count }` shape.
+  - Container snapshots are version 3 with the required components shape; v1 / v2 snapshots are rejected as typed `Invalid` without migration.
 
-  この変更は 0.x の公開型・保存形式を変更するため minor release です。release declaration の
-  差分は `application/game-loop.d.ts`、`application/inventory-interaction.d.ts`、
-  `application/player-service.d.ts`、`application/save-coordinator.d.ts`、
-  `application/time-service.d.ts`、`application/vehicle-service.d.ts`、
-  `domain/block-interaction.d.ts`、`domain/crop.d.ts`、`domain/frame-timing.d.ts`、
-  `domain/inventory.d.ts`、`domain/save-data.d.ts`、`domain/statistics.d.ts`、
-  `domain/vehicle.d.ts` の 13 ファイルに及びます。
+  This changes the public types and save format in 0.x and is therefore a minor release. The release declaration covers 13 files: `application/game-loop.d.ts`, `application/inventory-interaction.d.ts`, `application/player-service.d.ts`, `application/save-coordinator.d.ts`, `application/time-service.d.ts`, `application/vehicle-service.d.ts`, `domain/block-interaction.d.ts`, `domain/crop.d.ts`, `domain/frame-timing.d.ts`, `domain/inventory.d.ts`, `domain/save-data.d.ts`, `domain/statistics.d.ts`, and `domain/vehicle.d.ts`.
 
 - [#34](https://github.com/nerima-games/mc-sim/pull/34) [`6024b4f`](https://github.com/nerima-games/mc-sim/commit/6024b4ff47e7e64d67986342b4400f1dde06b801) Thanks [@takeokunn](https://github.com/takeokunn)! - Replace variable frame advancement with a branded fixed-step accumulator, kernel SimulationTick tracking, bounded catch-up, pause/resume controls, interpolation diagnostics, and overload reporting. Each 0.05-second tick runs two 0.025-second physics substeps. Remove the internal `domain/frame-timing` forwarder; root frame-timing names remain available as direct kernel re-exports, so consumers using the package root are unaffected while deep imports must migrate.
 
