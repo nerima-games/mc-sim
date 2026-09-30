@@ -1,13 +1,21 @@
 /**
- * Bounded explosion workload benchmark.
+ * Explosion and fixed-step workload benchmark.
  *
  * This follows mc-noise's R-C5 protocol: warm up, measure odd-numbered
  * samples, and compare the workload with a deterministic yardstick measured
  * in the same sample window. It is diagnostic, not part of `pnpm verify`.
+ *
+ * There is deliberately no guard here. mc-sim has no documented performance
+ * exception with a fast spelling versus a straightforward spelling like
+ * mc-noise's octave-loop exception. If one is introduced, add an in-process
+ * A/B guard at the same time; an artificial slow implementation would make
+ * this gate meaningless.
  */
-import { position } from '@nerima-games/mc-kernel'
+import { DeltaTimeSecs, position, type DeltaTimeSecs as DeltaTimeSecsValue } from '@nerima-games/mc-kernel'
 import { loadavg } from 'node:os'
+import { Either } from 'effect'
 import { planExplosion, type ExplosionBlockReader, type ExplosionRequest } from '../src/domain/explosion'
+import { advanceFixedStep, initialFixedStepAccumulator } from '../src/domain/fixed-step'
 import {
   checkGuards,
   checkWorkloads,
@@ -29,6 +37,10 @@ const RADII = [4, 8, 16] as const
 const RUNS = 9
 const WARMUP_ITERATIONS = 20
 const BLOCKS_PER_RADIUS = (radius: number): number => (radius * 2 + 1) ** 3
+// Fixed counts keep each timed explosion sample near 5 ms without weakening the gate.
+const EXPLOSION_ITERATIONS: Readonly<Record<number, number>> = { 4: 32, 8: 4, 16: 1 }
+const FIXED_STEP_FRAMES = 8192
+const FIXED_STEP_ITERATIONS = 4
 
 const blocks: ExplosionBlockReader = () => ({ resistance: 0, destructible: true })
 
@@ -61,17 +73,18 @@ const assertDeterministic = (request: ExplosionRequest): void => {
   }
 }
 
-const options: MeasureOptions = {
-  iterations: 1,
+const optionsFor = (iterations: number): MeasureOptions => ({
+  iterations,
   runs: RUNS,
   warmupIterations: WARMUP_ITERATIONS,
-}
+})
 
 const workloads: Workload[] = []
 for (const radius of RADII) {
   const request = requestFor(radius)
   assertDeterministic(request)
   const yardstickIterations = BLOCKS_PER_RADIUS(radius)
+  const iterations = EXPLOSION_ITERATIONS[radius] ?? 1
   const measurement = measurePaired(
     () => {
       const plan = planExplosion(request)
@@ -82,8 +95,8 @@ for (const radius of RADII) {
       for (let index = 0; index < yardstickIterations; index += 1) value = (value + index) | 0
       sink ^= value
     },
-    options,
-    { ...options, iterations: yardstickIterations },
+    optionsFor(iterations),
+    optionsFor(iterations * yardstickIterations),
   )
   const plan = planExplosion(request)
   workloads.push({
@@ -95,6 +108,45 @@ for (const radius of RADII) {
   })
 }
 
+const fixedStepDeltas: ReadonlyArray<DeltaTimeSecsValue> = Array.from(
+  { length: FIXED_STEP_FRAMES },
+  (_, index) => index % 17 === 0 ? DeltaTimeSecs(0.35) : DeltaTimeSecs(0.016),
+)
+
+const fixedStepWorkload = (): void => {
+  let state = initialFixedStepAccumulator()
+  let checksum = 0
+  for (const delta of fixedStepDeltas) {
+    const result = advanceFixedStep(state, delta)
+    if (Either.isLeft(result)) throw new Error('fixed-step benchmark overflowed')
+    state = result.right.state
+    checksum += Number(result.right.ticks) + (result.right.overloaded ? 1 : 0)
+  }
+  sink ^= checksum + Number(state.tick)
+}
+
+const fixedStepYardstick = (): void => {
+  let value = 0
+  for (let index = 0; index < FIXED_STEP_FRAMES; index += 1) {
+    value = (value + index * (index % 17 === 0 ? 5 : 1)) | 0
+  }
+  sink ^= value
+}
+
+const fixedStepMeasurement = measurePaired(
+  fixedStepWorkload,
+  fixedStepYardstick,
+  optionsFor(FIXED_STEP_ITERATIONS),
+  optionsFor(FIXED_STEP_ITERATIONS),
+)
+workloads.push({
+  detail: `${String(FIXED_STEP_FRAMES)} deterministic frames; ordinary and overload deltas`,
+  msPerUnit: fixedStepMeasurement.fastMs,
+  name: `game-loop/fixed-step/${String(FIXED_STEP_FRAMES)}-frames`,
+  ratio: fixedStepMeasurement.ratio,
+  unit: 'frame-batch',
+})
+
 if (sink === Number.MIN_VALUE) console.log(sink)
 
 const baseline = await readBaseline(BASELINE_PATH)
@@ -105,7 +157,7 @@ const checks = [
   ...checkWorkloads(workloads, 1, baseline, tolerances.workload),
 ]
 
-console.log('Explosion benchmark (mc-noise R-C5 workload protocol)')
+console.log('Explosion and fixed-step benchmark (mc-noise R-C5 workload protocol)')
 for (const workload of workloads) console.log(formatWorkload(workload))
 for (const check of checks) console.log(formatCheck(check))
 
