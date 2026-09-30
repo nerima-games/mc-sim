@@ -733,7 +733,7 @@ const resetLandingImpact: (state: SimFrameState) => Effect.Effect<void>
 
 | 領域 | 参照実装 | 主な消費者 |
 | --- | --- | --- |
-| ~~`EntityManager`~~ | — | **§7 で設計済** |
+| `EntityManager` | `EntityManager` (`src/application/entity-manager.ts`) | mx-gameplay / mx-multiplayer |
 | 体力 / 空腹 / XP | `VitalsService` (`src/application/vitals-service.ts`) | mx-gameplay / mx-ui |
 | 実績 / 統計 | `StatisticsService` (`src/application/statistics-service.ts`) | mx-gameplay / mx-ui |
 | 設定状態 | `SettingsService` (`src/application/settings-service.ts`) | mx-ui / mc-render |
