@@ -35,15 +35,23 @@ Node のシナリオテストは CI で高速に走り、プレビューは `pnp
 `pnpm test:coverage` のしきい値は文・分岐・関数・行のすべて 100% である。カバレッジを
 無視するコメントや、テストを選択しないことで通る設定は置かない。
 
-## 3. 爆発計画のホットパスと計測
+## 3. ホットパスと計測
 
 `planExplosion` は半径が大きいほど走査対象と遮蔽計算が増えるため、`scripts/benchmark-explosion.ts`
 で半径 4、8、16 の固定シナリオを計測する。入力は seed 7、原点、全ブロックを耐性 0 の破壊可能な
 ブロックとして固定し、計測前に同じ入力を 2 回実行して訪問数・破壊数・切り詰め状態の決定性を確認する。
 
+同じスクリプトで、mc-sim 所有の `advanceFixedStep` も 8192 frame の固定 delta 列で計測する。
+通常 frame と catch-up 上限に達する overload frame を混ぜ、固定ステップ accumulator の消費側コストを追う。
+
+mc-sim には文書化された「高速な綴りと素直な綴り」の性能例外が無いため、R-C5 guard は空である。
+性能例外を設けるときは、同一プロセス内 A/B guard と baseline を同時に追加する。現在の baseline は
+explosion の依存先計画コストと、sim 所有の fixed-step workload の回帰を判定する。
+
 計測は `uptime` の 1 分 load average が 10 未満のときだけ行う。計測方式は mc-noise の R-C5 方式に合わせる。20 回のウォームアップ後、9 回の奇数サンプルを取り、
-各サンプルで `planExplosion` と、同じ半径の立方体セル数だけ整数加算する yardstick を交互に計測する。
-比較は絶対ミリ秒ではなく `planExplosion / yardstick` の中央値で行うため、baseline はマシン固有の速度表ではなく、
+各サンプルで workload と、同程度の ALU 特性を持つ固定ループ yardstick を交互に計測する。爆発 workload は
+radius ごとに固定 iteration 数を持ち、各 sample が概ね 5ms 以上になるようにしている。
+比較は絶対ミリ秒ではなく `workload / yardstick` の中央値で行うため、baseline はマシン固有の速度表ではなく、
 同一プロセス内の回帰検知用である。baseline の guard tolerance は既定 1.3 倍、workload tolerance は既定 2.0 倍で、共有ランナーの wall-clock ノイズを
 考慮した診断ゲートとする。
 
