@@ -1,5 +1,26 @@
 # @nerima-games/mc-sim
 
+## 0.5.0
+
+### Minor Changes
+
+- [#33](https://github.com/nerima-games/mc-sim/pull/33) [`42ba2a5`](https://github.com/nerima-games/mc-sim/commit/42ba2a58fc3c9c022c87ed0c0187d5e77f55acc0) Thanks [@takeokunn](https://github.com/takeokunn)! - Migrate to the public contracts of `mc-kernel` 0.8.0, `mc-physics` 0.3.0, and `mc-save` 0.5.0.
+
+  - Inventory `ItemStack` now uses the kernel-owned canonical shape (`item` / `count` / `components`), and `itemStack`, `maxStackCountForItem`, and `addItemStack` delegate to the kernel types and implementations. Empty slots are `undefined`; `count: 0`, unresolved component patches, and durability sidecars are not part of the public stack shape.
+  - `TimeServiceApi.dayLengthSecs` changes from `Effect.Effect<number>` to `Effect.Effect<FixedDurationSecs>`. `Dimension` is owned by `mc-kernel` rather than `mc-worldgen`. `Statistics`, `StatisticKey` / `AchievementId`, vehicle types and IDs, and block-interaction decision types are re-exported from kernel-owned types. Crop, player, save coordinator, and vehicle dimension arguments use the same kernel type.
+  - The `save` wire schema is now version 3 and stores canonical `ItemStack` `components`. v1 / v2 envelopes and legacy stack shapes without components are rejected with `SaveDecodeError` rather than being implicitly repaired. Player, container, and equipment snapshots also reject the legacy `{ item, count }` shape.
+  - Container snapshots are version 3 with the required components shape; v1 / v2 snapshots are rejected as typed `Invalid` without migration.
+
+  This changes the public types and save format in 0.x and is therefore a minor release. The release declaration covers 13 files: `application/game-loop.d.ts`, `application/inventory-interaction.d.ts`, `application/player-service.d.ts`, `application/save-coordinator.d.ts`, `application/time-service.d.ts`, `application/vehicle-service.d.ts`, `domain/block-interaction.d.ts`, `domain/crop.d.ts`, `domain/frame-timing.d.ts`, `domain/inventory.d.ts`, `domain/save-data.d.ts`, `domain/statistics.d.ts`, and `domain/vehicle.d.ts`.
+
+- [#34](https://github.com/nerima-games/mc-sim/pull/34) [`6024b4f`](https://github.com/nerima-games/mc-sim/commit/6024b4ff47e7e64d67986342b4400f1dde06b801) Thanks [@takeokunn](https://github.com/takeokunn)! - Replace variable frame advancement with a branded fixed-step accumulator, kernel SimulationTick tracking, bounded catch-up, pause/resume controls, interpolation diagnostics, and overload reporting. Each 0.05-second tick runs two 0.025-second physics substeps. Remove the internal `domain/frame-timing` forwarder; root frame-timing names remain available as direct kernel re-exports, so consumers using the package root are unaffected while deep imports must migrate.
+
+- [#35](https://github.com/nerima-games/mc-sim/pull/35) [`bb1af8a`](https://github.com/nerima-games/mc-sim/commit/bb1af8a17b666f675644d41e51b62cc7b24da3a4) Thanks [@takeokunn](https://github.com/takeokunn)! - Require `@nerima-games/mc-worldgen` 0.5.0 and migrate dimension and chunk fixtures to the owning kernel and widened chunk block buffer. Add R-C5 explosion-planning and fixed-step game-loop workloads to `pnpm bench` with a committed baseline and workload regression gate.
+
+### Patch Changes
+
+- [#32](https://github.com/nerima-games/mc-sim/pull/32) [`af6166f`](https://github.com/nerima-games/mc-sim/commit/af6166fec57122637037ce975f192c92ae599846) Thanks [@takeokunn](https://github.com/takeokunn)! - Enforce the no-type-assertion source gate and synchronize the public API documentation with the implemented services.
+
 ## 0.4.2
 
 ### Patch Changes
