@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "recordedOn": "deterministic explosion fixtures; ratios are environment-sensitive",
+  "note": "Workloads are planExplosion/yardstick ratios measured in one process with 20 warmups and 9 paired samples. Regenerate only for an intentional implementation or measurement change.",
+  "guards": {},
+  "workloads": {
+    "explosion/plan/radius-4": 0.0011621651451369343,
+    "explosion/plan/radius-8": 0.0006459241318515792,
+    "explosion/plan/radius-16": 0.0016405817137054132
+  }
+}

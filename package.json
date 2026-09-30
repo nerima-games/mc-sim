@@ -48,6 +48,7 @@
     "lint": "oxlint --deny-warnings src test apps && ast-grep scan",
     "lint:fix": "oxlint --fix src test apps",
     "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.release.json --pretty false",
+    "bench": "tsx scripts/benchmark-explosion.ts",
     "package:verify": "pnpm build && node scripts/verify-package.mjs",
     "preview": "tsx apps/preview-sim/main.ts",
     "test": "vitest run",

@@ -30,11 +30,33 @@ Node のシナリオテストは CI で高速に走り、プレビューは `pnp
 | `pnpm verify` | 型検査、lint、通常テストを順に実行する |
 | `pnpm package:verify` | `pnpm build` の後、`scripts/verify-package.mjs` で公開 export の一覧と `pnpm pack` した archive の内容を検証する |
 | `pnpm preview` | 決定論シナリオを端末で確認する |
+| `pnpm bench` | 爆発計画のホットパスを計測する（`verify` には入らない） |
 
 `pnpm test:coverage` のしきい値は文・分岐・関数・行のすべて 100% である。カバレッジを
 無視するコメントや、テストを選択しないことで通る設定は置かない。
 
-## 3. プレビュー
+## 3. 爆発計画のホットパスと計測
+
+`planExplosion` は半径が大きいほど走査対象と遮蔽計算が増えるため、`scripts/benchmark-explosion.ts`
+で半径 4、8、16 の固定シナリオを計測する。入力は seed 7、原点、全ブロックを耐性 0 の破壊可能な
+ブロックとして固定し、計測前に同じ入力を 2 回実行して訪問数・破壊数・切り詰め状態の決定性を確認する。
+
+計測は `uptime` の 1 分 load average が 10 未満のときだけ行う。計測方式は mc-noise の R-C5 方式に合わせる。20 回のウォームアップ後、9 回の奇数サンプルを取り、
+各サンプルで `planExplosion` と、同じ半径の立方体セル数だけ整数加算する yardstick を交互に計測する。
+比較は絶対ミリ秒ではなく `planExplosion / yardstick` の中央値で行うため、baseline はマシン固有の速度表ではなく、
+同一プロセス内の回帰検知用である。baseline の guard tolerance は既定 1.3 倍、workload tolerance は既定 2.0 倍で、共有ランナーの wall-clock ノイズを
+考慮した診断ゲートとする。
+
+```console
+pnpm bench
+pnpm bench -- --workload-tolerance=3
+pnpm bench -- --update-baseline
+```
+
+ベンチマークは `pnpm verify` と CI の通常テストには含めない。baseline を更新するときは、実装または計測方式の
+意図した変更理由をレビュー記録に残し、ホスト名・会社名・秘密値を `scripts/bench-baseline.json` に保存しない。
+
+## 4. プレビュー
 
 `apps/preview-sim/` はゲームモジュールの公開 API ではなく、シミュレーションを人間が
 確認するためのアプリケーションである。
@@ -50,7 +72,7 @@ pnpm preview -- --stats
 スクリプトであり、衝突判定やジャンプの物理を実装したものではない。この境界を越えるには
 物理・体験層を接続する必要がある。
 
-## 4. 依存と時間の境界
+## 5. 依存と時間の境界
 
 共有語彙は所有元の公開パッケージを直接使う。
 
@@ -64,7 +86,7 @@ pnpm preview -- --stats
 直接 import し、Effect の `Clock` はサービス層で注入する。シミュレーションのコードは
 壁時計を直接読まず、時間をテストから制御できる形にする。
 
-## 5. テストの書き方
+## 6. テストの書き方
 
 テストは実装の行数ではなく、利用者から見える不変条件を検証する。
 
@@ -79,7 +101,7 @@ pnpm preview -- --stats
 テスト選択は Vitest の `include` によって非空の `test/**/*.test.ts` に限定する。全体テスト、
 カバレッジ、型検査を別々に実行し、どれか一つの終了コードだけを成功の根拠にしない。
 
-## 6. CI の順序
+## 7. CI の順序
 
 CI（`.github/workflows/ci.yaml`）は `nix develop` の中で次の順序で実行する。
 
