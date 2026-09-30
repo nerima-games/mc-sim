@@ -14,6 +14,7 @@ import {
   NonNegativeTickCount,
 } from '@nerima-games/mc-kernel'
 import type { FrameHandler, GameLoopApi, TimeServiceApi } from '../src/index.js'
+import { advanceFixedStep, initialFixedStepAccumulator } from '../src/index.js'
 
 const handler: FrameHandler = () => Effect.void
 const delta: DeltaTimeSecs = DeltaTimeSecs(0.05)
@@ -31,6 +32,7 @@ void gameLoopInput
 void timeAdvanceInput
 void item
 void addTick(tick, NonNegativeTickCount(1))
+void advanceFixedStep(initialFixedStepAccumulator(), delta)
 void blockAxis
 void chunkAxis
 
@@ -39,6 +41,9 @@ const wrongDelta: DeltaTimeSecs = fixed
 
 // @ts-expect-error A plain number cannot be used as a simulation tick.
 addTick(1, NonNegativeTickCount(1))
+
+// @ts-expect-error A plain number cannot be used as a fixed-step delta.
+advanceFixedStep(initialFixedStepAccumulator(), 0)
 
 // @ts-expect-error Chunk coordinates cannot be used as block coordinates.
 const wrongAxis: BlockAxis = chunkAxis

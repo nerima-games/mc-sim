@@ -238,7 +238,7 @@ export const simStages = (
 
         // The world clock, advanced exactly once per frame. `dt` is supplied by
         // the frame, never read from a clock: `application/game-loop.ts` has
-        // already clamped it through `domain/frame-timing.ts`, so a tab that was
+        // already clamped it through `@nerima-games/mc-kernel`, so a tab that was
         // backgrounded for thirty seconds delivers 0.05 here and the simulation
         // runs slow rather than teleporting the player through a collider.
         //

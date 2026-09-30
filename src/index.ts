@@ -27,7 +27,16 @@ export * from './domain/explosion.js'
 export * from './domain/primed-tnt.js'
 export * from './domain/projectile.js'
 export * from './domain/player-storage.js'
-export * from './domain/frame-timing.js'
+export {
+  advanceFixedStep,
+  createFixedStepAccumulator,
+  initialFixedStepAccumulator,
+  MAX_CATCH_UP_TICKS,
+  pauseFixedStep,
+  resumeFixedStep,
+  DEFAULT_TICK_DURATION,
+} from './domain/fixed-step.js'
+export type { FixedStepAccumulator, FixedStepAdvance } from './domain/fixed-step.js'
 export * from './domain/inventory.js'
 export * from './domain/hotbar.js'
 export * from './domain/placement-consumption.js'
@@ -67,6 +76,16 @@ export * from './application/weather-service.js'
 // what a host merges, and `SIM_STAGE_IDS` is what a consumer names.
 export * from './stages/registration.js'
 export * from './stages/stage-ids.js'
+
+export {
+  FIRST_FRAME_DELTA_SECS,
+  MAX_FRAME_DELTA_SECS,
+  MIN_FRAME_DELTA_SECS,
+  clampFrameDelta,
+  frameDeltaBetween,
+  frameDeltaLossBetween,
+  frameDeltaLossSecs,
+} from '@nerima-games/mc-kernel'
 
 export {
   ANVIL_MAX_CUSTOM_NAME_LENGTH,

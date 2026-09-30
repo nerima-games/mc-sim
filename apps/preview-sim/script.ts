@@ -242,7 +242,7 @@ const OBSTACLE_COURSE: Scenario = {
 /**
  * The delta-time clamp at both of its boundaries, and its first frame.
  *
- * `domain/frame-timing.ts` fixes 0.001 / 0.05 / 0.016 and explains each. The
+ * `@nerima-games/mc-kernel` fixes 0.001 / 0.05 / 0.016 and explains each. The
  * numbers are pinned by `test/frame-timing.test.ts`; what the test cannot show
  * is the CONSEQUENCE, which is that the world clock falls behind the injected
  * clock permanently after a background tab and never catches up.

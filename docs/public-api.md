@@ -16,23 +16,14 @@ read/edit vocabulary の移行は後続変更に残す。
 
 ## 0.2 今回の release declaration 差分
 
-`origin/main` と release declaration を比較した公開差分は次の 13 ファイルに現れる。
+R-SI1 の `origin/main` と release declaration の差分は次の 4 ファイルに現れる。
 
 | declaration | 公開契約の変更 |
 | --- | --- |
-| `application/game-loop.d.ts` | frame delta の kernel brand を使用 |
-| `application/inventory-interaction.d.ts` | canonical stack 比較の `sameStackIgnoringCount` を追加 |
-| `application/player-service.d.ts` | `Dimension` の所有元を `mc-kernel` に変更 |
-| `application/save-coordinator.d.ts` | `DimensionChunk.dimension` を kernel の `Dimension` に変更 |
-| `application/time-service.d.ts` | `dayLengthSecs: Effect<FixedDurationSecs>` に変更 |
-| `application/vehicle-service.d.ts` | vehicle の `Dimension` を kernel から利用 |
-| `domain/block-interaction.d.ts` | `BlockBreakDecision` / `BlockPlacementDecision` / `PlaceableBlock` を kernel から再輸出 |
-| `domain/crop.d.ts` | crop location の `Dimension` を kernel に変更 |
-| `domain/frame-timing.d.ts` | frame clamp / interval の所有元を kernel に変更し、mc-sim の名前を維持 |
-| `domain/inventory.d.ts` | canonical `ItemStack`、`itemStack`、`maxStackCountForItem`、`addItemStack` を公開 |
-| `domain/save-data.d.ts` | `Statistics` を kernel の型に変更し、save stack は canonical shape |
-| `domain/statistics.d.ts` | `Statistics` / `StatisticKey` / `AchievementId` を kernel から再輸出 |
-| `domain/vehicle.d.ts` | vehicle の型・ID・validator result を kernel から再輸出 |
+| `application/game-loop.d.ts` | 固定 tick、substep 2回、pause/resume、`SimulationTick`、補間、overload、typed `TimeOverflow` APIを追加 |
+| `domain/fixed-step.d.ts` | 新規。`FixedStepAccumulator` / `FixedStepAdvance` と `advanceFixedStep` 等を公開 |
+| `domain/frame-timing.d.ts` | 削除。旧 forwarder は公開しない |
+| `index.d.ts` | fixed-step APIを追加し、root の frame-timing 名は kernel から再輸出 |
 
 宣言差分に含まれる import 表記の変更は実行時 API ではなく、上表の型所有権変更に伴う生成結果である。
 
@@ -305,18 +296,33 @@ snapshot は位置キー順で決定論的に並び、JSON で往復できる。
 ## 3. GameLoop
 
 ```typescript
-type FrameHandler = (dt: DeltaTimeSecs) => Effect.Effect<void>
+type FrameHandler = (dt: DeltaTimeSecs, tick?: SimulationTick) => Effect.Effect<void>
 
 type GameLoopApi = {
   readonly start: (handler: FrameHandler) => Effect.Effect<void>   // 再入可能
+  readonly pause: Effect.Effect<void>
+  readonly resume: Effect.Effect<void>                             // resume時に余りを破棄
   readonly submitFrame: (at: MonotonicTimeSecs) => Effect.Effect<void>
   readonly stop: Effect.Effect<void>                                // 冪等・非ブロッキング
   readonly isRunning: Effect.Effect<boolean>
   readonly framesProcessed: Effect.Effect<number>    // stop を跨いで読める。§3-1
   readonly framesDropped: Effect.Effect<number>      // dropping queue が拒否した数。§3-1
   readonly secondsLostToClamp: Effect.Effect<number> // clamp が捨てたシミュレーション時間。§3-1
+  readonly simulationTick: Effect.Effect<SimulationTick>
+  readonly interpolationFraction: Effect.Effect<InterpolationFraction>
+  readonly overloaded: Effect.Effect<boolean>
+  readonly timeOverflow: Effect.Effect<Option<TimeOverflow>>
+  readonly advanceFrame: (delta: DeltaTimeSecs) => Effect.Effect<FixedStepAdvance, TimeOverflow>
 }
 ```
+
+`submitFrame` の delta は kernel の `frameDeltaBetween` で clamp された後、kernel の
+`tickDuration`（0.05 秒）単位で accumulator に加算される。1 tick は
+`physicsSubstepDuration`（0.025 秒）の physics substep 2 回として handler に渡される。
+1 frame で実行できる固定 tick は 5 回までで、超過分は捨てて `overloaded` を `true` にする。
+tick は kernel の `SimulationTick` で管理し、余りから `interpolationFraction` を計算する。pause 中は accumulator
+と tick を進めず、resume は残余を 0 に戻して spiral of death を作らない。既定の catch-up
+上限 5 は 0.05 秒の tick を 0.25 秒まで処理する値である（physics 呼び出しは最大10回）。
 
 ### 3-1. 捨てたものは数える
 
@@ -328,7 +334,7 @@ type GameLoopApi = {
   **引き算では復元できない**: submitted は呼び出し側の数字であり、processed は
   キューに残っている分だけ遅れる。だから offer の位置で数える。
 - clamp の上限を超えた時間は世界に届かず、誰も返さない（背景タブ 30 秒で 29.95 秒）。
-  `domain/frame-timing.ts` の `frameDeltaLossSecs` が量を定義し、ループが世代ごとに合算する。
+  kernel の `frameDeltaLossSecs` が量を定義し、ループが世代ごとに合算する。
   **下限側は数えない**。あちらは経過より*多く*時間を渡す側で、1 フレームで頭打ちになり、
   損失として符号付きで足すと本物のギャップと相殺して 0 に見えてしまう。
 
