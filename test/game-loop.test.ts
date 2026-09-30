@@ -19,7 +19,16 @@ import {
   physicsSubstepDuration,
   SimulationTick,
 } from '@nerima-games/mc-kernel'
-import { FRAME_QUEUE_CAPACITY, makeGameLoop } from '../src/application/game-loop'
+import {
+  FRAME_QUEUE_CAPACITY,
+  makeGameLoop,
+  PHYSICS_SUBSTEPS_PER_TICK,
+} from '../src/application/game-loop'
+import {
+  advance as advanceFixedStep,
+  initialFixedStepAccumulator,
+  MAX_CATCH_UP_TICKS,
+} from '../src/domain/fixed-step'
 
 /** A handler that records deltas and signals once it has seen `target` frames. */
 const recordingHandler = (target: number) =>
@@ -56,6 +65,27 @@ describe('game loop lifecycle', () => {
       expect(yield* Ref.get(probe.seen)).toHaveLength(6)
       expect(yield* loop.simulationTick).toBe(SimulationTick(3))
       yield* loop.stop
+    }),
+  )
+
+  it.effect('caps overload at five ticks and ten physics substeps', () =>
+    Effect.sync(() => {
+      const result = advanceFixedStep(initialFixedStepAccumulator(), DeltaTimeSecs(0.3))
+      expect(Either.isRight(result)).toBe(true)
+      if (Either.isRight(result)) {
+        let physicsCalls = 0
+        const physicsHandler = () => {
+          physicsCalls += 1
+        }
+        for (let tick = 0; tick < Number(result.right.ticks); tick += 1) {
+          for (let substep = 0; substep < PHYSICS_SUBSTEPS_PER_TICK; substep += 1) {
+            physicsHandler()
+          }
+        }
+        expect(result.right.ticks).toBe(MAX_CATCH_UP_TICKS)
+        expect(physicsCalls).toBe(10)
+        expect(result.right.overloaded).toBe(true)
+      }
     }),
   )
 
