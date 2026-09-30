@@ -97,6 +97,23 @@ describe('fixed-step accumulator', () => {
     }),
   )
 
+  it.effect('preserves a paused remainder and clears it on resume', () =>
+    Effect.sync(() => {
+      const first = advance(initialFixedStepAccumulator(), dt(0.075))
+      expect(Either.isRight(first)).toBe(true)
+      if (Either.isRight(first)) {
+        const paused = pause(first.right.state)
+        const whilePaused = advance(paused, dt(0.2))
+        expect(Either.isRight(whilePaused)).toBe(true)
+        if (Either.isRight(whilePaused)) {
+          expect(whilePaused.right.state.accumulator).toBeCloseTo(0.025)
+          expect(whilePaused.right.ticks).toBe(0)
+        }
+        expect(resume(paused).accumulator).toBe(duration(0))
+      }
+    }),
+  )
+
   it.effect('propagates addTick overflow without changing the accumulator', () =>
     Effect.sync(() => {
       const state = initialFixedStepAccumulator(SimulationTick(Number.MAX_SAFE_INTEGER))

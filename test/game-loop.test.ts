@@ -12,11 +12,12 @@
  * loaded CI machine.
  */
 import { describe, expect, it } from '@effect/vitest'
-import { Deferred, Effect, Ref } from 'effect'
+import { Deferred, Effect, Either, Option, Ref } from 'effect'
 import {
   DeltaTimeSecs,
   MonotonicTimeSecs,
   physicsSubstepDuration,
+  SimulationTick,
 } from '@nerima-games/mc-kernel'
 import { FRAME_QUEUE_CAPACITY, makeGameLoop } from '../src/application/game-loop'
 
@@ -39,6 +40,25 @@ const recordingHandler = (target: number) =>
   })
 
 describe('game loop lifecycle', () => {
+  it.effect('runs two physics substeps per fixed tick', () =>
+    Effect.gen(function* () {
+      const loop = yield* makeGameLoop()
+      const probe = yield* recordingHandler(6)
+
+      yield* loop.start(probe.handler)
+      yield* Effect.forEach(
+        [0, 0.05, 0.1, 0.15],
+        (at) => loop.submitFrame(MonotonicTimeSecs(at)),
+        { discard: true },
+      )
+      yield* Deferred.await(probe.reached)
+
+      expect(yield* Ref.get(probe.seen)).toHaveLength(6)
+      expect(yield* loop.simulationTick).toBe(SimulationTick(3))
+      yield* loop.stop
+    }),
+  )
+
   it.effect('processes submitted frames and clamps the deltas it derives', () =>
     Effect.gen(function* () {
       const loop = yield* makeGameLoop()
@@ -56,8 +76,8 @@ describe('game loop lifecycle', () => {
       yield* loop.stop
 
       const deltas = yield* Ref.get(probe.seen)
-      expect(deltas).toHaveLength(1)
-      expect(deltas).toStrictEqual([physicsSubstepDuration])
+      expect(deltas).toHaveLength(2)
+      expect(deltas).toStrictEqual([physicsSubstepDuration, physicsSubstepDuration])
     }),
   )
 
@@ -81,7 +101,7 @@ describe('game loop lifecycle', () => {
       yield* loop.submitFrame(MonotonicTimeSecs(3))
 
       expect(yield* loop.isRunning).toBe(false)
-      expect(yield* Ref.get(probe.seen)).toHaveLength(1)
+      expect(yield* Ref.get(probe.seen)).toHaveLength(2)
     }),
   )
 
@@ -124,8 +144,8 @@ describe('game loop lifecycle', () => {
 
       // The first world's handler saw nothing from the second world: its fiber
       // was interrupted and its queue shut down, not left running.
-      expect(yield* Ref.get(firstWorld.seen)).toHaveLength(1)
-      expect(yield* Ref.get(secondWorld.seen)).toHaveLength(1)
+      expect(yield* Ref.get(firstWorld.seen)).toHaveLength(2)
+      expect(yield* Ref.get(secondWorld.seen)).toHaveLength(2)
       // Frame timing restarted from scratch, so the second world's first frame
       // is a first frame — not a 400-second jump inherited from the first.
       expect((yield* Ref.get(secondWorld.seen))[0]).toBe(physicsSubstepDuration)
@@ -155,8 +175,8 @@ describe('game loop lifecycle', () => {
       yield* Deferred.await(fresh.reached)
       yield* loop.stop
 
-      expect(yield* Ref.get(stale.seen)).toHaveLength(1)
-      expect(yield* Ref.get(fresh.seen)).toHaveLength(1)
+      expect(yield* Ref.get(stale.seen)).toHaveLength(2)
+      expect(yield* Ref.get(fresh.seen)).toHaveLength(2)
     }),
   )
 
@@ -244,6 +264,37 @@ describe('loop observability', () => {
     }),
   )
 
+  it.effect('retains TimeOverflow as a typed loop diagnostic', () =>
+    Effect.gen(function* () {
+      const stopped = yield* makeGameLoop()
+      const stoppedResult = yield* Effect.either(stopped.advanceFrame(DeltaTimeSecs(0.05)))
+      expect(Either.isLeft(stoppedResult)).toBe(true)
+
+      const normal = yield* makeGameLoop()
+      yield* normal.start(() => Effect.void)
+      const normalResult = yield* Effect.either(normal.advanceFrame(DeltaTimeSecs(0.05)))
+      expect(Either.isRight(normalResult)).toBe(true)
+      yield* normal.stop
+
+      const loop = yield* makeGameLoop(SimulationTick(Number.MAX_SAFE_INTEGER))
+      yield* loop.start(() => Effect.void)
+      const result = yield* Effect.either(loop.advanceFrame(DeltaTimeSecs(0.05)))
+      expect(Either.isLeft(result)).toBe(true)
+      if (Either.isLeft(result)) expect(result.left._tag).toBe('TimeOverflow')
+      yield* loop.submitFrame(MonotonicTimeSecs(0))
+      yield* loop.submitFrame(MonotonicTimeSecs(1))
+      yield* Effect.promise(
+        () =>
+          new Promise<void>((resolve) => {
+            setTimeout(() => resolve(), 10)
+          }),
+      )
+      const diagnostic = yield* loop.timeOverflow
+      expect(Option.isSome(diagnostic)).toBe(true)
+      yield* loop.stop
+    }),
+  )
+
   it.effect('REGRESSION: frames the dropping queue refuses are counted, not silently discarded', () =>
     Effect.gen(function* () {
       const loop = yield* makeGameLoop()
@@ -295,11 +346,11 @@ describe('loop observability', () => {
       yield* loop.submitFrame(MonotonicTimeSecs(40.02))
       yield* Deferred.await(probe.reached)
 
-      expect(yield* loop.framesProcessed).toBe(1)
+      expect(yield* loop.framesProcessed).toBe(2)
       yield* loop.stop
 
       expect(yield* loop.isRunning).toBe(false)
-      expect(yield* loop.framesProcessed).toBe(1)
+      expect(yield* loop.framesProcessed).toBe(2)
       // The 30-second gap above, priced: 30 - 0.05 delivered.
       expect(yield* loop.secondsLostToClamp).toBeCloseTo(29.95, 9)
     }),
@@ -315,7 +366,7 @@ describe('loop observability', () => {
       yield* loop.submitFrame(MonotonicTimeSecs(100.05))
       yield* Deferred.await(first.reached)
       yield* loop.stop
-      expect(yield* loop.framesProcessed).toBe(1)
+      expect(yield* loop.framesProcessed).toBe(2)
 
       const second = yield* recordingHandler(1)
       yield* loop.start(second.handler)

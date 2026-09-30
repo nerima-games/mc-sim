@@ -88,6 +88,7 @@ import {
   physicsSubstepDuration,
   tickDuration,
   type MonotonicTimeSecs,
+  type TimeOverflow,
 } from '@nerima-games/mc-kernel'
 import {
   advance as advanceFixedStep,
@@ -95,6 +96,7 @@ import {
   pause as pauseFixedStep,
   resume as resumeFixedStep,
   type FixedStepAccumulator,
+  type FixedStepAdvance,
 } from '../domain/fixed-step.js'
 
 /**
@@ -168,12 +170,18 @@ export type GameLoopApi = {
   readonly simulationTick: Effect.Effect<SimulationTick>
   readonly interpolationFraction: Effect.Effect<InterpolationFraction>
   readonly overloaded: Effect.Effect<boolean>
+  readonly timeOverflow: Effect.Effect<Option.Option<TimeOverflow>>
+  readonly advanceFrame: (delta: DeltaTimeSecs) => Effect.Effect<FixedStepAdvance, TimeOverflow>
 }
 
 const GameLoopBase: Context.TagClass<GameLoop, '@nerima-games/mc-sim/GameLoop', GameLoopApi> =
   Context.Tag('@nerima-games/mc-sim/GameLoop')<GameLoop, GameLoopApi>()
 
 export class GameLoop extends GameLoopBase {}
+
+/** One kernel simulation tick is advanced by two physics substeps. */
+export const PHYSICS_SUBSTEPS_PER_TICK: number = Number(tickDuration) / Number(physicsSubstepDuration)
+const TIME_OVERFLOW: TimeOverflow = { _tag: 'TimeOverflow' }
 
 /**
  * What a generation counted. Published by `GameLoopApi`, and the value `stop`
@@ -207,7 +215,7 @@ const countersOf = (generation: Generation): Effect.Effect<Counters> =>
 const detach = <A>(ref: Ref.Ref<Option.Option<A>>): Effect.Effect<Option.Option<A>> =>
   Ref.getAndSet(ref, Option.none())
 
-export const makeGameLoop = (): Effect.Effect<GameLoopApi> =>
+export const makeGameLoop = (initialTick: SimulationTick = SimulationTick(0)): Effect.Effect<GameLoopApi> =>
   Effect.gen(function* () {
     const runningRef = yield* Ref.make(false)
     const fiberRef = yield* Ref.make<Option.Option<Fiber.RuntimeFiber<void, never>>>(Option.none())
@@ -220,6 +228,7 @@ export const makeGameLoop = (): Effect.Effect<GameLoopApi> =>
     const simulationTickRef = yield* Ref.make(SimulationTick(0))
     const interpolationFractionRef = yield* Ref.make(InterpolationFraction(0))
     const overloadedRef = yield* Ref.make(false)
+    const timeOverflowRef = yield* Ref.make<Option.Option<TimeOverflow>>(Option.none())
 
     const stop: Effect.Effect<void> = Effect.gen(function* () {
       yield* Ref.set(runningRef, false)
@@ -262,6 +271,7 @@ export const makeGameLoop = (): Effect.Effect<GameLoopApi> =>
         yield* Ref.set(simulationTickRef, SimulationTick(0))
         yield* Ref.set(interpolationFractionRef, InterpolationFraction(0))
         yield* Ref.set(overloadedRef, false)
+        yield* Ref.set(timeOverflowRef, Option.none())
 
         // Fresh state for this generation. A straggling previous daemon holds
         // references to the PREVIOUS queue and refs, and can do no harm here.
@@ -271,7 +281,7 @@ export const makeGameLoop = (): Effect.Effect<GameLoopApi> =>
         const lostSecs = yield* Ref.make(0)
         const lastInstant = yield* Ref.make<MonotonicTimeSecs | undefined>(undefined)
         const fixedStep = yield* Ref.make(
-          initialFixedStepAccumulator(SimulationTick(0), tickDuration),
+          initialFixedStepAccumulator(initialTick, tickDuration),
         )
 
         const processOneFrame = Queue.take(queue).pipe(
@@ -297,18 +307,21 @@ export const makeGameLoop = (): Effect.Effect<GameLoopApi> =>
             Ref.get(fixedStep).pipe(
               Effect.flatMap((current) => {
                 const advanced = advanceFixedStep(current, frame.dt)
-                const next = Either.getOrThrow(advanced)
-                return Ref.set(fixedStep, next.state).pipe(
+                return Either.match(advanced, {
+                  onLeft: (error) => Ref.set(timeOverflowRef, Option.some(error)),
+                  onRight: (next) => Ref.set(fixedStep, next.state).pipe(
                   Effect.zipRight(Ref.set(simulationTickRef, next.state.tick)),
                   Effect.zipRight(Ref.set(interpolationFractionRef, next.interpolationFraction)),
                   Effect.zipRight(Ref.set(overloadedRef, next.overloaded)),
                   Effect.zipRight(
                     Effect.forEach(
                       Array.from(
-                        { length: Number(next.ticks) },
+                        { length: Number(next.ticks) * PHYSICS_SUBSTEPS_PER_TICK },
                         (_, index) =>
                           SimulationTick(
-                            Number(next.state.tick) - Number(next.ticks) + index + 1,
+                            Number(next.state.tick) - Number(next.ticks) +
+                              Math.floor(index / PHYSICS_SUBSTEPS_PER_TICK) +
+                              1,
                           ),
                       ),
                       (tick) =>
@@ -325,7 +338,8 @@ export const makeGameLoop = (): Effect.Effect<GameLoopApi> =>
                       { discard: true },
                     ),
                   ),
-                )
+                  ),
+                })
               }),
             ),
           ),
@@ -344,6 +358,30 @@ export const makeGameLoop = (): Effect.Effect<GameLoopApi> =>
     ): Effect.Effect<A> =>
       Ref.get(generationRef).pipe(
         Effect.flatMap(Option.match({ onNone: () => whenStopped, onSome: whenRunning })),
+      )
+
+    const advanceFrame = (delta: DeltaTimeSecs): Effect.Effect<FixedStepAdvance, TimeOverflow> =>
+      Ref.get(generationRef).pipe(
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.fail(TIME_OVERFLOW),
+            onSome: (generation) =>
+              Ref.get(generation.fixedStep).pipe(
+                Effect.flatMap((current) =>
+                  Either.match(advanceFixedStep(current, delta), {
+                    onLeft: (error) => Effect.fail(error),
+                    onRight: (next) =>
+                      Ref.set(generation.fixedStep, next.state).pipe(
+                        Effect.zipRight(Ref.set(simulationTickRef, next.state.tick)),
+                        Effect.zipRight(Ref.set(interpolationFractionRef, next.interpolationFraction)),
+                        Effect.zipRight(Ref.set(overloadedRef, next.overloaded)),
+                        Effect.as(next),
+                      ),
+                  }),
+                ),
+              ),
+          }),
+        ),
       )
 
     /** Live while a generation is attached; the frozen teardown reading after. */
@@ -374,6 +412,8 @@ export const makeGameLoop = (): Effect.Effect<GameLoopApi> =>
       simulationTick: Ref.get(simulationTickRef),
       interpolationFraction: Ref.get(interpolationFractionRef),
       overloaded: Ref.get(overloadedRef),
+      timeOverflow: Ref.get(timeOverflowRef),
+      advanceFrame,
     }
   })
 
