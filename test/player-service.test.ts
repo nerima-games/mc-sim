@@ -2,8 +2,7 @@ import { describe, expect, it } from '@effect/vitest'
 import { Effect } from 'effect'
 import { INITIAL_PLAYER_DIMENSION, makePlayerService } from '../src/application/player-service'
 import { INITIAL_PLAYER_POSE } from '../src/domain/camera-pose'
-import { position } from '@nerima-games/mc-kernel'
-import type { Dimension } from '@nerima-games/mc-worldgen'
+import { position, type Dimension } from '@nerima-games/mc-kernel'
 
 /**
  * THE state this file was created for.

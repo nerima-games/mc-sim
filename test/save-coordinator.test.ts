@@ -19,8 +19,8 @@
  *      asserting the batching converges (never more publishes than requests)
  *      and the merged chunk count stays correct under contention.
  */
-import { chunkCoord } from '@nerima-games/mc-kernel'
-import type { Chunk, Dimension } from '@nerima-games/mc-worldgen'
+import { chunkCoord, type Dimension } from '@nerima-games/mc-kernel'
+import type { Chunk } from '@nerima-games/mc-worldgen'
 import { describe, expect, it } from '@effect/vitest'
 import { Deferred, Effect, Either, Fiber, Ref } from 'effect'
 import {
@@ -33,7 +33,7 @@ import {
 
 const fakeChunk = (cx: number, cz: number): Chunk => ({
   coord: chunkCoord(cx, cz),
-  blocks: new Uint8Array(1),
+  blocks: new Uint16Array(1),
   biomes: [],
 })
 

@@ -48,6 +48,7 @@
     "lint": "oxlint --deny-warnings src test apps && ast-grep scan",
     "lint:fix": "oxlint --fix src test apps",
     "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.release.json --pretty false",
+    "bench": "tsx scripts/benchmark-explosion.ts",
     "package:verify": "pnpm build && node scripts/verify-package.mjs",
     "preview": "tsx apps/preview-sim/main.ts",
     "test": "vitest run",
@@ -60,7 +61,7 @@
     "@nerima-games/mc-kernel": "0.8.0",
     "@nerima-games/mc-physics": "0.3.0",
     "@nerima-games/mc-save": "0.5.0",
-    "@nerima-games/mc-worldgen": "0.3.2",
+    "@nerima-games/mc-worldgen": "0.5.0",
     "effect": "3.22.1"
   },
   "devDependencies": {
