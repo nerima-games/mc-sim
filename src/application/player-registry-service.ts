@@ -77,13 +77,13 @@ export const makePlayerRegistryService = (
       }
       const decoded = decodePlayerRegistrySnapshotSync(input)
       const ids = new Set<PlayerId>()
-      for (const player of decoded.right.players) {
+      for (const player of decoded.players) {
         if (ids.has(player.id)) {
           return Effect.fail(validationError('snapshot.players.id', 'must be unique'))
         }
         ids.add(player.id)
       }
-      return Ref.modify(state, () => [undefined, decoded.right])
+      return Ref.modify(state, () => [undefined, decoded])
     },
     reset: Ref.set(state, emptyPlayerRegistrySnapshot()),
   }))
