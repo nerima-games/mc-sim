@@ -636,6 +636,44 @@ plan.md §4.3 / §5.1-3。時刻は mc-kernel が公開する `ClockPort` また
 
 ---
 
+## DN-15 R-SI2/R-SI3 は player-keyed registry を所有境界にする
+
+R-SI2/R-SI3 の設計判断は、既存の単一プレイヤー service を multiplayer 側の lookup map へ
+複製することではない。`PlayerId` を branded key とする一つの `PlayerRegistry` が player-owned
+slice の生成、破棄、lookup、snapshot、restore を所有する。内部 `Ref` は公開しない。
+
+理由は三つある。
+
+1. create/remove/restore と snapshot の競合を一つの `Ref.modify` で直列化できる。
+2. player 数に比例した `Context.Tag` / `Layer` の wiring を公開 API に持ち込まない。
+3. `mx-multiplayer` の `vitalsFor` / `inventoryFor` / `hotbarFor` / `vehiclesFor` を host の
+   手作り map から registry の typed lookup に置き換えられる。
+
+slice の wire 入力は `Schema` decoder を通し、decoder が失敗した場合は registry の state を
+変更しない。`PlayerId`、snapshot の record、duplicate ID、unknown field の扱いは domain 側に
+固定し、application service は atomic な状態遷移だけを担当する。既存の `EntityManager` の
+`spawn/despawn/find/snapshot/restore/reset` と同じ責務分割を採用する。
+
+### R-SI3 の service 分割
+
+player-owned state は registry の slice としてまとめ、world-owned state は独立 service に分ける。
+container / furnace / villager / portal-end / projectile / fluid / fishing / end-state は別々の
+domain 型と application wrapper を持つ。これにより一つの巨大な command service や、ルールを
+知らない registry に game rule の判定が混ざらない。`TimeService`、`WeatherService`、
+`EntityManager`、`VehicleService` は既存の service を拡張して利用する。
+
+`ToggleLeverCommand` は redstone device state の所有者である `mx-redstone` に残す。
+`VehicleUseCommand` は command header 以外に vehicle ID と action を持たないため、mc-sim に
+推測的な API を追加せず、wire protocol の修正を `mx-multiplayer` の別 deliverable とする。
+
+### 実装ゲート
+
+- branded `PlayerId` と decoder を先に実装し、`as`、`any`、非 null 断言を追加しない。
+- registry の create/remove/find/list/snapshot/restore/reset と、各 world-owned service の実挙動を
+  unit test で固定する。
+- `src/index.ts` の exports と docs の API 表を同じ変更で更新する。
+- `pnpm verify` と `pnpm package:verify` を nix devShell 経由で実行し、coverage 4 指標 100% を確認する。
+
 ## DN-13 非有限な入力には 2 通りの答えがあり、取り違えると恒久化する
 
 plan.md §3.8 の項目ではなく、**本リポジトリと mx-gameplay の実測から出た**注意である。

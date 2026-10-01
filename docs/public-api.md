@@ -1227,3 +1227,88 @@ declare const raycastArrowBlock: (
   isBlocking: IsArrowBlocker,
 ) => Option.Option<ArrowBlockImpact>
 ```
+
+## 10. R-SI2/R-SI3 player registry and authoritative command surfaces
+
+R-SI2 adds a single player-keyed ownership boundary. `PlayerId` is a branded
+string created by a decoder at the multiplayer boundary; no service accepts a
+plain string as a player key. The registry owns the per-player slices and does
+not expose their internal `Ref`s. This keeps create/remove/restore atomic and
+avoids registering one `Context.Tag` per connected player.
+
+```typescript
+type PlayerId = string & Brand.Brand<'PlayerId'>
+
+type PlayerSlice = {
+  readonly vitals: Vitals
+  readonly inventory: PlayerStorage
+  readonly hotbar: HotbarState
+  readonly equipment: Equipment
+  readonly statistics: Statistics
+  readonly vehicle: PlayerVehicleState
+}
+
+type PlayerRegistrySnapshot = {
+  readonly players: ReadonlyArray<{
+    readonly id: PlayerId
+    readonly slice: PlayerSlice
+  }>
+}
+
+type PlayerRegistryApi = {
+  readonly create: (id: PlayerId, initial?: PlayerSlice) => Effect.Effect<PlayerSlice, PlayerAlreadyExists>
+  readonly remove: (id: PlayerId) => Effect.Effect<boolean>
+  readonly find: (id: PlayerId) => Effect.Effect<PlayerSlice | undefined>
+  readonly players: Effect.Effect<ReadonlyArray<PlayerId>>
+  readonly snapshot: Effect.Effect<PlayerRegistrySnapshot>
+  readonly restore: (input: unknown) => Effect.Effect<void, PlayerRegistryValidationError>
+  readonly reset: Effect.Effect<void>
+}
+
+declare const PlayerRegistry: Context.Tag<PlayerRegistry, PlayerRegistryApi>
+declare const makePlayerRegistry: (
+  initial?: PlayerRegistrySnapshot,
+) => Effect.Effect<PlayerRegistryApi>
+declare const PlayerRegistryLayer: (
+  initial?: PlayerRegistrySnapshot,
+) => Layer.Layer<PlayerRegistry>
+```
+
+The first implementation slice exposes operation-specific views over the same
+registry state: `vitalsFor`, `inventoryFor`, `hotbarFor`, `equipmentFor`,
+`statisticsFor`, and `vehicleFor`. These are read/write APIs, not host-side
+maps. Existing single-player services remain valid constructors and are used
+as the pure operation vocabulary inside each slice. Snapshot input is decoded
+with Effect Schema before it reaches the registry; malformed input leaves the
+current state unchanged. Updates use one `Ref.modify` per registry operation,
+and hot-path reads return existing values without allocating wrapper objects.
+
+The 20 authoritative tags map to sim-owned surfaces as follows:
+
+| tag | mc-sim surface | status | owner when outside sim |
+| --- | --- | --- | --- |
+| `PlayerInventoryCommand` | per-player inventory/hotbar/equipment slice | in scope | — |
+| `PlayerVitalsCommand` | per-player vitals slice | in scope | — |
+| `WorldTimeWeatherCommand` | `TimeService`, `WeatherService` | in scope | — |
+| `ContainerCommand` | world-owned `ContainerService` | in scope | — |
+| `FurnaceCommand` | `FurnaceService` over smelting state | in scope | — |
+| `VillagerTradeCommand` | `VillagerService` | in scope | — |
+| `EntityAttackCommand` | behaviour-agnostic entity damage surface | in scope | — |
+| `EntityPickupCommand` | `EntityManager.find/despawn` | existing | — |
+| `BowUseCommand` | projectile service | in scope | — |
+| `IgniteTntCommand` | primed-TNT application service | in scope | — |
+| `EndPortalUseCommand` | portal/end-state service | in scope | — |
+| `ThrowEyeOfEnderCommand` | projectile service | in scope | — |
+| `InsertEyeIntoEndPortalFrameCommand` | end-state service | in scope | — |
+| `NetherPortalUseCommand` | portal service | in scope | — |
+| `ToggleLeverCommand` | — | out of scope | `mx-redstone` owns redstone device state |
+| `EnderPearlCommand` | projectile/teleport service | in scope | — |
+| `BucketUseCommand` | fluid/swimming state service | in scope | — |
+| `VehicleUseCommand` | — | out of scope | protocol must add target/action fields |
+| `FishingCommand` | fishing service | in scope | — |
+| `VehicleCommand` | per-player vehicle surface | existing/extend | — |
+
+`VehicleUseCommand` is intentionally not simulated: its wire shape is only a
+command header and cannot identify a vehicle or action. `ToggleLeverCommand`
+is intentionally not simulated because lever and redstone device state belongs
+to `mx-redstone`; adding a generic block write here would duplicate that owner.

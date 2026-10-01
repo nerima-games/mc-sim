@@ -31,6 +31,8 @@ plan.md §2.3-1 の分類でいう **名詞**。
 | 設定状態 | グラフィックス / 音量 / 操作の**値の保持**（画面は mx-ui、適用は各所） | 実装済 `application/settings-service.ts`。型と規則は mc-kernel 0.8 の公開値モデル。§3.6 |
 | ~~チャンクダーティ通知~~ | **mc-worldgen に移った**（`ChunkStore.subscribeDirty`）。mc-sim は中継しない — §3.3 | — |
 | レシピ / クラフト状態 | レシピ表とクラフト結果の状態（画面は mx-ui） | 実装済 `domain/recipe-data.ts` / `domain/recipe.ts` / `domain/crafting.ts` / `application/inventory-service.ts`。§3.1 |
+| **per-player registry** | player key で vitals / inventory / hotbar / equipment / statistics / vehicle の slice を所有し、生成・破棄・snapshot・restore を原子的に行う | R-SI2/R-SI3。`application/player-registry-service.ts`。入力 decoder は `domain/player-registry.ts` |
+| **authoritative command state** | multiplayer が適用するための furnace / container / villager / portal / projectile / fluid / fishing / end-state の状態 service | R-SI3。各 service は独立した domain state と application wrapper を持つ |
 
 ### 2.1 `sim:physics` —— なぜ 1 本で、なぜ `after` が 0 本なのか
 
@@ -386,6 +388,17 @@ mc-worldgen が barrel に出したので、`player-service.ts` はそこから�
 | `mx-redstone` | ワールド状態の読み書き、tick | 同上 |
 | `mx-ui` | 表示するための全状態（HUD / インベントリ / 実績 / 統計） | 読み取り API の網羅性 |
 | `mx-multiplayer` | 同期すべき状態のスナップショットと適用 | スナップショット/復元の対称性 |
+
+### R-SI2/R-SI3 の境界
+
+mc-sim は状態と状態遷移を所有し、入力イベントの意味付けや wire の codec は所有しない。
+`PlayerId` は multiplayer の wire 値を Schema decoder で branded type に変換した後にだけ
+registry へ渡される。registry は player ごとの service を host の lookup map に委譲せず、
+同一の原子的状態境界で create/remove/find/snapshot/restore を提供する。
+
+ToggleLever はレッドストーン装置の状態を持つ `mx-redstone`、VehicleUse は対象 vehicle と
+action が wire に存在しない `mx-multiplayer` protocol の責務である。sim に暫定 API を追加して
+この二つの所有権や wire 欠落を隠すことはしない。
 
 **この 6 者への影響を評価せずに公開 API を変更しないこと。**
 `src/index.ts` の公開 export、`package.json` の `exports`、生成された `dist/index.d.ts` と
