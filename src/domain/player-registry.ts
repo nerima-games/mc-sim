@@ -26,6 +26,18 @@ export type PlayerRegistryValidationError = {
 const isPlayerId = (value: unknown): value is PlayerId =>
   typeof value === 'string' && value.trim().length > 0
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const hasExactKeys = (value: Record<string, unknown>, expected: ReadonlyArray<string>): boolean => {
+  const actual = Object.keys(value)
+  return actual.length === expected.length && expected.every((key) => Object.hasOwn(value, key))
+}
+
+export const isPlayerRegistrySnapshotShape = (value: unknown): boolean =>
+  isRecord(value) && hasExactKeys(value, ['players']) && Array.isArray(value.players) &&
+  value.players.every((player) => isRecord(player) && hasExactKeys(player, ['id']) && isPlayerId(player.id))
+
 const playerIdSchema: Schema.Schema<PlayerId, string> = Schema.String.pipe(
   Schema.filter((value): value is PlayerId => isPlayerId(value)),
 )
