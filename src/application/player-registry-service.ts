@@ -53,7 +53,7 @@ export const makePlayerRegistryService = (
   initial: PlayerRegistrySnapshot = emptyPlayerRegistrySnapshot(),
 ): Effect.Effect<PlayerRegistryServiceApi> =>
   Effect.map(Ref.make(initial), (state) => ({
-    create: (id) => Ref.modify<CreateResult, PlayerRegistrySnapshot>(state, (current) => {
+    create: (id) => Ref.modify(state, (current): readonly [CreateResult, PlayerRegistrySnapshot] => {
       const existing = current.players.some((player) => player.id === id)
       return existing
         ? [duplicateError(id), current]

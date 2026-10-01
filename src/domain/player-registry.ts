@@ -1,4 +1,4 @@
-import { Brand, Schema } from 'effect'
+import { Brand, Either, ParseResult, Schema } from 'effect'
 
 export type PlayerId = string & Brand.Brand<'PlayerId'>
 
@@ -26,22 +26,29 @@ export type PlayerRegistryValidationError = {
 const isPlayerId = (value: unknown): value is PlayerId =>
   typeof value === 'string' && value.trim().length > 0
 
-const playerIdSchema: Schema.Schema<PlayerId> = Schema.String.pipe(
+const playerIdSchema: Schema.Schema<PlayerId, string> = Schema.String.pipe(
   Schema.filter((value): value is PlayerId => isPlayerId(value)),
 )
 
-export const PLAYER_RECORD_SCHEMA: Schema.Schema<PlayerRecord> = Schema.Struct({ id: playerIdSchema }).pipe(
+type PlayerRecordEncoded = { readonly id: string }
+export const PLAYER_RECORD_SCHEMA: Schema.Schema<PlayerRecord, PlayerRecordEncoded> = Schema.Struct({ id: playerIdSchema }).pipe(
   Schema.filter((value) => Object.keys(value).length === 1),
 )
 
-export const PLAYER_REGISTRY_SNAPSHOT_SCHEMA: Schema.Schema<PlayerRegistrySnapshot> = Schema.Struct({
+type PlayerRegistrySnapshotEncoded = { readonly players: ReadonlyArray<PlayerRecordEncoded> }
+export const PLAYER_REGISTRY_SNAPSHOT_SCHEMA: Schema.Schema<
+  PlayerRegistrySnapshot,
+  PlayerRegistrySnapshotEncoded
+> = Schema.Struct({
   players: Schema.Array(PLAYER_RECORD_SCHEMA),
 }).pipe(Schema.filter((value) => Object.keys(value).length === 1))
 
-export const decodePlayerId = (input: unknown) =>
+export const decodePlayerId: (input: unknown) => Either.Either<PlayerId, ParseResult.ParseError> = (input) =>
   Schema.decodeUnknownEither(playerIdSchema)(input)
 
-export const decodePlayerRegistrySnapshot = (input: unknown) =>
+export const decodePlayerRegistrySnapshot: (
+  input: unknown,
+) => Either.Either<PlayerRegistrySnapshot, ParseResult.ParseError> = (input) =>
   Schema.decodeUnknownEither(PLAYER_REGISTRY_SNAPSHOT_SCHEMA)(input)
 
 export const emptyPlayerRegistrySnapshot = (): PlayerRegistrySnapshot => ({ players: [] })
