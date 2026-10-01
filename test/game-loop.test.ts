@@ -13,6 +13,7 @@
  */
 import { describe, expect, it } from '@effect/vitest'
 import { Deferred, Effect, Either, Option, Ref } from 'effect'
+import { vi } from 'vitest'
 import {
   DeltaTimeSecs,
   MonotonicTimeSecs,
@@ -53,11 +54,18 @@ describe('game loop lifecycle', () => {
     Effect.gen(function* () {
       const loop = yield* makeGameLoop()
       const calls = yield* Ref.make(0)
+      const entered = yield* Deferred.make<void>()
       const reached = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      const arrayFrom = vi.spyOn(Array, 'from')
 
       yield* loop.start(() =>
         Ref.updateAndGet(calls, (count) => count + 1).pipe(
-          Effect.flatMap((count) => (count === 2 ? Deferred.succeed(reached, undefined) : Effect.void)),
+          Effect.flatMap((count) =>
+            count === 1
+              ? Deferred.succeed(entered, undefined).pipe(Effect.zipRight(Deferred.await(release)))
+              : Deferred.succeed(reached, undefined),
+          ),
           Effect.asVoid,
         ),
       )
@@ -65,7 +73,13 @@ describe('game loop lifecycle', () => {
       yield* loop.submitFrame(MonotonicTimeSecs(10.01))
       yield* loop.submitFrame(MonotonicTimeSecs(10.05))
 
+      yield* Deferred.await(entered)
+      expect(yield* Ref.get(calls)).toBe(1)
+      expect(arrayFrom).not.toHaveBeenCalled()
+
+      yield* Deferred.succeed(release, undefined)
       yield* Deferred.await(reached)
+      arrayFrom.mockRestore()
       expect(yield* Ref.get(calls)).toBe(2)
       yield* loop.stop
     }),
