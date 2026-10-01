@@ -60,9 +60,10 @@ export const makePlayerRegistryService = (
     create: (id) => Effect.flatMap(
       Ref.modify(state, (current): readonly [CreateResult, PlayerRegistrySnapshot] => {
         const existing = current.players.some((player) => player.id === id)
-        return existing
-          ? [duplicateError(id), current]
-          : [{ _tag: 'Created', player: { id } }, { players: [...current.players, { id }] }]
+        if (existing) {
+          return [duplicateError(id), current]
+        }
+        return [{ _tag: 'Created', player: { id } }, { players: [...current.players, { id }] }]
       }),
       createEffect,
     ),
