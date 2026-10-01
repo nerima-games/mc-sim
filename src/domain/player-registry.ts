@@ -1,4 +1,4 @@
-import { Brand, Either, Schema } from 'effect'
+import { Brand, Schema } from 'effect'
 
 export type PlayerId = string & Brand.Brand<'PlayerId'>
 
@@ -23,73 +23,25 @@ export type PlayerRegistryValidationError = {
   readonly reason: string
 }
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
+const isPlayerId = (value: unknown): value is PlayerId =>
+  typeof value === 'string' && value.trim().length > 0
 
-const hasExactKeys = (value: Record<string, unknown>, expected: ReadonlyArray<string>): boolean => {
-  const actual = Object.keys(value)
-  return actual.length === expected.length && expected.every((key) => Object.hasOwn(value, key))
-}
-
-const playerIdSchema: Schema.Schema<PlayerId, string> = Schema.transform(
-  Schema.String.pipe(Schema.filter((value): value is string => value.trim().length > 0)),
-  Schema.String,
-  { decode: playerId, encode: (value) => value, strict: true },
+const playerIdSchema: Schema.Schema<PlayerId> = Schema.String.pipe(
+  Schema.filter((value): value is PlayerId => isPlayerId(value)),
 )
 
-type PlayerRecordInput = {
-  readonly id: string
-}
-
-const isPlayerRecordInput = (value: unknown): value is PlayerRecordInput =>
-  isRecord(value) && hasExactKeys(value, ['id']) && typeof value['id'] === 'string'
-
-const playerRecordInput = Schema.Unknown.pipe(
-  Schema.filter((value): value is PlayerRecordInput =>
-    isPlayerRecordInput(value),
-  ),
+export const PLAYER_RECORD_SCHEMA: Schema.Schema<PlayerRecord> = Schema.Struct({ id: playerIdSchema }).pipe(
+  Schema.filter((value) => Object.keys(value).length === 1),
 )
 
-export const PLAYER_RECORD_SCHEMA: Schema.Schema<PlayerRecord, PlayerRecordInput> = Schema.transform(
-  playerRecordInput,
-  Schema.Struct({ id: playerIdSchema }),
-  {
-    decode: (value) => ({ id: value.id }),
-    encode: (value) => ({ id: value.id }),
-    strict: true,
-  },
-)
+export const PLAYER_REGISTRY_SNAPSHOT_SCHEMA: Schema.Schema<PlayerRegistrySnapshot> = Schema.Struct({
+  players: Schema.Array(PLAYER_RECORD_SCHEMA),
+}).pipe(Schema.filter((value) => Object.keys(value).length === 1))
 
-type SnapshotInput = {
-  readonly players: ReadonlyArray<PlayerRecordInput>
-}
-
-const snapshotInput = Schema.Unknown.pipe(
-  Schema.filter((value): value is SnapshotInput =>
-    isRecord(value) && hasExactKeys(value, ['players']) && Array.isArray(value['players']) &&
-    value['players'].every(isPlayerRecordInput),
-  ),
-)
-
-export const PLAYER_REGISTRY_SNAPSHOT_SCHEMA: Schema.Schema<
-  PlayerRegistrySnapshot,
-  SnapshotInput
-> = Schema.transform(
-  snapshotInput,
-  Schema.Struct({ players: Schema.Array(PLAYER_RECORD_SCHEMA) }),
-  {
-    decode: (value) => ({ players: value.players }),
-    encode: (value) => ({ players: value.players }),
-    strict: true,
-  },
-)
-
-export const decodePlayerId = (input: unknown): Either.Either<PlayerId, Schema.ParseError> =>
+export const decodePlayerId = (input: unknown) =>
   Schema.decodeUnknownEither(playerIdSchema)(input)
 
-export const decodePlayerRegistrySnapshot = (
-  input: unknown,
-): Either.Either<PlayerRegistrySnapshot, Schema.ParseError> =>
+export const decodePlayerRegistrySnapshot = (input: unknown) =>
   Schema.decodeUnknownEither(PLAYER_REGISTRY_SNAPSHOT_SCHEMA)(input)
 
 export const emptyPlayerRegistrySnapshot = (): PlayerRegistrySnapshot => ({ players: [] })

@@ -51,8 +51,19 @@ export * from './domain/vehicle.js'
 export * from './domain/weather.js'
 export * from './domain/wither.js'
 export * from './domain/player-registry.js'
-export * from './domain/container-state.js'
-export * from './domain/furnace-state.js'
+export {
+  ContainerStateSchema,
+  emptyContainerState,
+  isContainerId,
+  validateContainerStateSnapshot,
+} from './domain/container-state.js'
+export type { ContainerState, ContainerStateSnapshot } from './domain/container-state.js'
+export {
+  FurnaceId,
+  FurnaceStateSchema,
+  isFurnaceId,
+  validateFurnaceStateSnapshot,
+} from './domain/furnace-state.js'
 export * from './domain/end-state.js'
 export * from './domain/portal-state.js'
 export * from './domain/projectile-state.js'

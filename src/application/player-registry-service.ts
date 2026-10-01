@@ -45,16 +45,22 @@ const duplicateError = (id: PlayerId): PlayerAlreadyExists => ({
   id,
 })
 
+type CreateResult =
+  | { readonly _tag: 'Created'; readonly player: PlayerRecord }
+  | PlayerAlreadyExists
+
 export const makePlayerRegistryService = (
   initial: PlayerRegistrySnapshot = emptyPlayerRegistrySnapshot(),
 ): Effect.Effect<PlayerRegistryServiceApi> =>
   Effect.map(Ref.make(initial), (state) => ({
-    create: (id) => Ref.modify(state, (current) => {
+    create: (id) => Ref.modify<CreateResult, PlayerRegistrySnapshot>(state, (current) => {
       const existing = current.players.some((player) => player.id === id)
       return existing
-        ? [Effect.fail(duplicateError(id)), current]
-        : [Effect.succeed({ id }), { players: [...current.players, { id }] }]
-    }).pipe(Effect.flatten),
+        ? [duplicateError(id), current]
+        : [{ _tag: 'Created', player: { id } }, { players: [...current.players, { id }] }]
+    }).pipe(Effect.flatMap((result) =>
+      result._tag === 'Created' ? Effect.succeed(result.player) : Effect.fail(result),
+    )),
     remove: (id) => Ref.modify(state, (current) => {
       const players = current.players.filter((player) => player.id !== id)
       return [players.length !== current.players.length, { players }]

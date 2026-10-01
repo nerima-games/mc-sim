@@ -15,8 +15,9 @@ export { furnaceId as FurnaceId }
 export const isFurnaceId = (value: unknown): value is FurnaceId =>
   typeof value === 'string' && value.trim().length > 0
 
-export const emptyFurnaceState = Smelting.emptyFurnaceState
-export const validateFurnaceStateSnapshot = Smelting.validateFurnaceSnapshot
+export const emptyFurnaceState: typeof Smelting.emptyFurnaceState = Smelting.emptyFurnaceState
+export const validateFurnaceStateSnapshot: typeof Smelting.validateFurnaceSnapshot =
+  Smelting.validateFurnaceSnapshot
 
 export const FurnaceStateSchema: Schema.Schema<FurnaceState> = Schema.declare(
   (value: unknown): value is FurnaceState =>

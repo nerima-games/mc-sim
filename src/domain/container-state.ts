@@ -20,7 +20,8 @@ export const emptyContainerState = (
   kind: Storage.ContainerKind = 'chest',
 ): ContainerState => Storage.emptyContainer(id, kind)
 
-export const validateContainerStateSnapshot = Storage.validateContainerStorageSnapshot
+export const validateContainerStateSnapshot: typeof Storage.validateContainerStorageSnapshot =
+  Storage.validateContainerStorageSnapshot
 
 export const ContainerStateSchema: Schema.Schema<ContainerStateSnapshot> = Schema.declare(
   (value: unknown): value is ContainerStateSnapshot =>
