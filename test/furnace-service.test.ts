@@ -2,6 +2,7 @@ import { describe, expect, it } from '@effect/vitest'
 import { Effect } from 'effect'
 import { makeFurnaceService } from '../src/application/furnace-service.js'
 import { itemStack } from '../src/domain/inventory.js'
+import { FurnaceId, FurnaceStateSchema, isFurnaceId } from '../src/domain/furnace-state.js'
 
 describe('FurnaceService', () => {
   it.effect('advances the domain furnace through the Ref boundary', () =>
@@ -14,6 +15,12 @@ describe('FurnaceService', () => {
 
       expect(outcome.smelted).toBe(1)
       expect((yield* service.snapshot).output?.item).toBe('iron_ingot')
+      yield* service.setOutput(itemStack('iron_ingot', 1))
+      expect(isFurnaceId(FurnaceId('furnace:0'))).toBe(true)
+      expect(() => FurnaceId('')).toThrow()
+      expect(FurnaceStateSchema.is(yield* service.snapshot)).toBe(true)
+      yield* service.restore(yield* service.snapshot)
+      yield* service.reset
     }))
 
   it.effect('rejects malformed restore input without changing state', () =>

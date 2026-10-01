@@ -1,7 +1,8 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect } from 'effect'
 import { makePlayerRegistryService } from '../src/application/player-registry-service'
-import { PlayerId } from '../src/domain/player-registry'
+import { decodePlayerId, PlayerId } from '../src/domain/player-registry'
+import { PlayerRegistryServiceLayer } from '../src/application/player-registry-service.js'
 
 const player = (value: string) => PlayerId(value)
 
@@ -16,6 +17,8 @@ describe('PlayerRegistryService', () => {
       expect(yield* service.create(bob)).toEqual({ id: bob })
       expect(yield* service.find(alice)).toEqual({ id: alice })
       expect(yield* service.list).toEqual([alice, bob])
+      expect(decodePlayerId('carol')._tag).toBe('Right')
+      expect(decodePlayerId(1)._tag).toBe('Left')
       expect(yield* service.remove(alice)).toBe(true)
       expect(yield* service.remove(alice)).toBe(false)
       yield* service.reset
@@ -65,6 +68,7 @@ describe('PlayerRegistryService', () => {
 
       expect(outcomes).toHaveLength(ids.length)
       expect(yield* service.list).toHaveLength(ids.length)
+      expect(PlayerRegistryServiceLayer()).toBeDefined()
     }),
   )
 })

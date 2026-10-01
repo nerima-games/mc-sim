@@ -1,7 +1,7 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect } from 'effect'
 import { makeContainerService } from '../src/application/container-service.js'
-import { ContainerId } from '../src/domain/container-state.js'
+import { ContainerId, ContainerStateSchema, emptyContainerState, isContainerId } from '../src/domain/container-state.js'
 
 describe('ContainerService', () => {
   it.effect('creates, snapshots, and resets a container atomically', () =>
@@ -11,6 +11,10 @@ describe('ContainerService', () => {
 
       expect((yield* service.create(id))._tag).toBe('Created')
       expect((yield* service.snapshot(id))?.slots).toHaveLength(27)
+      expect(isContainerId(id)).toBe(true)
+      expect(() => ContainerId('')).toThrow()
+      expect(ContainerStateSchema.is(yield* service.snapshot(id))).toBe(false)
+      expect(emptyContainerState(id).id).toBe(id)
 
       yield* service.reset
       expect(yield* service.snapshot(id)).toBeNull()
