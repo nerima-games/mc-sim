@@ -63,4 +63,7 @@ export const decodePlayerRegistrySnapshot: (
 ) => Either.Either<PlayerRegistrySnapshot, ParseResult.ParseError> = (input) =>
   Schema.decodeUnknownEither(PLAYER_REGISTRY_SNAPSHOT_SCHEMA)(input)
 
+export const decodePlayerRegistrySnapshotSync: (input: unknown) => PlayerRegistrySnapshot = (input) =>
+  Schema.decodeUnknownSync(PLAYER_REGISTRY_SNAPSHOT_SCHEMA)(input)
+
 export const emptyPlayerRegistrySnapshot = (): PlayerRegistrySnapshot => ({ players: [] })

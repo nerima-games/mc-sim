@@ -1,6 +1,6 @@
 import { Context, Effect, Layer, Ref } from 'effect'
 import {
-  decodePlayerRegistrySnapshot,
+  decodePlayerRegistrySnapshotSync,
   emptyPlayerRegistrySnapshot,
   isPlayerRegistrySnapshotShape,
   type PlayerId,
@@ -75,10 +75,7 @@ export const makePlayerRegistryService = (
       if (!isPlayerRegistrySnapshotShape(input)) {
         return Effect.fail(validationError('snapshot', 'must match the player registry schema'))
       }
-      const decoded = decodePlayerRegistrySnapshot(input)
-      if (decoded._tag === 'Left') {
-        return Effect.fail(validationError('snapshot', 'must match the player registry schema'))
-      }
+      const decoded = decodePlayerRegistrySnapshotSync(input)
       const ids = new Set<PlayerId>()
       for (const player of decoded.right.players) {
         if (ids.has(player.id)) {

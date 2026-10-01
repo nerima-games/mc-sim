@@ -19,6 +19,7 @@ describe('PlayerRegistryService', () => {
       expect(yield* service.list).toEqual([alice, bob])
       expect(decodePlayerId('carol')._tag).toBe('Right')
       expect(decodePlayerId(1)._tag).toBe('Left')
+      expect(() => PlayerId('')).toThrow()
       expect(yield* service.remove(alice)).toBe(true)
       expect(yield* service.remove(alice)).toBe(false)
       yield* service.reset
