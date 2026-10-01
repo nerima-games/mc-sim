@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Effect } from 'effect'
+import { Effect, Schema } from 'effect'
 import { makeContainerService } from '../src/application/container-service.js'
 import { ContainerId, ContainerStateSchema, emptyContainerState, isContainerId } from '../src/domain/container-state.js'
 
@@ -13,7 +13,7 @@ describe('ContainerService', () => {
       expect((yield* service.snapshot(id))?.slots).toHaveLength(27)
       expect(isContainerId(id)).toBe(true)
       expect(() => ContainerId('')).toThrow()
-      expect(ContainerStateSchema.is(yield* service.snapshot(id))).toBe(false)
+      expect(Schema.is(ContainerStateSchema)(yield* service.snapshot(id))).toBe(false)
       expect(emptyContainerState(id).id).toBe(id)
 
       yield* service.reset
