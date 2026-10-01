@@ -49,6 +49,28 @@ const recordingHandler = (target: number) =>
   })
 
 describe('game loop lifecycle', () => {
+  it.effect('does not invoke the handler when a frame produces zero fixed steps', () =>
+    Effect.gen(function* () {
+      const loop = yield* makeGameLoop()
+      const calls = yield* Ref.make(0)
+      const reached = yield* Deferred.make<void>()
+
+      yield* loop.start(() =>
+        Ref.updateAndGet(calls, (count) => count + 1).pipe(
+          Effect.flatMap((count) => (count === 2 ? Deferred.succeed(reached, undefined) : Effect.void)),
+          Effect.asVoid,
+        ),
+      )
+      yield* loop.submitFrame(MonotonicTimeSecs(10))
+      yield* loop.submitFrame(MonotonicTimeSecs(10.01))
+      yield* loop.submitFrame(MonotonicTimeSecs(10.05))
+
+      yield* Deferred.await(reached)
+      expect(yield* Ref.get(calls)).toBe(2)
+      yield* loop.stop
+    }),
+  )
+
   it.effect('runs two physics substeps per fixed tick', () =>
     Effect.gen(function* () {
       const loop = yield* makeGameLoop()
