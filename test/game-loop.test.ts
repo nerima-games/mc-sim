@@ -13,6 +13,7 @@
  */
 import { describe, expect, it } from '@effect/vitest'
 import { Deferred, Effect, Either, Option, Ref } from 'effect'
+import { vi } from 'vitest'
 import {
   DeltaTimeSecs,
   MonotonicTimeSecs,
@@ -49,12 +50,52 @@ const recordingHandler = (target: number) =>
   })
 
 describe('game loop lifecycle', () => {
+  it.effect('does not invoke the handler when a frame produces zero fixed steps', () =>
+    Effect.gen(function* () {
+      const loop = yield* makeGameLoop()
+      const calls = yield* Ref.make(0)
+      const entered = yield* Deferred.make<void>()
+      const reached = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      const arrayFrom = vi.spyOn(Array, 'from')
+
+      yield* loop.start(() =>
+        Ref.updateAndGet(calls, (count) => count + 1).pipe(
+          Effect.flatMap((count) =>
+            count === 1
+              ? Deferred.succeed(entered, undefined).pipe(Effect.zipRight(Deferred.await(release)))
+              : Deferred.succeed(reached, undefined),
+          ),
+          Effect.asVoid,
+        ),
+      )
+      yield* loop.submitFrame(MonotonicTimeSecs(10))
+      yield* loop.submitFrame(MonotonicTimeSecs(10.01))
+      yield* loop.submitFrame(MonotonicTimeSecs(10.05))
+
+      yield* Deferred.await(entered)
+      expect(yield* Ref.get(calls)).toBe(1)
+      expect(arrayFrom).not.toHaveBeenCalled()
+
+      yield* Deferred.succeed(release, undefined)
+      yield* Deferred.await(reached)
+      arrayFrom.mockRestore()
+      expect(yield* Ref.get(calls)).toBe(2)
+      yield* loop.stop
+    }),
+  )
+
   it.effect('runs two physics substeps per fixed tick', () =>
     Effect.gen(function* () {
       const loop = yield* makeGameLoop()
       const probe = yield* recordingHandler(6)
+      const seenTicks = yield* Ref.make<ReadonlyArray<SimulationTick>>([])
+      const handler = (dt: DeltaTimeSecs, tick: SimulationTick | undefined) =>
+        Ref.update(seenTicks, (ticks) => (tick === undefined ? ticks : [...ticks, tick])).pipe(
+          Effect.zipRight(probe.handler(dt)),
+        )
 
-      yield* loop.start(probe.handler)
+      yield* loop.start(handler)
       yield* Effect.forEach(
         [0, 0.05, 0.1, 0.15],
         (at) => loop.submitFrame(MonotonicTimeSecs(at)),
@@ -63,6 +104,14 @@ describe('game loop lifecycle', () => {
       yield* Deferred.await(probe.reached)
 
       expect(yield* Ref.get(probe.seen)).toHaveLength(6)
+      expect(yield* Ref.get(seenTicks)).toStrictEqual([
+        SimulationTick(1),
+        SimulationTick(1),
+        SimulationTick(2),
+        SimulationTick(2),
+        SimulationTick(3),
+        SimulationTick(3),
+      ])
       expect(yield* loop.simulationTick).toBe(SimulationTick(3))
       yield* loop.stop
     }),

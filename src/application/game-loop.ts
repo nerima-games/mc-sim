@@ -211,6 +211,38 @@ const countersOf = (generation: Generation): Effect.Effect<Counters> =>
     secondsLostToClamp: Ref.get(generation.lostSecs),
   })
 
+const runPhysicsSubsteps = (
+  handler: FrameHandler,
+  frames: Ref.Ref<number>,
+  firstTick: number,
+  remaining: number,
+  index: number = 0,
+): Effect.Effect<void> => {
+  if (remaining === 0) return Effect.void
+
+  const step = handler(
+    DeltaTimeSecs(Number(physicsSubstepDuration)),
+    SimulationTick(firstTick + Math.floor(index / PHYSICS_SUBSTEPS_PER_TICK)),
+  ).pipe(
+    // Catch each substep independently so a defect does not kill the loop or
+    // skip the remaining substeps in this frame.
+    Effect.catchAllCause((cause) =>
+      Effect.logError(`Frame error: ${Cause.pretty(cause)}`),
+    ),
+    Effect.tap(() => Ref.update(frames, (count) => count + 1)),
+  )
+
+  return remaining === 1
+    ? step
+    : step.pipe(
+        Effect.zipRight(
+          Effect.suspend(() =>
+            runPhysicsSubsteps(handler, frames, firstTick, remaining - 1, index + 1),
+          ),
+        ),
+      )
+}
+
 /** Take ownership of an optional resource and clear the slot in one atomic step. */
 const detach = <A>(ref: Ref.Ref<Option.Option<A>>): Effect.Effect<Option.Option<A>> =>
   Ref.getAndSet(ref, Option.none())
@@ -314,28 +346,11 @@ export const makeGameLoop = (initialTick: SimulationTick = SimulationTick(0)): E
                   Effect.zipRight(Ref.set(interpolationFractionRef, next.interpolationFraction)),
                   Effect.zipRight(Ref.set(overloadedRef, next.overloaded)),
                   Effect.zipRight(
-                    Effect.forEach(
-                      Array.from(
-                        { length: Number(next.ticks) * PHYSICS_SUBSTEPS_PER_TICK },
-                        (_, index) =>
-                          SimulationTick(
-                            Number(next.state.tick) - Number(next.ticks) +
-                              Math.floor(index / PHYSICS_SUBSTEPS_PER_TICK) +
-                              1,
-                          ),
-                      ),
-                      (tick) =>
-                        handler(DeltaTimeSecs(Number(physicsSubstepDuration)), tick).pipe(
-                          // catchAllCause, not catchAll: a thrown exception inside a stage
-                          // surfaces as Cause.Die, which catchAll would miss and let kill
-                          // the loop. Logging the whole Cause is what makes a defect
-                          // visible at all — plan.md §3.8's Effect conventions.
-                          Effect.catchAllCause((cause) =>
-                            Effect.logError(`Frame error: ${Cause.pretty(cause)}`),
-                          ),
-                          Effect.tap(() => Ref.update(frames, (count) => count + 1)),
-                        ),
-                      { discard: true },
+                    runPhysicsSubsteps(
+                      handler,
+                      frames,
+                      Number(next.state.tick) - Number(next.ticks) + 1,
+                      Number(next.ticks) * PHYSICS_SUBSTEPS_PER_TICK,
                     ),
                   ),
                   ),
