@@ -50,6 +50,26 @@ export * from './domain/vitals.js'
 export * from './domain/vehicle.js'
 export * from './domain/weather.js'
 export * from './domain/wither.js'
+export * from './domain/player-registry.js'
+export {
+  ContainerStateSchema,
+  emptyContainerState,
+  isContainerId,
+  validateContainerStateSnapshot,
+} from './domain/container-state.js'
+export type { ContainerState, ContainerStateSnapshot } from './domain/container-state.js'
+export {
+  FurnaceId,
+  FurnaceStateSchema,
+  isFurnaceId,
+  validateFurnaceStateSnapshot,
+} from './domain/furnace-state.js'
+export * from './domain/end-state.js'
+export * from './domain/portal-state.js'
+export * from './domain/projectile-state.js'
+export * from './domain/fluid-state.js'
+export * from './domain/fishing-state.js'
+export * from './domain/villager-state.js'
 
 // --- Application: Effect services -------------------------------------------
 export * from './application/autosave.js'
@@ -68,6 +88,15 @@ export * from './application/time-service.js'
 export * from './application/vitals-service.js'
 export * from './application/vehicle-service.js'
 export * from './application/weather-service.js'
+export * from './application/player-registry-service.js'
+export * from './application/container-service.js'
+export * from './application/furnace-service.js'
+export * from './application/end-state-service.js'
+export * from './application/portal-service.js'
+export * from './application/projectile-charge-service.js'
+export * from './application/fluid-service.js'
+export * from './application/fishing-service.js'
+export * from './application/villager-service.js'
 
 // --- Stages: this repository's contribution to the frame ---------------------
 // `sim:physics` is named in an `after` edge by mx-gameplay, mx-redstone, mx-ui

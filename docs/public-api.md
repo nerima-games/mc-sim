@@ -1227,3 +1227,78 @@ declare const raycastArrowBlock: (
   isBlocking: IsArrowBlocker,
 ) => Option.Option<ArrowBlockImpact>
 ```
+
+## 10. R-SI2/R-SI3 player registry and authoritative command surfaces
+
+R-SI2 adds a single player-keyed ownership boundary. `PlayerId` is a branded
+string created by a decoder at the multiplayer boundary; no service accepts a
+plain string as a player key. The registry owns the per-player slices and does
+not expose their internal `Ref`s. This keeps create/remove/restore atomic and
+avoids registering one `Context.Tag` per connected player.
+
+```typescript
+type PlayerId = string & Brand.Brand<'PlayerId'>
+
+type PlayerRegistrySnapshot = {
+  readonly players: ReadonlyArray<{
+    readonly id: PlayerId
+  }>
+}
+
+type PlayerRegistryServiceApi = {
+  readonly create: (id: PlayerId) => Effect.Effect<PlayerRecord, PlayerAlreadyExists>
+  readonly remove: (id: PlayerId) => Effect.Effect<boolean>
+  readonly find: (id: PlayerId) => Effect.Effect<PlayerRecord | undefined>
+  readonly players: Effect.Effect<ReadonlyArray<PlayerId>>
+  readonly snapshot: Effect.Effect<PlayerRegistrySnapshot>
+  readonly restore: (input: unknown) => Effect.Effect<void, PlayerRegistryValidationError>
+  readonly reset: Effect.Effect<void>
+}
+
+declare const PlayerRegistryService: Context.Tag<PlayerRegistryService, PlayerRegistryServiceApi>
+declare const makePlayerRegistryService: (
+  initial?: PlayerRegistrySnapshot,
+) => Effect.Effect<PlayerRegistryServiceApi>
+declare const PlayerRegistryServiceLayer: (
+  initial?: PlayerRegistrySnapshot,
+) => Layer.Layer<PlayerRegistryService>
+```
+
+The first implementation slice establishes the registry lifecycle and branded
+player lookup boundary. Operation-specific views over the same registry state
+(`vitalsFor`, `inventoryFor`, `hotbarFor`, `equipmentFor`, `statisticsFor`, and
+`vehicleFor`) are the next integration surface for the multiplayer applier;
+they are read/write APIs, not host-side maps. Snapshot input is decoded
+with Effect Schema before it reaches the registry; malformed input leaves the
+current state unchanged. Updates use one `Ref.modify` per registry operation,
+and lookup reads return existing records without allocating wrapper objects.
+
+The 20 authoritative tags map to sim-owned surfaces as follows:
+
+| tag | mc-sim surface | status | owner when outside sim |
+| --- | --- | --- | --- |
+| `PlayerInventoryCommand` | per-player inventory/hotbar/equipment slice | in scope | — |
+| `PlayerVitalsCommand` | per-player vitals slice | in scope | — |
+| `WorldTimeWeatherCommand` | `TimeService`, `WeatherService` | in scope | — |
+| `ContainerCommand` | world-owned `ContainerService` | in scope | — |
+| `FurnaceCommand` | `FurnaceService` over smelting state | in scope | — |
+| `VillagerTradeCommand` | `VillagerService` | in scope | — |
+| `EntityAttackCommand` | behaviour-agnostic entity damage surface | in scope | — |
+| `EntityPickupCommand` | `EntityManager.find/despawn` | existing | — |
+| `BowUseCommand` | projectile service | in scope | — |
+| `IgniteTntCommand` | primed-TNT application service | in scope | — |
+| `EndPortalUseCommand` | portal/end-state service | in scope | — |
+| `ThrowEyeOfEnderCommand` | projectile service | in scope | — |
+| `InsertEyeIntoEndPortalFrameCommand` | end-state service | in scope | — |
+| `NetherPortalUseCommand` | portal service | in scope | — |
+| `ToggleLeverCommand` | — | out of scope | `mx-redstone` owns redstone device state |
+| `EnderPearlCommand` | projectile/teleport service | in scope | — |
+| `BucketUseCommand` | fluid/swimming state service | in scope | — |
+| `VehicleUseCommand` | — | out of scope | protocol must add target/action fields |
+| `FishingCommand` | fishing service | in scope | — |
+| `VehicleCommand` | per-player vehicle surface | existing/extend | — |
+
+`VehicleUseCommand` is intentionally not simulated: its wire shape is only a
+command header and cannot identify a vehicle or action. `ToggleLeverCommand`
+is intentionally not simulated because lever and redstone device state belongs
+to `mx-redstone`; adding a generic block write here would duplicate that owner.
