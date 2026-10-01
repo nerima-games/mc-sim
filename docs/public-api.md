@@ -1239,49 +1239,39 @@ avoids registering one `Context.Tag` per connected player.
 ```typescript
 type PlayerId = string & Brand.Brand<'PlayerId'>
 
-type PlayerSlice = {
-  readonly vitals: Vitals
-  readonly inventory: PlayerStorage
-  readonly hotbar: HotbarState
-  readonly equipment: Equipment
-  readonly statistics: Statistics
-  readonly vehicle: PlayerVehicleState
-}
-
 type PlayerRegistrySnapshot = {
   readonly players: ReadonlyArray<{
     readonly id: PlayerId
-    readonly slice: PlayerSlice
   }>
 }
 
-type PlayerRegistryApi = {
-  readonly create: (id: PlayerId, initial?: PlayerSlice) => Effect.Effect<PlayerSlice, PlayerAlreadyExists>
+type PlayerRegistryServiceApi = {
+  readonly create: (id: PlayerId) => Effect.Effect<PlayerRecord, PlayerAlreadyExists>
   readonly remove: (id: PlayerId) => Effect.Effect<boolean>
-  readonly find: (id: PlayerId) => Effect.Effect<PlayerSlice | undefined>
+  readonly find: (id: PlayerId) => Effect.Effect<PlayerRecord | undefined>
   readonly players: Effect.Effect<ReadonlyArray<PlayerId>>
   readonly snapshot: Effect.Effect<PlayerRegistrySnapshot>
   readonly restore: (input: unknown) => Effect.Effect<void, PlayerRegistryValidationError>
   readonly reset: Effect.Effect<void>
 }
 
-declare const PlayerRegistry: Context.Tag<PlayerRegistry, PlayerRegistryApi>
-declare const makePlayerRegistry: (
+declare const PlayerRegistryService: Context.Tag<PlayerRegistryService, PlayerRegistryServiceApi>
+declare const makePlayerRegistryService: (
   initial?: PlayerRegistrySnapshot,
-) => Effect.Effect<PlayerRegistryApi>
-declare const PlayerRegistryLayer: (
+) => Effect.Effect<PlayerRegistryServiceApi>
+declare const PlayerRegistryServiceLayer: (
   initial?: PlayerRegistrySnapshot,
-) => Layer.Layer<PlayerRegistry>
+) => Layer.Layer<PlayerRegistryService>
 ```
 
-The first implementation slice exposes operation-specific views over the same
-registry state: `vitalsFor`, `inventoryFor`, `hotbarFor`, `equipmentFor`,
-`statisticsFor`, and `vehicleFor`. These are read/write APIs, not host-side
-maps. Existing single-player services remain valid constructors and are used
-as the pure operation vocabulary inside each slice. Snapshot input is decoded
+The first implementation slice establishes the registry lifecycle and branded
+player lookup boundary. Operation-specific views over the same registry state
+(`vitalsFor`, `inventoryFor`, `hotbarFor`, `equipmentFor`, `statisticsFor`, and
+`vehicleFor`) are the next integration surface for the multiplayer applier;
+they are read/write APIs, not host-side maps. Snapshot input is decoded
 with Effect Schema before it reaches the registry; malformed input leaves the
 current state unchanged. Updates use one `Ref.modify` per registry operation,
-and hot-path reads return existing values without allocating wrapper objects.
+and lookup reads return existing records without allocating wrapper objects.
 
 The 20 authoritative tags map to sim-owned surfaces as follows:
 
