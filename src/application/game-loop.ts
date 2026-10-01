@@ -222,7 +222,7 @@ const runPhysicsSubsteps = (
 
   const step = handler(
     DeltaTimeSecs(Number(physicsSubstepDuration)),
-    SimulationTick(firstTick + index),
+    SimulationTick(firstTick + Math.floor(index / PHYSICS_SUBSTEPS_PER_TICK)),
   ).pipe(
     // Catch each substep independently so a defect does not kill the loop or
     // skip the remaining substeps in this frame.

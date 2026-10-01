@@ -75,8 +75,13 @@ describe('game loop lifecycle', () => {
     Effect.gen(function* () {
       const loop = yield* makeGameLoop()
       const probe = yield* recordingHandler(6)
+      const seenTicks = yield* Ref.make<ReadonlyArray<SimulationTick>>([])
+      const handler = (dt: DeltaTimeSecs, tick: SimulationTick | undefined) =>
+        Ref.update(seenTicks, (ticks) => (tick === undefined ? ticks : [...ticks, tick])).pipe(
+          Effect.zipRight(probe.handler(dt)),
+        )
 
-      yield* loop.start(probe.handler)
+      yield* loop.start(handler)
       yield* Effect.forEach(
         [0, 0.05, 0.1, 0.15],
         (at) => loop.submitFrame(MonotonicTimeSecs(at)),
@@ -85,6 +90,14 @@ describe('game loop lifecycle', () => {
       yield* Deferred.await(probe.reached)
 
       expect(yield* Ref.get(probe.seen)).toHaveLength(6)
+      expect(yield* Ref.get(seenTicks)).toStrictEqual([
+        SimulationTick(1),
+        SimulationTick(1),
+        SimulationTick(2),
+        SimulationTick(2),
+        SimulationTick(3),
+        SimulationTick(3),
+      ])
       expect(yield* loop.simulationTick).toBe(SimulationTick(3))
       yield* loop.stop
     }),
