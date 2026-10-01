@@ -35,8 +35,8 @@ const hasExactKeys = (value: Record<string, unknown>, expected: ReadonlyArray<st
 }
 
 export const isPlayerRegistrySnapshotShape = (value: unknown): boolean =>
-  isRecord(value) && hasExactKeys(value, ['players']) && Array.isArray(value.players) &&
-  value.players.every((player) => isRecord(player) && hasExactKeys(player, ['id']) && isPlayerId(player.id))
+  isRecord(value) && hasExactKeys(value, ['players']) && Array.isArray(value['players']) &&
+  value['players'].every((player) => isRecord(player) && hasExactKeys(player, ['id']) && isPlayerId(player['id']))
 
 const playerIdSchema: Schema.Schema<PlayerId, string> = Schema.String.pipe(
   Schema.filter((value): value is PlayerId => isPlayerId(value)),
