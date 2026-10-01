@@ -1,5 +1,11 @@
 # @nerima-games/mc-sim
 
+## 0.5.1
+
+### Patch Changes
+
+- [#38](https://github.com/nerima-games/mc-sim/pull/38) [`2664f01`](https://github.com/nerima-games/mc-sim/commit/2664f01ac6784ef2916c0859a770d22872b486fc) Thanks [@takeokunn](https://github.com/takeokunn)! - Avoid allocating a per-frame intermediate array when the fixed-step game loop advances physics substeps.
+
 ## 0.5.0
 
 ### Minor Changes
