@@ -26,7 +26,7 @@ describe('ContainerService', () => {
         count: 0,
       })
       yield* service.drain(id)
-      expect(ContainerServiceLayer()).toBeDefined()
+      expect(ContainerServiceLayer).toBeDefined()
 
       yield* service.reset
       expect(yield* service.snapshot(id)).toBeNull()
