@@ -34,8 +34,9 @@
           pkgs = pkgsFor system;
         in
         {
-          # Node 26 matches the CI runner; the package still supports Node 24.
-          # Corepack follows the `packageManager` field in package.json.
+          # Node 26 matches CI; the engines field allows Node 24. Corepack supplies
+          # pnpm rather than nixpkgs, and package.json's `packageManager` field
+          # controls its version without a second source that can drift.
           #
           # The devShell supplies oxlint and ast-grep to CI and local workflows.
           # Package scripts call these tools without adding them to the package.
