@@ -22,13 +22,10 @@ const run = (command, args, { cwd = root } = {}) => {
   return result.stdout
 }
 
-// Every value the barrel is contracted to export. A name dropping out of this
-// list without a matching README/docs update is a public-API break; a name
-// appearing that is not in this list means the dist build changed the export
-// surface without a review of that change. Regenerate by running
-// `npx tsx` against a temporary script that imports `src/index.ts` and prints
-// `Object.keys(...)` — see the mc-physics `scripts/verify-package.mjs` this
-// file's shape is copied from.
+// Expected public exports. Removing a name may break the API; adding one
+// changes the published API and requires review. Regenerate by running
+// `npx tsx -e 'import * as sim from "./src/index.ts"; console.log(JSON.stringify(Object.keys(sim).sort(), null, 2))'`
+// and comparing the sorted result with this list.
 const expectedExports = [
   'ANVIL_MAX_CUSTOM_NAME_LENGTH',
   'ANVIL_REPAIR_BONUS_RATIO',
@@ -438,14 +435,15 @@ try {
   // same dependency resolution a real downstream `npm install
   // @nerima-games/mc-sim` would go through: npm reads the tarball's own
   // package.json and fetches @nerima-games/mc-kernel, mc-physics, mc-save and
-  // mc-worldgen from GitHub Packages, which — unlike a plain `import()` from
-  // this repo's already-populated node_modules above — needs its own
-  // registry auth. mc-audio's CI hit exactly this as `E401 … authentication
-  // token not provided` in this step (org decision, 2026-08-30 14:15 JST).
+  // mc-worldgen from GitHub Packages, which needs its own registry auth,
+  // unlike a plain `import()` from this repo's already-populated node_modules.
   // NODE_AUTH_TOKEN must be set in the environment this script runs in
-  // (ci.yaml / release.yaml set it; locally: `NODE_AUTH_TOKEN=$(gh auth
-  // token)`). The `.npmrc` holds the literal `${NODE_AUTH_TOKEN}` placeholder
-  // — npm expands env vars in `.npmrc` itself — never the token value.
+  // (ci.yaml / release.yaml set it). Locally, read it from pnpm's global config
+  // before running this script:
+  // `export NODE_AUTH_TOKEN="$(corepack pnpm config get //npm.pkg.github.com/:_authToken --location=global)"`.
+  // The temporary consumer `.npmrc` uses `${NODE_AUTH_TOKEN}` as an environment
+  // placeholder; the repository `.npmrc` configures the registry but stores no
+  // auth token.
   const nodeAuthToken = process.env['NODE_AUTH_TOKEN']
   if (nodeAuthToken === undefined || nodeAuthToken.length === 0) {
     throw new Error(

@@ -34,19 +34,15 @@
           pkgs = pkgsFor system;
         in
         {
-          # Node 24 matches the `engines` field and the CI runner. pnpm comes
-          # from corepack rather than nixpkgs so that the version is decided by
-          # the `packageManager` field in package.json — one source of truth
-          # instead of two that can drift.
+          # Node 26 matches the CI runner; the package still supports Node 24.
+          # Corepack follows the `packageManager` field in package.json.
           #
-          # oxlint is declared in package.json and pnpm-lock.yaml so CI and local
-          # installs resolve the same CLI. The devShell supplies the same command
-          # for editor workflows; packageManager/Corepack remains the install
-          # source of truth.
+          # The devShell supplies oxlint and ast-grep to CI and local workflows.
+          # Package scripts call these tools without adding them to the package.
           default = pkgs.mkShell {
             packages = [
-              pkgs.nodejs_24
-              pkgs.corepack_24
+              pkgs.nodejs_26
+              pkgs.corepack
               pkgs.typescript-language-server
               pkgs.oxlint
               pkgs.ast-grep
