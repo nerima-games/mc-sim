@@ -488,6 +488,41 @@ const expectedExports = [
   'VANILLA_FUEL_RULES',
   'VANILLA_SMELTING_RECIPES',
   'WorldContainerIdSchema',
+  'ACHIEVEMENT_OWNER_REGISTRATION',
+  'ACHIEVEMENT_REPLICATED_OWNER_ID',
+  'AchievementCommitMismatch',
+  'AchievementService',
+  'AchievementServiceLayer',
+  'AchievementStatisticsSchema',
+  'EMPTY_ACHIEVEMENT_STATISTICS',
+  'DEFAULT_WEATHER_REMAINING_SECS',
+  'DamageAmount',
+  'DamageCause',
+  'EntityCount',
+  'EntityHealthPoints',
+  'EntityRosterRepairCount',
+  'EntitySerial',
+  'ExhaustionAmount',
+  'ExperienceAmount',
+  'ExperienceCost',
+  'ExperienceDelta',
+  'ExperienceLevel',
+  'ExperienceProgress',
+  'FoodSaturation',
+  'FoodTimerSecs',
+  'HealthAmount',
+  'HungerPoints',
+  'SaturationModifier',
+  'TotalExperience',
+  'WitherChargeRemainingSecs',
+  'WitherDamageAmount',
+  'WitherExplosionPower',
+  'WitherHealthPoints',
+  'WitherProjectileSpeed',
+  'WitherSummonMaterial',
+  'makeWeatherTransition',
+  'simulationTickToDayFraction',
+  'validateWeatherState',
   'anvilEnchantmentsFromComponent',
   'anyOf',
   'applyCooking',
@@ -510,9 +545,11 @@ const expectedExports = [
   'isAnyOfIngredient',
   'isCraftingIngredient',
   'isCraftingIngredientInput',
+  'makeAchievementService',
   'makeBrewingService',
   'makeBrewingServiceRegistration',
   'makeContainerStorageService',
+  'makeCoreTick',
   'makeFishingService',
   'makeFurnaceService',
   'makeFurnaceServiceRegistration',
@@ -636,13 +673,29 @@ import {
   matchStonecuttingRecipe,
   matchTransmuteRecipe,
   planGrindstone,
+  makeAchievementService,
+  makeCoreTick,
+  makeWeatherTransition,
+  simulationTickToDayFraction,
+  validateWeatherState,
 } from '@nerima-games/mc-sim'
-import type { HeadlessHarnessApi, HeadlessHarnessSession, HeadlessSaveSlice } from '@nerima-games/mc-sim/testing'
+import { HeadlessHarnessSessionFactoryLayer } from '@nerima-games/mc-sim/testing'
 import type {
+  HeadlessHarnessApi,
+  HeadlessHarnessSession,
+  HeadlessHarnessSessionFactoryApi,
+  HeadlessSaveSlice,
+  HeadlessSessionRestoreError,
+} from '@nerima-games/mc-sim/testing'
+import type {
+  AchievementServiceApi,
   AnvilPrimitiveFailure,
   AnyOfIngredient,
   BrewingServiceApi,
   ContainerStorageServiceApi,
+  CoreTickApi,
+  DamageAmount,
+  EntitySerial,
   CookingRecipe,
   FishingServiceApi,
   FurnaceServiceApi,
@@ -655,6 +708,7 @@ import type {
   TntServiceApi,
   TransmuteRecipe,
   WorldContainerId,
+  WitherChargeRemainingSecs,
 } from '@nerima-games/mc-sim'
 
 const frame = advanceFixedStep(initialFixedStepAccumulator(), DeltaTimeSecs(0.01))
@@ -680,6 +734,16 @@ type ItemAndPortSurface = readonly [
   WorldContainerId,
 ]
 const itemAndPortSurface: ItemAndPortSurface | undefined = undefined
+type CoreAndSessionSurface = readonly [
+  AchievementServiceApi,
+  CoreTickApi,
+  HeadlessHarnessSessionFactoryApi,
+  HeadlessSessionRestoreError,
+  DamageAmount,
+  EntitySerial,
+  WitherChargeRemainingSecs,
+]
+const coreAndSessionSurface: CoreAndSessionSurface | undefined = undefined
 
 void [
   frame,
@@ -700,6 +764,13 @@ void [
   matchTransmuteRecipe,
   planGrindstone,
   itemAndPortSurface,
+  coreAndSessionSurface,
+  HeadlessHarnessSessionFactoryLayer,
+  makeAchievementService,
+  makeCoreTick,
+  makeWeatherTransition,
+  simulationTickToDayFraction,
+  validateWeatherState,
 ]
 `,
   )
@@ -733,6 +804,9 @@ void [
     }
     if (testing.HeadlessHarness === undefined || typeof testing.HeadlessHarnessSessionFactory !== 'function') {
       throw new Error('The installed package is missing its testing subpath exports')
+    }
+    if (testing.HeadlessHarnessSessionFactoryLayer === undefined) {
+      throw new Error('The installed package is missing its session factory layer export')
     }
     console.log('verified installed ${packageJson.name}: ' + Object.keys(sim).length + ' exports')
   `

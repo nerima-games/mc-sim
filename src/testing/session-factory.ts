@@ -31,6 +31,7 @@ import {
 } from 'effect'
 import * as Camera from '../domain/camera-pose.js'
 import * as Inventory from '../domain/inventory.js'
+import * as PlayerStorage from '../domain/player-storage.js'
 import { LegacyItemStackSchema } from '../domain/save-data.js'
 import {
   ACHIEVEMENT_OWNER_REGISTRATION,
@@ -97,6 +98,7 @@ type PlayerSliceState = Readonly<{
 
 type SaveRestoreServiceError =
   | Inventory.ItemStackFailure
+  | PlayerStorage.PlayerStorageFailure
   | PlayerServiceInputError
   | WorldCommitCoordinatorError
 

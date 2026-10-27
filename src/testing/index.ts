@@ -16,3 +16,8 @@ export type {
 } from './headless-harness.js'
 export { HeadlessHarnessSessionFactory } from './session-factory.js'
 export type { HeadlessHarnessSession, HeadlessSaveSlice } from './session-factory.js'
+export { HeadlessHarnessSessionFactoryLayer } from './session-factory.js'
+export type {
+  HeadlessHarnessSessionFactoryApi,
+  HeadlessSessionRestoreError,
+} from './session-factory.js'

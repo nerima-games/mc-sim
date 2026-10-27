@@ -29,7 +29,14 @@ import {
   fixedStepParityCases,
 } from './fixtures/effect4-parity/fixed-step.js'
 import { explosionMainParityCases } from './fixtures/effect4-parity/explosion.js'
-import { HeadlessHarness, HeadlessHarnessSessionFactory, HeadlessHarnessTestLayer } from '../src/testing/index.js'
+import {
+  HeadlessHarness,
+  HeadlessHarnessSessionFactory,
+  HeadlessHarnessSessionFactoryLayer,
+  HeadlessHarnessTestLayer,
+} from '../src/testing/index.js'
+import * as PublicTesting from '../src/testing/index.js'
+import type * as PublicTestingTypes from '../src/testing/index.js'
 
 type IntegratedPublicTypeSurface = readonly [
   PublicApiTypes.RecipeGridDimension,
@@ -176,6 +183,52 @@ type IntegratedPublicTypeSurface = readonly [
   PublicApiTypes.TntAdvanceOutcome,
   PublicApiTypes.TntServiceError,
   PublicApiTypes.TntServiceApi,
+  PublicApiTypes.AchievementStatistics,
+  PublicApiTypes.AchievementUnlockRequest,
+  PublicApiTypes.AchievementUnlockEvent,
+  PublicApiTypes.AchievementOwnerCandidate,
+  PublicApiTypes.PendingAchievementUnlock,
+  PublicApiTypes.AchievementUnlockStage,
+  PublicApiTypes.AchievementCommitMismatchReason,
+  PublicApiTypes.AchievementCommitMismatch,
+  PublicApiTypes.AchievementServiceError,
+  PublicApiTypes.AchievementServiceApi,
+  PublicApiTypes.CoreTickStageName,
+  PublicApiTypes.CoreTickStageCandidate,
+  PublicApiTypes.CoreTickStageRecord,
+  PublicApiTypes.CoreTickStageInput,
+  PublicApiTypes.CoreTickStage,
+  PublicApiTypes.CoreTickCoordinator,
+  PublicApiTypes.CoreTickOptions,
+  PublicApiTypes.CoreTickInputError,
+  PublicApiTypes.CoreTickError<never>,
+  PublicApiTypes.CoreTickApi,
+  PublicApiTypes.DamageAmount,
+  PublicApiTypes.DamageCause,
+  PublicApiTypes.EntityCount,
+  PublicApiTypes.EntityHealthPoints,
+  PublicApiTypes.EntityRosterRepairCount,
+  PublicApiTypes.EntitySerial,
+  PublicApiTypes.ExhaustionAmount,
+  PublicApiTypes.ExperienceAmount,
+  PublicApiTypes.ExperienceCost,
+  PublicApiTypes.ExperienceDelta,
+  PublicApiTypes.ExperienceLevel,
+  PublicApiTypes.ExperienceProgress,
+  PublicApiTypes.FoodSaturation,
+  PublicApiTypes.FoodTimerSecs,
+  PublicApiTypes.HealthAmount,
+  PublicApiTypes.HungerPoints,
+  PublicApiTypes.SaturationModifier,
+  PublicApiTypes.TotalExperience,
+  PublicApiTypes.WitherChargeRemainingSecs,
+  PublicApiTypes.WitherDamageAmount,
+  PublicApiTypes.WitherExplosionPower,
+  PublicApiTypes.WitherHealthPoints,
+  PublicApiTypes.WitherProjectileSpeed,
+  PublicApiTypes.WitherSummonMaterial,
+  PublicTestingTypes.HeadlessHarnessSessionFactoryApi,
+  PublicTestingTypes.HeadlessSessionRestoreError,
 ]
 
 const integratedPublicTypeSurface: IntegratedPublicTypeSurface | undefined = undefined
@@ -292,9 +345,46 @@ const integratedPublicRuntimeExports = [
   'WorldContainerIdSchema',
   'worldContainerId',
   'worldContainerIdAt',
+  'ACHIEVEMENT_REPLICATED_OWNER_ID',
+  'AchievementStatisticsSchema',
+  'EMPTY_ACHIEVEMENT_STATISTICS',
+  'ACHIEVEMENT_OWNER_REGISTRATION',
+  'AchievementCommitMismatch',
+  'AchievementService',
+  'makeAchievementService',
+  'AchievementServiceLayer',
+  'makeCoreTick',
+  'DEFAULT_WEATHER_REMAINING_SECS',
+  'DamageAmount',
+  'DamageCause',
+  'EntityCount',
+  'EntityHealthPoints',
+  'EntityRosterRepairCount',
+  'EntitySerial',
+  'ExhaustionAmount',
+  'ExperienceAmount',
+  'ExperienceCost',
+  'ExperienceDelta',
+  'ExperienceLevel',
+  'ExperienceProgress',
+  'FoodSaturation',
+  'FoodTimerSecs',
+  'HealthAmount',
+  'HungerPoints',
+  'SaturationModifier',
+  'TotalExperience',
+  'WitherChargeRemainingSecs',
+  'WitherDamageAmount',
+  'WitherExplosionPower',
+  'WitherHealthPoints',
+  'WitherProjectileSpeed',
+  'WitherSummonMaterial',
+  'makeWeatherTransition',
+  'simulationTickToDayFraction',
+  'validateWeatherState',
 ]
 
-it('publishes the C1-C4 service and schema entry points', () => {
+it('publishes the C1-C5 service and schema entry points', () => {
   expect(typeof migrateSimulationSaveV3).toBe('function')
   expect(IntentSchema).toBeDefined()
   expect(IntentPayloadSchema).toBeDefined()
@@ -310,6 +400,8 @@ it('publishes the C1-C4 service and schema entry points', () => {
   expect(HeadlessHarness).toBeDefined()
   expect(HeadlessHarnessTestLayer).toBeDefined()
   expect(HeadlessHarnessSessionFactory).toBeDefined()
+  expect(HeadlessHarnessSessionFactoryLayer).toBeDefined()
+  expect(PublicTesting).toHaveProperty('HeadlessHarnessSessionFactoryLayer')
 })
 
 it('publishes recipe, item-state, station, and command-port APIs from the root barrel', () => {
