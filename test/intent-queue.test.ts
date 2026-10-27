@@ -95,6 +95,12 @@ describe('IntentQueue schemas', () => {
         throttle: 1.01,
         steering: 0,
       }),
+      localIntent('vehicle-id', 1, {
+        _tag: 'VehicleAction',
+        actor: 'actor-1',
+        vehicle: '   ',
+        action: 'mount',
+      }),
       localIntent('slot', 1, { _tag: 'ApplyEnchantmentOffer', actor: 'actor-1', station: address, offerSlot: 3 }),
       localIntent('direction', 1, {
         _tag: 'ThrowEnderPearl',

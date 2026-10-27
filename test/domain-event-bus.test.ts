@@ -17,6 +17,7 @@ const decodeEvents = () =>
       entity: 'zombie',
       position: { dimension: 'overworld', x: 1.5, y: 64, z: -2 },
       amount: 0.5,
+      cause: 'mob',
     }),
     blockBroken: decodeEvent({
       _tag: 'BlockBroken',
@@ -30,6 +31,7 @@ const decodeEvents = () =>
       tick: 2,
       position: { dimension: 'nether', x: 0, y: 32, z: 0 },
       power: 6,
+      source: 'creeper',
     }),
     levelUp: decodeEvent({
       _tag: 'LevelUp',
@@ -302,6 +304,30 @@ describe('DomainEventBus', () => {
           events.achievementUnlocked,
           events.levelUp,
         ])
+      }).pipe(Effect.provide(DomainEventBusLayer(capacity)))
+    }),
+  )
+
+  it.effect('publishes the kernel 0.10 EntityDied event to active subscribers', () =>
+    Effect.gen(function* () {
+      const capacity = yield* Schema.decodeUnknownEffect(EventSubscriberCapacitySchema)(1)
+      const event = yield* decodeEvent({
+        _tag: 'EntityDied',
+        tick: 5,
+        entity: 'zombie',
+        kind: 'zombie',
+        position: { dimension: 'overworld', x: 1, y: 64, z: -2 },
+        cause: 'fall',
+      })
+
+      yield* Effect.gen(function* () {
+        const bus = yield* DomainEventBus
+        const subscriber = yield* Effect.forkChild(bus.events.pipe(Stream.take(1), Stream.runCollect))
+
+        yield* Effect.yieldNow
+        yield* bus.publish(event)
+
+        expect(yield* Fiber.join(subscriber)).toStrictEqual([event])
       }).pipe(Effect.provide(DomainEventBusLayer(capacity)))
     }),
   )

@@ -46,7 +46,7 @@ const Direction3Schema = Schema.Struct({
   z: Direction3ComponentSchema,
 })
 const TradeOfferIdSchema = Schema.NonEmptyString.pipe(Schema.brand('TradeOfferId'))
-const VehicleIdSchema = Schema.NonEmptyString.pipe(Schema.fromBrand('VehicleId', KernelVehicleId))
+const VehicleIdSchema = Schema.String.pipe(Schema.fromBrand('VehicleId', KernelVehicleId))
 const VehicleControlAxisSchema = Schema.Finite.check(
   Schema.isBetween({ minimum: -1, maximum: 1 }),
 )
