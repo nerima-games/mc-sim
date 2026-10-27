@@ -105,14 +105,21 @@ export type WitherSummonMatch = {
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
-const finite = (value: number, fallback = 0): number => (Number.isFinite(value) ? value : fallback)
+const finite = (value: unknown, fallback = 0): number =>
+  typeof value === 'number' && Number.isFinite(value) ? value : fallback
 
 
 const positionOf = (x: number, y: number, z: number): Position =>
   position(PositionAxis(x), PositionAxis(y), PositionAxis(z))
 const nonNegative = (value: number): number => Math.max(0, finite(value))
-const repairPosition = (value: Position): Position =>
-  positionOf(finite(value?.x), finite(value?.y), finite(value?.z))
+const repairPosition = (value: unknown): Position => {
+  const coordinates = isRecord(value) ? value : {}
+  return positionOf(
+    finite(coordinates['x']),
+    finite(coordinates['y']),
+    finite(coordinates['z']),
+  )
+}
 const invalidNumber = (value: unknown): Brand.BrandError =>
   new Brand.BrandError(new SchemaIssue.InvalidType(Schema.Number.ast, value))
 
@@ -357,8 +364,8 @@ function normaliseWitherState(value: unknown): WitherState {
     phase,
     healthPoints,
     chargeRemainingSecs: phase === 'charging' ? chargeRemainingSecs : WitherChargeRemainingSecs(0),
-    feetPosition: repairPosition(state['feetPosition'] as Position),
-    velocity: repairPosition(state['velocity'] as Position),
+    feetPosition: repairPosition(state['feetPosition']),
+    velocity: repairPosition(state['velocity']),
   }
 }
 
