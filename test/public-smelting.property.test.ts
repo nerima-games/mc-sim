@@ -92,6 +92,31 @@ it('smelting recipe schemas validate canonical and malformed recipes', () => {
   expect(Schema.is(Sim.SmeltingRecipeOptionSchema)(null)).toBe(false)
 })
 
+it('furnace, inventory, and kernel recipe schemas reject omitted or null required fields', () => {
+  const furnace = Result.getOrThrow(Sim.furnaceState())
+  const decodeFurnace = Schema.decodeUnknownResult(Sim.FurnaceStateSchema)
+  for (const field of Object.keys(furnace)) {
+    const withoutField = Object.fromEntries(Object.entries(furnace).filter(([key]) => key !== field))
+    expect(Result.isFailure(decodeFurnace(withoutField))).toBe(true)
+    expect(Result.isFailure(decodeFurnace({ ...furnace, [field]: null }))).toBe(true)
+  }
+
+  const inventory = Result.getOrThrow(Sim.addItem(Sim.emptyInventory(), 'coal', 1)).inventory
+  expect(Schema.is(Sim.InventorySchema)(inventory)).toBe(true)
+  expect(Result.isFailure(Schema.decodeUnknownResult(Sim.InventorySchema)({}))).toBe(true)
+  expect(Result.isFailure(Schema.decodeUnknownResult(Sim.InventorySchema)({ slots: null }))).toBe(true)
+
+  const kernelRecipe = Sim.VANILLA_SMELTING_RECIPES[0]
+  if (kernelRecipe === undefined) throw new Error('vanilla smelting recipe missing')
+  const decodeRecipe = Schema.decodeUnknownResult(Sim.SmeltingRecipeInputSchema)
+  expect(Result.isSuccess(decodeRecipe(kernelRecipe))).toBe(true)
+  for (const field of Object.keys(kernelRecipe)) {
+    const withoutField = Object.fromEntries(Object.entries(kernelRecipe).filter(([key]) => key !== field))
+    expect(Result.isFailure(decodeRecipe(withoutField))).toBe(true)
+    expect(Result.isFailure(decodeRecipe({ ...kernelRecipe, [field]: null }))).toBe(true)
+  }
+})
+
 it('matchSmeltingRecipe returns a schema-valid recipe for valid input', () => {
   fc.assert(fc.property(fc.integer({ min: 1, max: 64 }), (count) => {
     const { input } = validInputs(count)

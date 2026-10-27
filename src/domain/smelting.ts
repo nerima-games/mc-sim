@@ -234,8 +234,23 @@ const isFurnaceState = (value: unknown): value is FurnaceState => {
   return fields.every((field) => Object.hasOwn(value, field)) && Result.isSuccess(furnaceState(value))
 }
 
-export const FurnaceStateSchema: Schema.Schema<FurnaceState> = Schema.declare(isFurnaceState)
-export const InventorySchema: Schema.Schema<Inventory> = Schema.declare(isInventory)
+const CanonicalItemStackSchema: Schema.Codec<ItemStack, ItemStack> = Schema.declare(isItemStack)
+const FurnaceSlotSchema: Schema.Codec<Slot, Slot> = Schema.UndefinedOr(CanonicalItemStackSchema)
+const FixedDurationSecsSchema: Schema.Codec<FixedDurationSecsValue, number> = Schema.Finite.check(
+  Schema.makeFilter((value) => FixedDurationSecs.is(value)),
+).pipe(Schema.brand('FixedDurationSecs'))
+export const FurnaceStateSchema: Schema.Codec<FurnaceState, unknown> = Schema.Struct({
+  station: Schema.Literals(COOKING_STATIONS),
+  input: FurnaceSlotSchema,
+  fuel: FurnaceSlotSchema,
+  output: FurnaceSlotSchema,
+  fuelTimeRemainingSecs: FixedDurationSecsSchema,
+  fuelTimeTotalSecs: FixedDurationSecsSchema,
+  cookProgressSecs: FixedDurationSecsSchema,
+}).check(Schema.makeFilter((state) => state.fuelTimeRemainingSecs <= state.fuelTimeTotalSecs))
+export const InventorySchema: Schema.Codec<Inventory, unknown> = Schema.Struct({
+  slots: Schema.Array(FurnaceSlotSchema),
+})
 export const FurnaceSnapshotValidationResultSchema: Schema.Schema<FurnaceSnapshotValidationResult> = Schema.Union([
   Schema.TaggedStruct('Valid', { state: FurnaceStateSchema }),
   Schema.TaggedStruct('Invalid', { error: FurnaceStateValidationFailureSchema }),
@@ -243,6 +258,12 @@ export const FurnaceSnapshotValidationResultSchema: Schema.Schema<FurnaceSnapsho
   Schema.TaggedStruct('ItemStackFailure', { error: ItemStackFailureSchema }),
 ])
 const ItemTypeSchema: Schema.Schema<ItemType> = Schema.declare(isItemType)
+const RecipeIdSchema: Schema.Codec<RecipeId, string> = Schema.String.check(
+  Schema.makeFilter((value) => RecipeId.is(value)),
+).pipe(Schema.brand('ResourceLocation'))
+const RecipeExperienceSchema: Schema.Codec<RecipeExperience, number> = Schema.Finite.check(
+  Schema.makeFilter((value) => RecipeExperience.is(value)),
+).pipe(Schema.brand('RecipeExperience'))
 const FiniteNumberSchema = Schema.Finite
 const SafePositiveIntegerSchema = Schema.Int.check(Schema.makeFilter((value) => Number.isSafeInteger(value) && value > 0))
 const SafeNonNegativeIntegerSchema = Schema.Int.check(Schema.makeFilter((value) => Number.isSafeInteger(value) && value >= 0))
@@ -371,13 +392,30 @@ const resolveRecipeTable = (
   return Result.all(recipes.map(validateRecipe))
 }
 
-export const SmeltingRecipeInputSchema: Schema.Schema<SmeltingRecipeInput> = Schema.declare(
-  (value: unknown): value is SmeltingRecipeInput => Result.isSuccess(validateRecipe(value)),
-)
-export const SmeltingRecipeOptionSchema: Schema.Schema<SmeltingRecipeInput | undefined> = Schema.declare(
-  (value: unknown): value is SmeltingRecipeInput | undefined =>
-    value === undefined || Result.isSuccess(validateRecipe(value)),
-)
+const StarterSmeltingRecipeSchema: Schema.Schema<StarterSmeltingRecipe> = Schema.Struct({
+  id: Schema.NonEmptyString,
+  input: ItemTypeSchema,
+  output: CanonicalItemStackSchema,
+  cookDurationSecs: Schema.Finite.check(Schema.isGreaterThan(0)),
+  experience: Schema.optionalKey(Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))),
+})
+const KernelSmeltingRecipeSchema: Schema.Schema<KernelSmeltingRecipe> = Schema.Struct({
+  _tag: Schema.Literal('Smelting'),
+  id: RecipeIdSchema,
+  input: ItemTypeSchema,
+  output: CanonicalItemStackSchema,
+  cookTimeSecs: FixedDurationSecsSchema.check(Schema.isGreaterThan(0)),
+  experience: RecipeExperienceSchema,
+  stations: Schema.Array(Schema.Literals(COOKING_STATIONS)).check(Schema.makeFilter((stations) => stations.length > 0)),
+})
+export const SmeltingRecipeInputSchema: Schema.Schema<SmeltingRecipeInput> = Schema.Union([
+  StarterSmeltingRecipeSchema,
+  KernelSmeltingRecipeSchema,
+])
+export const SmeltingRecipeOptionSchema: Schema.Schema<SmeltingRecipeInput | undefined> = Schema.Union([
+  SmeltingRecipeInputSchema,
+  Schema.Undefined,
+])
 
 const recipeInput = (recipe: SmeltingRecipeInput): ItemType => recipe.input
 const recipeOutput = (recipe: SmeltingRecipeInput): ItemStack => recipe.output
@@ -710,12 +748,9 @@ export const advanceFurnace = (
   )
 }
 
-const isRecipeCompletionCount = (value: unknown): value is RecipeCompletionCount =>
-  typeof value === 'number' && Result.isSuccess(RecipeCompletionCount.result(value))
-const RecipeCompletionCountSchema: Schema.Schema<RecipeCompletionCount> = Schema.declare(isRecipeCompletionCount)
-const isRecipeExperience = (value: unknown): value is RecipeExperience =>
-  typeof value === 'number' && Result.isSuccess(RecipeExperience.result(value))
-const RecipeExperienceSchema: Schema.Schema<RecipeExperience> = Schema.declare(isRecipeExperience)
+const RecipeCompletionCountSchema: Schema.Codec<RecipeCompletionCount, number> = Schema.Int.check(
+  Schema.makeFilter((value) => RecipeCompletionCount.is(value)),
+).pipe(Schema.brand('RecipeCompletionCount'))
 
 export const FurnaceOutcomeSchema: Schema.Schema<FurnaceOutcome> = Schema.Struct({
   state: FurnaceStateSchema,
