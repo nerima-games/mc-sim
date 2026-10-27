@@ -689,10 +689,23 @@ it('player, settings, and weather services preserve valid finite snapshots after
   const player = await Effect.runPromise(makePlayerService())
   const settings = await Effect.runPromise(makeSettingsService())
   const weather = await Effect.runPromise(makeWeatherService())
+  const lookSuccessSchema = PublicApplication.PlayerServiceLookSuccessSchema
+  const lookErrorSchema = PublicApplication.PlayerServiceLookErrorSchema
 
   await fc.assert(
     fc.asyncProperty(hostileNumber, async (value) => {
-      await runEffectResult(player.look, [value, value])
+      const poseBeforeLook = await Effect.runPromise(player.pose)
+      const lookOutcome = await assertEffectResult(
+        'PlayerService.look hostile deltas', player.look, [value, value],
+        lookSuccessSchema, lookErrorSchema,
+      )
+      if (Result.isSuccess(lookOutcome)) {
+        const pose = Schema.decodeUnknownSync(lookSuccessSchema)(lookOutcome.success)
+        expect(await Effect.runPromise(player.pose)).toEqual(pose)
+      } else {
+        expect(Schema.decodeUnknownSync(lookErrorSchema)(lookOutcome.failure)).toEqual(lookOutcome.failure)
+        expect(await Effect.runPromise(player.pose)).toEqual(poseBeforeLook)
+      }
 
       await Effect.runPromise(invokeEffect(settings.restore, [value]))
       await Effect.runPromise(settings.snapshot)
@@ -702,6 +715,40 @@ it('player, settings, and weather services preserve valid finite snapshots after
       await Effect.runPromise(invokeEffect(weather.restore, [value]))
       await Effect.runPromise(weather.snapshot)
     }),
+    checks,
+  )
+
+  await fc.assert(
+    fc.asyncProperty(
+      fc.tuple(
+        fc.double({ min: -20, max: 20, noNaN: true }),
+        fc.double({ min: -20, max: 20, noNaN: true }),
+      ),
+      async ([deltaYaw, deltaPitch]) => {
+        const validPlayer = await Effect.runPromise(makePlayerService())
+        const poseBeforeLook = await Effect.runPromise(validPlayer.pose)
+        const outcome = await assertEffectResult(
+          'PlayerService.look valid deltas', validPlayer.look, [deltaYaw, deltaPitch],
+          lookSuccessSchema, lookErrorSchema,
+        )
+        if (Result.isSuccess(outcome)) {
+          const pose = Schema.decodeUnknownSync(lookSuccessSchema)(outcome.success)
+          expect(pose.yawRadians).toBe(poseBeforeLook.yawRadians + deltaYaw)
+          expect(pose.pitchRadians).toBe(
+            Math.max(
+              Camera.PITCH_MIN_RADIANS,
+              Math.min(Camera.PITCH_MAX_RADIANS, poseBeforeLook.pitchRadians + deltaPitch),
+            ),
+          )
+          expect(pose.feetPosition).toEqual(Camera.INITIAL_PLAYER_POSE.feetPosition)
+          expect(await Effect.runPromise(validPlayer.pose)).toEqual(pose)
+        } else {
+          expect(Schema.decodeUnknownSync(lookErrorSchema)(outcome.failure)).toEqual(outcome.failure)
+          expect(await Effect.runPromise(validPlayer.pose)).toEqual(poseBeforeLook)
+        }
+        expect(Result.isSuccess(outcome)).toBe(true)
+      },
+    ),
     checks,
   )
 

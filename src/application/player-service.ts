@@ -14,7 +14,15 @@
  */
 import { Context, Effect, Layer, Ref, Result, Schema } from 'effect'
 import * as Camera from '../domain/camera-pose.js'
-import type { CameraPoseSnapshot, Dimension, DimensionRevision, Position, WorldRevision } from "@nerima-games/mc-kernel"
+import type {
+  AngleRadians,
+  CameraPoseSnapshot,
+  Dimension,
+  DimensionRevision,
+  Position,
+  PositionAxis,
+  WorldRevision,
+} from '@nerima-games/mc-kernel'
 import { ClockPort, DimensionIdSchema, monotonicSecs } from "@nerima-games/mc-kernel"
 import {
   PLAYER_REPLICATED_OWNER_ID,
@@ -167,6 +175,39 @@ export const PlayerServiceInputErrorSchema: Schema.Codec<PlayerServiceInputError
     'dimension',
   ]),
 })
+
+const PlayerServiceLookPositionAxisSchema: Schema.Codec<PositionAxis, number> =
+  Schema.Finite.pipe(Schema.brand('PositionAxis'))
+
+const PlayerServiceLookAngleRadiansSchema: Schema.Codec<AngleRadians, number> =
+  Schema.Finite.pipe(Schema.brand('AngleRadians'))
+
+const PlayerServiceLookFeetPositionSchema: Schema.Struct<{
+  readonly x: typeof PlayerServiceLookPositionAxisSchema
+  readonly y: typeof PlayerServiceLookPositionAxisSchema
+  readonly z: typeof PlayerServiceLookPositionAxisSchema
+}> = Schema.Struct({
+  x: PlayerServiceLookPositionAxisSchema,
+  y: PlayerServiceLookPositionAxisSchema,
+  z: PlayerServiceLookPositionAxisSchema,
+})
+
+type PlayerServiceLookSuccessEncoded = Readonly<{
+  feetPosition: Readonly<{ x: number; y: number; z: number }>
+  yawRadians: number
+  pitchRadians: number
+}>
+
+/** Success contract for `look`, retaining the kernel's finite coordinate and angle brands. */
+export const PlayerServiceLookSuccessSchema: Schema.Codec<Camera.PlayerPose, PlayerServiceLookSuccessEncoded> = Schema.Struct({
+  feetPosition: PlayerServiceLookFeetPositionSchema,
+  yawRadians: PlayerServiceLookAngleRadiansSchema,
+  pitchRadians: PlayerServiceLookAngleRadiansSchema,
+})
+
+/** Declared failure contract for `look`. */
+export const PlayerServiceLookErrorSchema: Schema.Codec<PlayerServiceInputError, PlayerServiceInputError> =
+  PlayerServiceInputErrorSchema
 
 const inputError = (
   reason: PlayerServiceInputError['reason'],
