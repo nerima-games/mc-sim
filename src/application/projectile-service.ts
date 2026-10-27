@@ -9,6 +9,7 @@ import {
   SimulationTickSchema,
   Velocity3Schema,
   WorldPositionSchema,
+  WorldRevisionSchema,
   type AngleRadians,
   type BlockAddress,
   type Dimension,
@@ -24,14 +25,17 @@ import { Context, Effect, Layer, Result, Schema } from 'effect'
 import type { YieldableError } from 'effect/Cause'
 import {
   WorldCommitCoordinator,
+  WorldCommitCoordinatorErrorSchema,
   type WorldCommitCoordinatorError,
 } from './world-commit-coordinator.js'
 import {
   makeReplicatedOwnerId,
+  replicatedSnapshotSchema,
   type ReplicatedOwnerId,
   type ReplicatedSnapshot,
 } from './replicated-state.js'
 import { DomainEventBus } from './domain-event-bus.js'
+import { SchemaErrorSchema } from '../schema-errors.js'
 
 const PositionAxisSchema = Schema.Finite.pipe(Schema.brand('PositionAxis'))
 const FixedDurationSecsSchema = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)).pipe(
@@ -51,7 +55,7 @@ const PhysicsVelocitySchema = Schema.Struct({
   z: BlocksPerSecondSchema,
 })
 
-const ProjectileHitSchema = Schema.Union([
+const ProjectileHitSchema: Schema.Codec<Physics.ProjectileHit, unknown> = Schema.Union([
   Schema.Struct({
     kind: Schema.Literals(['block']),
     point: PhysicsPositionSchema,
@@ -134,6 +138,17 @@ export const ProjectileServiceSnapshotSchema: Schema.Codec<
   projectiles: Schema.Array(ProjectileRecordSchema),
 })
 
+export const ProjectileServiceSnapshotSuccessSchema: Schema.Codec<
+  ReplicatedSnapshot<typeof ProjectileServiceSnapshotSchema>,
+  unknown
+> = replicatedSnapshotSchema(ProjectileServiceSnapshotSchema)
+
+export type ProjectileServiceSnapshotError = Schema.SchemaError | WorldCommitCoordinatorError
+export const ProjectileServiceSnapshotErrorSchema: Schema.Codec<ProjectileServiceSnapshotError, unknown> = Schema.Union([
+  SchemaErrorSchema,
+  WorldCommitCoordinatorErrorSchema,
+])
+
 export const PROJECTILE_REPLICATED_OWNER_ID: ReplicatedOwnerId = makeReplicatedOwnerId('projectile')
 
 export const INITIAL_PROJECTILE_SERVICE_SNAPSHOT: ProjectileServiceSnapshot = {
@@ -169,6 +184,9 @@ const ProjectileServiceFailureBase: new (
   })
 
 export class ProjectileServiceFailure extends ProjectileServiceFailureBase {}
+
+export const ProjectileServiceFailureSchema: Schema.Codec<ProjectileServiceFailure, unknown> =
+  Schema.instanceOf(ProjectileServiceFailure)
 
 export type ProjectileLaunchRequest = Readonly<{
   projectileId: ProjectileId
@@ -208,6 +226,12 @@ export type EnderPearlImpact = Readonly<{
   hit: Physics.ProjectileHit
 }>
 
+export const EnderPearlImpactSchema: Schema.Codec<EnderPearlImpact, unknown> = Schema.Struct({
+  actor: EntityIdSchema,
+  destination: WorldPositionSchema,
+  hit: ProjectileHitSchema,
+})
+
 export type ProjectileStepOutcome = Readonly<{
   projectile: Physics.Projectile
   hit?: Physics.ProjectileHit
@@ -215,10 +239,28 @@ export type ProjectileStepOutcome = Readonly<{
   revision: WorldRevision
 }>
 
+export const ProjectileLaunchOutcomeSchema: Schema.Codec<ProjectileLaunchOutcome, unknown> = Schema.Struct({
+  projectile: ProjectileSchema,
+  revision: WorldRevisionSchema,
+})
+
+export const ProjectileStepOutcomeSchema: Schema.Codec<ProjectileStepOutcome, unknown> = Schema.Struct({
+  projectile: ProjectileSchema,
+  hit: Schema.optionalKey(ProjectileHitSchema),
+  enderPearlImpact: Schema.optionalKey(EnderPearlImpactSchema),
+  revision: WorldRevisionSchema,
+})
+
 export type ProjectileServiceError =
   | Schema.SchemaError
   | ProjectileServiceFailure
   | WorldCommitCoordinatorError
+
+export const ProjectileServiceErrorSchema: Schema.Codec<ProjectileServiceError, unknown> = Schema.Union([
+  SchemaErrorSchema,
+  ProjectileServiceFailureSchema,
+  WorldCommitCoordinatorErrorSchema,
+])
 
 export type ProjectileServiceApi = Readonly<{
   readonly snapshot: Effect.Effect<

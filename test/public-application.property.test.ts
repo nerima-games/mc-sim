@@ -8,10 +8,13 @@ import {
   StoragePort,
 } from '@nerima-games/mc-save'
 import {
+  AngleRadians,
   ChunkAxis,
+  DeltaTimeSecs,
   DIMENSIONS,
   EntityIdSchema,
   DimensionRevisionSchema,
+  PositionAxis,
   ProjectileIdSchema,
   SaveSliceIdSchema,
   SaveVersionSchema,
@@ -19,7 +22,9 @@ import {
   SimulationTickSchema,
   WorldIdSchema,
   chunkCoord,
+  position,
 } from '@nerima-games/mc-kernel'
+import * as Physics from '@nerima-games/mc-physics'
 import type { Chunk } from '@nerima-games/mc-worldgen'
 import * as PublicApplication from '../src/index.js'
 import * as Camera from '../src/domain/camera-pose.js'
@@ -1937,7 +1942,8 @@ it('fishing, projectile, and TNT coordinators return typed outcomes for hostile 
       const fishing = yield* Effect.result(PublicApplication.makeFishingService(fishOwner))
       const projectiles = yield* PublicApplication.makeProjectileService()
       const tnt = yield* PublicApplication.makeTntService()
-      return { fishing, projectiles, tnt }
+      const coordinator = yield* PublicApplication.WorldCommitCoordinator
+      return { fishing, projectiles, tnt, coordinator }
     }).pipe(Effect.provide(environment)),
   )
   if (Result.isFailure(services.fishing)) {
@@ -2051,6 +2057,146 @@ it('fishing, projectile, and TNT coordinators return typed outcomes for hostile 
     checks,
   )
 
+  const captureProjectileOutcome = async (
+    propertyName: string,
+    effect: Effect.Effect<unknown, unknown, never>,
+    successSchema: Schema.ConstraintDecoder<unknown>,
+    failureSchema: Schema.ConstraintDecoder<unknown>,
+  ): Promise<Result.Result<unknown, unknown>> => {
+    const outcome = await Effect.runPromise(Effect.result(effect))
+    const schema = Result.isFailure(outcome) ? failureSchema : successSchema
+    const value = Result.isFailure(outcome) ? outcome.failure : outcome.success
+    expect(Schema.is(schema)(value), propertyName + ' runtime Schema').toBe(true)
+    const decoded = Schema.decodeUnknownResult(schema, { onExcessProperty: 'error' })(value)
+    expect(decoded._tag, propertyName + ' decoding').toBe('Success')
+    return outcome
+  }
+
+  const requireProjectileSuccess = <A>(
+    outcome: Result.Result<unknown, unknown>,
+    schema: Schema.ConstraintDecoder<A>,
+  ): A => {
+    if (Result.isFailure(outcome)) throw outcome.failure
+    const decoded = Schema.decodeUnknownResult(schema, { onExcessProperty: 'error' })(outcome.success)
+    expect(decoded._tag, 'Projectile success decoding').toBe('Success')
+    if (Result.isFailure(decoded)) throw decoded.failure
+    return decoded.success
+  }
+
+  const captureProjectileSnapshot = async (propertyName: string) => {
+    const outcome = await captureProjectileOutcome(
+      propertyName,
+      services.projectiles.snapshot,
+      PublicApplication.ProjectileServiceSnapshotSuccessSchema,
+      PublicApplication.ProjectileServiceSnapshotErrorSchema,
+    )
+    const snapshot = requireProjectileSuccess(
+      outcome,
+      PublicApplication.ProjectileServiceSnapshotSuccessSchema,
+    )
+    const ids = snapshot.state.projectiles.map((projectile) => projectile.id)
+    expect(new Set(ids).size).toBe(ids.length)
+    return snapshot
+  }
+
+  const assertProjectileOperation = async (
+    propertyName: string,
+    effect: Effect.Effect<unknown, unknown, never>,
+    successSchema: Schema.ConstraintDecoder<unknown>,
+  ) => {
+    const before = await captureProjectileSnapshot(propertyName + ' snapshot before')
+    const outcome = await captureProjectileOutcome(
+      propertyName,
+      effect,
+      successSchema,
+      PublicApplication.ProjectileServiceErrorSchema,
+    )
+    const after = await captureProjectileSnapshot(propertyName + ' snapshot after')
+    if (Result.isFailure(outcome)) expect(after).toEqual(before)
+    return { outcome, before, after }
+  }
+
+  const projectileBounds: Physics.AABB = {
+    minX: PositionAxis(-100),
+    minY: PositionAxis(-100),
+    minZ: PositionAxis(-100),
+    maxX: PositionAxis(100),
+    maxY: PositionAxis(100),
+    maxZ: PositionAxis(100),
+  }
+  const emptyProjectileWorld: Physics.ProjectileWorld = {
+    blockBounds: () => [],
+    bounds: projectileBounds,
+    entities: [],
+    isInWater: () => false,
+  }
+
+  expect((await captureProjectileSnapshot('ProjectileService.snapshot initial')).state.projectiles).toEqual([])
+
+  let validProjectileTrial = 0
+  await fc.assert(
+    fc.asyncProperty(fc.integer({ min: 1, max: 1_000_000 }), async (index) => {
+      const trialId = validProjectileTrial++
+      const projectileId = Schema.decodeUnknownSync(ProjectileIdSchema)(`property-projectile-${index}-${trialId}`)
+      const shooter = Schema.decodeUnknownSync(EntityIdSchema)(`property-shooter-${index}-${trialId}`)
+      const tick = Schema.decodeUnknownSync(SimulationTickSchema)(index)
+      const expectedRevision = await Effect.runPromise(services.coordinator.revision)
+      const expectedDimensionRevision = await Effect.runPromise(services.coordinator.dimensionRevision('overworld'))
+      const launched = await assertProjectileOperation(
+        'ProjectileService.launch valid input',
+        invokeEffect(services.projectiles.launch, [{
+          projectileId,
+          dimension: 'overworld',
+          shooter,
+          tick,
+          expectedRevision,
+          expectedDimensionRevision,
+          kind: 'projectile',
+          position: position(PositionAxis(0), PositionAxis(0), PositionAxis(0)),
+          yawRadians: AngleRadians(0),
+          pitchRadians: AngleRadians(0),
+          speed: Physics.BlocksPerSecond(30),
+          profile: PublicApplication.SNOWBALL_PROFILE,
+        }]),
+        PublicApplication.ProjectileLaunchOutcomeSchema,
+      )
+      expect(Result.isSuccess(launched.outcome), JSON.stringify(launched.outcome)).toBe(true)
+      if (Result.isSuccess(launched.outcome)) {
+        const launch = requireProjectileSuccess(launched.outcome, PublicApplication.ProjectileLaunchOutcomeSchema)
+        expect(launch.projectile.state).toBe('flying')
+        expect(launched.after.revision).toEqual(launch.revision)
+        expect(launched.after.state.projectiles).toHaveLength(launched.before.state.projectiles.length + 1)
+        expect(launched.after.state.projectiles.find(({ id }) => id === projectileId)?.projectile).toEqual(launch.projectile)
+      }
+
+      const stepRevision = await Effect.runPromise(services.coordinator.revision)
+      const stepDimensionRevision = await Effect.runPromise(services.coordinator.dimensionRevision('overworld'))
+      const stepped = await assertProjectileOperation(
+        'ProjectileService.step valid input',
+        invokeEffect(services.projectiles.step, [{
+          projectileId,
+          tick,
+          expectedRevision: stepRevision,
+          expectedDimensionRevision: stepDimensionRevision,
+          deltaTime: DeltaTimeSecs(0.01),
+          world: emptyProjectileWorld,
+          blockAddressOfHit: () => undefined,
+        }]),
+        PublicApplication.ProjectileStepOutcomeSchema,
+      )
+      expect(Result.isSuccess(stepped.outcome), JSON.stringify(stepped.outcome)).toBe(true)
+      if (Result.isSuccess(stepped.outcome)) {
+        const step = requireProjectileSuccess(stepped.outcome, PublicApplication.ProjectileStepOutcomeSchema)
+        expect(step.hit).toBeUndefined()
+        expect(step.enderPearlImpact).toBeUndefined()
+        expect(stepped.after.revision).toEqual(step.revision)
+        expect(stepped.after.state.projectiles).toHaveLength(stepped.before.state.projectiles.length)
+        expect(stepped.after.state.projectiles.find(({ id }) => id === projectileId)?.projectile).toEqual(step.projectile)
+      }
+    }),
+    checks,
+  )
+
   await fc.assert(
     fc.asyncProperty(fc.tuple(hostileValue, hostileNumber), async ([value, amount]) => {
       const cast = await assertFishingOperation(
@@ -2080,7 +2226,7 @@ it('fishing, projectile, and TNT coordinators return typed outcomes for hostile 
         expect(reel.outcome.success).toMatchObject({ _tag: expect.stringMatching(/^(NoBite|Caught)$/) })
       }
 
-      const launch = {
+      const launchRequest = {
         projectileId: value,
         dimension: value,
         shooter: value,
@@ -2094,16 +2240,46 @@ it('fishing, projectile, and TNT coordinators return typed outcomes for hostile 
         speed: amount,
         profile: value,
       }
-      await runEffectResult(services.projectiles.launch, [launch])
-      await runEffectResult(services.projectiles.step, [{
-        projectileId: value,
-        tick: amount,
-        expectedRevision: amount,
-        expectedDimensionRevision: amount,
-        deltaTime: amount,
-        world: {},
-        blockAddressOfHit: () => undefined,
-      }])
+      const projectileLaunch = await assertProjectileOperation(
+        'ProjectileService.launch hostile input',
+        invokeEffect(services.projectiles.launch, [launchRequest]),
+        PublicApplication.ProjectileLaunchOutcomeSchema,
+      )
+      if (Result.isSuccess(projectileLaunch.outcome)) {
+        const launch = requireProjectileSuccess(
+          projectileLaunch.outcome,
+          PublicApplication.ProjectileLaunchOutcomeSchema,
+        )
+        expect(projectileLaunch.after.state.projectiles).toHaveLength(
+          projectileLaunch.before.state.projectiles.length + 1,
+        )
+        expect(projectileLaunch.after.state.projectiles.find(({ id }) => id === value)?.projectile)
+          .toEqual(launch.projectile)
+      }
+      const projectileStep = await assertProjectileOperation(
+        'ProjectileService.step hostile input',
+        invokeEffect(services.projectiles.step, [{
+          projectileId: value,
+          tick: amount,
+          expectedRevision: amount,
+          expectedDimensionRevision: amount,
+          deltaTime: amount,
+          world: emptyProjectileWorld,
+          blockAddressOfHit: () => undefined,
+        }]),
+        PublicApplication.ProjectileStepOutcomeSchema,
+      )
+      if (Result.isSuccess(projectileStep.outcome)) {
+        const step = requireProjectileSuccess(
+          projectileStep.outcome,
+          PublicApplication.ProjectileStepOutcomeSchema,
+        )
+        expect(projectileStep.after.state.projectiles).toHaveLength(
+          projectileStep.before.state.projectiles.length,
+        )
+        expect(projectileStep.after.state.projectiles.find(({ id }) => id === value)?.projectile)
+          .toEqual(step.projectile)
+      }
 
       await runEffectResult(services.tnt.prime, [{
         id: value,
