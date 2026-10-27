@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect, Result } from 'effect'
-import type { ItemType } from '@nerima-games/mc-kernel'
+import { itemComponents, MaxStackSize, type ItemType } from '@nerima-games/mc-kernel'
 import { afterEach, vi } from 'vitest'
 import { makeInventoryService } from '../src/application/inventory-service.js'
 import * as Container from '../src/domain/container-storage.js'
@@ -74,25 +74,27 @@ const stackThatFailsOnComponentSnapshot = (
   return { ...original, components }
 }
 
-const oversizedStackThatFailsOnSpill = (item: ItemType): Inv.ItemStack => {
+const oversizedStackThatFailsOnSpill = (
+  item: ItemType,
+  failOnEnumeration: number | undefined = 7,
+): Inv.ItemStack => {
   const original = stack(item, 2)
-  const components = { ...original.components }
-  Object.defineProperty(components, 'maxStackSize', {
-    value: 1,
-    enumerable: true,
-    configurable: true,
-    writable: true,
-  })
+  const components = requireSuccess(itemComponents(item, { maxStackSize: MaxStackSize(1) }))
   let enumerations = 0
   const unstableComponents = new Proxy(components, {
     ownKeys(target) {
       enumerations += 1
-      if (enumerations === 7) throw new Error('overflow stack snapshot failed')
+      if (enumerations === failOnEnumeration) throw new Error('overflow stack snapshot failed')
       return Reflect.ownKeys(target)
     },
   })
   return { ...original, components: unstableComponents }
 }
+
+const oversizedStack = (item: ItemType): Inv.ItemStack => ({
+  ...stack(item, 2),
+  components: requireSuccess(itemComponents(item, { maxStackSize: MaxStackSize(1) })),
+})
 
 const expectHostileFailure = (failure: unknown): void => {
   expect(failure).toMatchObject({ _tag: 'ItemValidationFailure', reason: 'hostile-input' })
@@ -101,6 +103,11 @@ const expectHostileFailure = (failure: unknown): void => {
 const expectResultFailure = <A, E>(result: Result.Result<A, E>): void => {
   expect(Result.isFailure(result)).toBe(true)
   if (Result.isFailure(result)) expectHostileFailure(result.failure)
+}
+
+const expectBrandFailure = <A, E>(result: Result.Result<A, E>): void => {
+  expect(Result.isFailure(result)).toBe(true)
+  if (Result.isFailure(result)) expect(result.failure).toMatchObject({ _tag: 'BrandError' })
 }
 
 const setSlot = (inventory: Inv.Inventory, index: number, item: Inv.ItemStack): void => {
@@ -173,8 +180,17 @@ describe('inventory migration constructor-failure edges', () => {
     extendedSlots.push(stackThatFailsOnComponentSnapshot('stone', 1, 3))
     expectResultFailure(Inv.normaliseInventory({ slots: extendedSlots }))
 
+    const extendedValidSlots = [...Inv.emptyInventory().slots, stack('stone')]
+    kernelFailures.itemStackFailureCountdown = 5
+    expectBrandFailure(Inv.normaliseInventory({ slots: extendedValidSlots }))
+
     expectResultFailure(Inv.normaliseInventory({
       slots: [oversizedStackThatFailsOnSpill('oak_planks')],
+    }))
+
+    kernelFailures.itemStackFailureCountdown = 9
+    expectBrandFailure(Inv.normaliseInventory({
+      slots: [oversizedStack('oak_planks')],
     }))
   })
 

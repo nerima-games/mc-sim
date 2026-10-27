@@ -107,6 +107,18 @@ describe('clickInventory', () => {
     expect(result.result).toStrictEqual({ _tag: 'Swapped', carried: stored })
     expect(result.inventory.slots[0]).toStrictEqual(carried)
   })
+
+  it('returns InvalidCount for a carried stack with an invalid count', () => {
+    const inventory = emptyInventory()
+    const result = clickInventory(inventory, {
+      _tag: 'LeftClick',
+      slotIndex: 0,
+      carried: { ...itemStack('stone', 1), count: 0 },
+    } as unknown as InventoryClick)
+
+    expect(result.result._tag).toBe('InvalidCount')
+    expect(result.inventory).toBe(inventory)
+  })
 })
 
 describe('legacy stack fallback', () => {
@@ -130,6 +142,15 @@ describe('legacy stack fallback', () => {
       _tag: 'Failure', failure: { _tag: 'ItemValidationFailure', reason: 'invalid-type' },
     })
     expect(original).toStrictEqual(emptyInventory())
+  })
+
+  it('rejects explicitly undefined components when normalising a saved slot', () => {
+    expect(normaliseInventoryResult({
+      slots: [{ item: 'stone', count: 1, components: undefined }],
+    })).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'ItemValidationFailure', field: 'components', reason: 'invalid-type' },
+    })
   })
 
   it('propagates malformed stored components from every inventory transition', () => {
@@ -682,6 +703,16 @@ describe('REGRESSION: InventoryService.restore is the guarded path, and reports 
 })
 
 describe('InventoryService slot operations', () => {
+  it.effect('rejects a non-record click envelope as a typed service failure', () =>
+    Effect.gen(function* () {
+      const service = yield* makeInventoryService()
+      const failure = yield* Effect.flip(service.click(null as never))
+
+      expect(failure).toMatchObject({ _tag: 'ItemValidationFailure', field: 'click' })
+      expect(yield* service.snapshot).toStrictEqual(emptyInventory())
+    }),
+  )
+
   it.effect('gets and sets a slot without losing tool durability', () =>
     Effect.gen(function* () {
       const service = yield* makeInventoryService()
