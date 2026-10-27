@@ -25,6 +25,20 @@ const hostileValue: fc.Arbitrary<unknown> = fc.oneof(
   ),
 )
 
+const timeStateInput: fc.Arbitrary<unknown> = fc.oneof(
+  fc.constant(Time.INITIAL_TIME_STATE),
+  fc.record({ ticks: hostileValue, dayLengthTicks: fc.constant(Time.INITIAL_TIME_STATE.dayLengthTicks) }),
+)
+
+const statisticsInput: fc.Arbitrary<unknown> = fc.oneof(
+  fc.constant(Statistics.EMPTY_STATISTICS),
+  fc.constantFrom<unknown>(null, undefined, Number.NaN),
+  fc.record({
+    counters: fc.dictionary(fc.string(), hostileValue),
+    unlocked: fc.array(hostileValue),
+  }),
+)
+
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
@@ -67,10 +81,10 @@ const isValidTimeState = (value: unknown): boolean => invoke(Time.isValidTimeSta
 
 const checks = { numRuns: 100 }
 
-it('time advance returns a typed failure or a valid finite clock for arbitrary deltas', () => {
+it('time advance returns a typed failure or a valid finite clock for arbitrary ticks and deltas', () => {
   fc.assert(
-    fc.property(hostileValue, (delta) => {
-      const result = invoke(Time.advance, [Time.INITIAL_TIME_STATE, delta])
+    fc.property(fc.tuple(timeStateInput, hostileValue), ([state, delta]) => {
+      const result = invoke(Time.advance, [state, delta])
       expect(isSafeResult(result, isValidTimeState)).toBe(true)
     }),
     checks,
@@ -96,14 +110,22 @@ it('TimeService advance preserves a valid snapshot for arbitrary deltas', async 
   )
 })
 
-it('statistics record returns a typed failure or a valid finite snapshot for arbitrary keys and amounts', () => {
+it('statistics record returns a typed failure or a valid finite snapshot for arbitrary state, keys, and amounts', () => {
   fc.assert(
-    fc.property(fc.tuple(hostileValue, hostileValue), ([key, amount]) => {
-      const result = invoke(Statistics.record, [Statistics.EMPTY_STATISTICS, key, amount])
+    fc.property(fc.tuple(statisticsInput, hostileValue, hostileValue), ([statistics, key, amount]) => {
+      const result = invoke(Statistics.record, [statistics, key, amount])
       expect(isSafeResult(result, Statistics.isValidStatistics)).toBe(true)
     }),
     checks,
   )
+})
+
+it('statistics zero records are a no-op', () => {
+  const zeroRecord = invoke(Statistics.record, [Statistics.EMPTY_STATISTICS, 'test.zero', 0])
+  expect(isRecord(zeroRecord) && zeroRecord['_tag'] === 'Success').toBe(true)
+  if (isRecord(zeroRecord) && zeroRecord['_tag'] === 'Success') {
+    expect(successValue(zeroRecord)).toBe(Statistics.EMPTY_STATISTICS)
+  }
 })
 
 it('StatisticsService record returns a typed failure or preserves a valid finite snapshot', async () => {

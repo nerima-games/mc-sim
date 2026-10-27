@@ -26,6 +26,10 @@ describe('counting', () => {
   it.effect('a counter starts at zero and is never undefined', () =>
     Effect.sync(() => {
       expect(counterOf(EMPTY_STATISTICS, 'blocks.mined')).toBe(0)
+      expect(Reflect.apply(counterOf, undefined, [{ counters: { 'blocks.mined': Number.POSITIVE_INFINITY }, unlocked: [] }, 'blocks.mined'])).toBe(0)
+
+      const incremented = recorded(EMPTY_STATISTICS, 'blocks.mined', 1)
+      expect(counterOf(incremented, 'blocks.mined')).toBe(1)
     }),
   )
 

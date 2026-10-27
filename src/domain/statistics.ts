@@ -90,8 +90,10 @@ const isValidStatisticsRecord = (statistics: unknown): boolean => {
  */
 
 /** How many times something has been counted. Never `undefined`, never negative. */
-export const counterOf = (statistics: Statistics, key: StatisticKey): number =>
-  Number.isFinite(statistics['counters'][key]) ? Math.max(0, statistics['counters'][key] ?? 0) : 0
+export const counterOf = (statistics: Statistics, key: StatisticKey): number => {
+  const count = statistics['counters'][key]
+  return typeof count === 'number' && Number.isFinite(count) ? Math.max(0, count) : 0
+}
 
 /**
  * Count something. `amount` defaults to one, which is the overwhelming case.
