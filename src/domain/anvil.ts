@@ -187,6 +187,8 @@ export {
   nextAnvilRepairCost,
 } from './anvil-planning.js'
 
+export type { AnvilRepairCostFailure } from './anvil-planning.js'
+
 export type {
   AnvilRuleSetCompilation,
   CompiledAnvilEnchantmentRule,

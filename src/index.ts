@@ -136,6 +136,7 @@ export type {
   AnvilItemPayload,
   AnvilPlan,
   AnvilPrimitiveFailure,
+  AnvilRepairCostFailure,
   AnvilRepairMaterialRule,
   AnvilRejectionReason,
   AnvilRuleSet,

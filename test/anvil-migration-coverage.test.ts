@@ -346,7 +346,7 @@ describe('anvil rule compilation and input validation', () => {
 })
 
 describe('anvil transformations', () => {
-  it('starts from the left input and saturates repair-cost growth', () => {
+  it('starts from the left input and reports invalid or overflowing repair-cost growth', () => {
     const empty = initialTransformationOf(canonicalPayload('iron_sword'))
     const damaged = initialTransformationOf(canonicalPayload('iron_sword', {
       durability: { current: 25, max: 100 },
@@ -362,8 +362,17 @@ describe('anvil transformations', () => {
     })
     expect(damaged.durability).toStrictEqual({ current: 25, max: 100 })
     expect(damaged.enchantments).toStrictEqual([enchantment('minecraft:sharpness')])
-    expect(nextAnvilRepairCost(4)).toBe(9)
-    expect(nextAnvilRepairCost(Number.MAX_SAFE_INTEGER)).toBe(Number.MAX_SAFE_INTEGER)
+    expect(unwrap(nextAnvilRepairCost(4))).toBe(9)
+    expect(unwrap(nextAnvilRepairCost(Math.floor((Number.MAX_SAFE_INTEGER - 1) / 2))))
+      .toBe(Number.MAX_SAFE_INTEGER)
+    expect(nextAnvilRepairCost(Number.MAX_SAFE_INTEGER)).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'AnvilRepairCostOverflow' },
+    })
+    expect(nextAnvilRepairCost(-1)).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'InvalidAnvilRepairCost' },
+    })
   })
 
   it('repairs matching items, rejects incompatible durability, and leaves full items unchanged', () => {
