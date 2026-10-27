@@ -1,0 +1,220 @@
+import { SimulationTick, type SimulationTick as SimulationTickValue } from '@nerima-games/mc-kernel'
+import { Brand, Effect, Ref, Result, Semaphore } from 'effect'
+import type { DomainEvent, DomainEventBusApi } from './domain-event-bus.js'
+import type { QueuedIntent } from './intent-queue.js'
+import type {
+  DimensionRevisionExpectation,
+  ReplicatedOwnerCandidate,
+  WorldCommitCoordinatorApi,
+  WorldCommitCoordinatorError,
+  WorldCommitRequest,
+} from './world-commit-coordinator.js'
+import type { ReplicatedOwnerChange, ReplicatedWorldDelta } from './replicated-state.js'
+
+export type CoreTickStageName = 'intentsAndRules' | 'stations' | 'environment' | 'entities'
+
+export type CoreTickStageCandidate<StageError = never> = Readonly<{
+  changes: ReadonlyArray<ReplicatedOwnerCandidate>
+  expectedDimensions: ReadonlyArray<DimensionRevisionExpectation>
+  events: ReadonlyArray<DomainEvent>
+  restore?: (delta: ReplicatedWorldDelta<ReplicatedOwnerChange>) => Effect.Effect<void, StageError>
+  value?: unknown
+}>
+
+export type CoreTickStageRecord<StageError = never> = Readonly<{
+  name: CoreTickStageName
+  candidate: CoreTickStageCandidate<StageError>
+}>
+
+export type CoreTickStageInput<StageError = never> = Readonly<{
+  tick: SimulationTickValue
+  ready: ReadonlyArray<QueuedIntent>
+  expectedRevision: WorldCommitRequest['expectedRevision']
+  previous: ReadonlyArray<CoreTickStageRecord<StageError>>
+}>
+
+export type CoreTickStage<StageError = never> = (
+  input: CoreTickStageInput<StageError>,
+) => Effect.Effect<CoreTickStageCandidate<StageError>, StageError>
+
+export type CoreTickCoordinator = Readonly<{
+  revision: WorldCommitCoordinatorApi['revision']
+  commit: WorldCommitCoordinatorApi['commit']
+}>
+
+export type CoreTickOptions<StageError = never> = Readonly<{
+  coordinator: CoreTickCoordinator
+  publish: DomainEventBusApi['publish']
+  stages: Readonly<{
+    intentsAndRules: CoreTickStage<StageError>
+    stations: CoreTickStage<StageError>
+    environment: CoreTickStage<StageError>
+    entities: CoreTickStage<StageError>
+  }>
+  initialTick?: SimulationTickValue
+}>
+
+export type CoreTickInputError =
+  | Readonly<{
+      _tag: 'CoreTickInvalidTick'
+      value: unknown
+      reason: Brand.BrandError
+    }>
+  | Readonly<{
+      _tag: 'CoreTickTickOverflow'
+      current: SimulationTickValue
+      reason: Brand.BrandError
+    }>
+  | Readonly<{
+      _tag: 'CoreTickOutOfOrder'
+      expected: SimulationTickValue
+      actual: SimulationTickValue
+    }>
+
+export type CoreTickError<StageError> =
+  | CoreTickInputError
+  | StageError
+  | WorldCommitCoordinatorError
+
+export type CoreTickApi<StageError = never> = Readonly<{
+  runTick: (
+    tick: SimulationTickValue,
+    ready: ReadonlyArray<QueuedIntent>,
+  ) => Effect.Effect<void, CoreTickError<StageError>>
+}>
+
+type PendingTick = Readonly<{
+  ready: ReadonlyArray<QueuedIntent>
+}>
+
+type TickValidation =
+  | Readonly<{ _tag: 'Valid'; tick: SimulationTickValue }>
+  | CoreTickInputError
+
+const stageOrder: ReadonlyArray<CoreTickStageName> = [
+  'intentsAndRules',
+  'stations',
+  'environment',
+  'entities',
+]
+
+const validateTick = (
+  current: SimulationTickValue,
+  input: SimulationTickValue,
+): TickValidation => {
+  const nextResult = SimulationTick.result(current + 1)
+  if (Result.isFailure(nextResult)) {
+    return {
+      _tag: 'CoreTickTickOverflow',
+      current,
+      reason: nextResult.failure,
+    }
+  }
+
+  const inputResult = SimulationTick.result(input)
+  if (Result.isFailure(inputResult)) {
+    return {
+      _tag: 'CoreTickInvalidTick',
+      value: input,
+      reason: inputResult.failure,
+    }
+  }
+
+  return inputResult.success === nextResult.success
+    ? { _tag: 'Valid', tick: inputResult.success }
+    : {
+        _tag: 'CoreTickOutOfOrder',
+        expected: nextResult.success,
+        actual: inputResult.success,
+      }
+}
+
+const mergeReady = (
+  retained: ReadonlyArray<QueuedIntent>,
+  incoming: ReadonlyArray<QueuedIntent>,
+): ReadonlyArray<QueuedIntent> => {
+  const bySequence = new Map<number, QueuedIntent>()
+  for (const queued of retained) bySequence.set(queued.sequence, queued)
+  for (const queued of incoming) {
+    if (!bySequence.has(queued.sequence)) bySequence.set(queued.sequence, queued)
+  }
+  return [...bySequence.values()].sort((left, right) => {
+    const tickOrder = left.intent.targetTick - right.intent.targetTick
+    return tickOrder !== 0 ? tickOrder : left.sequence - right.sequence
+  })
+}
+
+const hasChanges = (
+  changes: ReadonlyArray<ReplicatedOwnerCandidate>,
+): changes is readonly [ReplicatedOwnerCandidate, ...ReadonlyArray<ReplicatedOwnerCandidate>] =>
+  changes.length > 0
+
+export const makeCoreTick = <StageError = never>(
+  options: CoreTickOptions<StageError>,
+): Effect.Effect<CoreTickApi<StageError>, CoreTickInputError> => {
+  const initialTick = options.initialTick ?? SimulationTick(0)
+  const validInitialTick = SimulationTick.result(initialTick)
+  if (Result.isFailure(validInitialTick)) {
+    return Effect.fail({
+      _tag: 'CoreTickInvalidTick',
+      value: initialTick,
+      reason: validInitialTick.failure,
+    })
+  }
+
+  return Effect.gen(function* () {
+    const currentTick = yield* Ref.make(validInitialTick.success)
+    const pendingTick = yield* Ref.make<PendingTick | undefined>(undefined)
+    const semaphore = yield* Semaphore.make(1)
+
+    const runTick: CoreTickApi<StageError>['runTick'] = (tick, ready) =>
+      Effect.uninterruptibleMask((restore) =>
+        semaphore.withPermit(Effect.gen(function* () {
+          const current = yield* Ref.get(currentTick)
+          const validation = validateTick(current, tick)
+          if (validation._tag !== 'Valid') return yield* Effect.fail(validation)
+
+          const pending = yield* Ref.get(pendingTick)
+          const retainedReady = pending === undefined ? [] : pending.ready
+          const acceptedReady = mergeReady(retainedReady, ready)
+          yield* Ref.set(pendingTick, { ready: acceptedReady })
+
+          const expectedRevision = yield* options.coordinator.revision
+          const previous: Array<CoreTickStageRecord<StageError>> = []
+          for (const name of stageOrder) {
+            const candidate = yield* restore(options.stages[name]({
+              tick: validation.tick,
+              ready: acceptedReady,
+              expectedRevision,
+              previous,
+            }))
+            previous.push({ name, candidate })
+          }
+
+          const changes = previous.flatMap(({ candidate }) => candidate.changes)
+          if (hasChanges(changes)) {
+            const delta = yield* options.coordinator.commit({
+              expectedRevision,
+              expectedDimensions: previous.flatMap(({ candidate }) => candidate.expectedDimensions),
+              changes,
+            })
+
+            for (const { candidate } of previous) {
+              if (candidate.restore !== undefined) yield* candidate.restore(delta)
+            }
+
+            for (const { candidate } of previous) {
+              for (const event of candidate.events) yield* options.publish(event)
+            }
+          }
+
+          yield* Ref.set(currentTick, validation.tick)
+          yield* Ref.set(pendingTick, undefined)
+        })),
+      )
+
+    return {
+      runTick,
+    }
+  })
+}
