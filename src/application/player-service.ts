@@ -60,9 +60,9 @@ export type PlayerServiceApi = {
    */
   readonly dimension: Effect.Effect<Dimension>
   /** Rotate the view. Pitch is clamped; yaw is not wrapped. */
-  readonly look: (deltaYaw: number, deltaPitch: number) => Effect.Effect<Camera.PlayerPose>
+  readonly look: (deltaYaw: number, deltaPitch: number) => Effect.Effect<Camera.PlayerPose, PlayerServiceInputError>
   /** Move to a feet-origin position. The name carries the coordinate convention. */
-  readonly moveTo: (feetPosition: Position) => Effect.Effect<void>
+  readonly moveTo: (feetPosition: Position) => Effect.Effect<void, PlayerServiceInputError>
   /**
    * Record that the player is now in another world.
    *
@@ -104,11 +104,10 @@ export type PlayerServiceApi = {
    * for every caller that does not know to pass it, which is every caller
    * written before this member existed.
    *
-   * No error channel, deliberately, for the reason `VitalsServiceApi.restore`
-   * has none: failing a world load over a recoverable field turns a repairable
-   * save into an unopenable one.
+   * Invalid runtime values fail before replacing the current state, so a bad
+   * save cannot poison later camera snapshots.
    */
-  readonly restore: (pose: Camera.PlayerPose, dimension: Dimension) => Effect.Effect<void>
+  readonly restore: (pose: Camera.PlayerPose, dimension: Dimension) => Effect.Effect<void, PlayerServiceInputError>
   /**
    * Return to the fresh-world pose AND dimension. Required for re-entrant world
    * loads.
@@ -126,33 +125,86 @@ const PlayerServiceBase: Context.ServiceClass<PlayerService, '@nerima-games/mc-s
 
 export class PlayerService extends PlayerServiceBase {}
 
+export type PlayerServiceInputError = Readonly<{
+  _tag: 'PlayerServiceInputError'
+  reason: 'invalid-look' | 'invalid-pose' | 'invalid-position'
+  field: 'pose' | 'deltaYaw' | 'deltaPitch' | 'yawRadians' | 'pitchRadians' | 'feetPosition' | 'feetPosition.x' | 'feetPosition.y' | 'feetPosition.z'
+}>
+
+const inputError = (
+  reason: PlayerServiceInputError['reason'],
+  field: PlayerServiceInputError['field'],
+): PlayerServiceInputError => ({ _tag: 'PlayerServiceInputError', reason, field })
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const invalidPositionField = (feetPosition: unknown): PlayerServiceInputError['field'] | undefined => {
+  if (!isRecord(feetPosition)) return 'feetPosition'
+  if (typeof feetPosition['x'] !== 'number' || !Number.isFinite(feetPosition['x'])) return 'feetPosition.x'
+  if (typeof feetPosition['y'] !== 'number' || !Number.isFinite(feetPosition['y'])) return 'feetPosition.y'
+  if (typeof feetPosition['z'] !== 'number' || !Number.isFinite(feetPosition['z'])) return 'feetPosition.z'
+  return undefined
+}
+
+const invalidPoseError = (
+  pose: unknown,
+  reason: PlayerServiceInputError['reason'],
+): PlayerServiceInputError | undefined => {
+  if (!isRecord(pose)) return inputError(reason, 'pose')
+  if (typeof pose['yawRadians'] !== 'number' || !Number.isFinite(pose['yawRadians'])) return inputError(reason, 'yawRadians')
+  if (typeof pose['pitchRadians'] !== 'number' || !Number.isFinite(pose['pitchRadians'])) return inputError(reason, 'pitchRadians')
+  const positionField = invalidPositionField(pose['feetPosition'])
+  return positionField === undefined ? undefined : inputError(reason, positionField)
+}
+
 export const makePlayerService = (
   initial: Camera.PlayerPose = Camera.INITIAL_PLAYER_POSE,
   initialDimension: Dimension = INITIAL_PLAYER_DIMENSION,
-): Effect.Effect<PlayerServiceApi> =>
-  Effect.map(Ref.make<PlayerState>({ pose: initial, dimension: initialDimension }), (state) => ({
-    pose: Effect.map(Ref.get(state), (current) => current.pose),
-    dimension: Effect.map(Ref.get(state), (current) => current.dimension),
-    look: (deltaYaw, deltaPitch) =>
-      Ref.modify(state, (current) => {
+): Effect.Effect<PlayerServiceApi, PlayerServiceInputError> =>
+  Effect.gen(function* () {
+    const initialError = invalidPoseError(initial, 'invalid-pose')
+    if (initialError !== undefined) return yield* Effect.fail(initialError)
+
+    const state = yield* Ref.make<PlayerState>({ pose: initial, dimension: initialDimension })
+    const modify = <A>(f: (current: PlayerState) => readonly [Effect.Effect<A, PlayerServiceInputError>, PlayerState]) =>
+      Ref.modify(state, f).pipe(Effect.flatten)
+
+    return {
+      pose: Effect.map(Ref.get(state), (current) => current.pose),
+      dimension: Effect.map(Ref.get(state), (current) => current.dimension),
+      look: (deltaYaw, deltaPitch) => modify((current) => {
+        if (!Number.isFinite(deltaYaw))
+          return [Effect.fail(inputError('invalid-look', 'deltaYaw')), current]
+        if (!Number.isFinite(deltaPitch))
+          return [Effect.fail(inputError('invalid-look', 'deltaPitch')), current]
+
         const next = Camera.applyLook(current.pose, deltaYaw, deltaPitch)
-        return [next, { ...current, pose: next }]
+        const nextError = invalidPoseError(next, 'invalid-look')
+        return nextError === undefined
+          ? [Effect.succeed(next), { ...current, pose: next }]
+          : [Effect.fail(nextError), current]
       }),
-    moveTo: (feetPosition) =>
-      Ref.update(state, (current) => ({
-        ...current,
-        pose: Camera.withFeetPosition(current.pose, feetPosition),
-      })),
-    setDimension: (dimension) => Ref.update(state, (current) => ({ ...current, dimension })),
-    cameraPose: Effect.flatMap(monotonicSecs, (now) =>
-      Effect.map(Ref.get(state), (current) => Camera.cameraPoseOf(current.pose, now)),
-    ),
-    restore: (pose, dimension) => Ref.set(state, { pose, dimension }),
-    reset: Ref.set(state, { pose: Camera.INITIAL_PLAYER_POSE, dimension: INITIAL_PLAYER_DIMENSION }),
-  }))
+      moveTo: (feetPosition) => modify((current) => {
+        const positionField = invalidPositionField(feetPosition)
+        if (positionField !== undefined)
+          return [Effect.fail(inputError('invalid-position', positionField)), current]
+        return [Effect.void, { ...current, pose: Camera.withFeetPosition(current.pose, feetPosition) }]
+      }),
+      setDimension: (dimension) => Ref.update(state, (current) => ({ ...current, dimension })),
+      cameraPose: Effect.flatMap(monotonicSecs, (now) =>
+        Effect.map(Ref.get(state), (current) => Camera.cameraPoseOf(current.pose, now)),
+      ),
+      restore: (pose, dimension) => {
+        const error = invalidPoseError(pose, 'invalid-pose')
+        return error === undefined ? Ref.set(state, { pose, dimension }) : Effect.fail(error)
+      },
+      reset: Ref.set(state, { pose: Camera.INITIAL_PLAYER_POSE, dimension: INITIAL_PLAYER_DIMENSION }),
+    }
+  })
 
 export const PlayerServiceLayer = (
   initial: Camera.PlayerPose = Camera.INITIAL_PLAYER_POSE,
   initialDimension: Dimension = INITIAL_PLAYER_DIMENSION,
-): Layer.Layer<PlayerService> =>
+): Layer.Layer<PlayerService, PlayerServiceInputError> =>
   Layer.effect(PlayerService, makePlayerService(initial, initialDimension))

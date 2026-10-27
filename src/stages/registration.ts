@@ -107,7 +107,7 @@ import {
 import { InventoryService, InventoryServiceLayer } from '../application/inventory-service.js'
 import type { ItemStackFailure } from '../domain/inventory.js'
 import { CropService, CropServiceLayer, type CropServiceApi } from '../application/crop-service.js'
-import { PlayerService, PlayerServiceLayer, type PlayerServiceApi } from '../application/player-service.js'
+import { PlayerService, PlayerServiceLayer, type PlayerServiceApi, type PlayerServiceInputError } from '../application/player-service.js'
 import { TimeService, TimeServiceLayer, type TimeServiceApi } from '../application/time-service.js'
 import {
   PositionAxis,
@@ -269,7 +269,7 @@ export const simStages = (
         const resolved = yield* Ref.getAndSet(state.resolvedFeetPosition, Option.none<Position>())
         if (Option.isSome(resolved)) {
           yield* resetLandingImpact(state)
-          yield* player.moveTo(resolved.value)
+          yield* Effect.orDie(player.moveTo(resolved.value))
           return
         }
 
@@ -372,13 +372,13 @@ export const simStages = (
           Effect.fromResult(footOfCentre(resolvedBody.body.y, PLAYER_HALF_HEIGHT)),
         )
         const positionY = yield* Effect.orDie(Effect.fromResult(PositionAxis.result(feetY)))
-        yield* player.moveTo(
+        yield* Effect.orDie(player.moveTo(
           position(
             resolvedBody.body.x,
             positionY,
             resolvedBody.body.z,
           ),
-        )
+        ))
       }),
   },
 ]
@@ -459,7 +459,7 @@ export const makeSimStagesWithPhysics = (
  */
 export const simModule: GameModule<
   InventoryService | PlayerService | TimeService | CropService,
-  ItemStackFailure,
+  ItemStackFailure | PlayerServiceInputError,
   never,
   PlayerService | TimeService | CropService
 > = {

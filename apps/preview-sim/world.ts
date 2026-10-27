@@ -57,7 +57,7 @@ import { TestClock } from 'effect/testing'
 import { startAutoSaveDaemon, type AutoSaveStatus } from '../../src/application/autosave'
 import { makeGameLoop, type FrameHandler } from '../../src/application/game-loop'
 import { makeInventoryService } from '../../src/application/inventory-service'
-import { makePlayerService } from '../../src/application/player-service'
+import { makePlayerService, type PlayerServiceInputError } from '../../src/application/player-service'
 import { makeSettingsService } from '../../src/application/settings-service'
 import { makeStatisticsService } from '../../src/application/statistics-service'
 import { makeTimeService } from '../../src/application/time-service'
@@ -395,7 +395,7 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
   /** Movement and inventory actions. `undefined` means "not one of mine". */
   const applyMovementAction = (
     action: ScriptedAction,
-  ): Effect.Effect<void, ItemStackFailure> | undefined => {
+  ): Effect.Effect<void, ItemStackFailure | PlayerServiceInputError> | undefined => {
     switch (action.kind) {
       case 'look':
         return guarded('look', player.look(action.deltaYaw, action.deltaPitch))
@@ -734,7 +734,7 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
     }
   }
 
-  const applyAction = (action: ScriptedAction): Effect.Effect<void, ItemStackFailure> =>
+  const applyAction = (action: ScriptedAction): Effect.Effect<void, ItemStackFailure | PlayerServiceInputError> =>
     applyMovementAction(action) ??
     applyTimeAction(action) ??
     applyRestoreAction(action) ??

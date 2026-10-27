@@ -159,3 +159,138 @@ describe('REGRESSION: reset is a whole fresh world', () => {
     }),
   )
 })
+
+describe('REGRESSION: invalid runtime poses do not enter player state', () => {
+  it.effect('look rejects non-finite deltas and leaves the pose unchanged', () =>
+    Effect.gen(function* () {
+      const player = yield* makePlayerService()
+      const before = yield* player.pose
+
+      const yawFailure = yield* Effect.flip(player.look(Number.NaN, 0))
+      const pitchFailure = yield* Effect.flip(player.look(0, Number.POSITIVE_INFINITY))
+
+      expect(yawFailure).toStrictEqual({
+        _tag: 'PlayerServiceInputError',
+        reason: 'invalid-look',
+        field: 'deltaYaw',
+      })
+      expect(pitchFailure).toStrictEqual({
+        _tag: 'PlayerServiceInputError',
+        reason: 'invalid-look',
+        field: 'deltaPitch',
+      })
+      expect(yield* player.pose).toStrictEqual(before)
+    }),
+  )
+
+  it.effect('look rejects a finite delta whose accumulated yaw overflows', () =>
+    Effect.gen(function* () {
+      const player = yield* makePlayerService()
+      yield* player.look(Number.MAX_VALUE, 0)
+      const before = yield* player.pose
+
+      const failure = yield* Effect.flip(player.look(Number.MAX_VALUE, 0))
+
+      expect(failure).toStrictEqual({
+        _tag: 'PlayerServiceInputError',
+        reason: 'invalid-look',
+        field: 'yawRadians',
+      })
+      expect(yield* player.pose).toStrictEqual(before)
+    }),
+  )
+
+  it.effect('construction rejects a non-finite initial pose', () =>
+    Effect.gen(function* () {
+      const failure = yield* Effect.flip(makePlayerService({ ...INITIAL_PLAYER_POSE, pitchRadians: Number.NaN }))
+
+      expect(failure).toStrictEqual({
+        _tag: 'PlayerServiceInputError',
+        reason: 'invalid-pose',
+        field: 'pitchRadians',
+      })
+    }),
+  )
+
+  it.effect('construction rejects a missing runtime pose', () =>
+    Effect.gen(function* () {
+      const failure = yield* Effect.flip(makePlayerService(JSON.parse('null')))
+
+      expect(failure).toStrictEqual({
+        _tag: 'PlayerServiceInputError',
+        reason: 'invalid-pose',
+        field: 'pose',
+      })
+    }),
+  )
+
+  it.effect('restore rejects a non-finite pose and preserves pose and dimension', () =>
+    Effect.gen(function* () {
+      const player = yield* makePlayerService()
+      yield* player.setDimension('nether')
+      const beforePose = yield* player.pose
+      const beforeDimension = yield* player.dimension
+
+      const missingFailure = yield* Effect.flip(player.restore(JSON.parse('null'), 'end'))
+      const failure = yield* Effect.flip(
+        player.restore({ ...INITIAL_PLAYER_POSE, yawRadians: Number.POSITIVE_INFINITY }, 'end'),
+      )
+
+      expect(missingFailure).toStrictEqual({
+        _tag: 'PlayerServiceInputError',
+        reason: 'invalid-pose',
+        field: 'pose',
+      })
+      expect(failure).toStrictEqual({
+        _tag: 'PlayerServiceInputError',
+        reason: 'invalid-pose',
+        field: 'yawRadians',
+      })
+      expect(yield* player.pose).toStrictEqual(beforePose)
+      expect(yield* player.dimension).toBe(beforeDimension)
+    }),
+  )
+
+  it.effect('restore rejects a non-finite feet coordinate', () =>
+    Effect.gen(function* () {
+      const player = yield* makePlayerService()
+      const malformedPose = JSON.parse('{"feetPosition":{"x":0,"y":null,"z":0},"yawRadians":0,"pitchRadians":0}')
+
+      const failure = yield* Effect.flip(player.restore(malformedPose, 'nether'))
+
+      expect(failure).toStrictEqual({
+        _tag: 'PlayerServiceInputError',
+        reason: 'invalid-pose',
+        field: 'feetPosition.y',
+      })
+      expect(yield* player.pose).toStrictEqual(INITIAL_PLAYER_POSE)
+      expect(yield* player.dimension).toBe('overworld')
+    }),
+  )
+
+  it.effect('moveTo rejects each non-finite runtime coordinate and preserves the pose', () =>
+    Effect.gen(function* () {
+      const player = yield* makePlayerService()
+      const before = yield* player.pose
+      const invalidPositions = [
+        JSON.parse('null'),
+        JSON.parse('{"x":null,"y":0,"z":0}'),
+        JSON.parse('{"x":0,"y":null,"z":0}'),
+        JSON.parse('{"x":0,"y":0,"z":null}'),
+      ]
+
+      const failures = yield* Effect.forEach(invalidPositions, (invalidPosition) =>
+        Effect.flip(player.moveTo(invalidPosition)),
+      )
+
+      expect(failures.map((failure) => failure.field)).toStrictEqual([
+        'feetPosition',
+        'feetPosition.x',
+        'feetPosition.y',
+        'feetPosition.z',
+      ])
+      expect(failures.every((failure) => failure.reason === 'invalid-position')).toBe(true)
+      expect(yield* player.pose).toStrictEqual(before)
+    }),
+  )
+})
