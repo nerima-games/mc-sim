@@ -35,7 +35,7 @@ export const makeWeatherService = (
       Effect.flatMap(Effect.fromResult(Weather.validateWeatherState(candidate)), (next) =>
         Ref.modify(state, () => [next, next]),
       ),
-    restore: (next) => Ref.set(state, Weather.normaliseWeatherState(next)),
+    restore: (next) => Effect.map(Ref.set(state, Weather.normaliseWeatherState(next)), () => undefined),
     reset: Ref.set(state, Weather.INITIAL_WEATHER_STATE),
   }))
 

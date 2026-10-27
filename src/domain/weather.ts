@@ -1,4 +1,4 @@
-import { Result } from 'effect'
+import { Result, Schema } from 'effect'
 
 /** Weather kinds shared by persistence, gameplay, and presentation boundaries. */
 export const WEATHERS = ['clear', 'rain', 'thunder'] as const
@@ -11,11 +11,42 @@ export type WeatherState = {
   readonly remainingSecs: number
 }
 
+type WeatherStateEncoded = Readonly<{
+  weather: Weather
+  remainingSecs: number
+}>
+
+export const WeatherSchema: Schema.Codec<Weather, Weather> = Schema.Literals(WEATHERS)
+
+const PositiveFiniteDurationSchema: Schema.Codec<number, number> = Schema.Finite.check(Schema.isGreaterThan(0))
+
+/** Strict success schema shared by weather state boundaries. */
+export const WeatherStateSchema: Schema.Codec<WeatherState, WeatherStateEncoded> = Schema.Struct({
+  weather: WeatherSchema,
+  remainingSecs: PositiveFiniteDurationSchema,
+})
+
 export type WeatherValidationFailure = Readonly<{
   readonly _tag: 'WeatherValidationFailure'
   readonly field: 'state' | 'weather' | 'remainingSecs'
   readonly reason: 'not-object' | 'unknown-weather' | 'invalid-duration'
 }>
+
+/** Failure variants emitted by weather validation and transitions. */
+export const WeatherValidationFailureSchema: Schema.Codec<WeatherValidationFailure, WeatherValidationFailure> = Schema.Union([
+  Schema.TaggedStruct('WeatherValidationFailure', {
+    field: Schema.Literal('state'),
+    reason: Schema.Literal('not-object'),
+  }),
+  Schema.TaggedStruct('WeatherValidationFailure', {
+    field: Schema.Literal('weather'),
+    reason: Schema.Literal('unknown-weather'),
+  }),
+  Schema.TaggedStruct('WeatherValidationFailure', {
+    field: Schema.Literal('remainingSecs'),
+    reason: Schema.Literal('invalid-duration'),
+  }),
+])
 
 export const DEFAULT_WEATHER_REMAINING_SECS = 600
 

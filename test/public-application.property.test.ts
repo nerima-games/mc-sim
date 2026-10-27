@@ -691,6 +691,12 @@ it('player, settings, and weather services preserve valid finite snapshots after
   const weather = await Effect.runPromise(makeWeatherService())
   const lookSuccessSchema = PublicApplication.PlayerServiceLookSuccessSchema
   const lookErrorSchema = PublicApplication.PlayerServiceLookErrorSchema
+  const weatherSuccessSchema = PublicApplication.WeatherStateSchema
+  const weatherErrorSchema = PublicApplication.WeatherValidationFailureSchema
+  const decodeWeatherState = (value: unknown) =>
+    Schema.decodeUnknownSync(weatherSuccessSchema, { onExcessProperty: 'error' })(value)
+  const decodeWeatherError = (value: unknown) =>
+    Schema.decodeUnknownSync(weatherErrorSchema, { onExcessProperty: 'error' })(value)
 
   await fc.assert(
     fc.asyncProperty(hostileNumber, async (value) => {
@@ -710,11 +716,123 @@ it('player, settings, and weather services preserve valid finite snapshots after
       await Effect.runPromise(invokeEffect(settings.restore, [value]))
       await Effect.runPromise(settings.snapshot)
 
-      await runEffectResult(weather.candidateTransition, [value, value])
-      await runEffectResult(weather.applyTransition, [value])
-      await Effect.runPromise(invokeEffect(weather.restore, [value]))
-      await Effect.runPromise(weather.snapshot)
+      const stateBeforeCandidate = decodeWeatherState(await Effect.runPromise(weather.snapshot))
+      const candidateOutcome = await assertEffectResult(
+        'WeatherService.candidateTransition hostile input', weather.candidateTransition, [value, value],
+        weatherSuccessSchema, weatherErrorSchema,
+      )
+      if (Result.isSuccess(candidateOutcome)) {
+        decodeWeatherState(candidateOutcome.success)
+      } else {
+        expect(decodeWeatherError(candidateOutcome.failure)).toEqual({
+          _tag: 'WeatherValidationFailure', field: 'weather', reason: 'unknown-weather',
+        })
+      }
+      expect(Result.isFailure(candidateOutcome)).toBe(true)
+      expect(decodeWeatherState(await Effect.runPromise(weather.snapshot))).toEqual(stateBeforeCandidate)
+
+      const stateBeforeApply = decodeWeatherState(await Effect.runPromise(weather.snapshot))
+      const applyOutcome = await assertEffectResult(
+        'WeatherService.applyTransition hostile input', weather.applyTransition, [value],
+        weatherSuccessSchema, weatherErrorSchema,
+      )
+      if (Result.isSuccess(applyOutcome)) {
+        decodeWeatherState(applyOutcome.success)
+      } else {
+        expect(decodeWeatherError(applyOutcome.failure)).toEqual({
+          _tag: 'WeatherValidationFailure', field: 'state', reason: 'not-object',
+        })
+      }
+      expect(Result.isFailure(applyOutcome)).toBe(true)
+      expect(decodeWeatherState(await Effect.runPromise(weather.snapshot))).toEqual(stateBeforeApply)
+
+      const restoreOutcome = await assertEffectResult(
+        'WeatherService.restore normalized hostile input', weather.restore, [value],
+        Schema.Undefined, Schema.Never,
+      )
+      if (Result.isSuccess(restoreOutcome)) {
+        expect(Schema.decodeUnknownSync(Schema.Undefined)(restoreOutcome.success)).toBeUndefined()
+      }
+      expect(Result.isSuccess(restoreOutcome)).toBe(true)
+      expect(decodeWeatherState(await Effect.runPromise(weather.snapshot))).toEqual(
+        PublicApplication.normaliseWeatherState(value),
+      )
     }),
+    checks,
+  )
+
+  await fc.assert(
+    fc.asyncProperty(
+      fc.tuple(
+        fc.constantFrom(...PublicApplication.WEATHERS),
+        fc.integer({ min: 1, max: 1_000_000 }).map((tenths) => tenths / 10),
+      ),
+      async ([nextWeather, remainingSecs]) => {
+        const service = await Effect.runPromise(makeWeatherService({ weather: 'thunder', remainingSecs: 17 }))
+        const stateBeforeCandidate = decodeWeatherState(await Effect.runPromise(service.snapshot))
+        const candidateOutcome = await assertEffectResult(
+          'WeatherService.candidateTransition valid input', service.candidateTransition, [nextWeather, remainingSecs],
+          weatherSuccessSchema, weatherErrorSchema,
+        )
+        let candidate: unknown
+        if (Result.isSuccess(candidateOutcome)) {
+          candidate = decodeWeatherState(candidateOutcome.success)
+          expect(candidate).toEqual({ weather: nextWeather, remainingSecs })
+        } else {
+          expect(decodeWeatherError(candidateOutcome.failure)).toBeDefined()
+        }
+        expect(Result.isSuccess(candidateOutcome)).toBe(true)
+        expect(decodeWeatherState(await Effect.runPromise(service.snapshot))).toEqual(stateBeforeCandidate)
+
+        if (Result.isSuccess(candidateOutcome)) {
+          const applyOutcome = await assertEffectResult(
+            'WeatherService.applyTransition valid candidate', service.applyTransition, [candidate],
+            weatherSuccessSchema, weatherErrorSchema,
+          )
+          if (Result.isSuccess(applyOutcome)) {
+            const applied = decodeWeatherState(applyOutcome.success)
+            expect(applied).toEqual(candidate)
+            expect(decodeWeatherState(await Effect.runPromise(service.snapshot))).toEqual(applied)
+          } else {
+            expect(decodeWeatherError(applyOutcome.failure)).toBeDefined()
+            expect(decodeWeatherState(await Effect.runPromise(service.snapshot))).toEqual(stateBeforeCandidate)
+          }
+          expect(Result.isSuccess(applyOutcome)).toBe(true)
+        }
+      },
+    ),
+    checks,
+  )
+
+  await fc.assert(
+    fc.asyncProperty(
+      fc.constantFrom<unknown>(
+        null,
+        undefined,
+        false,
+        [],
+        {},
+        { weather: 'snow', remainingSecs: 30 },
+        { weather: 'rain', remainingSecs: 0 },
+        { weather: 'thunder', remainingSecs: Number.NaN },
+        { weather: 'clear', remainingSecs: Number.POSITIVE_INFINITY },
+      ),
+      async (invalidTransition) => {
+        const service = await Effect.runPromise(makeWeatherService({ weather: 'thunder', remainingSecs: 17 }))
+        const stateBefore = decodeWeatherState(await Effect.runPromise(service.snapshot))
+        const outcome = await assertEffectResult(
+          'WeatherService.applyTransition invalid state', service.applyTransition, [invalidTransition],
+          weatherSuccessSchema, weatherErrorSchema,
+        )
+        if (Result.isSuccess(outcome)) {
+          decodeWeatherState(outcome.success)
+        } else {
+          decodeWeatherError(outcome.failure)
+        }
+        expect(Result.isFailure(outcome)).toBe(true)
+        expect(decodeWeatherState(await Effect.runPromise(service.snapshot))).toEqual(stateBefore)
+      },
+    ),
     checks,
   )
 
