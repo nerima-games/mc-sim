@@ -519,6 +519,22 @@ describe('experience as the HUD reads it', () => {
     }),
   )
 
+  it.effect('falls back to zero when total experience changes after validation', () =>
+    Effect.sync(() => {
+      let totalExperienceReads = 0
+      const vitals = {
+        ...SPAWN_VITALS,
+        get totalExperience() {
+          totalExperienceReads += 1
+          return totalExperienceReads <= 3 ? 11 : Number.POSITIVE_INFINITY
+        },
+      } as Vitals
+
+      expect(experienceProgress(vitals)).toBe(0)
+      expect(totalExperienceReads).toBe(4)
+    }),
+  )
+
   it.effect('the bar fills within a level and resets at the boundary', () =>
     Effect.sync(() => {
       // Level 1 costs 9 (2*1+7), so 7 + 4 is a bar a bit under half.
