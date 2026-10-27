@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Effect, Result } from 'effect'
+import { Effect, Result, Schema } from 'effect'
+import { BlockAddressSchema } from '@nerima-games/mc-kernel'
 import { makeInventoryService } from '../src/application/inventory-service'
 import {
   CHEST_CONTAINER_CAPACITY,
@@ -15,6 +16,7 @@ import {
   snapshotContainerStorage,
   transferContainerItem,
   validateContainerStorageSnapshot,
+  worldContainerIdAt,
 } from '../src/domain/container-storage'
 import { itemStack as itemStackResult, type ItemStack } from '../src/domain/inventory'
 import { emptyPlayerStorage } from '../src/domain/player-storage'
@@ -40,6 +42,16 @@ describe('container storage domain', () => {
     const duplicate = createContainer(created.storage, id)
     expect(duplicate.result._tag).toBe('AlreadyExists')
     expect(duplicate.storage).toBe(created.storage)
+  })
+
+  it('derives a branded world container id from a kernel block address', () => {
+    const address = Schema.decodeUnknownSync(BlockAddressSchema)({
+      dimension: 'nether',
+      position: { x: 12, y: 64, z: -7 },
+    })
+    const id = worldContainerIdAt(address)
+
+    expect(id).toBe('nether:12,64,-7')
   })
 
   it('strictly rejects duplicate ids and malformed slots', () => {

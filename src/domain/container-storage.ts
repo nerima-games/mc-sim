@@ -1,7 +1,7 @@
 import * as Eq from './equipment.js'
 import * as Inv from './inventory.js'
-import { Result } from 'effect'
-import { isItemStack, isItemType, itemStacksCanMerge, maxStackCountForStack } from '@nerima-games/mc-kernel'
+import { Brand, Result, Schema } from 'effect'
+import { isItemStack, isItemType, itemStacksCanMerge, maxStackCountForStack, type BlockAddress } from '@nerima-games/mc-kernel'
 import * as Player from './player-storage.js'
 
 export type ContainerKind = 'chest' | 'shulker_box' | 'dispenser' | 'dropper' | 'hopper'
@@ -12,6 +12,13 @@ export const HOPPER_CONTAINER_CAPACITY = 5 as const
 export const CONTAINER_STORAGE_SNAPSHOT_VERSION = 3 as const
 
 export type ContainerId = string
+
+export type WorldContainerId = string & Brand.Brand<'WorldContainerId'>
+export const WorldContainerIdSchema: Schema.Codec<WorldContainerId, string> =
+  Schema.NonEmptyString.pipe(Schema.brand('WorldContainerId'))
+
+export const worldContainerId = (value: string): Result.Result<WorldContainerId, Schema.SchemaError> =>
+  Schema.decodeUnknownResult(WorldContainerIdSchema)(value)
 
 export type ContainerPosition = {
   readonly x: number
@@ -214,6 +221,12 @@ export const containerIdAt = (
   dimension: string,
   position: ContainerPosition,
 ): ContainerId => `${dimension}:${position.x},${position.y},${position.z}`
+
+
+export const worldContainerIdAt = (
+  address: BlockAddress,
+): WorldContainerId =>
+  Schema.decodeUnknownSync(WorldContainerIdSchema)(containerIdAt(address.dimension, address.position))
 
 export const findContainer = (
   storage: ContainerStorage,
