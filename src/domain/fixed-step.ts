@@ -79,7 +79,7 @@ export const advance = (
     const validDelta = yield* DeltaTimeSecs.result(delta)
     const accumulator = yield* FixedDurationSecs.result(state.accumulator)
     const tick = yield* SimulationTick.result(state.tick)
-    const tickDuration = yield* FixedDurationSecs.result(state.tickDuration)
+    const fixedIntervalSecs = yield* FixedDurationSecs.result(state.tickDuration)
     const maxCatchUpTicks = yield* NonNegativeTickCount.result(state.maxCatchUpTicks)
 
     if (typeof state.paused !== 'boolean') {
@@ -87,7 +87,7 @@ export const advance = (
     }
 
     if (state.paused) {
-      const fraction = yield* InterpolationFraction.result(accumulator / tickDuration)
+      const fraction = yield* InterpolationFraction.result(accumulator / fixedIntervalSecs)
       return {
         state,
         ticks: NonNegativeTickCount(0),
@@ -97,7 +97,7 @@ export const advance = (
     }
 
     const available = accumulator + validDelta
-    const maximum = tickDuration * maxCatchUpTicks
+    const maximum = fixedIntervalSecs * maxCatchUpTicks
     if (!Number.isFinite(maximum)) {
       return yield* Result.fail(invalidConfiguration('catchUpWindow'))
     }
@@ -105,11 +105,11 @@ export const advance = (
     const overloaded = available > maximum
     const bounded = Math.min(available, maximum)
     const ticks = yield* NonNegativeTickCount.result(
-      Math.min(maxCatchUpTicks, Math.floor(bounded / tickDuration)),
+      Math.min(maxCatchUpTicks, Math.floor(bounded / fixedIntervalSecs)),
     )
     const nextTick = yield* addTick(tick, ticks)
-    const remainder = yield* FixedDurationSecs.result(bounded - ticks * tickDuration)
-    const fraction = yield* InterpolationFraction.result(remainder / tickDuration)
+    const remainder = yield* FixedDurationSecs.result(bounded - ticks * fixedIntervalSecs)
+    const fraction = yield* InterpolationFraction.result(remainder / fixedIntervalSecs)
     const nextState: FixedStepAccumulator = { ...state, accumulator: remainder, tick: nextTick }
 
     return {
