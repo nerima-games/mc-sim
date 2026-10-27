@@ -267,6 +267,25 @@ describe('planExplosion', () => {
       _tag: 'Failure',
       failure: { _tag: 'ExplosionValidationFailure', path: 'limits' },
     })
+    expect(planExplosionResult({ ...request, blocks: null as never })).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'ExplosionValidationFailure', path: 'blocks' },
+    })
+    expect(planExplosionResult({ ...request, entities: null as never })).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'ExplosionValidationFailure', path: 'entities' },
+    })
+    expect(planExplosionResult({ ...request, limits: { maxAffectedEntities: -1 } })).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'ExplosionValidationFailure', path: 'limits.maxAffectedEntities' },
+    })
+    expect(planExplosionResult({
+      ...request,
+      center: { x: Number.MAX_SAFE_INTEGER, y: 0.5, z: 0.5 } as never,
+    })).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'ExplosionValidationFailure', path: 'center.x' },
+    })
     expect(planExplosionResult({
       ...request,
       center: { x: 0.5, y: Number.NaN, z: 0.5 } as never,
@@ -284,6 +303,23 @@ describe('planExplosion', () => {
       _tag: 'Failure',
       failure: { _tag: 'ExplosionValidationFailure', path: 'entities[0].feetPosition.x' },
     })
+    expect(planExplosionResult({
+      ...request,
+      entities: [{ ...entity('missing-position', 0, 0, 0), feetPosition: null }] as never,
+    })).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'ExplosionValidationFailure', path: 'entities[0].feetPosition' },
+    })
+    expect(planExplosionResult({
+      ...request,
+      entities: [{
+        ...entity('invalid-coordinate', 0, 0, 0),
+        feetPosition: { x: '0', y: 0, z: 0 },
+      }] as never,
+    })).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'ExplosionValidationFailure', path: 'entities[0].feetPosition.x' },
+    })
 
     const overflowingDistanceEntity = {
       ...entity('overflowing-distance-entity', 0, 0, 0),
@@ -297,6 +333,34 @@ describe('planExplosion', () => {
       _tag: 'Failure',
       failure: { _tag: 'ExplosionValidationFailure', reason: 'distance from center must be finite' },
     })
+  })
+
+  it('returns the second limits normalization failure before reading any blocks', () => {
+    let limitsReads = 0
+    let blockReads = 0
+    const result = planExplosionResult({
+      center: position(0.5, 0.5, 0.5),
+      radius: 1,
+      seed: 1,
+      blocks: () => {
+        blockReads += 1
+        return air()
+      },
+      entities: [],
+      limits: {
+        get maxVisitedBlocks() {
+          limitsReads += 1
+          return limitsReads === 1 ? 4 : -1
+        },
+      },
+    })
+
+    expect(result).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'ExplosionValidationFailure', path: 'limits.maxVisitedBlocks' },
+    })
+    expect(limitsReads).toBe(2)
+    expect(blockReads).toBe(0)
   })
 
   it('never crosses an unloaded cell when a large explosion shares radial traces', () => {
