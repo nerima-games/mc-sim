@@ -8,21 +8,41 @@
  * the deletion is silent.
  */
 import { describe, expect, it } from '@effect/vitest'
-import { Effect, Fiber } from 'effect'
+import { Effect, Fiber, Result } from 'effect'
 import { makeInventoryService } from '../src/application/inventory-service'
-import { craftFromGrid, ingredientCost } from '../src/domain/crafting'
+import { craftFromGrid as craftFromGridResult, ingredientCost } from '../src/domain/crafting'
 import {
-  addItem,
+  addItem as addItemResult,
   countOf,
   emptyInventory,
   INVENTORY_SLOT_COUNT,
-  itemStack,
+  itemStack as itemStackResult,
   maxStackCountForItem,
   type Inventory,
+  type ItemStack,
 } from '../src/domain/inventory'
 import type { ItemType } from '@nerima-games/mc-kernel'
-import { craftGrid, shapelessRecipe, type CraftGrid } from '../src/domain/recipe'
-import { STARTER_RECIPES } from '../src/domain/recipe-data'
+import { craftGrid as craftGridResult, shapelessRecipe as shapelessRecipeResult, type CraftGrid } from '../src/domain/recipe'
+import { STARTER_RECIPES as starterRecipesResult } from '../src/domain/recipe-data'
+
+const requireSuccess = <A, E>(result: Result.Result<A, E>): A => {
+  if (Result.isFailure(result)) throw result.failure
+  return result.success
+}
+
+const itemStack = (...args: Parameters<typeof itemStackResult>): ItemStack =>
+  requireSuccess(itemStackResult(...args))
+const addItem = (...args: Parameters<typeof addItemResult>) => requireSuccess(addItemResult(...args))
+const craftGrid = (...args: Parameters<typeof craftGridResult>): CraftGrid =>
+  requireSuccess(craftGridResult(...args))
+const craftFromGrid = (...args: Parameters<typeof craftFromGridResult>) =>
+  requireSuccess(craftFromGridResult(...args))
+const shapelessRecipe = (
+  id: Parameters<typeof shapelessRecipeResult>[0],
+  items: Parameters<typeof shapelessRecipeResult>[1],
+  output: ItemStack,
+) => requireSuccess(shapelessRecipeResult(id, items, Result.succeed(output)))
+const STARTER_RECIPES = requireSuccess(starterRecipesResult)
 
 const LEGEND: Readonly<Record<string, ItemType>> = {
   P: 'oak_planks',

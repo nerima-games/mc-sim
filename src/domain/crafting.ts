@@ -29,7 +29,9 @@
  * it arrives as inventory state with its own drop-on-close rule — not as a
  * change to this function.
  */
+import { Result } from 'effect'
 import { addItemStack, countOf, removeItem, type Inventory, type ItemStack } from './inventory.js'
+import type { ItemStackFailure } from './inventory.js'
 import type { ItemType } from "@nerima-games/mc-kernel"
 import { cellAt, matchRecipe, type CraftGrid, type RecipeId, type RecipeTable } from './recipe.js'
 
@@ -84,6 +86,8 @@ export type CraftOutcome = {
   readonly result: CraftResult
 }
 
+export type CraftFailure = ItemStackFailure
+
 /**
  * Take one craft from `grid`, charged to `inventory`.
  *
@@ -97,10 +101,14 @@ export type CraftOutcome = {
  * checking for room first would refuse the last craft in a full inventory, which
  * is exactly when a player crafts to make room.
  */
-export const craftFromGrid = (inventory: Inventory, table: RecipeTable, grid: CraftGrid): CraftOutcome => {
+export const craftFromGrid = (
+  inventory: Inventory,
+  table: RecipeTable,
+  grid: CraftGrid,
+): Result.Result<CraftOutcome, CraftFailure> => {
   const match = matchRecipe(table, grid)
   if (match._tag === 'NoMatch') {
-    return { inventory, result: { _tag: 'NoMatch' } }
+    return Result.succeed({ inventory, result: { _tag: 'NoMatch' } })
   }
 
   const cost = ingredientCost(grid)
@@ -110,21 +118,24 @@ export const craftFromGrid = (inventory: Inventory, table: RecipeTable, grid: Cr
     return held >= needed ? [] : [{ item, short: needed - held }]
   })
   if (missing.length > 0) {
-    return { inventory, result: { _tag: 'MissingIngredients', missing } }
+    return Result.succeed({ inventory, result: { _tag: 'MissingIngredients', missing } })
   }
 
   let charged = inventory
   for (const [item, needed] of cost) {
-    charged = removeItem(charged, item, needed).inventory
+    const removed = removeItem(charged, item, needed)
+    if (Result.isFailure(removed)) return Result.fail(removed.failure)
+    charged = removed.success.inventory
   }
 
   const produced = addItemStack(charged, match.output)
-  if (produced.leftover > 0) {
-    return { inventory, result: { _tag: 'NoRoom' } }
+  if (Result.isFailure(produced)) return Result.fail(produced.failure)
+  if (produced.success.leftover > 0) {
+    return Result.succeed({ inventory, result: { _tag: 'NoRoom' } })
   }
 
-  return {
-    inventory: produced.inventory,
+  return Result.succeed({
+    inventory: produced.success.inventory,
     result: { _tag: 'Crafted', recipeId: match.recipe.id, output: match.output },
-  }
+  })
 }

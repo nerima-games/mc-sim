@@ -1,25 +1,42 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Effect, Fiber } from 'effect'
+import { Effect, Fiber, Result } from 'effect'
 import {
-  addItem,
-  addItemStack,
+  addItem as addItemResult,
+  addItemStack as addItemStackResult,
   countOf,
   emptyInventory,
   INVENTORY_SLOT_COUNT,
   isEmpty,
-  itemStack,
+  itemStack as itemStackResult,
   maxStackCountForItem,
-  normaliseInventory,
-  removeItem,
-  removeItemAt,
+  normaliseInventory as normaliseInventoryResult,
+  removeItem as removeItemResult,
+  removeItemAt as removeItemAtResult,
   slotAt,
   type Inventory,
+  type ItemStack,
 } from '../src/domain/inventory'
 import { containerIdAt } from '../src/domain/container-storage'
 import { isItemType, RepairCost, type ItemType, type StackCount } from '@nerima-games/mc-kernel'
 import { makeInventoryService } from '../src/application/inventory-service'
-import { clickInventory } from '../src/application/inventory-interaction'
+import { clickInventory as clickInventoryResult } from '../src/application/inventory-interaction'
 import type { InventoryClick } from '../src/index'
+
+const requireSuccess = <A, E>(result: Result.Result<A, E>): A => {
+  if (Result.isFailure(result)) throw result.failure
+  return result.success
+}
+
+const itemStack = (...args: Parameters<typeof itemStackResult>): ItemStack =>
+  requireSuccess(itemStackResult(...args))
+const addItem = (...args: Parameters<typeof addItemResult>) => requireSuccess(addItemResult(...args))
+const addItemStack = (...args: Parameters<typeof addItemStackResult>) => requireSuccess(addItemStackResult(...args))
+const normaliseInventory = (...args: Parameters<typeof normaliseInventoryResult>) =>
+  requireSuccess(normaliseInventoryResult(...args))
+const removeItem = (...args: Parameters<typeof removeItemResult>) => requireSuccess(removeItemResult(...args))
+const removeItemAt = (...args: Parameters<typeof removeItemAtResult>) => requireSuccess(removeItemAtResult(...args))
+const clickInventory = (...args: Parameters<typeof clickInventoryResult>) =>
+  requireSuccess(clickInventoryResult(...args))
 
 /**
  * A slot holding a count `StackCount` would reject, or an item `ItemType` does
@@ -67,14 +84,11 @@ const corruptSlot = (item: string, count: number): Inventory => ({
 const FOREIGN_ITEM = 'mythril_ingot'
 
 describe('itemStack', () => {
-  it.effect('throws for a count over the item\'s own stack limit, naming the item and count', () =>
+  it.effect('returns a failure for a count over the item\'s own stack limit', () =>
     Effect.sync(() => {
-      // DN-06: the brand is applied HERE so an out-of-range count fails at the
-      // place that names it (a recipe output of 65, say) instead of flowing
-      // into a slot as a bare number.
-      expect(() => itemStack('stone', 65)).toThrow('Item stack count for stone must be an integer in [1, 64], received 65')
-      expect(() => itemStack('stone', 65)).toThrow(RangeError)
-      expect(() => itemStack('stone', 64)).not.toThrow()
+      const invalid = itemStackResult('stone', 65)
+      expect(Result.isFailure(invalid)).toBe(true)
+      expect(itemStack('stone', 64).count).toBe(64)
     }),
   )
 })

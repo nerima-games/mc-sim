@@ -1,6 +1,7 @@
+import { Result } from 'effect'
 import type { ItemType } from '@nerima-games/mc-kernel'
 
-import { itemStack, type ItemStack, type Slot } from './inventory.js'
+import { itemStack, type ItemStack, type ItemStackFailure, type Slot } from './inventory.js'
 
 export type RecipeId = string
 
@@ -50,14 +51,13 @@ export const craftGrid = (
   width: number,
   height: number,
   items: ReadonlyArray<ItemType | undefined>,
-): CraftGrid => ({
-  width,
-  height,
-  cells: Array.from({ length: Math.max(0, width * height) }, (_unused, index) => {
+): Result.Result<CraftGrid, ItemStackFailure> => {
+  const cells = Array.from({ length: Math.max(0, width * height) }, (_unused, index) => {
     const item = items[index]
-    return item === undefined ? undefined : itemStack(item, 1)
-  }),
-})
+    return item === undefined ? Result.succeed(undefined) : itemStack(item, 1)
+  })
+  return Result.map(Result.all(cells), (values) => ({ width, height, cells: values }))
+}
 
 export const cellAt = (grid: CraftGrid, x: number, y: number): Slot =>
   x < 0 || y < 0 || x >= grid.width || y >= grid.height ? undefined : grid.cells[y * grid.width + x]
@@ -109,11 +109,13 @@ export const shapedRecipe = (
   id: RecipeId,
   rows: ReadonlyArray<string>,
   key: Readonly<Record<string, ItemType>>,
-  output: ItemStack,
-): ShapedRecipe => ({ _tag: 'Shaped', id, pattern: trimPattern(rows, key), output })
+  output: ReturnType<typeof itemStack>,
+): Result.Result<ShapedRecipe, ItemStackFailure> =>
+  Result.map(output, (stack) => ({ _tag: 'Shaped', id, pattern: trimPattern(rows, key), output: stack }))
 
 export const shapelessRecipe = (
   id: RecipeId,
   items: ReadonlyArray<ItemType>,
-  output: ItemStack,
-): ShapelessRecipe => ({ _tag: 'Shapeless', id, ingredients: items.map(exactly), output })
+  output: ReturnType<typeof itemStack>,
+): Result.Result<ShapelessRecipe, ItemStackFailure> =>
+  Result.map(output, (stack) => ({ _tag: 'Shapeless', id, ingredients: items.map(exactly), output: stack }))

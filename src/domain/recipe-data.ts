@@ -4,14 +4,15 @@
  * Matching and inventory mutation stay in `recipe.ts` and `crafting.ts`; this
  * module owns only the vanilla rows that this simulation can represent.
  */
+import { Result } from 'effect'
 import {
   shapedRecipe,
   shapelessRecipe,
   type RecipeTable,
 } from './recipe.js'
-import { itemStack } from './inventory.js'
+import { itemStack, type ItemStackFailure } from './inventory.js'
 
-export const STARTER_RECIPES: RecipeTable = [
+export const STARTER_RECIPES: Result.Result<RecipeTable, ItemStackFailure> = Result.all([
   shapelessRecipe('mc-sim:bone-meal', ['bone'], itemStack('bone_meal', 3)),
   shapelessRecipe('mc-sim:oak-planks', ['oak_log'], itemStack('oak_planks', 4)),
   shapedRecipe('mc-sim:stick', ['P', 'P'], { P: 'oak_planks' }, itemStack('stick', 4)),
@@ -376,4 +377,4 @@ export const STARTER_RECIPES: RecipeTable = [
     { I: 'iron_ingot' },
     itemStack('iron_boots', 1),
   ),
-]
+])

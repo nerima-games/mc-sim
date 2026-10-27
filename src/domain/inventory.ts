@@ -13,14 +13,14 @@
  * `application/inventory-service.ts` is the thin Ref wrapper.
  *
  * IT IS ALSO TOTAL, INCLUDING ON AN `Inventory` IT DID NOT BUILD. That claim
- * used to be false and expensively so: `removeItem` wrote `StackCount(left)`,
- * `StackCount` is built with `Brand.make`, and a slot restored from another build's
- * save made it THROW. A throw from a pure domain function is a `Cause.Die` in
- * the frame loop, which `application/game-loop.ts` logs and swallows, so mining
- * and crafting simply stopped working while nothing failed.
+ * used to be false and expensively so: `removeItem` wrote `StackCount(left)`;
+ * that constructor threw when a slot restored from another build's save was
+ * out of range. The stack constructors now return a typed `Result`, and each
+ * transition propagates that failure instead of letting it become a `Cause.Die`
+ * that the frame loop logs and swallows.
  *
  * Two private helpers hold the line — `heldCount` guards every READ of a slot
- * count and `derivedStackCount` clamps every WRITE derived from one. Repair is
+ * count and `derivedStack` clamps every WRITE derived from one. Repair is
  * a separate concern from totality: `normaliseInventory` is the one function
  * that repairs a whole inventory and it ACCOUNTS for what it cannot place,
  * which is what `InventoryService.restore` runs on the world-load path.
@@ -30,18 +30,31 @@
  * concerns rather than being hidden in the stack primitive. This module owns
  * stack limits, normalization, and pure inventory transitions.
  */
+import { Result } from 'effect'
 import {
+  StackCount,
   isItemType,
   isItemComponents,
-  itemStack,
+  itemStack as kernelItemStack,
   itemStacksCanMerge,
   maxStackCountForItem,
   type ItemType,
   type ItemStack,
 } from '@nerima-games/mc-kernel'
+import type { ItemStackFailure as StackConstructionFailure } from './item-stack.js'
 
-export { itemStack, maxStackCountForItem }
+export { maxStackCountForItem }
 export type { ItemStack }
+
+export type ItemStackFailure = StackConstructionFailure
+export type ItemStackResult = Result.Result<ItemStack, ItemStackFailure>
+
+export const itemStack = (
+  item: ItemType,
+  count: number,
+  options?: Parameters<typeof kernelItemStack>[2],
+): ItemStackResult => Result.flatMap(StackCount.result(count), (stackCount) =>
+  kernelItemStack(item, stackCount, options))
 
 /*
  * THERE IS NO `ItemId` HERE ANY MORE.
@@ -79,14 +92,13 @@ const heldCount = (stack: ItemStack): number =>
 /**
  * Brand a count DERIVED from a slot that may itself be out of range.
  *
- * `StackCount` is built with `Brand.make` and THROWS outside [0, 64]. That is right for
- * `itemStack`, where the number is a literal a human wrote (DN-06: a recipe
- * output of 65 should fail at the place that names it). It is wrong here: the
- * number is whatever was left after taking from a slot that may already have
- * been corrupt, and a throw from a pure domain function becomes a `Cause.Die`
- * in the frame loop, which `application/game-loop.ts` logs and SWALLOWS. The
- * observable result was that mining and crafting stopped working, with a line
- * in a log nobody reads, and this module's header claims to be pure and total.
+ * `StackCount.result` fails outside [0, 64]. That is right for `itemStack`,
+ * where the number is a literal a human wrote (DN-06: a recipe output of 65
+ * should fail at the place that names it). It is wrong to let a derived count
+ * reach that boundary unbounded: the number is whatever was left after taking
+ * from a slot that may already have been corrupt, and silently losing the
+ * transition would stop mining or crafting. This helper clamps the derived
+ * count before construction; callers still propagate any typed failure.
  *
  * Repairing to the representable range keeps that claim true. It also loses the
  * surplus of an over-full slot, which is why it is not the sanctioned way to
@@ -98,7 +110,7 @@ const heldCount = (stack: ItemStack): number =>
 const stackLimit = (stack: ItemStack): number =>
   isItemComponents(stack.components) ? stack.components.maxStackSize : maxStackCountForItem(stack.item)
 
-const derivedStack = (stack: ItemStack, count: number): ItemStack =>
+const derivedStack = (stack: ItemStack, count: number) =>
   itemStack(stack.item, Math.min(stackLimit(stack), Math.max(1, Math.floor(count))),
     isItemComponents(stack.components) ? { components: stack.components } : {})
 
@@ -148,7 +160,7 @@ export type AddOutcome = {
  * branding the input would reject the very case this function exists to spread
  * across slots.
  */
-const addStack = (inventory: Inventory, stack: ItemStack, count: number): AddOutcome => {
+const addStack = (inventory: Inventory, stack: ItemStack, count: number): Result.Result<AddOutcome, ItemStackFailure> => {
   const slots = [...inventory.slots]
   let remaining = count
 
@@ -163,7 +175,9 @@ const addStack = (inventory: Inventory, stack: ItemStack, count: number): AddOut
       continue
     }
     const accepted = Math.min(maxStackCount - held, remaining)
-    slots[index] = derivedStack(slot, held + accepted)
+    const updated = derivedStack(slot, held + accepted)
+    if (Result.isFailure(updated)) return Result.fail(updated.failure)
+    slots[index] = updated.success
     remaining -= accepted
   }
 
@@ -172,27 +186,29 @@ const addStack = (inventory: Inventory, stack: ItemStack, count: number): AddOut
       continue
     }
     const accepted = Math.min(stackLimit(stack), remaining)
-    slots[index] = derivedStack(stack, accepted)
+    const added = derivedStack(stack, accepted)
+    if (Result.isFailure(added)) return Result.fail(added.failure)
+    slots[index] = added.success
     remaining -= accepted
   }
 
-  return { inventory: { slots }, leftover: remaining }
+  return Result.succeed({ inventory: { slots }, leftover: remaining })
 }
 
-export const addItem = (inventory: Inventory, item: ItemType, count: number): AddOutcome => {
+export const addItem = (inventory: Inventory, item: ItemType, count: number): Result.Result<AddOutcome, ItemStackFailure> => {
   if (!Number.isInteger(count) || count <= 0) {
     // A rejected quantity is reported as leftover, because the caller turns
     // leftover into dropped-item entities and 2.5 items asked for is 2.5 items
     // not placed. `Math.max(0, NaN)` is NaN, though, and a NaN leftover is a
     // number every caller downstream would believe — so a quantity that is not
     // a quantity leaves nothing behind.
-    return { inventory, leftover: Number.isFinite(count) ? Math.max(0, count) : 0 }
+    return Result.succeed({ inventory, leftover: Number.isFinite(count) ? Math.max(0, count) : 0 })
   }
 
-  return addStack(inventory, itemStack(item, 1), count)
+  return Result.flatMap(itemStack(item, 1), (stack) => addStack(inventory, stack, count))
 }
 
-export const addItemStack = (inventory: Inventory, stack: ItemStack): AddOutcome =>
+export const addItemStack = (inventory: Inventory, stack: ItemStack): Result.Result<AddOutcome, ItemStackFailure> =>
   addStack(inventory, stack, stack.count)
 
 export type RemoveOutcome = {
@@ -226,33 +242,37 @@ export const removeItemAt = (
   slotIndex: number,
   expectedItem: ItemType,
   count: number,
-): RemoveAtOutcome => {
+): Result.Result<RemoveAtOutcome, ItemStackFailure> => {
   if (!Number.isInteger(slotIndex) || slotIndex < 0 || slotIndex >= INVENTORY_SLOT_COUNT) {
-    return { inventory, result: { _tag: 'InvalidSlot' } }
+    return Result.succeed({ inventory, result: { _tag: 'InvalidSlot' } })
   }
   if (!Number.isInteger(count) || count <= 0) {
-    return { inventory, result: { _tag: 'InvalidCount' } }
+    return Result.succeed({ inventory, result: { _tag: 'InvalidCount' } })
   }
 
   const slot = inventory.slots[slotIndex]
   if (slot === undefined) {
-    return { inventory, result: { _tag: 'EmptySlot' } }
+    return Result.succeed({ inventory, result: { _tag: 'EmptySlot' } })
   }
   if (slot.item !== expectedItem) {
-    return { inventory, result: { _tag: 'ItemMismatch', actualItem: slot.item } }
+    return Result.succeed({ inventory, result: { _tag: 'ItemMismatch', actualItem: slot.item } })
   }
 
   const available = heldCount(slot)
   if (available < count) {
-    return { inventory, result: { _tag: 'Insufficient', available } }
+    return Result.succeed({ inventory, result: { _tag: 'Insufficient', available } })
   }
 
   const remaining = available - count
   const slots = [...inventory.slots]
-  slots[slotIndex] = remaining === 0
-    ? undefined
-    : derivedStack(slot, remaining)
-  return { inventory: { slots }, result: { _tag: 'Removed', removed: count } }
+  if (remaining === 0) {
+    slots[slotIndex] = undefined
+    return Result.succeed({ inventory: { slots }, result: { _tag: 'Removed', removed: count } })
+  }
+  return Result.map(derivedStack(slot, remaining), (updated) => {
+    slots[slotIndex] = updated
+    return { inventory: { slots }, result: { _tag: 'Removed', removed: count } }
+  })
 }
 
 /**
@@ -266,9 +286,9 @@ export const removeItemAt = (
  * `derivedStackCount` and `heldCount` for what an out-of-range slot does here
  * and why it cannot be allowed to throw.
  */
-export const removeItem = (inventory: Inventory, item: ItemType, count: number): RemoveOutcome => {
+export const removeItem = (inventory: Inventory, item: ItemType, count: number): Result.Result<RemoveOutcome, ItemStackFailure> => {
   if (!Number.isInteger(count) || count <= 0) {
-    return { inventory, removed: 0 }
+    return Result.succeed({ inventory, removed: 0 })
   }
 
   const slots = [...inventory.slots]
@@ -282,11 +302,17 @@ export const removeItem = (inventory: Inventory, item: ItemType, count: number):
     const held = heldCount(slot)
     const taken = Math.min(held, remaining)
     const left = held - taken
-    slots[index] = left === 0 ? undefined : derivedStack(slot, left)
+    if (left === 0) {
+      slots[index] = undefined
+    } else {
+      const updated = derivedStack(slot, left)
+      if (Result.isFailure(updated)) return Result.fail(updated.failure)
+      slots[index] = updated.success
+    }
     remaining -= taken
   }
 
-  return { inventory: { slots }, removed: count - remaining }
+  return Result.succeed({ inventory: { slots }, removed: count - remaining })
 }
 
 export type NormaliseOutcome = {
@@ -368,45 +394,51 @@ export type NormaliseOutcome = {
  * `countOf`, invisible to every recipe, undroppable, and permanent. The repoint
  * created this hole and closes it in the same commit.
  */
-export const normaliseInventory = (inventory: Inventory): NormaliseOutcome => {
+export const normaliseInventory = (inventory: Inventory): Result.Result<NormaliseOutcome, ItemStackFailure> => {
   const slots: Array<Slot> = Array.from({ length: INVENTORY_SLOT_COUNT }, () => undefined)
   // A plain count, NOT a `StackCount`: a spilled quantity may legitimately
   // exceed one stack, which is precisely the input `addItem` takes unbranded.
   const spilled: Array<{ readonly stack: ItemStack; readonly count: number }> = []
   let discarded = 0
 
-  inventory.slots.forEach((slot, index) => {
+  for (const [index, slot] of inventory.slots.entries()) {
     if (slot === undefined) {
-      return
+      continue
     }
     const held = heldCount(slot)
     if (held === 0) {
-      return
+      continue
     }
     if (!isItemType(slot.item)) {
       discarded += held
-      return
+      continue
     }
     if (index >= INVENTORY_SLOT_COUNT) {
-      spilled.push({ stack: derivedStack(slot, 1), count: held })
-      return
+      const stack = derivedStack(slot, 1)
+      if (Result.isFailure(stack)) return Result.fail(stack.failure)
+      spilled.push({ stack: stack.success, count: held })
+      continue
     }
     const maxStackCount = stackLimit(slot)
-    slots[index] = derivedStack(slot, Math.min(held, maxStackCount))
+    const normalized = derivedStack(slot, Math.min(held, maxStackCount))
+    if (Result.isFailure(normalized)) return Result.fail(normalized.failure)
+    slots[index] = normalized.success
     if (held > maxStackCount) {
-      spilled.push({ stack: derivedStack(slot, 1), count: held - maxStackCount })
+      const stack = derivedStack(slot, 1)
+      if (Result.isFailure(stack)) return Result.fail(stack.failure)
+      spilled.push({ stack: stack.success, count: held - maxStackCount })
     }
-  })
+  }
 
-  return spilled.reduce<NormaliseOutcome>(
-    (carried, stack) => {
-      const outcome = addStack(carried.inventory, stack.stack, stack.count)
-      return {
-        inventory: outcome.inventory,
-        leftover: carried.leftover + outcome.leftover,
-        discarded: carried.discarded,
-      }
-    },
-    { inventory: { slots }, leftover: 0, discarded },
-  )
+  let outcome: NormaliseOutcome = { inventory: { slots }, leftover: 0, discarded }
+  for (const stack of spilled) {
+    const added = addStack(outcome.inventory, stack.stack, stack.count)
+    if (Result.isFailure(added)) return Result.fail(added.failure)
+    outcome = {
+      inventory: added.success.inventory,
+      leftover: outcome.leftover + added.success.leftover,
+      discarded: outcome.discarded,
+    }
+  }
+  return Result.succeed(outcome)
 }

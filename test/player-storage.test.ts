@@ -1,9 +1,9 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Effect } from 'effect'
+import { Effect, Result } from 'effect'
 import { makeInventoryService } from '../src/application/inventory-service'
 import type { ContainerStoredStack } from '../src/domain/container-storage'
 import * as Eq from '../src/domain/equipment'
-import { emptyInventory, itemStack } from '../src/domain/inventory'
+import { emptyInventory, itemStack as itemStackResult, type ItemStack } from '../src/domain/inventory'
 import {
   addStoredStack,
   consumeAndDamageAt,
@@ -16,6 +16,12 @@ import {
   validatePlayerStorageSnapshot,
 } from '../src/domain/player-storage'
 import type { PlayerStorage, StorageLocation } from '../src/domain/player-storage'
+
+const itemStack = (...args: Parameters<typeof itemStackResult>): ItemStack => {
+  const result = itemStackResult(...args)
+  if (Result.isFailure(result)) throw result.failure
+  return result.success
+}
 
 const bytes = (value: unknown): string => JSON.stringify(value)
 

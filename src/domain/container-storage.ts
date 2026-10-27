@@ -1,5 +1,6 @@
 import * as Eq from './equipment.js'
 import * as Inv from './inventory.js'
+import { Result } from 'effect'
 import { isItemStack, isItemType, itemStacksCanMerge, maxStackCountForStack } from '@nerima-games/mc-kernel'
 import * as Player from './player-storage.js'
 
@@ -48,6 +49,7 @@ export type ContainerStorageValidationError = {
 export type ContainerStorageValidationResult =
   | { readonly _tag: 'Valid'; readonly storage: ContainerStorage }
   | { readonly _tag: 'Invalid'; readonly error: ContainerStorageValidationError }
+  | { readonly _tag: 'ItemStackFailure'; readonly error: Inv.ItemStackFailure }
 
 export type CreateContainerResult =
   | { readonly _tag: 'Created'; readonly container: Container }
@@ -81,6 +83,7 @@ export type ContainerTransferResult =
   | { readonly _tag: 'InvalidSourceStack' }
   | { readonly _tag: 'InvalidDestinationStack' }
   | { readonly _tag: 'InvalidSourceDurability' }
+  | { readonly _tag: 'ItemStackFailure'; readonly error: Inv.ItemStackFailure }
 
 export type ContainerTransferOutcome = {
   readonly playerStorage: Player.PlayerStorage
@@ -103,6 +106,7 @@ export type ContainerExtractResult =
   | { readonly _tag: 'InsufficientSource'; readonly available: number }
   | { readonly _tag: 'InvalidSourceStack' }
   | { readonly _tag: 'InvalidSourceDurability' }
+  | { readonly _tag: 'ItemStackFailure'; readonly error: Inv.ItemStackFailure }
 
 export type ContainerExtractOutcome = {
   readonly storage: ContainerStorage
@@ -131,6 +135,7 @@ export type ContainerMoveResult =
   | { readonly _tag: 'InvalidSourceStack' }
   | { readonly _tag: 'InvalidDestinationStack' }
   | { readonly _tag: 'InvalidSourceDurability' }
+  | { readonly _tag: 'ItemStackFailure'; readonly error: Inv.ItemStackFailure }
 
 export type ContainerMoveOutcome = {
   readonly storage: ContainerStorage
@@ -168,10 +173,14 @@ const coreStack = (stack: ContainerStoredStack): Inv.ItemStack => ({
   item: stack.item, count: stack.count, components: stack.components,
 })
 
-const storedWithCount = (stack: ContainerStoredStack, count: number): ContainerStoredStack => ({
-  ...Inv.itemStack(stack.item, count, { components: stack.components }),
-  durability: copyDurability(stack.durability),
-})
+const storedWithCount = (
+  stack: ContainerStoredStack,
+  count: number,
+): Result.Result<ContainerStoredStack, Inv.ItemStackFailure> =>
+  Result.map(Inv.itemStack(stack.item, count, { components: stack.components }), (updated) => ({
+    ...updated,
+    durability: copyDurability(stack.durability),
+  }))
 
 const CONTAINER_CAPACITY_BY_KIND = {
   chest: CHEST_CONTAINER_CAPACITY,
@@ -247,6 +256,7 @@ const invalid = (path: string, reason: string): ContainerStorageValidationResult
 type SlotValidation =
   | { readonly _tag: 'Invalid'; readonly error: ContainerStorageValidationError }
   | { readonly _tag: 'Slot'; readonly slot: ContainerSlot }
+  | { readonly _tag: 'ItemStackFailure'; readonly error: Inv.ItemStackFailure }
 
 const validateStoredSlot = (slot: unknown, slotPath: string): SlotValidation => {
   if (slot === null) return { _tag: 'Slot', slot: null }
@@ -261,6 +271,7 @@ const validateStoredSlot = (slot: unknown, slotPath: string): SlotValidation => 
   if (!isItemStack(candidate))
     return { _tag: 'Invalid', error: invalidError(slotPath, 'expected a valid stored item stack') }
   const stack = Inv.itemStack(candidate.item, candidate.count, { components: candidate.components })
+  if (Result.isFailure(stack)) return { _tag: 'ItemStackFailure', error: stack.failure }
   const durability = slot['durability']
   if (Eq.isDamageableItemType(slot['item'])) {
     if (!Eq.isValidDurabilityForItem(slot['item'], durability))
@@ -270,17 +281,18 @@ const validateStoredSlot = (slot: unknown, slotPath: string): SlotValidation => 
       }
     return {
       _tag: 'Slot',
-      slot: { ...stack, durability: { ...durability } },
+      slot: { ...stack.success, durability: { ...durability } },
     }
   }
   if (durability !== null)
     return { _tag: 'Invalid', error: invalidError(`${slotPath}.durability`, 'non-durable item requires null') }
-  return { _tag: 'Slot', slot: { ...stack, durability: null } }
+  return { _tag: 'Slot', slot: { ...stack.success, durability: null } }
 }
 
 type ContainerCandidateValidation =
   | { readonly _tag: 'Invalid'; readonly error: ContainerStorageValidationError }
   | { readonly _tag: 'Container'; readonly container: Container }
+  | { readonly _tag: 'ItemStackFailure'; readonly error: Inv.ItemStackFailure }
 
 const validateContainerCandidate = (
   candidate: unknown,
@@ -306,7 +318,7 @@ const validateContainerCandidate = (
   const slots: Array<ContainerSlot> = []
   for (let slotIndex = 0; slotIndex < capacity; slotIndex += 1) {
     const validated = validateStoredSlot(candidate['slots'][slotIndex], `${path}.slots.${slotIndex}`)
-    if (validated._tag === 'Invalid') return validated
+    if (validated._tag !== 'Slot') return validated
     slots.push(validated.slot)
   }
   return { _tag: 'Container', container: { id: candidate['id'], kind, slots } }
@@ -330,6 +342,7 @@ export const validateContainerStorageSnapshot = (
     const candidate = value['containers'][containerIndex]
     const path = `containerStorage.containers.${containerIndex}`
     const validated = validateContainerCandidate(candidate, path, ids)
+    if (validated._tag === 'ItemStackFailure') return validated
     if (validated._tag === 'Invalid') return { _tag: 'Invalid', error: validated.error }
     ids.add(validated.container.id)
     containers.push(validated.container)
@@ -411,25 +424,51 @@ const validateTransferStacks = (
 }
 
 /** Move exactly `count` items, changing player and chest together or neither. */
+type TransferContainerLookupError = Extract<
+  ContainerTransferResult,
+  {
+    readonly _tag:
+      | 'InvalidDirection'
+      | 'InvalidPlayerSlot'
+      | 'InvalidCount'
+      | 'ContainerNotFound'
+      | 'InvalidContainerSlot'
+  }
+>
+
+type TransferContainerLookup =
+  | { readonly _tag: 'Invalid'; readonly result: TransferContainerLookupError }
+  | { readonly _tag: 'Valid'; readonly container: Container; readonly containerIndex: number }
+
+const lookupTransferContainer = (
+  containerStorage: ContainerStorage,
+  request: ContainerTransferRequest,
+): TransferContainerLookup => {
+  if (request.direction !== 'PlayerToContainer' && request.direction !== 'ContainerToPlayer')
+    return { _tag: 'Invalid', result: { _tag: 'InvalidDirection' } }
+  if (!validPlayerSlot(request.playerSlot))
+    return { _tag: 'Invalid', result: { _tag: 'InvalidPlayerSlot' } }
+  if (!Number.isSafeInteger(request.count) || request.count <= 0)
+    return { _tag: 'Invalid', result: { _tag: 'InvalidCount' } }
+  const container = containerStorage.containers.find(
+    (candidate) => candidate.id === request.containerId,
+  )
+  if (container === undefined)
+    return { _tag: 'Invalid', result: { _tag: 'ContainerNotFound' } }
+  const containerIndex = containerStorage.containers.indexOf(container)
+  if (!validContainerSlot(container, request.containerSlot))
+    return { _tag: 'Invalid', result: { _tag: 'InvalidContainerSlot' } }
+  return { _tag: 'Valid', container, containerIndex }
+}
+
 export const transferContainerItem = (
   playerStorage: Player.PlayerStorage,
   containerStorage: ContainerStorage,
   request: ContainerTransferRequest,
 ): ContainerTransferOutcome => {
-  if (request.direction !== 'PlayerToContainer' && request.direction !== 'ContainerToPlayer')
-    return failure(playerStorage, containerStorage, { _tag: 'InvalidDirection' })
-  if (!validPlayerSlot(request.playerSlot))
-    return failure(playerStorage, containerStorage, { _tag: 'InvalidPlayerSlot' })
-  if (!Number.isSafeInteger(request.count) || request.count <= 0)
-    return failure(playerStorage, containerStorage, { _tag: 'InvalidCount' })
-  const container = containerStorage.containers.find(
-    (candidate) => candidate.id === request.containerId,
-  )
-  if (container === undefined)
-    return failure(playerStorage, containerStorage, { _tag: 'ContainerNotFound' })
-  const containerIndex = containerStorage.containers.indexOf(container)
-  if (!validContainerSlot(container, request.containerSlot))
-    return failure(playerStorage, containerStorage, { _tag: 'InvalidContainerSlot' })
+  const lookup = lookupTransferContainer(containerStorage, request)
+  if (lookup._tag === 'Invalid') return failure(playerStorage, containerStorage, lookup.result)
+  const { container, containerIndex } = lookup
 
   const playerStoredStack = resolvePlayerStoredStack(playerStorage, request.playerSlot)
   const containerStack: unknown = container.slots[request.containerSlot] ?? null
@@ -442,24 +481,43 @@ export const transferContainerItem = (
   const { source: validSource, destination: validDestination } = validated
 
   const remaining = validSource.count - request.count
-  const moved: ContainerStoredStack = {
-    ...Inv.itemStack(validSource.item, (validDestination?.count ?? 0) + request.count, { components: validSource.components }),
-    durability: copyDurability(validSource.durability),
+  const movedResult = storedWithCount(validSource, (validDestination?.count ?? 0) + request.count)
+  if (Result.isFailure(movedResult))
+    return failure(playerStorage, containerStorage, { _tag: 'ItemStackFailure', error: movedResult.failure })
+  let remainingPlayerStack: Inv.Slot = undefined
+  if (playerIsSource && remaining > 0) {
+    const remainingResult = Inv.itemStack(validSource.item, remaining, { components: validSource.components })
+    if (Result.isFailure(remainingResult))
+      return failure(playerStorage, containerStorage, { _tag: 'ItemStackFailure', error: remainingResult.failure })
+    remainingPlayerStack = remainingResult.success
   }
+  let remainingContainerStack: ContainerSlot = null
+  if (!playerIsSource && remaining > 0) {
+    const remainingResult = storedWithCount(validSource, remaining)
+    if (Result.isFailure(remainingResult))
+      return failure(playerStorage, containerStorage, { _tag: 'ItemStackFailure', error: remainingResult.failure })
+    remainingContainerStack = remainingResult.success
+  }
+  let destinationPlayerStack: Inv.Slot = undefined
+  if (!playerIsSource) {
+    const destinationResult = Inv.itemStack(movedResult.success.item, movedResult.success.count, {
+      components: movedResult.success.components,
+    })
+    if (Result.isFailure(destinationResult))
+      return failure(playerStorage, containerStorage, { _tag: 'ItemStackFailure', error: destinationResult.failure })
+    destinationPlayerStack = destinationResult.success
+  }
+  const moved = movedResult.success
   const playerSlots = [...playerStorage.inventory.slots]
   const playerDurability = [...playerStorage.inventoryDurability]
   const containerSlots = [...container.slots]
   if (playerIsSource) {
-    playerSlots[request.playerSlot] = remaining === 0
-      ? undefined
-      : Inv.itemStack(validSource.item, remaining, { components: validSource.components })
+    playerSlots[request.playerSlot] = remainingPlayerStack
     playerDurability[request.playerSlot] = remaining === 0 ? null : copyDurability(validSource.durability)
     containerSlots[request.containerSlot] = moved
   } else {
-    containerSlots[request.containerSlot] = remaining === 0
-      ? null
-      : storedWithCount(validSource, remaining)
-    playerSlots[request.playerSlot] = Inv.itemStack(moved.item, moved.count, { components: moved.components })
+    containerSlots[request.containerSlot] = remainingContainerStack
+    playerSlots[request.playerSlot] = destinationPlayerStack
     playerDurability[request.playerSlot] = copyDurability(moved.durability)
   }
   const containers = [...containerStorage.containers]
@@ -503,16 +561,24 @@ export const extractContainerItem = (
 
   const slots = [...container.slots]
   const remaining = source.count - request.count
-  slots[request.containerSlot] = remaining === 0
-    ? null
-    : storedWithCount(source, remaining)
+  let remainingStack: ContainerSlot = null
+  if (remaining > 0) {
+    const remainingResult = storedWithCount(source, remaining)
+    if (Result.isFailure(remainingResult))
+      return { storage, result: { _tag: 'ItemStackFailure', error: remainingResult.failure } }
+    remainingStack = remainingResult.success
+  }
+  const extractedResult = storedWithCount(source, request.count)
+  if (Result.isFailure(extractedResult))
+    return { storage, result: { _tag: 'ItemStackFailure', error: extractedResult.failure } }
+  slots[request.containerSlot] = remainingStack
   const containers = [...storage.containers]
   containers[containerIndex] = { ...container, slots }
   return {
     storage: { containers },
     result: {
       _tag: 'Extracted',
-      stack: storedWithCount(source, request.count),
+      stack: extractedResult.success,
     },
   }
 }
@@ -595,10 +661,18 @@ export const moveContainerItem = (
   const sourceSlots = [...sourceContainer.slots]
   const destinationSlots = sourceIndex === destinationIndex ? sourceSlots : [...destinationContainer.slots]
   const remaining = validSource.count - request.count
-  sourceSlots[request.sourceSlot] = remaining === 0
-    ? null
-    : storedWithCount(validSource, remaining)
-  destinationSlots[request.destinationSlot] = storedWithCount(validSource, (validDestination?.count ?? 0) + request.count)
+  let remainingStack: ContainerSlot = null
+  if (remaining > 0) {
+    const remainingResult = storedWithCount(validSource, remaining)
+    if (Result.isFailure(remainingResult))
+      return { storage, result: { _tag: 'ItemStackFailure', error: remainingResult.failure } }
+    remainingStack = remainingResult.success
+  }
+  const destinationResult = storedWithCount(validSource, (validDestination?.count ?? 0) + request.count)
+  if (Result.isFailure(destinationResult))
+    return { storage, result: { _tag: 'ItemStackFailure', error: destinationResult.failure } }
+  sourceSlots[request.sourceSlot] = remainingStack
+  destinationSlots[request.destinationSlot] = destinationResult.success
   const updatedContainers = [...storage.containers]
   updatedContainers[sourceIndex] = { ...sourceContainer, slots: sourceSlots }
   if (sourceIndex !== destinationIndex)

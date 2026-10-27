@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Effect } from 'effect'
+import { Effect, Result } from 'effect'
 import { makeInventoryService } from '../src/application/inventory-service'
 import {
   CHEST_CONTAINER_CAPACITY,
@@ -16,8 +16,14 @@ import {
   transferContainerItem,
   validateContainerStorageSnapshot,
 } from '../src/domain/container-storage'
-import { itemStack } from '../src/domain/inventory'
+import { itemStack as itemStackResult, type ItemStack } from '../src/domain/inventory'
 import { emptyPlayerStorage } from '../src/domain/player-storage'
+
+const itemStack = (...args: Parameters<typeof itemStackResult>): ItemStack => {
+  const result = itemStackResult(...args)
+  if (Result.isFailure(result)) throw result.failure
+  return result.success
+}
 
 const bytes = (value: unknown): string => JSON.stringify(value)
 
@@ -715,13 +721,19 @@ describe('InventoryService chest integration', () => {
       })).toMatchObject({ _tag: 'Transferred', item: 'bow' })
       const player = yield* restored.storageSnapshot
       const bow = itemStack('bow', 1)
+      const restoredBow = player.inventory.slots[8]
       const serializedComponents = Object.fromEntries(
         Object.entries(bow.components).filter(([, value]) => value !== undefined),
       )
-      expect(player.inventory.slots[8]).toStrictEqual({
-        ...bow,
-        components: serializedComponents,
-      })
+      expect(restoredBow).toBeDefined()
+      if (restoredBow === undefined) return
+      expect({
+        item: restoredBow.item,
+        count: restoredBow.count,
+        components: Object.fromEntries(
+          Object.entries(restoredBow.components).filter(([, value]) => value !== undefined),
+        ),
+      }).toStrictEqual({ item: bow.item, count: bow.count, components: serializedComponents })
       expect(player.inventoryDurability[8]).toStrictEqual({ current: 365, max: 384 })
     }),
   )

@@ -6,27 +6,49 @@
  * line says what broke rather than which function was called.
  */
 import { describe, expect, it } from '@effect/vitest'
-import { Effect } from 'effect'
-import { itemStack } from '../src/domain/inventory'
+import { Effect, Result } from 'effect'
+import { itemStack as itemStackResult, type ItemStack } from '../src/domain/inventory'
 import type { ItemType } from '@nerima-games/mc-kernel'
 import {
   cellAt,
   conflictsIn,
-  craftGrid,
+  craftGrid as craftGridResult,
   exactly,
   matchRecipe,
-  shapedRecipe,
-  shapelessRecipe,
+  shapedRecipe as shapedRecipeResult,
+  shapelessRecipe as shapelessRecipeResult,
   type CraftGrid,
   type Recipe,
   type RecipePattern,
   type RecipeTable,
 } from '../src/domain/recipe'
-import { STARTER_RECIPES } from '../src/domain/recipe-data'
+import { STARTER_RECIPES as starterRecipesResult } from '../src/domain/recipe-data'
 
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
+
+const requireSuccess = <A, E>(result: Result.Result<A, E>): A => {
+  if (Result.isFailure(result)) throw result.failure
+  return result.success
+}
+
+const itemStack = (...args: Parameters<typeof itemStackResult>): ItemStack =>
+  requireSuccess(itemStackResult(...args))
+const craftGrid = (...args: Parameters<typeof craftGridResult>): CraftGrid =>
+  requireSuccess(craftGridResult(...args))
+const shapedRecipe = (
+  id: Parameters<typeof shapedRecipeResult>[0],
+  rows: Parameters<typeof shapedRecipeResult>[1],
+  key: Parameters<typeof shapedRecipeResult>[2],
+  output: ItemStack,
+) => requireSuccess(shapedRecipeResult(id, rows, key, Result.succeed(output)))
+const shapelessRecipe = (
+  id: Parameters<typeof shapelessRecipeResult>[0],
+  items: Parameters<typeof shapelessRecipeResult>[1],
+  output: ItemStack,
+) => requireSuccess(shapelessRecipeResult(id, items, Result.succeed(output)))
+const STARTER_RECIPES = requireSuccess(starterRecipesResult)
 
 /**
  * Every letter is a member of kernel's `ITEM_TYPES`, because `ItemType` is a
