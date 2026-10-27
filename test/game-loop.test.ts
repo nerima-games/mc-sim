@@ -372,6 +372,26 @@ describe('loop observability', () => {
     }),
   )
 
+  it.effect('does not record malformed runtime fixed-step state as TimeOverflow', () =>
+    Effect.gen(function* () {
+      const loop = yield* makeGameLoop(JSON.parse('null'))
+      const handlerCalls = yield* Ref.make(0)
+
+      yield* loop.start(() => Ref.update(handlerCalls, (calls) => calls + 1))
+      yield* loop.submitFrame(MonotonicTimeSecs(0))
+      yield* loop.submitFrame(MonotonicTimeSecs(1))
+
+      const result = yield* Effect.result(loop.advanceFrame(DeltaTimeSecs(0.05)))
+      expect(Result.isFailure(result)).toBe(true)
+      if (Result.isFailure(result)) expect(result.failure._tag).toBe('BrandError')
+      expect(Option.isNone(yield* loop.timeOverflow)).toBe(true)
+
+      for (let attempt = 0; attempt < 10; attempt += 1) yield* Effect.yieldNow
+      expect(yield* Ref.get(handlerCalls)).toBe(0)
+      yield* loop.stop
+    }),
+  )
+
   it.effect('REGRESSION: frames the dropping queue refuses are counted, not silently discarded', () =>
     Effect.gen(function* () {
       const loop = yield* makeGameLoop()
