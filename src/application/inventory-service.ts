@@ -376,19 +376,12 @@ export const InventorySnapshotSchema: AnySchema = Schema.declare<Inv.Inventory>(
     value['slots'].every((slot) => slot === undefined || Schema.is(Inv.ItemStackSchema)(slot)),
 )
 
-const isContainerStoredStack = (value: unknown): value is Container.ContainerStoredStack => {
-  if (value === null) return false
-  const emptyContainer = Container.emptyContainer('schema-probe')
-  return Container.validateContainerStorageSnapshot({
-    version: Container.CONTAINER_STORAGE_SNAPSHOT_VERSION,
-    containers: [{
-      ...emptyContainer,
-      slots: [value, ...emptyContainer.slots.slice(1)],
-    }],
-  })._tag === 'Valid'
-}
-
-export const ContainerStoredStackSchema: AnySchema = Schema.declare(isContainerStoredStack)
+export const ContainerStoredStackSchema: AnySchema = Eq.EquipmentItemSchema.check(Schema.makeFilter((stack) => {
+  const durabilityDefinition = Eq.itemDurabilityDefinitionFor(stack.item)
+  return durabilityDefinition === undefined
+    ? stack.durability === null
+    : Eq.isValidDurabilityForItem(stack.item, stack.durability)
+}))
 
 const InventoryCarriedStackSchema: AnySchema = Schema.declare<InventoryCarriedStack>(
   (value): value is InventoryCarriedStack => value !== undefined && validCarried(value),
