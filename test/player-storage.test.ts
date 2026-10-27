@@ -1,4 +1,5 @@
 import { describe, expect, it } from '@effect/vitest'
+import { vi } from 'vitest'
 import { Effect, Result } from 'effect'
 import { makeInventoryService } from '../src/application/inventory-service'
 import type { ContainerStoredStack } from '../src/domain/container-storage'
@@ -154,6 +155,30 @@ describe('player storage', () => {
     })
     expect(storage.inventoryDurability[0]).toStrictEqual(Eq.durabilityForItem('bow'))
   })
+
+  it('returns the first equipment constructor failure from damageAt without changing storage', () => {
+    const storage = storageFromInventory({
+      slots: [itemStack('bow', 1), ...Array.from({ length: 35 }, () => undefined)],
+    })
+    const stack = storage.inventory.slots[0]
+    const durability = storage.inventoryDurability[0]
+    if (stack === undefined || durability === null) throw new Error('damageable stack is missing its durability')
+    expect(Eq.isValidDurabilityForItem(stack.item, durability)).toBe(true)
+
+    const failure = Eq.equipmentItem(itemStack('stone', 1), null)
+    if (Result.isSuccess(failure)) throw new Error('non-damageable equipment unexpectedly passed')
+
+    const equipmentItemSpy = vi.spyOn(Eq, 'equipmentItem').mockReturnValue(failure)
+    try {
+      const outcome = damageAt(storage, { _tag: 'Inventory', slotIndex: 0 }, 1)
+      expect(outcome.result).toStrictEqual({ _tag: 'EquipmentFailure', error: failure.failure })
+      expect(outcome.storage).toBe(storage)
+      expect(equipmentItemSpy).toHaveBeenCalledTimes(1)
+    } finally {
+      equipmentItemSpy.mockRestore()
+    }
+  })
+
   it('adds a damaged tool with its exact durability and copies the input', () => {
     const durability = { current: 17, max: FLINT_AND_STEEL_MAX_DURABILITY }
     const outcome = addStoredStack(emptyPlayerStorage(), {
