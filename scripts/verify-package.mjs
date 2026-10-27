@@ -56,6 +56,9 @@ const expectedExports = [
   'DEFAULT_TNT_FUSE_SECS',
   'DESPAWNED',
   'DISPENSER_CONTAINER_CAPACITY',
+  'DimensionRevisionConflict',
+  'DomainEventBus',
+  'DomainEventBusLayer',
   'EGG_PROFILE',
   'EMPTY_STATISTICS',
   'ENCHANTMENT_TABLE_BOOK',
@@ -75,6 +78,7 @@ const expectedExports = [
   'EntityManagerLayer',
   'EquipmentService',
   'EquipmentServiceLayer',
+  'EventSubscriberCapacitySchema',
   'FIRST_FRAME_DELTA_SECS',
   'FLINT_AND_STEEL_MAX_DURABILITY',
   'FOOD_TICK_SECS',
@@ -93,8 +97,18 @@ const expectedExports = [
   'INITIAL_WEATHER_STATE',
   'INVENTORY_SLOT_COUNT',
   'ITEM_DURABILITY_CATALOG',
+  'IntentIdSchema',
+  'IntentPayloadSchema',
+  'IntentQueue',
+  'IntentQueueCapacitySchema',
+  'IntentQueueFull',
+  'IntentQueueLayer',
+  'IntentSchema',
+  'IntentSequenceSchema',
   'InventoryService',
   'InventoryServiceLayer',
+  'LegacyItemStackSchema',
+  'LegacySimulationSaveV3Schema',
   'MAX_CATCH_UP_TICKS',
   'MAX_DAY_LENGTH_SECS',
   'MAX_EXHAUSTION',
@@ -119,10 +133,19 @@ const expectedExports = [
   'PITCH_EPSILON',
   'PITCH_MAX_RADIANS',
   'PITCH_MIN_RADIANS',
+  'PLAYER_REPLICATED_OWNER_ID',
   'POTATO_MATURITY_SECS',
+  'PitchRadiansSchema',
   'PlayerService',
   'PlayerServiceLayer',
+  'PlayerServiceSnapshotSchema',
+  'QueuedIntentSchema',
   'REGEN_HUNGER_THRESHOLD',
+  'ReplicatedOwnerChangeSchema',
+  'ReplicatedOwnerDuplicate',
+  'ReplicatedOwnerIdSchema',
+  'ReplicatedOwnerUnknown',
+  'ReplicatedPlayerPoseSchema',
   'SIMULATION_SAVE_FORMAT',
   'SIMULATION_SAVE_SCHEMA',
   'SIM_STAGE_IDS',
@@ -168,6 +191,10 @@ const expectedExports = [
   'WITHER_SPAWN_CHARGE_SECS',
   'WeatherService',
   'WeatherServiceLayer',
+  'WorldCommitCoordinator',
+  'WorldCommitCoordinatorLayer',
+  'WorldRevisionConflict',
+  'YawRadiansSchema',
   'activeBrewingRecipe',
   'addBrewingFuel',
   'addExhaustion',
@@ -311,6 +338,7 @@ const expectedExports = [
   'makeHotbarService',
   'makeInventoryService',
   'makePlayerService',
+  'makeReplicatedOwnerId',
   'makeSaveCoordinator',
   'makeSettingsService',
   'makeSimFrameState',
@@ -323,12 +351,14 @@ const expectedExports = [
   'makeVehicleService',
   'makeVitalsService',
   'makeWeatherService',
+  'makeWorldCommitCoordinator',
   'matchRecipe',
   'matchSmeltingRecipe',
   'matchWitherSummon',
   'matureYieldsFor',
   'maturitySecsFor',
   'maxStackCountForItem',
+  'migrateSimulationSaveV3',
   'mintEntityId',
   'moonPhase',
   'moveContainerItem',
@@ -354,6 +384,9 @@ const expectedExports = [
   'record',
   'removeItem',
   'removeItemAt',
+  'replicatedOwnerChangeSchema',
+  'replicatedSnapshotSchema',
+  'replicatedWorldDeltaSchema',
   'resetLandingImpact',
   'respawn',
   'restoreWither',
@@ -422,7 +455,14 @@ try {
 
   const archive = join(temporaryDirectory, archiveName)
   const entries = new Set(run('tar', ['-tzf', archive]).split('\n').filter(Boolean))
-  for (const entry of ['package/dist/index.js', 'package/dist/index.d.ts', 'package/LICENSE', 'package/README.md']) {
+  for (const entry of [
+    'package/dist/index.js',
+    'package/dist/index.d.ts',
+    'package/dist/testing/index.js',
+    'package/dist/testing/index.d.ts',
+    'package/LICENSE',
+    'package/README.md',
+  ]) {
     if (!entries.has(entry)) {
       throw new Error(`package archive is missing ${entry}`)
     }
@@ -467,11 +507,15 @@ try {
 
   const probe = `
     const sim = await import(${JSON.stringify(packageJson.name)})
+    const testing = await import(${JSON.stringify(`${packageJson.name}/testing`)})
     if (Object.keys(sim).length === 0) {
       throw new Error('The installed package has no runtime exports')
     }
     if (typeof sim.makeGameLoop !== 'function' || typeof sim.craftFromGrid !== 'function') {
       throw new Error('The installed package is missing expected exports')
+    }
+    if (testing.HeadlessHarness === undefined || typeof testing.HeadlessHarnessSessionFactory !== 'function') {
+      throw new Error('The installed package is missing its testing subpath exports')
     }
     console.log('verified installed ${packageJson.name}: ' + Object.keys(sim).length + ' exports')
   `

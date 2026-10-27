@@ -3,7 +3,19 @@ import { DeltaTimeSecs, PositionAxis, SimulationTick, position } from '@nerima-g
 import { Effect, Result } from 'effect'
 import {
   EntityId,
+  DomainEventBus,
+  DomainEventBusLayer,
+  EventSubscriberCapacitySchema,
+  IntentPayloadSchema,
+  IntentQueue,
+  IntentQueueLayer,
+  IntentSchema,
+  PlayerServiceSnapshotSchema,
+  ReplicatedOwnerIdSchema,
+  WorldCommitCoordinator,
+  WorldCommitCoordinatorLayer,
   advanceFixedStep,
+  migrateSimulationSaveV3,
   planExplosion,
   initialFixedStepAccumulator,
   pauseFixedStep,
@@ -15,6 +27,25 @@ import {
   fixedStepParityCases,
 } from './fixtures/effect4-parity/fixed-step.js'
 import { explosionMainParityCases } from './fixtures/effect4-parity/explosion.js'
+import { HeadlessHarness, HeadlessHarnessSessionFactory, HeadlessHarnessTestLayer } from '../src/testing/index.js'
+
+it('publishes the C1-C4 service and schema entry points', () => {
+  expect(typeof migrateSimulationSaveV3).toBe('function')
+  expect(IntentSchema).toBeDefined()
+  expect(IntentPayloadSchema).toBeDefined()
+  expect(IntentQueue).toBeDefined()
+  expect(IntentQueueLayer).toBeDefined()
+  expect(DomainEventBus).toBeDefined()
+  expect(DomainEventBusLayer).toBeDefined()
+  expect(EventSubscriberCapacitySchema).toBeDefined()
+  expect(ReplicatedOwnerIdSchema).toBeDefined()
+  expect(PlayerServiceSnapshotSchema).toBeDefined()
+  expect(WorldCommitCoordinator).toBeDefined()
+  expect(WorldCommitCoordinatorLayer).toBeDefined()
+  expect(HeadlessHarness).toBeDefined()
+  expect(HeadlessHarnessTestLayer).toBeDefined()
+  expect(HeadlessHarnessSessionFactory).toBeDefined()
+})
 
 const normalizeFixedStepResult = (result: ReturnType<typeof advanceFixedStep>) =>
   Result.isFailure(result)

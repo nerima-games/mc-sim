@@ -29,6 +29,11 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing/index.d.ts",
+      "import": "./dist/testing/index.js",
+      "default": "./dist/testing/index.js"
     }
   },
   "files": [
@@ -47,7 +52,7 @@
     "typecheck": "tsc -p tsconfig.build.json --pretty false && tsc -p tsconfig.test.json --pretty false && tsc -p tsconfig.preview.json --pretty false",
     "lint": "oxlint --deny-warnings src test apps && ast-grep scan",
     "lint:fix": "oxlint --fix src test apps",
-    "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.release.json --pretty false",
+    "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.release.json --pretty false && tsc -p tsconfig.testing-release.json --pretty false",
     "bench": "tsx scripts/benchmark-explosion.ts",
     "package:verify": "pnpm build && node scripts/verify-package.mjs",
     "preview": "tsx apps/preview-sim/main.ts",
