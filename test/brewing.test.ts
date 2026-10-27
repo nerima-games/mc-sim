@@ -24,6 +24,7 @@ import {
   type BrewingState,
 } from '../src/domain/brewing.js'
 import { itemStack as itemStackResult, type ItemStack } from '../src/domain/inventory.js'
+import * as inventoryModule from '../src/domain/inventory.js'
 import * as itemStackModule from '../src/domain/item-stack.js'
 
 const must = <A, E>(result: Result.Result<A, E>): A => {
@@ -183,7 +184,7 @@ describe('brewing domain', () => {
     expect(validateBrewingSnapshot(null)).toMatchObject({ _tag: 'Invalid' })
   })
 
-  it('returns output stack construction failures from a single brew', () => {
+  it('brews a starter recipe once and returns its output', () => {
     const recipe = VANILLA_BREWING_RECIPES[0]
     if (recipe === undefined) throw new Error('vanilla brewing recipe missing')
     const state = withFuel(must(brewingState({
@@ -194,6 +195,131 @@ describe('brewing domain', () => {
     expect(Result.isSuccess(result)).toBe(true)
     if (Result.isFailure(result)) throw result.failure
     expect(result.success.bottles[0]?.item).toBe(recipe.output)
+  })
+
+  it('returns output stack construction failures from a single brew', () => {
+    const recipe = STARTER_BREWING_RECIPES[0]
+    if (recipe === undefined) throw new Error('starter brewing recipe missing')
+    const ingredient = itemStack(recipe.ingredient, 1)
+    const state = withFuel(must(brewingState({
+      bottles: [itemStack(recipe.input, 1), undefined, undefined],
+      ingredient,
+      fuelCharges: 1,
+    })))
+    const outputFailure = itemStackResult('water_bottle', 0)
+    if (Result.isSuccess(outputFailure)) throw new Error('invalid stack count unexpectedly passed')
+
+    const originalItemStack = inventoryModule.itemStack
+    const outputSpy = vi.spyOn(inventoryModule, 'itemStack').mockImplementation((item, count, options) =>
+      item === recipe.output && count === 1
+        ? outputFailure
+        : originalItemStack(item, count, options),
+    )
+    let result: ReturnType<typeof brewOnce>
+    try {
+      result = brewOnce(state, ingredient, recipe)
+    } finally {
+      outputSpy.mockRestore()
+    }
+
+    expect(result!).toMatchObject({ _tag: 'Failure', failure: outputFailure.failure })
+  })
+
+  it('uses the output returned by a dynamic recipe getter after validation', () => {
+    const recipe = STARTER_BREWING_RECIPES[0]
+    if (recipe === undefined) throw new Error('starter brewing recipe missing')
+    let outputReads = 0
+    const dynamicRecipe = {
+      id: recipe.id,
+      input: recipe.input,
+      ingredient: recipe.ingredient,
+      get output() {
+        outputReads += 1
+        return outputReads === 1 ? recipe.output : 'potion_of_swiftness'
+      },
+    }
+    const ingredient = itemStack(recipe.ingredient, 1)
+    const state = withFuel(must(brewingState({
+      bottles: [itemStack(recipe.input, 1), undefined, undefined],
+      ingredient,
+      fuelCharges: 1,
+    })))
+
+    const result = brewOnce(state, ingredient, dynamicRecipe)
+    expect(Result.isSuccess(result)).toBe(true)
+    if (Result.isFailure(result)) throw result.failure
+    expect(outputReads).toBe(2)
+    expect(result.success.bottles[0]?.item).toBe('potion_of_swiftness')
+  })
+
+  it('rejects an undefined direct brew ingredient', () => {
+    const recipe = STARTER_BREWING_RECIPES[0]
+    if (recipe === undefined) throw new Error('starter brewing recipe missing')
+    const state = withFuel(must(brewingState({
+      bottles: [itemStack(recipe.input, 1), undefined, undefined],
+      fuelCharges: 1,
+    })))
+
+    expect(brewOnce(state, undefined as never, recipe)).toMatchObject({
+      _tag: 'Failure',
+      failure: {
+        _tag: 'BrewingValidationFailure',
+        path: 'ingredient',
+        reason: 'expected an ItemStack',
+      },
+    })
+  })
+
+  it('returns ingredient consumption helper failures from a single brew', () => {
+    const recipe = STARTER_BREWING_RECIPES[0]
+    if (recipe === undefined) throw new Error('starter brewing recipe missing')
+    const ingredient = itemStack(recipe.ingredient, 2)
+    const state = withFuel(must(brewingState({
+      bottles: [itemStack(recipe.input, 1), undefined, undefined],
+      ingredient,
+      fuelCharges: 1,
+    })))
+    const consumeFailure = itemStackModule.itemStackWithCount(ingredient, 0)
+    if (Result.isSuccess(consumeFailure)) throw new Error('invalid stack count unexpectedly passed')
+
+    const consumeSpy = vi.spyOn(itemStackModule, 'itemStackWithCount').mockReturnValue(consumeFailure)
+    let result: ReturnType<typeof brewOnce>
+    try {
+      result = brewOnce(state, ingredient, recipe)
+    } finally {
+      consumeSpy.mockRestore()
+    }
+
+    expect(result!).toMatchObject({ _tag: 'Failure', failure: consumeFailure.failure })
+  })
+
+  it('returns reset-duration failures from a single brew', () => {
+    const recipe = STARTER_BREWING_RECIPES[0]
+    if (recipe === undefined) throw new Error('starter brewing recipe missing')
+    const ingredient = itemStack(recipe.ingredient, 1)
+    const state = withFuel(must(brewingState({
+      bottles: [itemStack(recipe.input, 1), undefined, undefined],
+      ingredient,
+      fuelCharges: 1,
+    })))
+    const durationFailure = FixedDurationSecs.result(-1)
+    if (Result.isSuccess(durationFailure)) throw new Error('invalid duration unexpectedly passed')
+
+    const originalDuration = FixedDurationSecs.result
+    let zeroCalls = 0
+    const durationSpy = vi.spyOn(FixedDurationSecs, 'result').mockImplementation((value) => {
+      if (value === 0 && ++zeroCalls === 2) return Result.fail(durationFailure.failure)
+      return originalDuration(value)
+    })
+    let result: ReturnType<typeof brewOnce>
+    try {
+      result = brewOnce(state, ingredient, recipe)
+    } finally {
+      durationSpy.mockRestore()
+    }
+
+    expect(zeroCalls).toBe(2)
+    expect(result!).toMatchObject({ _tag: 'Failure', failure: durationFailure.failure })
   })
 
   it('covers persisted aliases, malformed slots, and Result failures without substituting state', () => {
