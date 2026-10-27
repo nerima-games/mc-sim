@@ -102,6 +102,9 @@ export type WitherSummonMatch = {
   readonly consumedBlocks: ReadonlyArray<BlockCell>
 }
 
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
 const finite = (value: number, fallback = 0): number => (Number.isFinite(value) ? value : fallback)
 
 
@@ -112,6 +115,24 @@ const repairPosition = (value: Position): Position =>
   positionOf(finite(value?.x), finite(value?.y), finite(value?.z))
 const invalidNumber = (value: unknown): Brand.BrandError =>
   new Brand.BrandError(new SchemaIssue.InvalidType(Schema.Number.ast, value))
+
+const invalidEnvelope = (value: unknown): Brand.BrandError =>
+  new Brand.BrandError(new SchemaIssue.InvalidType(Schema.Struct({}).ast, value))
+
+const isWitherPhase = (value: unknown): value is WitherPhase =>
+  value === 'charging' || value === 'airborne' || value === 'armoured' || value === 'dead'
+
+const isPosition = (value: unknown): value is Position =>
+  isRecord(value) &&
+  typeof value['x'] === 'number' && PositionAxis.is(value['x']) &&
+  typeof value['y'] === 'number' && PositionAxis.is(value['y']) &&
+  typeof value['z'] === 'number' && PositionAxis.is(value['z'])
+
+const isWitherState = (value: unknown): value is WitherState =>
+  isRecord(value) && isWitherPhase(value['phase']) &&
+  typeof value['healthPoints'] === 'number' && WitherHealthPoints.is(value['healthPoints']) &&
+  typeof value['chargeRemainingSecs'] === 'number' && WitherChargeRemainingSecs.is(value['chargeRemainingSecs']) &&
+  isPosition(value['feetPosition']) && isPosition(value['velocity'])
 
 const phaseForHealth = (healthPoints: number): Exclude<WitherPhase, 'charging'> =>
   healthPoints <= 0 ? 'dead' : healthPoints <= WITHER_ARMOUR_THRESHOLD ? 'armoured' : 'airborne'
@@ -175,6 +196,7 @@ export const stepWither = (
   deltaTimeSecs: unknown,
   targetPosition?: Position,
 ): Result.Result<WitherStep, WitherStepFailure> => Result.gen(function* () {
+  if (!isWitherState(state)) return yield* Result.fail(invalidEnvelope(state))
   if (typeof deltaTimeSecs !== 'number') return yield* Result.fail(invalidNumber(deltaTimeSecs))
   const delta = yield* DeltaTimeSecs.result(deltaTimeSecs)
   if (state.phase === 'dead') return { state, spawnExplosion: undefined }
@@ -215,8 +237,12 @@ export const damageWither = (
   amount: unknown,
   kind: WitherDamageKind,
 ): Result.Result<WitherDamageResult, WitherStepFailure> => Result.gen(function* () {
+  if (!isWitherState(state)) return yield* Result.fail(invalidEnvelope(state))
   if (typeof amount !== 'number') return yield* Result.fail(invalidNumber(amount))
   const damage = yield* WitherDamageAmount.result(amount)
+  if (kind !== 'melee' && kind !== 'ranged' && kind !== 'magic' && kind !== 'explosion' && kind !== 'void') {
+    return yield* Result.fail(invalidEnvelope(kind))
+  }
   const ignored = state.phase === 'dead' || state.phase === 'charging' || (state.phase === 'armoured' && kind === 'ranged')
   if (ignored || damage === 0) return { state, appliedDamage: WitherDamageAmount(0), ignored, death: undefined }
 
@@ -238,7 +264,7 @@ export const witherSkullProjectile = (
   variant: WitherSkullVariant,
 ): WitherSkullProjectileDescriptor => ({
   kind: 'wither_skull',
-  variant,
+  variant: variant === 'blue' ? 'blue' : 'normal',
   origin: repairPosition(origin),
   direction: scaledDirection(repairPosition(origin), repairPosition(target), 1),
   speed: WitherProjectileSpeed(variant === 'blue' ? 12 : 10),
@@ -265,6 +291,14 @@ export const matchWitherSummon = (
   blockAt: (cell: BlockCell) => WitherSummonMaterial | undefined,
 ): Result.Result<WitherSummonMatch | undefined, Brand.BrandError> =>
   Result.gen(function* () {
+    if (!isRecord(base) || typeof blockAt !== 'function') return yield* Result.fail(invalidEnvelope(base))
+    if (
+      typeof base['x'] !== 'number' || !Number.isFinite(base['x']) ||
+      typeof base['y'] !== 'number' || !Number.isFinite(base['y']) ||
+      typeof base['z'] !== 'number' || !Number.isFinite(base['z'])
+    ) {
+      return yield* Result.fail(invalidEnvelope(base))
+    }
     const x = yield* PositionAxis.result(base.x)
     const y = yield* PositionAxis.result(base.y)
     const z = yield* PositionAxis.result(base.z)
@@ -299,23 +333,40 @@ export const matchWitherSummon = (
     return undefined
   })
 
-export const serializeWither = (state: WitherState): WitherSnapshot => ({ kind: 'wither', version: 1, state })
+export const serializeWither = (state: WitherState): WitherSnapshot => ({
+  kind: 'wither',
+  version: 1,
+  state: normaliseWitherState(state),
+})
 
-export const restoreWither = (snapshot: WitherSnapshot): WitherState => {
-  const healthPoints = WitherHealthPoints(Math.min(WITHER_MAX_HEALTH, nonNegative(snapshot.state.healthPoints)))
-  const chargeRemainingSecs = WitherChargeRemainingSecs(Math.min(WITHER_SPAWN_CHARGE_SECS, nonNegative(snapshot.state.chargeRemainingSecs)))
+const normaliseWitherState = (value: unknown): WitherState => {
+  const state = isRecord(value) ? value : {}
+  const rawHealthPoints = state['healthPoints']
+  const rawChargeRemainingSecs = state['chargeRemainingSecs']
+  const healthPoints = WitherHealthPoints(Math.min(
+    WITHER_MAX_HEALTH,
+    nonNegative(typeof rawHealthPoints === 'number' ? rawHealthPoints : Number.NaN),
+  ))
+  const chargeRemainingSecs = WitherChargeRemainingSecs(Math.min(
+    WITHER_SPAWN_CHARGE_SECS,
+    nonNegative(typeof rawChargeRemainingSecs === 'number' ? rawChargeRemainingSecs : Number.NaN),
+  ))
+  const rawPhase = state['phase']
   const phase = healthPoints <= 0
     ? 'dead'
-    : snapshot.state.phase === 'charging' && chargeRemainingSecs > 0
+    : rawPhase === 'charging' && chargeRemainingSecs > 0
       ? 'charging'
-      : snapshot.state.phase === 'armoured' || healthPoints <= WITHER_ARMOUR_THRESHOLD
+      : rawPhase === 'armoured' || healthPoints <= WITHER_ARMOUR_THRESHOLD
         ? 'armoured'
         : 'airborne'
   return {
     phase,
     healthPoints,
     chargeRemainingSecs: phase === 'charging' ? chargeRemainingSecs : WitherChargeRemainingSecs(0),
-    feetPosition: repairPosition(snapshot.state.feetPosition),
-    velocity: repairPosition(snapshot.state.velocity),
+    feetPosition: repairPosition(state['feetPosition'] as Position),
+    velocity: repairPosition(state['velocity'] as Position),
   }
 }
+
+export const restoreWither = (snapshot: WitherSnapshot): WitherState =>
+  normaliseWitherState(isRecord(snapshot) ? snapshot['state'] : undefined)
