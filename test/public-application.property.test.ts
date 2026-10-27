@@ -1,7 +1,12 @@
 import fc from 'fast-check'
-import { Deferred, Effect, Layer, Ref, Result, Schema } from 'effect'
+import { Deferred, Effect, Layer, Option, Ref, Result, Schema } from 'effect'
 import { expect, it } from 'vitest'
-import { InMemoryStorageLayer } from '@nerima-games/mc-save'
+import {
+  failingStorageLayer,
+  makeInMemoryStorage,
+  StorageOperation,
+  StoragePort,
+} from '@nerima-games/mc-save'
 import {
   ChunkAxis,
   DIMENSIONS,
@@ -431,31 +436,128 @@ it('save coordinator decodes the typed failure after every snapshot generation r
   expect(await Effect.runPromise(coordinator.retainedChunkCount)).toBe(8)
 })
 
-it('simulation save boundary returns typed failures for hostile payloads and safe options for arbitrary keys', async () => {
-  const key = simulationSaveKey('application-property-save')
+const applicationPropertySimulationSave = Schema.decodeUnknownSync(PublicApplication.SIMULATION_SAVE_SCHEMA)({
+  dimension: 'overworld',
+  tick: 7,
+  player: {
+    position: { x: 3.5, y: 64, z: -7.25 },
+    inventory: [],
+    selectedHotbarSlot: 0,
+  },
+  statistics: { counters: {}, unlocked: [] },
+})
+
+it('simulation save boundary decodes void and Option outcomes while preserving stored state', async () => {
+  const storage = await Effect.runPromise(makeInMemoryStorage)
+  const storageLayer = Layer.succeed(StoragePort, storage)
+  const key = simulationSaveKey('application-property-save-roundtrip')
+  const saveSuccessSchema = PublicApplication.SaveSimulationSuccessSchema
+  const loadSuccessSchema = PublicApplication.LoadSimulationSuccessSchema
+  const errorSchema = PublicApplication.SimulationSaveErrorSchema
+
+  const saveOutcome = await assertEffectResult(
+    'saveSimulation valid save',
+    () => invokeEffect(saveSimulation, [key, applicationPropertySimulationSave]).pipe(Effect.provide(storageLayer)),
+    [], saveSuccessSchema, errorSchema,
+  )
+  expect(Result.isSuccess(saveOutcome)).toBe(true)
+  if (Result.isSuccess(saveOutcome)) {
+    expect(Schema.decodeUnknownSync(saveSuccessSchema)(saveOutcome.success)).toBeUndefined()
+  }
+
+  const stored = await Effect.runPromise(storage.get(key))
+  expect(Option.isSome(stored)).toBe(true)
+  expect(await Effect.runPromise(storage.keys)).toStrictEqual([key])
+
+  const loadOutcome = await assertEffectResult(
+    'loadSimulation saved value', () => invokeEffect(loadSimulation, [key]).pipe(Effect.provide(storageLayer)),
+    [], loadSuccessSchema, errorSchema,
+  )
+  expect(Result.isSuccess(loadOutcome)).toBe(true)
+  if (Result.isSuccess(loadOutcome)) {
+    const loaded = Schema.decodeUnknownSync(loadSuccessSchema)(loadOutcome.success)
+    expect(Option.isSome(loaded)).toBe(true)
+    if (Option.isSome(loaded)) expect(loaded.value).toStrictEqual(applicationPropertySimulationSave)
+  }
+})
+
+it('saveSimulation decodes hostile save failures and leaves storage unchanged', async () => {
+  const saveSuccessSchema = PublicApplication.SaveSimulationSuccessSchema
+  const errorSchema = PublicApplication.SimulationSaveErrorSchema
 
   await fc.assert(
-    fc.asyncProperty(hostileValue, async (payload) => {
-      const outcome = await Effect.runPromise(
-        Effect.result(
-          invokeEffect(saveSimulation, [key, payload]).pipe(Effect.provide(InMemoryStorageLayer)),
-        ),
+    fc.asyncProperty(hostileValue, async (value) => {
+      const storage = await Effect.runPromise(makeInMemoryStorage)
+      const storageLayer = Layer.succeed(StoragePort, storage)
+      const key = simulationSaveKey('application-property-invalid-save')
+      const malformedPayload = { _tag: 'HostileSaveCandidate', value }
+      const outcome = await assertEffectResult(
+        'saveSimulation malformed payload',
+        () => invokeEffect(saveSimulation, [key, malformedPayload]).pipe(Effect.provide(storageLayer)),
+        [], saveSuccessSchema, errorSchema,
       )
       expect(Result.isFailure(outcome)).toBe(true)
+      if (Result.isFailure(outcome)) {
+        const error = Schema.decodeUnknownSync(errorSchema)(outcome.failure)
+        expect(error._tag).toBe('SaveDecodeError')
+      }
+      expect(await Effect.runPromise(storage.keys)).toStrictEqual([])
     }),
     checks,
   )
+})
+
+it('loadSimulation returns the declared Option.none for arbitrary non-blank missing keys', async () => {
+  const loadSuccessSchema = PublicApplication.LoadSimulationSuccessSchema
+  const errorSchema = PublicApplication.SimulationSaveErrorSchema
 
   await fc.assert(
     fc.asyncProperty(fc.string({ minLength: 1 }).filter((rawKey) => rawKey.trim().length > 0), async (rawKey) => {
-      await Effect.runPromise(
-        invokeEffect(loadSimulation, [simulationSaveKey(rawKey)]).pipe(
-          Effect.provide(InMemoryStorageLayer),
-        ) as Effect.Effect<unknown, unknown, never>,
+      const storage = await Effect.runPromise(makeInMemoryStorage)
+      const storageLayer = Layer.succeed(StoragePort, storage)
+      const key = simulationSaveKey(rawKey)
+      const outcome = await assertEffectResult(
+        'loadSimulation missing key', () => invokeEffect(loadSimulation, [key]).pipe(Effect.provide(storageLayer)),
+        [], loadSuccessSchema, errorSchema,
       )
+      expect(Result.isSuccess(outcome)).toBe(true)
+      if (Result.isSuccess(outcome)) {
+        expect(Option.isNone(Schema.decodeUnknownSync(loadSuccessSchema)(outcome.success))).toBe(true)
+      }
+      expect(await Effect.runPromise(storage.keys)).toStrictEqual([])
     }),
     checks,
   )
+})
+
+it('save and load decode storage failures through their declared error union', async () => {
+  const storageFailureLayer = failingStorageLayer(StorageOperation('simulation-property-storage-failure'))
+  const saveSuccessSchema = PublicApplication.SaveSimulationSuccessSchema
+  const loadSuccessSchema = PublicApplication.LoadSimulationSuccessSchema
+  const errorSchema = PublicApplication.SimulationSaveErrorSchema
+  const key = simulationSaveKey('application-property-storage-failure')
+
+  const saveOutcome = await assertEffectResult(
+    'saveSimulation storage failure',
+    () => invokeEffect(saveSimulation, [key, applicationPropertySimulationSave]).pipe(
+      Effect.provide(storageFailureLayer),
+    ),
+    [], saveSuccessSchema, errorSchema,
+  )
+  expect(Result.isFailure(saveOutcome)).toBe(true)
+  if (Result.isFailure(saveOutcome)) {
+    expect(Schema.decodeUnknownSync(errorSchema)(saveOutcome.failure)._tag).toBe('StorageError')
+  }
+
+  const loadOutcome = await assertEffectResult(
+    'loadSimulation storage failure',
+    () => invokeEffect(loadSimulation, [key]).pipe(Effect.provide(storageFailureLayer)),
+    [], loadSuccessSchema, errorSchema,
+  )
+  expect(Result.isFailure(loadOutcome)).toBe(true)
+  if (Result.isFailure(loadOutcome)) {
+    expect(Schema.decodeUnknownSync(errorSchema)(loadOutcome.failure)._tag).toBe('StorageError')
+  }
 })
 
 it('legacy save migration rejects hostile payloads through its typed decode channel', async () => {
