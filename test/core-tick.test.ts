@@ -26,6 +26,7 @@ const commitDeltaFor = (request: WorldCommitRequest) => ({
   world: makeWorldId('core-tick-test-world'),
   revision: makeRevision(Number(request.expectedRevision) + 1),
   changes: request.changes.map(({ ownerId, state }) => ({ owner: ownerId, state })),
+  blockChanges: [],
 })
 
 const readyIntent = (id: string, sequence: number, targetTick: number = 1): QueuedIntent => ({

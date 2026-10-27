@@ -1,12 +1,33 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Brand, Cause, Deferred, Effect, Exit, Fiber, Schema, SchemaGetter } from 'effect'
+import { Brand, Cause, Deferred, Effect, Exit, Fiber, Result, Schema, SchemaGetter } from 'effect'
 import {
+  BlockIdSchema,
+  BlockPositionSchema,
+  ChunkAxis,
+  DimensionIdSchema,
   DimensionRevisionSchema,
   WorldIdSchema,
   WorldRevisionSchema,
+  WorldWriteChunkUnavailable,
+  WorldWriteInvalidBatch,
 } from '@nerima-games/mc-kernel'
+import type { BlockId, ChunkCoord, Dimension, WorldWriteBatch } from '@nerima-games/mc-kernel'
+import {
+  CHUNK_HEIGHT,
+  CHUNK_SIZE_XZ,
+  ChunkCapacity,
+  ChunkStoreRegistry,
+  ChunkStoreRegistryLayer,
+  chunkCoord,
+} from '@nerima-games/mc-worldgen'
+import { emptyBlocks } from '@nerima-games/mc-worldgen/testing'
+import type { ChunkStoreRegistryApi, PreparedChunkWrite } from '@nerima-games/mc-worldgen'
 import type { ReplicatedOwnerId } from '../src/application/replicated-state'
 import {
+  ReplicatedBlockChangeSchema,
+  ReplicatedOwnerChangeSchema,
+  WorldBlockReadSchema,
+  WorldReadSnapshotSchema,
   replicatedOwnerChangeSchema,
   replicatedSnapshotSchema,
   replicatedWorldDeltaSchema,
@@ -18,13 +39,60 @@ import {
   ReplicatedOwnerUnknown,
   WorldRevisionConflict,
   WorldCommitCoordinator,
+  WorldCommitCoordinatorErrorSchema,
+  WorldCommitResultSchema,
   WorldCommitCoordinatorLayer,
+  WorldCommitBlockWriteInvalidPosition,
+  WorldCommitChunkStoreUnavailable,
+  WorldWriteTokenInvalid,
 } from '../src/application/world-commit-coordinator'
 
 const makeOwnerId = Brand.nominal<ReplicatedOwnerId>()
 const ownerA = makeOwnerId('owner-a')
 const ownerB = makeOwnerId('owner-b')
 const unknownOwner = makeOwnerId('unknown-owner')
+const transactionPosition = Schema.decodeUnknownSync(BlockPositionSchema)({ x: 1, y: 32, z: 1 })
+const blockId = (value: number): BlockId => Schema.decodeUnknownSync(BlockIdSchema)(value)
+const transactionWorld = Schema.decodeUnknownSync(WorldIdSchema)('world-a')
+const transactionDimension = Schema.decodeUnknownSync(DimensionIdSchema)('overworld')
+const transactionSource = (_dimension: Dimension) => (coord: ChunkCoord) => Effect.succeed({
+  blocks: emptyBlocks(),
+  biomes: Array.from({ length: CHUNK_SIZE_XZ * CHUNK_SIZE_XZ }, () => 'PLAINS' as const),
+  coord,
+})
+const makeChunkStoreRegistry = () => Effect.provide(
+  ChunkStoreRegistry,
+  ChunkStoreRegistryLayer(transactionSource, ChunkCapacity(2)),
+)
+const makeBlockWrite = (
+  block: BlockId,
+  edits: WorldWriteBatch['edits'] = [{ position: transactionPosition, block }],
+): WorldWriteBatch => ({
+  world: transactionWorld,
+  expectedWorldRevision: Schema.decodeUnknownSync(WorldRevisionSchema)(0),
+  dimension: transactionDimension,
+  expectedDimensionRevision: Schema.decodeUnknownSync(DimensionRevisionSchema)(0),
+  edits,
+})
+
+const decodeCoordinatorEffectResult = (value: unknown) =>
+  Schema.decodeUnknownSync(Schema.Result(Schema.Unknown, WorldCommitCoordinatorErrorSchema))(value)
+
+const commitEffectResultSchema = WorldCommitResultSchema(ReplicatedOwnerChangeSchema)
+const decodeCommitEffectResult = (value: unknown) =>
+  Schema.decodeUnknownSync(commitEffectResultSchema)(value)
+
+const expectRequiredFieldsToRejectOmissionAndNull = (
+  schema: Schema.Codec<any, any>,
+  value: Readonly<Record<string, unknown>>,
+  fields: ReadonlyArray<string>,
+) => {
+  for (const field of fields) {
+    const omitted = Object.fromEntries(Object.entries(value).filter(([key]) => key !== field))
+    expect(Schema.decodeUnknownResult(schema)(omitted)._tag, `${field} omission`).toBe('Failure')
+    expect(Schema.decodeUnknownResult(schema)({ ...value, [field]: null })._tag, `${field} null`).toBe('Failure')
+  }
+}
 
 describe('replicated state schemas', () => {
   it('builds typed snapshot, owner-change, and world-delta codecs', () => {
@@ -43,6 +111,7 @@ describe('replicated state schemas', () => {
       world: 'world-a',
       revision: 4,
       changes: [{ owner: 'owner-a', state: { enabled: true } }],
+      blockChanges: [],
     })
 
     expect(snapshot._tag).toBe('Success')
@@ -54,6 +123,111 @@ describe('replicated state schemas', () => {
     expect(delta._tag).toBe('Success')
     if (delta._tag === 'Success') expect(delta.success.changes).toHaveLength(1)
   })
+
+  it('rejects omitted and null commit-result and block-change fields', () => {
+    const ownerChangeSchema = replicatedOwnerChangeSchema('owner-a', Schema.Struct({ enabled: Schema.Boolean }))
+    const deltaSchema = replicatedWorldDeltaSchema(ownerChangeSchema)
+    const delta = {
+      world: 'world-a',
+      revision: 1,
+      changes: [{ owner: 'owner-a', state: { enabled: true } }],
+      blockChanges: [{
+        dimension: 'overworld',
+        position: { x: 1, y: 32, z: 1 },
+        before: 1,
+        after: 2,
+      }],
+    }
+    expect(Schema.decodeUnknownResult(commitEffectResultSchema)(Result.succeed(delta))._tag).toBe('Success')
+    for (const field of ['world', 'revision', 'changes', 'blockChanges']) {
+      const missingResult = Result.succeed(Object.fromEntries(Object.entries(delta).filter(([key]) => key !== field)))
+      const nullResult = Result.succeed({ ...delta, [field]: null })
+      expect(Schema.decodeUnknownResult(commitEffectResultSchema)(missingResult)._tag, `${field} omission`)
+        .toBe('Failure')
+      expect(Schema.decodeUnknownResult(commitEffectResultSchema)(nullResult)._tag, `${field} null`)
+        .toBe('Failure')
+    }
+    expect(Schema.decodeUnknownResult(deltaSchema)({ ...delta, revision: Number.MAX_SAFE_INTEGER })._tag).toBe('Success')
+    expect(Schema.decodeUnknownResult(deltaSchema)({ ...delta, revision: Number.MAX_SAFE_INTEGER + 1 })._tag)
+      .toBe('Failure')
+    expect(Schema.decodeUnknownResult(ReplicatedBlockChangeSchema)({
+      ...delta.blockChanges[0],
+      position: { x: Number.MAX_SAFE_INTEGER + 1, y: 32, z: 1 },
+    })._tag).toBe('Failure')
+    expectRequiredFieldsToRejectOmissionAndNull(deltaSchema, delta, ['world', 'revision', 'changes', 'blockChanges'])
+    expectRequiredFieldsToRejectOmissionAndNull(ReplicatedBlockChangeSchema, delta.blockChanges[0]!, [
+      'dimension', 'position', 'before', 'after',
+    ])
+
+    const blockRead = {
+      dimension: 'overworld',
+      position: { x: 1, y: 32, z: 1 },
+      reading: { _tag: 'Block', block: 2 },
+    }
+    expectRequiredFieldsToRejectOmissionAndNull(WorldBlockReadSchema, blockRead, ['dimension', 'position', 'reading'])
+    expect(Schema.decodeUnknownResult(WorldBlockReadSchema)({
+      ...blockRead,
+      reading: { _tag: 'Block' },
+    })._tag).toBe('Failure')
+    expect(Schema.decodeUnknownResult(WorldBlockReadSchema)({
+      ...blockRead,
+      reading: { _tag: 'Block', block: null },
+    })._tag).toBe('Failure')
+
+    const readSnapshotSchema = WorldReadSnapshotSchema(Schema.Struct({ enabled: Schema.Boolean }))
+    const readSnapshot = {
+      world: 'world-a',
+      revision: 1,
+      state: { enabled: true },
+      blocks: [blockRead],
+    }
+    expectRequiredFieldsToRejectOmissionAndNull(readSnapshotSchema, readSnapshot, [
+      'world', 'revision', 'state', 'blocks',
+    ])
+  })
+
+  it('decodes the complete commit Result, including strict tagged failures and stale revisions', () => {
+    const staleValue = {
+      _tag: 'WorldWriteStale',
+      dimension: 'overworld',
+      key: '0,0',
+      expectedRevision: 0,
+      actualRevision: { _tag: 'None' },
+    }
+    const staleSchema = WorldCommitCoordinatorErrorSchema
+    const validFailureResult = Result.fail(staleValue)
+    expect(Schema.decodeUnknownResult(commitEffectResultSchema)(validFailureResult)._tag).toBe('Success')
+
+    for (const field of ['dimension', 'key', 'expectedRevision', 'actualRevision']) {
+      const missingFailure = Result.fail(Object.fromEntries(Object.entries(staleValue).filter(([key]) => key !== field)))
+      const nullFailure = Result.fail({ ...staleValue, [field]: null })
+      expect(Schema.decodeUnknownResult(commitEffectResultSchema)(missingFailure)._tag, `${field} omission`)
+        .toBe('Failure')
+      expect(Schema.decodeUnknownResult(commitEffectResultSchema)(nullFailure)._tag, `${field} null`)
+        .toBe('Failure')
+    }
+    expect(Schema.decodeUnknownResult(staleSchema)({ ...staleValue, expectedRevision: Number.MAX_SAFE_INTEGER })._tag)
+      .toBe('Success')
+    expect(Schema.decodeUnknownResult(staleSchema)({
+      ...staleValue,
+      actualRevision: { _tag: 'Some', value: Number.MAX_SAFE_INTEGER },
+    })._tag).toBe('Success')
+    expect(Schema.decodeUnknownResult(staleSchema)({
+      ...staleValue,
+      actualRevision: { _tag: 'Some', value: Number.MAX_SAFE_INTEGER + 1 },
+    })._tag).toBe('Failure')
+    expect(Schema.decodeUnknownResult(staleSchema)({ ...staleValue, expectedRevision: Number.MAX_SAFE_INTEGER + 1 })._tag)
+      .toBe('Failure')
+    expect(Schema.decodeUnknownResult(staleSchema)({ ...staleValue, expectedRevision: -1 })._tag).toBe('Failure')
+    expect(Schema.decodeUnknownResult(staleSchema)({ ...staleValue, expectedRevision: 0.5 })._tag).toBe('Failure')
+    expect(Schema.decodeUnknownResult(commitEffectResultSchema)(Result.fail({
+      _tag: 'WorldWriteTokenInvalid',
+      reason: 'unknown_token',
+    }))._tag).toBe('Success')
+    expect(Schema.decodeUnknownResult(commitEffectResultSchema)(Result.fail({
+      _tag: 'WorldWriteTokenInvalid',
+    }))._tag).toBe('Failure')
+  })
 })
 
 describe('WorldCommitCoordinator', () => {
@@ -64,7 +238,9 @@ describe('WorldCommitCoordinator', () => {
       const counterSchema = Schema.Struct({ count: Schema.Int })
       const coordinator = yield* WorldCommitCoordinator
       const absentDimension = yield* coordinator.dimensionRevision('end')
-      const unknownSnapshot = yield* Effect.result(coordinator.snapshot(unknownOwner, counterSchema))
+      const unknownSnapshot = decodeCoordinatorEffectResult(
+        yield* Effect.result(coordinator.snapshot(unknownOwner, counterSchema)),
+      )
       const delta = yield* coordinator.commit({
         expectedRevision: revisionZero,
         expectedDimensions: [{ dimension: 'end', expectedRevision: dimensionRevisionZero }],
@@ -72,6 +248,7 @@ describe('WorldCommitCoordinator', () => {
       })
 
       expect(absentDimension).toBe(0)
+      expect(coordinator.worldId).toBe('world-a')
       expect(unknownSnapshot._tag).toBe('Failure')
       if (unknownSnapshot._tag === 'Failure') expect(unknownSnapshot.failure).toBeInstanceOf(ReplicatedOwnerUnknown)
       expect(delta.revision).toBe(1)
@@ -140,14 +317,14 @@ describe('WorldCommitCoordinator', () => {
         ],
       })
 
-      const outcome = yield* Effect.result(coordinator.commit({
+      const outcome = decodeCommitEffectResult(yield* Effect.result(coordinator.commit({
         expectedRevision: revisionZero,
         expectedDimensions: [{ dimension: 'overworld', expectedRevision: dimensionRevisionZero }],
         changes: [
           { ownerId: ownerA, state: { count: 8 } },
           { ownerId: ownerB, state: { enabled: 'invalid' } },
         ],
-      }))
+      })))
 
       expect(outcome._tag).toBe('Failure')
       expect(yield* coordinator.revision).toBe(0)
@@ -177,14 +354,14 @@ describe('WorldCommitCoordinator', () => {
         ],
       })
 
-      const outcome = yield* Effect.result(coordinator.commit({
+      const outcome = decodeCommitEffectResult(yield* Effect.result(coordinator.commit({
         expectedRevision: revisionZero,
         expectedDimensions: [{ dimension: 'overworld', expectedRevision: dimensionRevisionZero }],
         changes: [
           { ownerId: ownerA, state: { count: 7 } },
           { ownerId: ownerB, state: { count: 1 } },
         ],
-      }))
+      })))
 
       expect(outcome._tag).toBe('Failure')
       expect(yield* coordinator.revision).toBe(0)
@@ -254,26 +431,26 @@ describe('WorldCommitCoordinator', () => {
       })
       const candidate = { ownerId: ownerA, state: { count: 1 } }
 
-      const invalidRevision = yield* Effect.result(coordinator.commit({
+      const invalidRevision = decodeCommitEffectResult(yield* Effect.result(coordinator.commit({
         expectedRevision: Brand.nominal<typeof revisionZero>()(0.5),
         expectedDimensions: [],
         changes: [candidate],
-      }))
-      const worldConflict = yield* Effect.result(coordinator.commit({
+      })))
+      const worldConflict = decodeCommitEffectResult(yield* Effect.result(coordinator.commit({
         expectedRevision: revisionOne,
         expectedDimensions: [],
         changes: [candidate],
-      }))
-      const dimensionConflict = yield* Effect.result(coordinator.commit({
+      })))
+      const dimensionConflict = decodeCommitEffectResult(yield* Effect.result(coordinator.commit({
         expectedRevision: revisionZero,
         expectedDimensions: [{ dimension: 'overworld', expectedRevision: dimensionRevisionOne }],
         changes: [candidate],
-      }))
-      const ownerConflict = yield* Effect.result(coordinator.commit({
+      })))
+      const ownerConflict = decodeCommitEffectResult(yield* Effect.result(coordinator.commit({
         expectedRevision: revisionZero,
         expectedDimensions: [],
         changes: [{ ownerId: unknownOwner, state: { count: 1 } }],
-      }))
+      })))
 
       expect(invalidRevision._tag).toBe('Failure')
       if (invalidRevision._tag === 'Failure') expect(invalidRevision.failure._tag).toBe('SchemaError')
@@ -293,31 +470,412 @@ describe('WorldCommitCoordinator', () => {
       const world = yield* Schema.decodeUnknownEffect(WorldIdSchema)('world-a')
       const revisionZero = yield* Schema.decodeUnknownEffect(WorldRevisionSchema)(0)
       const counterSchema = Schema.Struct({ count: Schema.Int })
-      const duplicateRegistration = yield* Effect.result(makeWorldCommitCoordinator({
+      const duplicateRegistration = decodeCoordinatorEffectResult(yield* Effect.result(makeWorldCommitCoordinator({
         world,
         owners: [
           { ownerId: ownerA, schema: counterSchema, initialState: { count: 0 } },
           { ownerId: ownerA, schema: counterSchema, initialState: { count: 1 } },
         ],
-      }))
+      })))
       const coordinator = yield* makeWorldCommitCoordinator({
         world,
         owners: [{ ownerId: ownerA, schema: counterSchema, initialState: { count: 0 } }],
       })
-      const duplicateChange = yield* Effect.result(coordinator.commit({
+      const duplicateChange = decodeCommitEffectResult(yield* Effect.result(coordinator.commit({
         expectedRevision: revisionZero,
         expectedDimensions: [],
         changes: [
           { ownerId: ownerA, state: { count: 1 } },
           { ownerId: ownerA, state: { count: 2 } },
         ],
-      }))
+      })))
 
       expect(duplicateRegistration._tag).toBe('Failure')
       if (duplicateRegistration._tag === 'Failure') expect(duplicateRegistration.failure).toBeInstanceOf(ReplicatedOwnerDuplicate)
       expect(duplicateChange._tag).toBe('Failure')
       if (duplicateChange._tag === 'Failure') expect(duplicateChange.failure).toBeInstanceOf(ReplicatedOwnerDuplicate)
       expect(yield* coordinator.revision).toBe(0)
+    }),
+  )
+
+  it.effect('commits a sparse block patch with owner state under one revision and reads both together', () =>
+    Effect.gen(function* () {
+      const registry = yield* makeChunkStoreRegistry()
+      const chunkStore = registry.forDimension('overworld')
+      yield* chunkStore.load(chunkCoord(ChunkAxis(0), ChunkAxis(0)))
+      yield* chunkStore.setBlock(transactionPosition, blockId(1))
+      const counterSchema = Schema.Struct({ count: Schema.Int })
+      const coordinator = yield* makeWorldCommitCoordinator({
+        world: transactionWorld,
+        owners: [{ ownerId: ownerA, schema: counterSchema, initialState: { count: 0 } }],
+        chunkStores: registry,
+      })
+      const revisionZero = Schema.decodeUnknownSync(WorldRevisionSchema)(0)
+      const dimensionRevisionZero = Schema.decodeUnknownSync(DimensionRevisionSchema)(0)
+
+      const delta = yield* coordinator.commit({
+        expectedRevision: revisionZero,
+        expectedDimensions: [{ dimension: 'overworld', expectedRevision: dimensionRevisionZero }],
+        changes: [{ ownerId: ownerA, state: { count: 1 } }],
+        blockWrite: makeBlockWrite(blockId(2)),
+      })
+      const observed = yield* coordinator.observe(ownerA, counterSchema, [
+        { dimension: 'overworld', position: transactionPosition },
+      ])
+      const observedDecoded = Schema.decodeUnknownResult(WorldReadSnapshotSchema(counterSchema))(observed)
+
+      expect(delta.revision).toBe(1)
+      expect(delta.changes.map(({ owner }) => owner)).toStrictEqual([ownerA])
+      expect(delta.blockChanges).toStrictEqual([{
+        dimension: 'overworld',
+        position: transactionPosition,
+        before: blockId(1),
+        after: blockId(2),
+      }])
+      expect(yield* coordinator.revision).toBe(1)
+      expect(yield* coordinator.dimensionRevision('overworld')).toBe(1)
+      expect(yield* coordinator.dimensionRevision('nether')).toBe(0)
+      expect(observedDecoded._tag).toBe('Success')
+      if (observedDecoded._tag === 'Success') {
+        expect(observedDecoded.success).toStrictEqual({
+          world: transactionWorld,
+          revision: delta.revision,
+          state: { count: 1 },
+          blocks: [{
+            dimension: 'overworld',
+            position: transactionPosition,
+            reading: { _tag: 'Block', block: blockId(2) },
+          }],
+        })
+      }
+    }),
+  )
+
+  it.effect('commits a non-empty all-no-op batch with an empty sparse delta', () =>
+    Effect.gen(function* () {
+      const registry = yield* makeChunkStoreRegistry()
+      const chunkStore = registry.forDimension('overworld')
+      yield* chunkStore.load(chunkCoord(ChunkAxis(0), ChunkAxis(0)))
+      yield* chunkStore.setBlock(transactionPosition, blockId(1))
+      const coordinator = yield* makeWorldCommitCoordinator({
+        world: transactionWorld,
+        owners: [],
+        chunkStores: registry,
+      })
+      const delta = yield* coordinator.commit({
+        expectedRevision: Schema.decodeUnknownSync(WorldRevisionSchema)(0),
+        expectedDimensions: [{
+          dimension: 'overworld',
+          expectedRevision: Schema.decodeUnknownSync(DimensionRevisionSchema)(0),
+        }],
+        changes: [],
+        blockWrite: makeBlockWrite(blockId(1)),
+      })
+
+      expect(delta.blockChanges).toStrictEqual([])
+      expect(delta.revision).toBe(1)
+      expect(yield* coordinator.dimensionRevision('overworld')).toBe(1)
+      expect(yield* chunkStore.getBlock(transactionPosition)).toStrictEqual({ _tag: 'Block', block: blockId(1) })
+    }),
+  )
+
+  it.effect('rejects empty, duplicate, out-of-world, and unavailable block writes without partial publication', () =>
+    Effect.gen(function* () {
+      const registry = yield* makeChunkStoreRegistry()
+      const chunkStore = registry.forDimension('overworld')
+      yield* chunkStore.load(chunkCoord(ChunkAxis(0), ChunkAxis(0)))
+      yield* chunkStore.setBlock(transactionPosition, blockId(1))
+      const counterSchema = Schema.Struct({ count: Schema.Int })
+      const coordinator = yield* makeWorldCommitCoordinator({
+        world: transactionWorld,
+        owners: [{ ownerId: ownerA, schema: counterSchema, initialState: { count: 0 } }],
+        chunkStores: registry,
+      })
+      const revisionZero = Schema.decodeUnknownSync(WorldRevisionSchema)(0)
+      const dimensionRevisionZero = Schema.decodeUnknownSync(DimensionRevisionSchema)(0)
+      const candidate = { ownerId: ownerA, state: { count: 1 } }
+      const outOfWorldPosition = Schema.decodeUnknownSync(BlockPositionSchema)({ x: 1, y: CHUNK_HEIGHT, z: 1 })
+      const unavailablePosition = Schema.decodeUnknownSync(BlockPositionSchema)({ x: CHUNK_SIZE_XZ * 2, y: 32, z: 1 })
+      const emptyBatch = makeBlockWrite(blockId(2), [])
+      const duplicateBatch = makeBlockWrite(blockId(2), [
+        { position: transactionPosition, block: blockId(2) },
+        { position: transactionPosition, block: blockId(3) },
+      ])
+      const outOfWorldBatch = makeBlockWrite(blockId(2), [{ position: outOfWorldPosition, block: blockId(2) }])
+      const unavailableBatch = makeBlockWrite(blockId(2), [{ position: unavailablePosition, block: blockId(2) }])
+      const requests: ReadonlyArray<WorldWriteBatch> = [emptyBatch, duplicateBatch, outOfWorldBatch, unavailableBatch]
+      const outcomes = yield* Effect.forEach(requests, (blockWrite) => Effect.map(Effect.result(coordinator.commit({
+        expectedRevision: revisionZero,
+        expectedDimensions: [{ dimension: 'overworld', expectedRevision: dimensionRevisionZero }],
+        changes: [candidate],
+        blockWrite,
+      })), decodeCommitEffectResult))
+
+      expect(outcomes.map(({ _tag }) => _tag)).toStrictEqual(['Failure', 'Failure', 'Failure', 'Failure'])
+      const [emptyOutcome, duplicateOutcome, outOfWorldOutcome, unavailableOutcome] = outcomes
+      if (emptyOutcome?._tag === 'Failure') expect(emptyOutcome.failure).toBeInstanceOf(WorldWriteInvalidBatch)
+      if (duplicateOutcome?._tag === 'Failure') expect(duplicateOutcome.failure).toBeInstanceOf(WorldWriteInvalidBatch)
+      if (outOfWorldOutcome?._tag === 'Failure') expect(outOfWorldOutcome.failure).toBeInstanceOf(WorldCommitBlockWriteInvalidPosition)
+      if (unavailableOutcome?._tag === 'Failure') expect(unavailableOutcome.failure).toBeInstanceOf(WorldWriteChunkUnavailable)
+      expect(yield* coordinator.revision).toBe(0)
+      expect(yield* coordinator.dimensionRevision('overworld')).toBe(0)
+      expect((yield* coordinator.snapshot(ownerA, counterSchema)).state).toStrictEqual({ count: 0 })
+      expect(yield* chunkStore.getBlock(transactionPosition)).toStrictEqual({ _tag: 'Block', block: blockId(1) })
+    }),
+  )
+
+  it.effect('checks block batch world and revision baselines without substituting request values', () =>
+    Effect.gen(function* () {
+      const registry = yield* makeChunkStoreRegistry()
+      yield* registry.forDimension('overworld').load(chunkCoord(ChunkAxis(0), ChunkAxis(0)))
+      const counterSchema = Schema.Struct({ count: Schema.Int })
+      const coordinator = yield* makeWorldCommitCoordinator({
+        world: transactionWorld,
+        owners: [{ ownerId: ownerA, schema: counterSchema, initialState: { count: 0 } }],
+        chunkStores: registry,
+      })
+      const revisionZero = Schema.decodeUnknownSync(WorldRevisionSchema)(0)
+      const dimensionRevisionZero = Schema.decodeUnknownSync(DimensionRevisionSchema)(0)
+      const otherWorld = Schema.decodeUnknownSync(WorldIdSchema)('world-b')
+      const mismatchedWorld = { ...makeBlockWrite(blockId(2)), world: otherWorld }
+      const mismatchedWorldRevision = {
+        ...makeBlockWrite(blockId(2)),
+        expectedWorldRevision: Schema.decodeUnknownSync(WorldRevisionSchema)(1),
+      }
+      const mismatchedDimensionRevision = {
+        ...makeBlockWrite(blockId(2)),
+        expectedDimensionRevision: Schema.decodeUnknownSync(DimensionRevisionSchema)(1),
+      }
+      const [worldOutcome, worldRevisionOutcome, dimensionRevisionOutcome, missingDimensionOutcome, emptyOutcome] = yield* Effect.all([
+        coordinator.commit({
+          expectedRevision: revisionZero,
+          expectedDimensions: [{ dimension: 'overworld', expectedRevision: dimensionRevisionZero }],
+          changes: [],
+          blockWrite: mismatchedWorld,
+        }).pipe(Effect.result, Effect.map(decodeCommitEffectResult)),
+        coordinator.commit({
+          expectedRevision: revisionZero,
+          expectedDimensions: [{ dimension: 'overworld', expectedRevision: dimensionRevisionZero }],
+          changes: [],
+          blockWrite: mismatchedWorldRevision,
+        }).pipe(Effect.result, Effect.map(decodeCommitEffectResult)),
+        coordinator.commit({
+          expectedRevision: revisionZero,
+          expectedDimensions: [{ dimension: 'overworld', expectedRevision: dimensionRevisionZero }],
+          changes: [],
+          blockWrite: mismatchedDimensionRevision,
+        }).pipe(Effect.result, Effect.map(decodeCommitEffectResult)),
+        coordinator.commit({
+          expectedRevision: revisionZero,
+          expectedDimensions: [],
+          changes: [],
+          blockWrite: makeBlockWrite(blockId(2)),
+        }).pipe(Effect.result, Effect.map(decodeCommitEffectResult)),
+        coordinator.commit({ expectedRevision: revisionZero, expectedDimensions: [], changes: [] })
+          .pipe(Effect.result, Effect.map(decodeCommitEffectResult)),
+      ])
+
+      expect([
+        worldOutcome,
+        worldRevisionOutcome,
+        dimensionRevisionOutcome,
+        missingDimensionOutcome,
+        emptyOutcome,
+      ].map(({ _tag }) => _tag)).toStrictEqual(['Failure', 'Failure', 'Failure', 'Failure', 'Failure'])
+      if (worldOutcome._tag === 'Failure') expect(worldOutcome.failure._tag).toBe('WorldCommitBlockWriteMismatch')
+      if (worldRevisionOutcome._tag === 'Failure') expect(worldRevisionOutcome.failure._tag).toBe('WorldCommitBlockWriteMismatch')
+      if (dimensionRevisionOutcome._tag === 'Failure') {
+        expect(dimensionRevisionOutcome.failure._tag).toBe('WorldCommitBlockWriteMismatch')
+        if (dimensionRevisionOutcome.failure._tag === 'WorldCommitBlockWriteMismatch') {
+          expect(dimensionRevisionOutcome.failure.reason).toBe('dimension-revision')
+        }
+      }
+      if (missingDimensionOutcome._tag === 'Failure') {
+        expect(missingDimensionOutcome.failure._tag).toBe('WorldCommitBlockWriteMismatch')
+        if (missingDimensionOutcome.failure._tag === 'WorldCommitBlockWriteMismatch') {
+          expect(missingDimensionOutcome.failure.reason).toBe('dimension-revision')
+        }
+      }
+      if (emptyOutcome._tag === 'Failure') expect(emptyOutcome.failure._tag).toBe('WorldCommitEmptyRequest')
+      expect(yield* coordinator.revision).toBe(0)
+    }),
+  )
+
+  it.effect('serializes same-revision commits so only one prepared block patch is visible', () =>
+    Effect.gen(function* () {
+      const registry = yield* makeChunkStoreRegistry()
+      const chunkStore = registry.forDimension('overworld')
+      yield* chunkStore.load(chunkCoord(ChunkAxis(0), ChunkAxis(0)))
+      yield* chunkStore.setBlock(transactionPosition, blockId(1))
+      const counterSchema = Schema.Struct({ count: Schema.Int })
+      const coordinator = yield* makeWorldCommitCoordinator({
+        world: transactionWorld,
+        owners: [{ ownerId: ownerA, schema: counterSchema, initialState: { count: 0 } }],
+        chunkStores: registry,
+      })
+      const revisionZero = Schema.decodeUnknownSync(WorldRevisionSchema)(0)
+      const dimensionRevisionZero = Schema.decodeUnknownSync(DimensionRevisionSchema)(0)
+      const commit = (block: BlockId) => coordinator.commit({
+        expectedRevision: revisionZero,
+        expectedDimensions: [{ dimension: 'overworld', expectedRevision: dimensionRevisionZero }],
+        changes: [{ ownerId: ownerA, state: { count: block } }],
+        blockWrite: makeBlockWrite(block),
+      }).pipe(Effect.result, Effect.map(decodeCommitEffectResult))
+      const outcomes = yield* Effect.all([commit(blockId(2)), commit(blockId(3))], { concurrency: 'unbounded' })
+      const winnerIndex = outcomes.findIndex((outcome) => outcome._tag === 'Success')
+      const winner = outcomes[winnerIndex]
+      const winnerBlock = winnerIndex === 0 ? blockId(2) : blockId(3)
+
+      expect(outcomes.filter(({ _tag }) => _tag === 'Success')).toHaveLength(1)
+      expect(outcomes.filter(({ _tag }) => _tag === 'Failure')).toHaveLength(1)
+      if (winner?._tag === 'Success') expect(winner.success.blockChanges[0]?.after).toBe(winnerBlock)
+      expect(yield* coordinator.revision).toBe(1)
+      expect(yield* chunkStore.getBlock(transactionPosition)).toStrictEqual({ _tag: 'Block', block: winnerBlock })
+    }),
+  )
+
+  it.effect('maps a stale prepared chunk and an invalid publish token without advancing coordinator state', () =>
+    Effect.gen(function* () {
+      const baseRegistry = yield* makeChunkStoreRegistry()
+      const baseStore = baseRegistry.forDimension('overworld')
+      yield* baseStore.load(chunkCoord(ChunkAxis(0), ChunkAxis(0)))
+      yield* baseStore.setBlock(transactionPosition, blockId(1))
+      const staleRegistry: ChunkStoreRegistryApi = {
+        forDimension: (dimension) => {
+          const store = baseRegistry.forDimension(dimension)
+          return {
+            ...store,
+            publish: (prepared) => Effect.flatMap(
+              store.setBlock(transactionPosition, blockId(3)),
+              () => store.publish(prepared),
+            ),
+          }
+        },
+      }
+      const counterSchema = Schema.Struct({ count: Schema.Int })
+      const staleCoordinator = yield* makeWorldCommitCoordinator({
+        world: transactionWorld,
+        owners: [{ ownerId: ownerA, schema: counterSchema, initialState: { count: 0 } }],
+        chunkStores: staleRegistry,
+      })
+      const revisionZero = Schema.decodeUnknownSync(WorldRevisionSchema)(0)
+      const dimensionRevisionZero = Schema.decodeUnknownSync(DimensionRevisionSchema)(0)
+      const staleOutcome = decodeCommitEffectResult(yield* Effect.result(staleCoordinator.commit({
+        expectedRevision: revisionZero,
+        expectedDimensions: [{ dimension: 'overworld', expectedRevision: dimensionRevisionZero }],
+        changes: [{ ownerId: ownerA, state: { count: 1 } }],
+        blockWrite: makeBlockWrite(blockId(2)),
+      })))
+
+      expect(staleOutcome._tag).toBe('Failure')
+      if (staleOutcome._tag === 'Failure') {
+        expect(staleOutcome.failure._tag).toBe('WorldWriteStale')
+        if (staleOutcome.failure._tag === 'WorldWriteStale') {
+          expect(staleOutcome.failure.actualRevision._tag).toBe('Some')
+        }
+      }
+      expect(yield* staleCoordinator.revision).toBe(0)
+      expect((yield* staleCoordinator.snapshot(ownerA, counterSchema)).state).toStrictEqual({ count: 0 })
+      expect(yield* baseStore.getBlock(transactionPosition)).toStrictEqual({ _tag: 'Block', block: blockId(3) })
+
+      const tokenRegistry: ChunkStoreRegistryApi = {
+        forDimension: (dimension) => {
+          const store = baseRegistry.forDimension(dimension)
+          return {
+            ...store,
+            publish: (_prepared: PreparedChunkWrite) => Effect.fail({
+              _tag: 'ChunkWriteTokenInvalid',
+              reason: 'unknown_token',
+            }),
+          }
+        },
+      }
+      const tokenCoordinator = yield* makeWorldCommitCoordinator({
+        world: transactionWorld,
+        owners: [{ ownerId: ownerA, schema: counterSchema, initialState: { count: 0 } }],
+        chunkStores: tokenRegistry,
+      })
+      const tokenOutcome = decodeCommitEffectResult(yield* Effect.result(tokenCoordinator.commit({
+        expectedRevision: revisionZero,
+        expectedDimensions: [{ dimension: 'overworld', expectedRevision: dimensionRevisionZero }],
+        changes: [{ ownerId: ownerA, state: { count: 1 } }],
+        blockWrite: makeBlockWrite(blockId(2)),
+      })))
+
+      expect(tokenOutcome._tag).toBe('Failure')
+      if (tokenOutcome._tag === 'Failure') expect(tokenOutcome.failure).toBeInstanceOf(WorldWriteTokenInvalid)
+      expect(yield* tokenCoordinator.revision).toBe(0)
+      expect((yield* tokenCoordinator.snapshot(ownerA, counterSchema)).state).toStrictEqual({ count: 0 })
+    }),
+  )
+
+  it.effect('allows owner-only reads without ChunkStore and reports missing stores for block observations', () =>
+    Effect.gen(function* () {
+      const counterSchema = Schema.Struct({ count: Schema.Int })
+      const coordinator = yield* makeWorldCommitCoordinator({
+        world: transactionWorld,
+        owners: [{ ownerId: ownerA, schema: counterSchema, initialState: { count: 0 } }],
+      })
+      const emptyRead = yield* coordinator.observe(ownerA, counterSchema, [])
+      const unavailableRead = decodeCoordinatorEffectResult(yield* Effect.result(coordinator.observe(ownerA, counterSchema, [
+        { dimension: 'overworld', position: transactionPosition },
+      ])))
+
+      expect(emptyRead).toStrictEqual({
+        world: transactionWorld,
+        revision: 0,
+        state: { count: 0 },
+        blocks: [],
+      })
+      expect(unavailableRead._tag).toBe('Failure')
+      if (unavailableRead._tag === 'Failure') expect(unavailableRead.failure).toBeInstanceOf(WorldCommitChunkStoreUnavailable)
+    }),
+  )
+
+  it.effect('interrupting prepared block preflight leaves its candidate unpublished', () =>
+    Effect.gen(function* () {
+      const baseRegistry = yield* makeChunkStoreRegistry()
+      const store = baseRegistry.forDimension('overworld')
+      yield* store.load(chunkCoord(ChunkAxis(0), ChunkAxis(0)))
+      yield* store.setBlock(transactionPosition, blockId(1))
+      const prepareStarted = yield* Deferred.make<void>()
+      const releasePrepare = yield* Deferred.make<void>()
+      const registry: ChunkStoreRegistryApi = {
+        forDimension: (dimension) => {
+          const dimensionStore = baseRegistry.forDimension(dimension)
+          return {
+            ...dimensionStore,
+            prepare: (edits) => Effect.flatMap(dimensionStore.prepare(edits), (prepared) =>
+              Effect.andThen(
+                Deferred.succeed(prepareStarted, undefined),
+                Effect.map(Deferred.await(releasePrepare), () => prepared),
+              ),
+            ),
+          }
+        },
+      }
+      const counterSchema = Schema.Struct({ count: Schema.Int })
+      const coordinator = yield* makeWorldCommitCoordinator({
+        world: transactionWorld,
+        owners: [{ ownerId: ownerA, schema: counterSchema, initialState: { count: 0 } }],
+        chunkStores: registry,
+      })
+      const fiber = yield* Effect.forkChild(coordinator.commit({
+        expectedRevision: Schema.decodeUnknownSync(WorldRevisionSchema)(0),
+        expectedDimensions: [{
+          dimension: 'overworld',
+          expectedRevision: Schema.decodeUnknownSync(DimensionRevisionSchema)(0),
+        }],
+        changes: [{ ownerId: ownerA, state: { count: 1 } }],
+        blockWrite: makeBlockWrite(blockId(2)),
+      }))
+      yield* Deferred.await(prepareStarted)
+      yield* Fiber.interrupt(fiber)
+
+      expect(yield* coordinator.revision).toBe(0)
+      expect(yield* coordinator.dimensionRevision('overworld')).toBe(0)
+      expect((yield* coordinator.snapshot(ownerA, counterSchema)).state).toStrictEqual({ count: 0 })
+      expect(yield* store.getBlock(transactionPosition)).toStrictEqual({ _tag: 'Block', block: blockId(1) })
     }),
   )
 })
