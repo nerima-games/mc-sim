@@ -12,10 +12,22 @@
  * stamp is what lets a renderer running ahead of or behind the simulation
  * measure the gap instead of silently drawing a stale pose.
  */
-import { Context, Effect, Layer, Ref } from 'effect'
+import { Context, Effect, Layer, Ref, Schema } from 'effect'
 import * as Camera from '../domain/camera-pose.js'
-import type { CameraPoseSnapshot, Dimension, Position } from "@nerima-games/mc-kernel"
+import type { CameraPoseSnapshot, Dimension, DimensionRevision, Position, WorldRevision } from "@nerima-games/mc-kernel"
 import { ClockPort, monotonicSecs } from "@nerima-games/mc-kernel"
+import {
+  PLAYER_REPLICATED_OWNER_ID,
+  PlayerServiceSnapshotSchema,
+  type ReplicatedOwnerChange,
+  type ReplicatedSnapshot,
+  type ReplicatedWorldDelta,
+} from './replicated-state.js'
+import {
+  ReplicatedOwnerUnknown,
+  WorldCommitCoordinator,
+  type WorldCommitCoordinatorError,
+} from './world-commit-coordinator.js'
 
 /**
  * The dimension a fresh world starts in.
@@ -32,32 +44,33 @@ export const INITIAL_PLAYER_DIMENSION: Dimension = 'overworld'
 /**
  * Pose and dimension as one value, because they are written together.
  *
- * NOT PUBLISHED as a persistence format and deliberately not called a snapshot:
- * `VitalsServiceApi.snapshot` exists because mc-save needs the whole of the
- * vitals, and no caller has asked for the whole of the player yet. Adding one
- * here on speculation is plan.md §8's second risk. This type exists so that the
- * two fields share a single `Ref` — see the header of `application/
- * vitals-service.ts` for why a two-step read-decide-write is the hazard.
+ * This is the service's coordinate-only working state. `replicatedCandidate`
+ * adds the world-position shape, and only the coordinator-backed `snapshot`
+ * exposes committed replicated state.
  */
 type PlayerState = {
   readonly pose: Camera.PlayerPose
   readonly dimension: Dimension
 }
 
+type PlayerReplicatedState = Schema.Schema.Type<typeof PlayerServiceSnapshotSchema>
+
+const playerReplicatedCandidateOf = (current: PlayerState) => ({
+  pose: {
+    feetPosition: {
+      dimension: current.dimension,
+      x: current.pose.feetPosition.x,
+      y: current.pose.feetPosition.y,
+      z: current.pose.feetPosition.z,
+    },
+    yawRadians: current.pose.yawRadians,
+    pitchRadians: current.pose.pitchRadians,
+  },
+})
+
 export type PlayerServiceApi = {
   readonly pose: Effect.Effect<Camera.PlayerPose>
-  /**
-   * Which world the player is in.
-   *
-   * THE STATE THAT MAKES A PORTAL CROSSING COMPLETABLE. mc-worldgen's
-   * `resolveNetherTravel` takes a `from: Dimension` and returns a
-   * `toDimension`, and until this member existed nothing could answer the first
-   * or receive the second — `mx-gameplay/domain/player-port.ts` recorded the gap
-   * by name, and this is the member it named.
-   *
-   * mc-sim NEVER READS THIS VALUE. Nothing here branches on it; the type is
-   * imported directly from mc-kernel.
-   */
+  /** The dimension currently associated with the player's pose. */
   readonly dimension: Effect.Effect<Dimension>
   /** Rotate the view. Pitch is clamped; yaw is not wrapped. */
   readonly look: (deltaYaw: number, deltaPitch: number) => Effect.Effect<Camera.PlayerPose, PlayerServiceInputError>
@@ -83,14 +96,7 @@ export type PlayerServiceApi = {
    * a caller doing them in either order is safe.
    */
   readonly setDimension: (dimension: Dimension) => Effect.Effect<void>
-  /**
-   * The snapshot mc-render mirrors. Stamped from `ClockPort`.
-   *
-   * Deliberately an `Effect` requiring `ClockPort` rather than a plain read:
-   * making the clock dependency visible in the type is what stops someone
-   * "simplifying" this into a `Date.now()` call. The tests and code review keep
-   * the wall-clock boundary explicit.
-   */
+  /** Build the render pose using the supplied simulation clock. */
   readonly cameraPose: Effect.Effect<CameraPoseSnapshot, never, ClockPort>
   /**
    * THE WORLD-LOAD PATH. Both halves of the player's location, together.
@@ -117,6 +123,20 @@ export type PlayerServiceApi = {
    * `reset` notes describe — a teardown path that silently keeps one field of
    * the world it was told to discard.
    */
+  /** Read the player state and revision from the world-session committed snapshot. */
+  readonly snapshot: Effect.Effect<
+    ReplicatedSnapshot<typeof PlayerServiceSnapshotSchema>,
+    Schema.SchemaError | ReplicatedOwnerUnknown,
+    WorldCommitCoordinator
+  >
+  /** Build an owner candidate from the current service state; this is not a committed snapshot. */
+  readonly replicatedCandidate: Effect.Effect<PlayerReplicatedState, Schema.SchemaError>
+  /** Submit the current player candidate through the world coordinator. */
+  readonly submitReplicatedCandidate: (
+    expectedRevision: WorldRevision,
+    expectedDimensionRevision: DimensionRevision,
+  ) => Effect.Effect<ReplicatedWorldDelta<ReplicatedOwnerChange>, WorldCommitCoordinatorError, WorldCommitCoordinator>
+  /** Reset the pose and dimension to their fresh-world values. */
   readonly reset: Effect.Effect<void>
 }
 
@@ -173,6 +193,9 @@ export const makePlayerService = (
     return {
       pose: Effect.map(Ref.get(state), (current) => current.pose),
       dimension: Effect.map(Ref.get(state), (current) => current.dimension),
+      replicatedCandidate: Effect.flatMap(Ref.get(state), (current) =>
+        Schema.decodeUnknownEffect(PlayerServiceSnapshotSchema)(playerReplicatedCandidateOf(current)),
+      ),
       look: (deltaYaw, deltaPitch) => modify((current) => {
         if (!Number.isFinite(deltaYaw))
           return [Effect.fail(inputError('invalid-look', 'deltaYaw')), current]
@@ -195,6 +218,44 @@ export const makePlayerService = (
       cameraPose: Effect.flatMap(monotonicSecs, (now) =>
         Effect.map(Ref.get(state), (current) => Camera.cameraPoseOf(current.pose, now)),
       ),
+      snapshot: Effect.flatMap(WorldCommitCoordinator, (coordinator) =>
+        coordinator.snapshot(PLAYER_REPLICATED_OWNER_ID, PlayerServiceSnapshotSchema),
+      ),
+      submitReplicatedCandidate: (expectedRevision, expectedDimensionRevision) =>
+        Effect.flatMap(
+          Effect.flatMap(Ref.get(state), (current) =>
+            Schema.decodeUnknownEffect(PlayerServiceSnapshotSchema)(playerReplicatedCandidateOf(current)),
+          ),
+          (candidate) => Effect.flatMap(WorldCommitCoordinator, (coordinator) =>
+            Effect.flatMap(
+              coordinator.snapshot(PLAYER_REPLICATED_OWNER_ID, PlayerServiceSnapshotSchema),
+              (committed) => {
+                const previousDimension = committed.state.pose.feetPosition.dimension
+                const nextDimension = candidate.pose.feetPosition.dimension
+                const changes = [{ ownerId: PLAYER_REPLICATED_OWNER_ID, state: candidate }] as const
+
+                if (previousDimension === nextDimension) {
+                  return coordinator.commit({
+                    expectedRevision,
+                    expectedDimensions: [{ dimension: previousDimension, expectedRevision: expectedDimensionRevision }],
+                    changes,
+                  })
+                }
+
+                return Effect.flatMap(coordinator.dimensionRevision(nextDimension), (nextDimensionRevision) =>
+                  coordinator.commit({
+                    expectedRevision,
+                    expectedDimensions: [
+                      { dimension: previousDimension, expectedRevision: expectedDimensionRevision },
+                      { dimension: nextDimension, expectedRevision: nextDimensionRevision },
+                    ],
+                    changes,
+                  }),
+                )
+              },
+            ),
+          ),
+        ),
       restore: (pose, dimension) => {
         const error = invalidPoseError(pose, 'invalid-pose')
         return error === undefined ? Ref.set(state, { pose, dimension }) : Effect.fail(error)
