@@ -337,6 +337,9 @@ describe('HeadlessHarness stateHash', () => {
       const symbolKey = { [Symbol('hidden')]: 1 }
       const sparse = new Array(1)
       const sparsePrototype = Object.setPrototypeOf([1], Object.create(Array.prototype))
+      const throwingPrototypeArray = new Proxy([], {
+        getPrototypeOf: () => { throw new Error('prototype inspection failed') },
+      })
       const symbolArrayProperty = Object.assign([1], { [Symbol('hidden')]: 1 })
       const accessorArrayElement = Object.defineProperty([], '0', {
         get: () => { getterCalls += 1; return 'never-read' },
@@ -360,6 +363,7 @@ describe('HeadlessHarness stateHash', () => {
         [{ nested: undefined }, '$["nested"]'],
         [sparse, '$[0]'],
         [sparsePrototype, '$'],
+        [throwingPrototypeArray, '$'],
         [symbolArrayProperty, '$'],
         [accessorArrayElement, '$[0]'],
         [accessor, '$["hidden"]'],
