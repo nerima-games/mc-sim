@@ -10,6 +10,7 @@ import {
   validateFurnaceSnapshot,
   FurnaceFailureSchema,
   FurnaceCollectionOutcomeSchema,
+  FurnaceStateSchema,
   type FurnaceCollectionOutcome,
   type FurnaceFailure,
   type FurnaceOutcome,
@@ -39,16 +40,13 @@ const isValidInventory = (value: unknown): value is Inventory =>
   value['slots'].length === INVENTORY_SLOT_COUNT &&
   value['slots'].every((slot) => slot === undefined || isItemStack(slot))
 
-const isFurnaceServiceState = (value: unknown): value is FurnaceServiceState => {
-  if (!isRecord(value) || Object.keys(value).length !== 2) return false
-  if (!Object.hasOwn(value, 'furnace') || !Object.hasOwn(value, 'experience')) return false
-  if (validateFurnaceSnapshot(value['furnace'])._tag !== 'Valid') return false
-  const experience = value['experience']
-  return typeof experience === 'number' && Result.isSuccess(RecipeExperience.result(experience))
-}
-
-export const FurnaceServiceStateSchema: Schema.Codec<FurnaceServiceState, FurnaceServiceState> =
-  Schema.declare<FurnaceServiceState>(isFurnaceServiceState)
+const RecipeExperienceSchema: Schema.Codec<RecipeExperienceValue, number> = Schema.Finite.check(
+  Schema.makeFilter((value) => RecipeExperience.is(value)),
+).pipe(Schema.brand('RecipeExperience'))
+export const FurnaceServiceStateSchema: Schema.Codec<FurnaceServiceState, unknown> = Schema.Struct({
+  furnace: FurnaceStateSchema,
+  experience: RecipeExperienceSchema,
+})
 
 export type FurnaceServiceError =
   | FurnaceFailure

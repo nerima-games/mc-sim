@@ -56,6 +56,18 @@ const withFurnace = <A, E, R>(
   )
 
 describe('FurnaceService', () => {
+  it('FurnaceServiceStateSchema rejects missing or null required fields', () => {
+    const initialState = must(makeFurnaceServiceRegistration(furnaceOwnerId)).initialState
+    const decode = Schema.decodeUnknownResult(FurnaceServiceStateSchema)
+
+    expect(Result.isFailure(decode({ furnace: initialState.furnace }))).toBe(true)
+    expect(Result.isFailure(decode({ ...initialState, experience: null }))).toBe(true)
+    expect(Result.isFailure(decode({
+      ...initialState,
+      furnace: { ...initialState.furnace, station: null },
+    }))).toBe(true)
+  })
+
   it.effect('commits input, fuel, tick, output and experience state through the world coordinator', () =>
     withFurnace(({ furnace, coordinator }) =>
       Effect.gen(function* () {
@@ -185,7 +197,7 @@ describe('FurnaceService', () => {
         1,
         null,
         [],
-        { furnace: furnaceState, experience: 0, extra: true },
+        { furnace: { ...furnaceState, station: null }, experience: 0 },
         { other: furnaceState, experience: 0 },
         { furnace: furnaceState, extra: 0 },
         { furnace: {}, experience: 0 },
@@ -211,7 +223,7 @@ describe('FurnaceService', () => {
 
         const invalidAdvance = yield* Effect.result(furnace.advance(-1))
         expect(Result.isFailure(invalidAdvance)).toBe(true)
-        expect(yield* furnace.snapshot).toBe(before)
+        expect(yield* furnace.snapshot).toStrictEqual(before)
 
         yield* furnace.advance(10)
         const readyToCollect = yield* furnace.snapshot
