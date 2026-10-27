@@ -13,8 +13,9 @@ Code snippets illustrate public contracts and may omit fields from complete decl
 `DeltaTimeSecs` と `FixedDurationSecs`、`SimulationTick` と plain `number`、`BlockAxis` と
 `ChunkAxis` は相互変換せず、それぞれの公開 API の境界で constructor または validator を通す。
 `Dimension` は `mc-kernel` が所有し、player、crop、vehicle、save coordinator の公開境界で
-同じ型を使う。`mc-worldgen` は `Chunk` と live chunk の所有者であり、worldgen pin と
-read/edit vocabulary の移行は後続変更に残す。
+同じ型を使う。`mc-worldgen` は `Chunk`、`ChunkStore`、live block state の所有者である。
+`WorldCommitCoordinator` は C4 の world revision と owner state を管理し、C7 の block write を
+`ChunkStore` の copy-on-write transaction と同じ commit に束ねる。
 
 ## 0.2 Fixed-step API declarations
 
@@ -725,11 +726,61 @@ const resetLandingImpact: (state: SimFrameState) => Effect.Effect<void>
 | 体力 / 空腹 / XP | `VitalsService` (`src/application/vitals-service.ts`) | mx-gameplay / mx-ui |
 | 実績 / 統計 | `StatisticsService` (`src/application/statistics-service.ts`) | mx-gameplay / mx-ui |
 | 設定状態 | `SettingsService` (`src/application/settings-service.ts`) | mx-ui / mc-render |
+| C4/C7 world transaction | `WorldCommitCoordinator` (`src/application/world-commit-coordinator.ts`) | mc-compose / gameplay ports |
 | ~~チャンクダーティ通知~~ | — | **mc-worldgen に移った。下記** |
 | ドロップ / 経験値オーブ | mx-gameplay のルール層 | mx-gameplay / mc-render |
 | レシピ / craft | `domain/recipe-data.ts`, `domain/recipe.ts`, `domain/crafting.ts`, `InventoryService` | mx-ui / mx-gameplay |
 | かまど / チェスト / 装備 | `InventoryService` / `EquipmentService` | mx-ui / mx-gameplay |
+| ホッパー転送 | `HopperService` (`src/application/hopper-service.ts`) | mx-redstone / mx-gameplay |
+| バケツの fluid write | `BucketService` (`src/application/bucket-service.ts`) | mx-gameplay |
+| primed TNT | `TntService` (`src/application/tnt-service.ts`) | mx-gameplay / mc-compose |
 | `GameModule` | `src/stages/registration.ts` の `simModule` | mc-compose |
+
+### C4/C7 world transaction と block read
+
+`WorldCommitCoordinator.commit` は owner candidate と、任意の `WorldWriteBatch` を一つの commit として
+処理する。block write は `ChunkStore` の copy-on-write prepare/publish を使い、publish が失敗した場合は
+owner state、world revision、dimension revision を更新しない。成功時は world revision を一度だけ進め、
+block write がある dimension の revision も一度だけ進める。返す `ReplicatedWorldDelta` は owner の
+`changes` に加え、編集セルごとの `dimension`、`position`、`before`、`after` を `blockChanges` に含める。
+
+```typescript
+const delta = yield* coordinator.commit({
+  expectedRevision,
+  expectedDimensions: [{ dimension, expectedRevision: expectedDimensionRevision }],
+  changes: [{ ownerId, state: nextOwnerState }],
+  blockWrite: {
+    world,
+    expectedWorldRevision: expectedRevision,
+    dimension,
+    expectedDimensionRevision,
+    edits: [{ position, block }],
+  },
+})
+
+const observed = yield* coordinator.observe(ownerId, ownerSchema, [{ dimension, position }])
+```
+
+`observe` は owner state と要求された block reads を同じ coordinator gate 内で読み、同じ world revision を
+返す。block read は `Block`、`ChunkNotLoaded`、`OutOfWorld` のいずれかである。別途 `ChunkStore.load` や
+`peek` で取得した値は coordinator commit 後に古くなり得るため、必要な呼び手は commit 後に読み直す。
+owner-only commit は dimension revision を変えない。block-only commit は owner change が空の delta を返す。
+
+### Hopper、bucket、TNT の transaction port
+
+`HopperService.transfer` は hopper cell を含む `WorldWriteBatch` を受け取り、container storage、必要な
+player storage、hopper cooldown、block edits を同じ coordinator commit に渡す。player-to-player 転送、
+dimension 不一致、hopper cell を含まない batch は `InvalidRequest` になる。`advanceCooldown` は hopper
+owner state だけを commit し、revision expectation が stale なら失敗する。
+
+`BucketService.commitUse` は呼び出し側が準備した player storage candidate と fluid-cell edits を同時に commit
+する境界である。空の edits は `NoChanges` を返し、player storage を変更しない。この port は bucket の
+ゲームプレイルールや fluid 探索を実装しない。
+
+`TntService.advance` は通常の fuse 更新を commit する。起爆時は terminal TNT owner candidate と
+`ExplosionPlan` を `DetonationPlanned` として返し、状態をまだ commit しない。呼び出し側は entity owner
+candidates を `commitDetonation` に渡す。これが terminal TNT state、関連 entity state、破壊 block を AIR に
+する write を一つの coordinator commit に束ねる。成功後に同じ explosion effects を別経路で再適用しない。
 
 ### チャンクダーティ通知は mc-worldgen のものになった
 
@@ -1190,8 +1241,9 @@ fuseが尽きたときだけ`planExplosion`を呼び、終端状態（`kind: 'de
 host は同じ更新単位（`Ref.modify` など）の中で `expected` を比較してから、
 TNT entity の更新または除去と block/entity effects を一括適用する。
 
-**`commit` は throw しない同期関数にする。** §8 と同じく、この API は失敗を型付き結果として返さず、
-部分適用を戻す機構もない。TNT の状態と爆発 mutation を同じ不可分の更新境界で適用できるときだけ呼ぶ。
+この低レベル関数を直接使う host は、§8 と同じく `commit` を throw しない同期関数にし、TNT state と
+爆発 mutation を同じ不可分の更新境界で適用できる場合にだけ呼ぶ。シミュレーション coordinator と統合する場合は、上記の
+`TntService.commitDetonation` が worldgen block state、owner revisions、entity owner changes を一緒に commit する。
 
 ## 9. Projectile
 
