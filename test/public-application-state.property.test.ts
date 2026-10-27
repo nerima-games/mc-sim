@@ -13,6 +13,7 @@ import {
 } from '@nerima-games/mc-kernel'
 import type { Chunk } from '@nerima-games/mc-worldgen'
 import { InMemoryStorageLayer } from '@nerima-games/mc-save'
+import { PLAYER_HALF_HEIGHT, PLAYER_HALF_WIDTH } from '@nerima-games/mc-physics'
 import * as App from '../src/index.js'
 import {
   assertResultContract,
@@ -468,7 +469,33 @@ it('TimeService candidate, setters, configureDay, and restore keep a finite vali
   )
 })
 
-it('physics stage registration reports jumpSpeed for invalid magnitudes', async () => {
+it('physics stage registration decodes success and failure outcomes', async () => {
+  const validConfig: App.SimPhysicsConfig = {
+    resolve: {
+      halfWidth: PLAYER_HALF_WIDTH,
+      halfHeight: PLAYER_HALF_HEIGHT,
+      environment: { blockAt: () => Result.succeed(null) },
+      blockPropertiesAt: () => Result.succeed(null),
+      blockShapeAt: () => null,
+    },
+    walkSpeed: 4,
+    jumpSpeed: 7,
+  }
+  const successful = await Effect.runPromise(Effect.result(
+    invokeEffect(App.makeSimStagesWithPhysics, [validConfig]).pipe(Effect.provide(App.simModule.layers)),
+  ))
+  assertEffectOutcome(
+    'makeSimStagesWithPhysics valid config',
+    () => successful,
+    App.SimPhysicsStagesSchema,
+    App.SimPhysicsConfigErrorSchema,
+  )
+  expect(Result.isSuccess(successful)).toBe(true)
+  if (Result.isSuccess(successful)) {
+    expect(successful.success.map((stage) => stage.id)).toStrictEqual([App.SIM_STAGE_IDS.physics])
+    expect(typeof successful.success[0]?.run).toBe('function')
+  }
+
   await fc.assert(
     fc.asyncProperty(
       fc.oneof(
@@ -481,6 +508,12 @@ it('physics stage registration reports jumpSpeed for invalid magnitudes', async 
           walkSpeed: 1,
           jumpSpeed,
         }])).pipe(Effect.provide(App.simModule.layers)))
+        assertEffectOutcome(
+          'makeSimStagesWithPhysics invalid jumpSpeed',
+          () => result,
+          App.SimPhysicsStagesSchema,
+          App.SimPhysicsConfigErrorSchema,
+        )
         expect(Result.isFailure(result)).toBe(true)
         if (Result.isFailure(result)) {
           expect(result.failure).toStrictEqual({ _tag: 'SimPhysicsConfigError', field: 'jumpSpeed' })

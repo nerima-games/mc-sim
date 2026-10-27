@@ -87,7 +87,7 @@
  * The physics state below contains only integration inputs and results. The
  * authoritative pose and clock remain in `PlayerService` and `TimeService`.
  */
-import { Effect, Layer, Option, Ref } from 'effect'
+import { Effect, Layer, Option, Ref, Schema } from 'effect'
 import {
   BlockLength,
   BlocksPerSecond,
@@ -136,8 +136,25 @@ export type SimPhysicsConfigError = Readonly<{
   readonly field: 'config' | 'resolve' | 'walkSpeed' | 'jumpSpeed'
 }>
 
+export const SimPhysicsConfigErrorSchema: Schema.Schema<SimPhysicsConfigError> = Schema.Struct({
+  _tag: Schema.Literal('SimPhysicsConfigError'),
+  field: Schema.Literals(['config', 'resolve', 'walkSpeed', 'jumpSpeed']),
+})
+
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const isSimPhysicsStages = (value: unknown): value is ReadonlyArray<StageRegistration> =>
+  Array.isArray(value) && value.length === 1 && value.every((stage) => {
+    if (!isRecord(stage)) return false
+    const keys = Object.keys(stage).sort()
+    return stage['id'] === SIM_STAGE_IDS.physics &&
+      typeof stage['run'] === 'function' &&
+      keys.length === 2 && keys[0] === 'id' && keys[1] === 'run'
+  })
+
+export const SimPhysicsStagesSchema: Schema.Schema<ReadonlyArray<StageRegistration>> =
+  Schema.declare(isSimPhysicsStages)
 
 const isFiniteNumber = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value)
