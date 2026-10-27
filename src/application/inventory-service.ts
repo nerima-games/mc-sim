@@ -376,7 +376,7 @@ export const InventorySnapshotSchema: AnySchema = Schema.declare<Inv.Inventory>(
     value['slots'].every((slot) => slot === undefined || Schema.is(Inv.ItemStackSchema)(slot)),
 )
 
-export const ContainerStoredStackSchema: AnySchema = Eq.EquipmentItemSchema.check(Schema.makeFilter((stack) => {
+export const ContainerStoredStackSchema: Schema.Codec<Container.ContainerStoredStack, unknown> = Eq.EquipmentItemSchema.check(Schema.makeFilter((stack) => {
   const durabilityDefinition = Eq.itemDurabilityDefinitionFor(stack.item)
   return durabilityDefinition === undefined
     ? stack.durability === null

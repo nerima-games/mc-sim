@@ -149,20 +149,20 @@ export const DurabilitySchema: Schema.Codec<Durability> = Schema.Struct({
 const StackCountSchema = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: MAX_STACK_COUNT }))
   .pipe(Schema.brand('StackCount')) as Schema.Codec<ItemStack['count'], number>
 
-const ItemComponentsSchema: Schema.Schema<ItemStack['components']> = Schema.declare(isItemComponents)
+const ItemComponentsSchema = Schema.declare(isItemComponents)
 
-export const EquipmentItemSchema: Schema.Schema<EquipmentItem> = Schema.Struct({
+export const EquipmentItemSchema: Schema.Codec<EquipmentItem, unknown> = Schema.Struct({
   item: Schema.Literals(ITEM_TYPES),
   count: StackCountSchema,
   components: ItemComponentsSchema,
   durability: Schema.NullOr(DurabilitySchema),
 }).check(Schema.makeFilter(({ item, count, components }) => isItemStack({ item, count, components })))
 
-const equipmentItemForSlotSchema = (slot: EquipmentSlot): Schema.Schema<EquipmentItem> =>
+const equipmentItemForSlotSchema = (slot: EquipmentSlot): Schema.Codec<EquipmentItem, unknown> =>
   EquipmentItemSchema.check(Schema.makeFilter((item) =>
     item.durability !== null && isEquipmentItemForSlot(slot, item)))
 
-export const EquipmentSlotsSchema: Schema.Schema<EquipmentSlots> = Schema.Struct({
+export const EquipmentSlotsSchema: Schema.Codec<EquipmentSlots, unknown> = Schema.Struct({
   head: Schema.NullOr(equipmentItemForSlotSchema('head')),
   chest: Schema.NullOr(equipmentItemForSlotSchema('chest')),
   legs: Schema.NullOr(equipmentItemForSlotSchema('legs')),
@@ -170,7 +170,7 @@ export const EquipmentSlotsSchema: Schema.Schema<EquipmentSlots> = Schema.Struct
   offhand: Schema.NullOr(equipmentItemForSlotSchema('offhand')),
 })
 
-export const EquipmentSchema: Schema.Schema<Equipment> = Schema.Struct({
+export const EquipmentSchema: Schema.Codec<Equipment, unknown> = Schema.Struct({
   slots: EquipmentSlotsSchema,
 })
 

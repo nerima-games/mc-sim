@@ -257,7 +257,7 @@ export const FurnaceSnapshotValidationResultSchema: Schema.Schema<FurnaceSnapsho
   Schema.TaggedStruct('BrandFailure', { error: BrandErrorSchema }),
   Schema.TaggedStruct('ItemStackFailure', { error: ItemStackFailureSchema }),
 ])
-const ItemTypeSchema: Schema.Schema<ItemType> = Schema.declare(isItemType)
+const ItemTypeSchema: Schema.Codec<ItemType, unknown> = Schema.declare(isItemType)
 const RecipeIdSchema: Schema.Codec<RecipeId, string> = Schema.String.check(
   Schema.makeFilter((value) => RecipeId.is(value)),
 ).pipe(Schema.brand('ResourceLocation'))
@@ -392,14 +392,14 @@ const resolveRecipeTable = (
   return Result.all(recipes.map(validateRecipe))
 }
 
-const StarterSmeltingRecipeSchema: Schema.Schema<StarterSmeltingRecipe> = Schema.Struct({
+const StarterSmeltingRecipeSchema: Schema.Codec<StarterSmeltingRecipe, unknown> = Schema.Struct({
   id: Schema.NonEmptyString,
   input: ItemTypeSchema,
   output: CanonicalItemStackSchema,
   cookDurationSecs: Schema.Finite.check(Schema.isGreaterThan(0)),
   experience: Schema.optionalKey(Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))),
 })
-const KernelSmeltingRecipeSchema: Schema.Schema<KernelSmeltingRecipe> = Schema.Struct({
+const KernelSmeltingRecipeSchema: Schema.Codec<KernelSmeltingRecipe, unknown> = Schema.Struct({
   _tag: Schema.Literal('Smelting'),
   id: RecipeIdSchema,
   input: ItemTypeSchema,
@@ -408,11 +408,11 @@ const KernelSmeltingRecipeSchema: Schema.Schema<KernelSmeltingRecipe> = Schema.S
   experience: RecipeExperienceSchema,
   stations: Schema.Array(Schema.Literals(COOKING_STATIONS)).check(Schema.makeFilter((stations) => stations.length > 0)),
 })
-export const SmeltingRecipeInputSchema: Schema.Schema<SmeltingRecipeInput> = Schema.Union([
+export const SmeltingRecipeInputSchema: Schema.Codec<SmeltingRecipeInput, unknown> = Schema.Union([
   StarterSmeltingRecipeSchema,
   KernelSmeltingRecipeSchema,
 ])
-export const SmeltingRecipeOptionSchema: Schema.Schema<SmeltingRecipeInput | undefined> = Schema.Union([
+export const SmeltingRecipeOptionSchema: Schema.Codec<SmeltingRecipeInput | undefined, unknown> = Schema.Union([
   SmeltingRecipeInputSchema,
   Schema.Undefined,
 ])
