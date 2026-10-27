@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Ref, Result } from 'effect'
+import { Context, Effect, Layer, Result, Schema } from 'effect'
 import type { ItemStack } from '@nerima-games/mc-kernel'
 import {
   addBrewingFuel,
@@ -12,16 +12,57 @@ import {
   type BrewingOutcome,
   type BrewingState,
 } from '../domain/brewing.js'
+import type { ReplicatedOwnerId } from './replicated-state.js'
+import {
+  type ReplicatedOwnerRegistration,
+  WorldCommitCoordinator,
+  type WorldCommitCoordinatorError,
+} from './world-commit-coordinator.js'
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const isBrewingServiceState = (value: unknown): value is BrewingState => {
+  if (!isRecord(value)) return false
+  const fields = ['bottles', 'ingredient', 'fuel', 'fuelCharges', 'brewProgressSecs']
+  if (Object.keys(value).length !== fields.length || !fields.every((field) => Object.hasOwn(value, field))) {
+    return false
+  }
+  return Result.isSuccess(brewingState(value))
+}
+
+export const BrewingServiceStateSchema: Schema.Codec<BrewingState, BrewingState> =
+  Schema.declare<BrewingState>(isBrewingServiceState)
+
+export type BrewingServiceError =
+  | BrewingFailure
+  | Schema.SchemaError
+  | WorldCommitCoordinatorError
 
 export type BrewingServiceApi = {
-  readonly snapshot: Effect.Effect<BrewingState>
-  readonly setBottle: (index: number, bottle: ItemStack | undefined) => Effect.Effect<BrewingState, BrewingFailure>
-  readonly setIngredient: (ingredient: ItemStack | undefined) => Effect.Effect<BrewingState, BrewingFailure>
-  readonly setFuel: (fuel: ItemStack | undefined) => Effect.Effect<BrewingState, BrewingFailure>
-  readonly addFuel: Effect.Effect<BrewingState, BrewingFailure>
-  readonly advance: (elapsedSecs: number) => Effect.Effect<BrewingOutcome, BrewingFailure>
-  readonly restore: (snapshot: unknown) => Effect.Effect<void, BrewingFailure>
-  readonly reset: Effect.Effect<void, BrewingFailure>
+  readonly snapshot: Effect.Effect<
+    BrewingState,
+    Schema.SchemaError | WorldCommitCoordinatorError,
+    WorldCommitCoordinator
+  >
+  readonly setBottle: (
+    index: number,
+    bottle: ItemStack | undefined,
+  ) => Effect.Effect<BrewingState, BrewingServiceError, WorldCommitCoordinator>
+  readonly setIngredient: (
+    ingredient: ItemStack | undefined,
+  ) => Effect.Effect<BrewingState, BrewingServiceError, WorldCommitCoordinator>
+  readonly setFuel: (
+    fuel: ItemStack | undefined,
+  ) => Effect.Effect<BrewingState, BrewingServiceError, WorldCommitCoordinator>
+  readonly addFuel: Effect.Effect<BrewingState, BrewingServiceError, WorldCommitCoordinator>
+  readonly advance: (
+    elapsedSecs: number,
+  ) => Effect.Effect<BrewingOutcome, BrewingServiceError, WorldCommitCoordinator>
+  readonly restore: (
+    snapshot: unknown,
+  ) => Effect.Effect<void, BrewingServiceError, WorldCommitCoordinator>
+  readonly reset: Effect.Effect<void, BrewingServiceError, WorldCommitCoordinator>
 }
 
 const BrewingServiceBase: Context.ServiceClass<
@@ -35,49 +76,103 @@ export class BrewingService extends BrewingServiceBase {}
 const fromResult = <A, E>(result: Result.Result<A, E>): Effect.Effect<A, E> =>
   Result.isSuccess(result) ? Effect.succeed(result.success) : Effect.fail(result.failure)
 
-const updateState = <A>(
-  state: Ref.Ref<BrewingState>,
-  update: (current: BrewingState) => Result.Result<Readonly<{ value: A; state: BrewingState }>, BrewingFailure>,
-): Effect.Effect<A, BrewingFailure> =>
-  Ref.modify(state, (current): readonly [Result.Result<A, BrewingFailure>, BrewingState] => {
-    const result = update(current)
-    return Result.isFailure(result)
-      ? [Result.fail(result.failure), current]
-      : [Result.succeed(result.success.value), result.success.state]
-  }).pipe(Effect.flatMap((result) => fromResult(result)))
+export const makeBrewingServiceRegistration = (
+  ownerId: ReplicatedOwnerId,
+  initial?: unknown,
+): Result.Result<ReplicatedOwnerRegistration<typeof BrewingServiceStateSchema>, BrewingFailure> => {
+  const state = initial === undefined ? emptyBrewingState() : brewingState(initial)
+  return Result.map(state, (initialState) => ({
+    ownerId,
+    schema: BrewingServiceStateSchema,
+    initialState,
+  }))
+}
+
+type BrewingUpdate<A> = Readonly<{
+  value: A
+  state: BrewingState
+}>
+
+const updateBrewingState = <A>(
+  ownerId: ReplicatedOwnerId,
+  update: (current: BrewingState) => Result.Result<BrewingUpdate<A>, BrewingFailure>,
+): Effect.Effect<A, BrewingServiceError, WorldCommitCoordinator> =>
+  Effect.flatMap(WorldCommitCoordinator, (coordinator) =>
+    Effect.flatMap(coordinator.snapshot(ownerId, BrewingServiceStateSchema), (snapshot) =>
+      Effect.flatMap(fromResult(update(snapshot.state)), ({ value, state }) =>
+        Effect.map(
+          coordinator.commit({
+            expectedRevision: snapshot.revision,
+            expectedDimensions: [],
+            changes: [{ ownerId, state }],
+          }),
+          () => value,
+        ),
+      ),
+    ),
+  )
 
 export const makeBrewingService = (
-  initial?: unknown,
-): Effect.Effect<BrewingServiceApi, BrewingFailure> => {
-  const initialState = initial === undefined ? emptyBrewingState() : brewingState(initial)
-  if (Result.isFailure(initialState)) return Effect.fail(initialState.failure)
-  return Effect.map(Ref.make(initialState.success), (state) => ({
-    snapshot: Ref.get(state),
-    setBottle: (index, bottle) => updateState(state, (current) =>
-      Result.map(setBrewingBottle(current, index, bottle), (next) => ({ value: next, state: next })),
+  ownerId: ReplicatedOwnerId,
+): Effect.Effect<BrewingServiceApi> =>
+  Effect.succeed({
+    snapshot: Effect.flatMap(WorldCommitCoordinator, (coordinator) =>
+      Effect.map(
+        coordinator.snapshot(ownerId, BrewingServiceStateSchema),
+        ({ state }) => state,
+      ),
     ),
-    setIngredient: (ingredient) => updateState(state, (current) =>
-      Result.map(setBrewingIngredient(current, ingredient), (next) => ({ value: next, state: next })),
+    setBottle: (index, bottle) => updateBrewingState(ownerId, (current) =>
+      Result.map(setBrewingBottle(current, index, bottle), (state) => ({
+        value: state,
+        state,
+      })),
     ),
-    setFuel: (fuel) => updateState(state, (current) =>
-      Result.map(brewingState({ ...current, fuel }), (next) => ({ value: next, state: next })),
+    setIngredient: (ingredient) => updateBrewingState(ownerId, (current) =>
+      Result.map(setBrewingIngredient(current, ingredient), (state) => ({
+        value: state,
+        state,
+      })),
     ),
-    addFuel: updateState(state, (current) =>
-      Result.map(addBrewingFuel(current), (next) => ({ value: next, state: next })),
+    setFuel: (fuel) => updateBrewingState(ownerId, (current) =>
+      Result.map(brewingState({ ...current, fuel }), (state) => ({
+        value: state,
+        state,
+      })),
     ),
-    advance: (elapsedSecs) => updateState(state, (current) =>
-      Result.map(advanceBrewing(current, elapsedSecs), (outcome) => ({ value: outcome, state: outcome.state })),
+    addFuel: updateBrewingState(ownerId, (current) =>
+      Result.map(addBrewingFuel(current), (state) => ({
+        value: state,
+        state,
+      })),
+    ),
+    advance: (elapsedSecs) => updateBrewingState(ownerId, (current) =>
+      Result.map(advanceBrewing(current, elapsedSecs), (outcome) => ({
+        value: outcome,
+        state: outcome.state,
+      })),
     ),
     restore: (snapshot) => {
       const validated = validateBrewingSnapshot(snapshot)
       if (validated._tag !== 'Valid') return Effect.fail(validated.error)
-      return Ref.set(state, validated.state)
+      return updateBrewingState(ownerId, (_current) =>
+        Result.succeed({
+          value: undefined,
+          state: validated.state,
+        }),
+      )
     },
-    reset: fromResult(emptyBrewingState()).pipe(Effect.flatMap((next) => Ref.set(state, next))),
-  }))
-}
+    reset: fromResult(emptyBrewingState()).pipe(
+      Effect.flatMap((state) =>
+        updateBrewingState(ownerId, (_current) =>
+          Result.succeed({
+            value: undefined,
+            state,
+          }),
+        ),
+      ),
+    ),
+  })
 
-export const BrewingServiceLayer: Layer.Layer<BrewingService, BrewingFailure> = Layer.effect(
-  BrewingService,
-  makeBrewingService(),
-)
+export const BrewingServiceLayer = (ownerId: ReplicatedOwnerId): Layer.Layer<BrewingService> =>
+  Layer.effect(BrewingService, makeBrewingService(ownerId))
