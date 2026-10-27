@@ -1,8 +1,10 @@
 import { describe, expect, it } from '@effect/vitest'
 import {
   BlockAddressSchema,
+  BlockIdSchema,
   WorldIdSchema,
   WorldRevisionSchema,
+  WorldWriteBatchSchema,
 } from '@nerima-games/mc-kernel'
 import { Effect, Layer, Result, Schema, Stream } from 'effect'
 import {
@@ -24,6 +26,8 @@ import { ReplicatedOwnerIdSchema } from '../src/application/replicated-state.js'
 import {
   makeWorldCommitCoordinator,
   WorldCommitCoordinator,
+  WorldCommitCoordinatorErrorSchema,
+  WorldCommitChunkStoreUnavailable,
   WorldCommitCoordinatorLayer,
 } from '../src/application/world-commit-coordinator.js'
 import {
@@ -40,8 +44,8 @@ import type { WorldCommitCoordinatorApi } from '../src/application/world-commit-
 const world = Schema.decodeUnknownSync(WorldIdSchema)('container-service-test')
 const playerOwnerId = Schema.decodeUnknownSync(ReplicatedOwnerIdSchema)('container-service-player')
 
-const addressAt = (x: number) => Schema.decodeUnknownSync(BlockAddressSchema)({
-  dimension: 'overworld',
+const addressAt = (x: number, dimension: 'overworld' | 'nether' | 'end' = 'overworld') => Schema.decodeUnknownSync(BlockAddressSchema)({
+  dimension,
   position: { x, y: 64, z: 8 },
 })
 
@@ -315,4 +319,49 @@ describe('ContainerStorageService', () => {
       Effect.provide(ContainerStorageServiceLayer.pipe(Layer.provide(dependencies))),
     )
   })
+
+  it.effect('includes a block-write dimension that has no container address in the commit expectations', () =>
+    Effect.flatMap(makeFixture(playerWithStack('stone', 2)), ({ coordinator, service }) =>
+      Effect.gen(function* () {
+        const sourceAddress = addressAt(40, 'nether')
+        const destinationAddress = addressAt(41, 'nether')
+        expect(yield* service.createContainerAt(sourceAddress)).toMatchObject({ _tag: 'Created' })
+        expect(yield* service.createContainerAt(destinationAddress)).toMatchObject({ _tag: 'Created' })
+        expect(yield* service.transferContainerItem({
+          playerOwnerId,
+          address: sourceAddress,
+          direction: 'PlayerToContainer',
+          playerSlot: 0,
+          containerSlot: 0,
+          count: 2,
+        })).toMatchObject({ _tag: 'Transferred' })
+        const before = yield* coordinator.snapshot(CONTAINER_STORAGE_REPLICATED_OWNER_ID, ContainerStorageSnapshotSchema)
+        const revision = yield* coordinator.revision
+        const overworldRevision = yield* coordinator.dimensionRevision('overworld')
+        const blockWrite = Schema.decodeUnknownSync(WorldWriteBatchSchema)({
+          world,
+          expectedWorldRevision: revision,
+          dimension: 'overworld',
+          expectedDimensionRevision: overworldRevision,
+          edits: [{ position: { x: 42, y: 64, z: 8 }, block: Schema.decodeUnknownSync(BlockIdSchema)(23) }],
+        })
+        const rejected = yield* Effect.result(service.moveContainerItem({
+          sourceAddress,
+          sourceSlot: 0,
+          destinationAddress,
+          destinationSlot: 0,
+          count: 1,
+        }, { blockWrite }))
+        const decoded = Schema.decodeUnknownSync(
+          Schema.Result(Schema.Unknown, WorldCommitCoordinatorErrorSchema),
+        )(rejected)
+
+        expect(decoded).toEqual(rejected)
+        expect(Result.isFailure(decoded)).toBe(true)
+        if (Result.isFailure(decoded)) expect(decoded.failure).toBeInstanceOf(WorldCommitChunkStoreUnavailable)
+        expect(yield* coordinator.snapshot(CONTAINER_STORAGE_REPLICATED_OWNER_ID, ContainerStorageSnapshotSchema))
+          .toEqual(before)
+      }),
+    ),
+  )
 })

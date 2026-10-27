@@ -10,6 +10,7 @@ import {
   WorldRevisionSchema,
   WorldWriteChunkUnavailable,
   WorldWriteInvalidBatch,
+  chunkKeyOfPosition,
 } from '@nerima-games/mc-kernel'
 import type { BlockId, ChunkCoord, Dimension, WorldWriteBatch } from '@nerima-games/mc-kernel'
 import {
@@ -21,7 +22,12 @@ import {
   chunkCoord,
 } from '@nerima-games/mc-worldgen'
 import { emptyBlocks } from '@nerima-games/mc-worldgen/testing'
-import type { ChunkStoreRegistryApi, PreparedChunkWrite } from '@nerima-games/mc-worldgen'
+import type {
+  ChunkStoreRegistryApi,
+  ChunkWriteInvalidBatch,
+  ChunkWriteStale,
+  PreparedChunkWrite,
+} from '@nerima-games/mc-worldgen'
 import type { ReplicatedOwnerId } from '../src/application/replicated-state'
 import {
   ReplicatedBlockChangeSchema,
@@ -809,6 +815,99 @@ describe('WorldCommitCoordinator', () => {
     }),
   )
 
+  it.effect('maps stale chunks without an actual revision and chunk-store prepare errors to typed results', () =>
+    Effect.gen(function* () {
+      const baseRegistry = yield* makeChunkStoreRegistry()
+      const baseStore = baseRegistry.forDimension('overworld')
+      yield* baseStore.load(chunkCoord(ChunkAxis(0), ChunkAxis(0)))
+      const stale: ChunkWriteStale = {
+        _tag: 'ChunkWriteStale',
+        key: chunkKeyOfPosition(transactionPosition),
+        expectedRevision: 0,
+      }
+      const staleRegistry: ChunkStoreRegistryApi = {
+        forDimension: (dimension) => ({
+          ...baseRegistry.forDimension(dimension),
+          publish: (_prepared: PreparedChunkWrite) => Effect.fail(stale),
+        }),
+      }
+      const counterSchema = Schema.Struct({ count: Schema.Int })
+      const staleCoordinator = yield* makeWorldCommitCoordinator({
+        world: transactionWorld,
+        owners: [{ ownerId: ownerA, schema: counterSchema, initialState: { count: 0 } }],
+        chunkStores: staleRegistry,
+      })
+      const staleOutcome = decodeCommitEffectResult(yield* Effect.result(staleCoordinator.commit({
+        expectedRevision: Schema.decodeUnknownSync(WorldRevisionSchema)(0),
+        expectedDimensions: [{
+          dimension: 'overworld',
+          expectedRevision: Schema.decodeUnknownSync(DimensionRevisionSchema)(0),
+        }],
+        changes: [{ ownerId: ownerA, state: { count: 1 } }],
+        blockWrite: makeBlockWrite(blockId(2)),
+      })))
+      expect(staleOutcome._tag).toBe('Failure')
+      if (staleOutcome._tag === 'Failure') {
+        expect(staleOutcome.failure._tag).toBe('WorldWriteStale')
+        if (staleOutcome.failure._tag === 'WorldWriteStale') {
+          expect(staleOutcome.failure.actualRevision).toEqual({ _tag: 'None' })
+        }
+      }
+      expect(yield* staleCoordinator.revision).toBe(0)
+
+      const errors: ReadonlyArray<Readonly<{
+        error: ChunkWriteInvalidBatch
+        expectedTag: string
+      }>> = [
+        { error: { _tag: 'ChunkWriteInvalidBatch', reason: 'empty' }, expectedTag: 'WorldWriteInvalidBatch' },
+        {
+          error: { _tag: 'ChunkWriteInvalidBatch', reason: 'duplicate-position' },
+          expectedTag: 'WorldWriteInvalidBatch',
+        },
+        { error: { _tag: 'ChunkWriteInvalidBatch', reason: 'invalid-edit' }, expectedTag: 'WorldCommitBlockWritePrepareInvalid' },
+      ]
+      for (const { error, expectedTag } of errors) {
+        const invalidRegistry: ChunkStoreRegistryApi = {
+          forDimension: (dimension) => ({
+            ...baseRegistry.forDimension(dimension),
+            prepare: (_edits) => Effect.fail(error),
+          }),
+        }
+        const coordinator = yield* makeWorldCommitCoordinator({
+          world: transactionWorld,
+          owners: [{ ownerId: ownerA, schema: counterSchema, initialState: { count: 0 } }],
+          chunkStores: invalidRegistry,
+        })
+        const outcome = decodeCommitEffectResult(yield* Effect.result(coordinator.commit({
+          expectedRevision: Schema.decodeUnknownSync(WorldRevisionSchema)(0),
+          expectedDimensions: [{
+            dimension: 'overworld',
+            expectedRevision: Schema.decodeUnknownSync(DimensionRevisionSchema)(0),
+          }],
+          changes: [{ ownerId: ownerA, state: { count: 1 } }],
+          blockWrite: makeBlockWrite(blockId(2)),
+        })))
+        expect(outcome._tag).toBe('Failure')
+        if (outcome._tag === 'Failure') expect(outcome.failure._tag).toBe(expectedTag)
+        expect(yield* coordinator.revision).toBe(0)
+        expect((yield* coordinator.snapshot(ownerA, counterSchema)).state).toEqual({ count: 0 })
+      }
+    }),
+  )
+
+  it.effect('rejects malformed ChunkStore options at coordinator construction', () =>
+    Effect.gen(function* () {
+      const malformedCoordinator: ReturnType<typeof makeWorldCommitCoordinator> = Reflect.apply(makeWorldCommitCoordinator, undefined, [{
+        world: transactionWorld,
+        owners: [],
+        chunkStores: {},
+      }])
+      const result = decodeCoordinatorEffectResult(yield* Effect.result(malformedCoordinator))
+      expect(result._tag).toBe('Failure')
+      if (result._tag === 'Failure') expect(result.failure._tag).toBe('WorldCommitCoordinatorInvalidOptions')
+    }),
+  )
+
   it.effect('allows owner-only reads without ChunkStore and reports missing stores for block observations', () =>
     Effect.gen(function* () {
       const counterSchema = Schema.Struct({ count: Schema.Int })
@@ -820,6 +919,20 @@ describe('WorldCommitCoordinator', () => {
       const unavailableRead = decodeCoordinatorEffectResult(yield* Effect.result(coordinator.observe(ownerA, counterSchema, [
         { dimension: 'overworld', position: transactionPosition },
       ])))
+      const unknownOwnerRead = decodeCoordinatorEffectResult(yield* Effect.result(coordinator.observe(
+        unknownOwner,
+        counterSchema,
+        [],
+      )))
+      const unavailableCommit = decodeCommitEffectResult(yield* Effect.result(coordinator.commit({
+        expectedRevision: Schema.decodeUnknownSync(WorldRevisionSchema)(0),
+        expectedDimensions: [{
+          dimension: 'overworld',
+          expectedRevision: Schema.decodeUnknownSync(DimensionRevisionSchema)(0),
+        }],
+        changes: [{ ownerId: ownerA, state: { count: 1 } }],
+        blockWrite: makeBlockWrite(blockId(2)),
+      })))
 
       expect(emptyRead).toStrictEqual({
         world: transactionWorld,
@@ -829,6 +942,12 @@ describe('WorldCommitCoordinator', () => {
       })
       expect(unavailableRead._tag).toBe('Failure')
       if (unavailableRead._tag === 'Failure') expect(unavailableRead.failure).toBeInstanceOf(WorldCommitChunkStoreUnavailable)
+      expect(unknownOwnerRead._tag).toBe('Failure')
+      if (unknownOwnerRead._tag === 'Failure') expect(unknownOwnerRead.failure).toBeInstanceOf(ReplicatedOwnerUnknown)
+      expect(unavailableCommit._tag).toBe('Failure')
+      if (unavailableCommit._tag === 'Failure') {
+        expect(unavailableCommit.failure).toBeInstanceOf(WorldCommitChunkStoreUnavailable)
+      }
     }),
   )
 

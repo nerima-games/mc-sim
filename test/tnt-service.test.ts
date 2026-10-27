@@ -467,6 +467,50 @@ describe('TntService', () => {
     }),
   )
 
+  it.effect('rejects detonation plans whose explosion or owner candidate does not match the plan', () =>
+    Effect.flatMap(transactionalFixture(), ({ coordinator, tnt }) =>
+      Effect.gen(function* () {
+        yield* tnt.prime({
+          id: entity,
+          dimension: 'overworld',
+          center: { x: 8, y: 64, z: 8 },
+          fuseSecs: 1,
+          expectedRevision: revision(0),
+          expectedDimensionRevision: dimensionRevision(0),
+        })
+        const planned = yield* tnt.advance(advanceRequest(1, 1, 1))
+        expect(planned._tag).toBe('DetonationPlanned')
+        if (planned._tag !== 'DetonationPlanned') return
+        expect(planned.explosion.destroyedBlocks.length).toBeGreaterThan(0)
+
+        const rejectedExplosion = yield* Effect.result(tnt.commitDetonation({
+          ...planned,
+          explosion: { ...planned.explosion, destroyedBlocks: [] },
+        }))
+        const rejectedOwnerCandidate = yield* Effect.result(tnt.commitDetonation({
+          ...planned,
+          ownerCandidate: { ...planned.ownerCandidate, state: { tnts: [] } },
+        }))
+        const resultSchema = Schema.Result(TntDetonationCommitOutcomeSchema, TntServiceErrorSchema)
+        const decodedExplosion = Schema.decodeUnknownSync(resultSchema)(rejectedExplosion)
+        const decodedOwnerCandidate = Schema.decodeUnknownSync(resultSchema)(rejectedOwnerCandidate)
+        expect(Result.isFailure(decodedExplosion)).toBe(true)
+        if (Result.isFailure(decodedExplosion)) {
+          expect(decodedExplosion.failure).toMatchObject({ _tag: 'TntServiceFailure', reason: 'invalid-input' })
+        }
+        expect(Result.isFailure(decodedOwnerCandidate)).toBe(true)
+        if (Result.isFailure(decodedOwnerCandidate)) {
+          expect(decodedOwnerCandidate.failure).toMatchObject({ _tag: 'TntServiceFailure', reason: 'invalid-input' })
+        }
+        expect((yield* tnt.snapshot).state.tnts[0]?.state).toEqual({
+          kind: 'primed',
+          remainingFuseSecs: 1,
+        })
+        expect(yield* coordinator.revision).toBe(revision(1))
+      }),
+    ),
+  )
+
   it('rejects TNT outcomes with missing or null required fields', () => {
     const decodeAdvance = Schema.decodeUnknownSync(TntAdvanceOutcomeSchema)
     const assertRequiredFields = (

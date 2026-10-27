@@ -24,6 +24,8 @@ const TransferFailureSchema = Schema.Struct({
 const schemaFactoryExports = [
   'EntityRosterSchema',
   'EntitySchema',
+  'WorldCommitResultSchema',
+  'WorldReadSnapshotSchema',
   'makeCoreTickErrorSchema',
   'replicatedOwnerChangeSchema',
   'replicatedSnapshotSchema',

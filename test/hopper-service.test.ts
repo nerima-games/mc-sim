@@ -7,6 +7,7 @@ import {
   WorldWriteBatchSchema,
   chunkCoord,
   ChunkAxis,
+  type Dimension,
 } from '@nerima-games/mc-kernel'
 import {
   CHUNK_HEIGHT,
@@ -49,17 +50,17 @@ const world = Schema.decodeUnknownSync(WorldIdSchema)('hopper-service-test')
 const playerOwnerId = Schema.decodeUnknownSync(ReplicatedOwnerIdSchema)('hopper-service-player')
 const hopperBlock = Schema.decodeUnknownSync(BlockIdSchema)(23)
 
-const playerWithStone = (): PlayerStorage => {
-  const stack = itemStack('stone', 1)
+const playerWithStone = (count = 1): PlayerStorage => {
+  const stack = itemStack('stone', count)
   if (Result.isFailure(stack)) throw stack.failure
   const slots: Array<typeof stack.success | undefined> = Array.from({ length: 36 }, () => undefined)
   slots[0] = stack.success
   return { ...emptyPlayerStorage(), inventory: { slots } }
 }
 
-const addressAt = (x: number) => Schema.decodeUnknownSync(BlockAddressSchema)({
-  dimension: 'overworld',
-  position: { x, y: 64, z: 8 },
+const addressAt = (x: number, dimension: Dimension = 'overworld', y = 64, z = 8) => Schema.decodeUnknownSync(BlockAddressSchema)({
+  dimension,
+  position: { x, y, z },
 })
 
 const chunkSource: ChunkSource = (coord) => Effect.succeed({
@@ -68,7 +69,7 @@ const chunkSource: ChunkSource = (coord) => Effect.succeed({
   biomes: Array.from({ length: CHUNK_SIZE_XZ * CHUNK_SIZE_XZ }, () => 'PLAINS' as const),
 })
 
-const makeFixture = () =>
+const makeFixture = (playerStorage: PlayerStorage = playerWithStone()) =>
   Effect.gen(function* () {
     const chunkStores = yield* ChunkStoreRegistry
     const overworld = chunkStores.forDimension('overworld')
@@ -78,7 +79,7 @@ const makeFixture = () =>
       chunkStores,
       owners: [
         containerStorageOwnerRegistration(),
-        playerStorageOwnerRegistration(playerOwnerId, playerWithStone()),
+        playerStorageOwnerRegistration(playerOwnerId, playerStorage),
         hopperOwnerRegistration(),
       ],
     })
@@ -229,6 +230,227 @@ describe('HopperService', () => {
         expect((yield* overworld.getBlock(hopperAddress.position))).toEqual({ _tag: 'Block', block: AIR_BLOCK_ID })
       }),
     ),
+  )
+
+  it.effect('returns typed invalid requests for unsupported endpoints, mixed dimensions, and missing block edits', () =>
+    Effect.flatMap(makeFixture(), ({ coordinator, hopperService }) =>
+      Effect.gen(function* () {
+        const hopperAddress = addressAt(20)
+        const player = { _tag: 'Player' as const, ownerId: playerOwnerId, slot: 0 }
+        const playerToPlayer = yield* hopperService.transfer({
+          hopperAddress,
+          source: player,
+          destination: { ...player, slot: 1 },
+          blockWrite: batchFor(0, 0, hopperAddress),
+        })
+        const dimensionMismatch = yield* hopperService.transfer({
+          hopperAddress,
+          source: { _tag: 'Container', address: addressAt(21, 'nether'), slot: 0 },
+          destination: player,
+          blockWrite: batchFor(0, 0, hopperAddress),
+        })
+        const missingHopperEdit = yield* hopperService.transfer({
+          hopperAddress,
+          source: player,
+          destination: { _tag: 'Container', address: addressAt(22), slot: 0 },
+          blockWrite: batchFor(0, 0, addressAt(23)),
+        })
+
+        expect(Schema.decodeUnknownSync(HopperTransferOutcomeSchema)(playerToPlayer))
+          .toEqual({ _tag: 'InvalidRequest', reason: 'player-to-player' })
+        expect(Schema.decodeUnknownSync(HopperTransferOutcomeSchema)(dimensionMismatch))
+          .toEqual({ _tag: 'InvalidRequest', reason: 'dimension-mismatch' })
+        expect(Schema.decodeUnknownSync(HopperTransferOutcomeSchema)(missingHopperEdit))
+          .toEqual({ _tag: 'InvalidRequest', reason: 'missing-hopper-block-edit' })
+        expect(yield* coordinator.revision).toBe(0)
+      }),
+    ),
+  )
+
+  it.effect('transfers from a container to a player and advances an existing hopper cooldown', () =>
+    Effect.flatMap(makeFixture(playerWithStone(2)), ({ coordinator, containerService, hopperService }) =>
+      Effect.gen(function* () {
+        const hopperAddress = addressAt(14)
+        yield* containerService.createContainerAt(hopperAddress, 'hopper')
+        yield* containerService.transferContainerItem({
+          playerOwnerId,
+          address: hopperAddress,
+          direction: 'PlayerToContainer',
+          playerSlot: 0,
+          containerSlot: 0,
+          count: 1,
+        })
+        const revisionBefore = yield* coordinator.revision
+        const dimensionRevisionBefore = yield* coordinator.dimensionRevision('overworld')
+        const firstTransfer = yield* hopperService.transfer({
+          hopperAddress,
+          source: { _tag: 'Container', address: hopperAddress, slot: 0 },
+          destination: { _tag: 'Player', ownerId: playerOwnerId, slot: 0 },
+          blockWrite: batchFor(revisionBefore, dimensionRevisionBefore, hopperAddress),
+        })
+        expect(Schema.decodeUnknownSync(HopperTransferOutcomeSchema)(firstTransfer)).toMatchObject({
+          _tag: 'Committed',
+          transfer: { direction: 'ContainerToPlayer', item: 'stone', count: 1 },
+        })
+        expect(Schema.decodeUnknownSync(HopperTransferOutcomeSchema)(yield* hopperService.transfer({
+          hopperAddress,
+          source: { _tag: 'Player', ownerId: playerOwnerId, slot: 0 },
+          destination: { _tag: 'Container', address: hopperAddress, slot: 0 },
+          blockWrite: batchFor(revisionBefore, dimensionRevisionBefore, hopperAddress),
+        }))).toMatchObject({ _tag: 'CoolingDown', ticks: 8 })
+
+        const revisionAfterTransfer = yield* coordinator.revision
+        const dimensionRevisionAfterTransfer = yield* coordinator.dimensionRevision('overworld')
+        const staleWorld = yield* Effect.result(hopperService.advanceCooldown({
+          address: hopperAddress,
+          ticks: 1,
+          expectedRevision: revisionBefore,
+          expectedDimensionRevision: dimensionRevisionAfterTransfer,
+        }))
+        const staleDimension = yield* Effect.result(hopperService.advanceCooldown({
+          address: hopperAddress,
+          ticks: 1,
+          expectedRevision: revisionAfterTransfer,
+          expectedDimensionRevision: dimensionRevisionBefore,
+        }))
+        expect(Schema.decodeUnknownSync(
+          Schema.Result(HopperCooldownOutcomeSchema, HopperServiceErrorSchema),
+        )(staleWorld)).toEqual(staleWorld)
+        expect(Schema.decodeUnknownSync(
+          Schema.Result(HopperCooldownOutcomeSchema, HopperServiceErrorSchema),
+        )(staleDimension)).toEqual(staleDimension)
+        expect(Result.isFailure(staleWorld)).toBe(true)
+        if (Result.isFailure(staleWorld)) expect(staleWorld.failure).toBeInstanceOf(WorldRevisionConflict)
+        expect(Result.isFailure(staleDimension)).toBe(true)
+        if (Result.isFailure(staleDimension)) expect(staleDimension.failure._tag).toBe('DimensionRevisionConflict')
+
+        const mismatchedAddresses = [
+          addressAt(14, 'nether'),
+          addressAt(15),
+          addressAt(14, 'overworld', 65),
+          addressAt(14, 'overworld', 64, 9),
+        ]
+        for (const address of mismatchedAddresses) {
+          expect(Schema.decodeUnknownSync(HopperCooldownOutcomeSchema)(yield* hopperService.advanceCooldown({
+            address,
+            ticks: 1,
+            expectedRevision: revisionAfterTransfer,
+            expectedDimensionRevision: dimensionRevisionAfterTransfer,
+          }))).toEqual({ _tag: 'UnknownHopper' })
+        }
+
+        const advancedOnce = yield* hopperService.advanceCooldown({
+          address: hopperAddress,
+          ticks: 1,
+          expectedRevision: revisionAfterTransfer,
+          expectedDimensionRevision: dimensionRevisionAfterTransfer,
+        })
+        expect(Schema.decodeUnknownSync(HopperCooldownOutcomeSchema)(advancedOnce))
+          .toMatchObject({ _tag: 'Advanced', hopper: { cooldownTicks: 7 } })
+        const revisionAfterOneTick = yield* coordinator.revision
+        const dimensionRevisionAfterOneTick = yield* coordinator.dimensionRevision('overworld')
+        const advancedToZero = yield* hopperService.advanceCooldown({
+          address: hopperAddress,
+          ticks: 7,
+          expectedRevision: revisionAfterOneTick,
+          expectedDimensionRevision: dimensionRevisionAfterOneTick,
+        })
+        expect(Schema.decodeUnknownSync(HopperCooldownOutcomeSchema)(advancedToZero))
+          .toMatchObject({ _tag: 'Advanced', hopper: { cooldownTicks: 0 } })
+        const revisionAtZero = yield* coordinator.revision
+        const dimensionRevisionAtZero = yield* coordinator.dimensionRevision('overworld')
+        expect(Schema.decodeUnknownSync(HopperCooldownOutcomeSchema)(yield* hopperService.advanceCooldown({
+          address: hopperAddress,
+          ticks: 1,
+          expectedRevision: revisionAtZero,
+          expectedDimensionRevision: dimensionRevisionAtZero,
+        }))).toEqual({ _tag: 'NoChange' })
+
+        const retransfer = yield* hopperService.transfer({
+          hopperAddress,
+          source: { _tag: 'Player', ownerId: playerOwnerId, slot: 0 },
+          destination: { _tag: 'Container', address: hopperAddress, slot: 0 },
+          blockWrite: batchFor(revisionAtZero, dimensionRevisionAtZero, hopperAddress),
+        })
+        expect(Schema.decodeUnknownSync(HopperTransferOutcomeSchema)(retransfer)).toMatchObject({
+          _tag: 'Committed',
+          transfer: { direction: 'PlayerToContainer', item: 'stone', count: 1 },
+          hopper: { cooldownTicks: 8 },
+        })
+
+        const secondHopperAddress = addressAt(15)
+        yield* containerService.createContainerAt(secondHopperAddress, 'hopper')
+        const revisionBeforeSecondTransfer = yield* coordinator.revision
+        const dimensionRevisionBeforeSecondTransfer = yield* coordinator.dimensionRevision('overworld')
+        const secondTransfer = yield* hopperService.transfer({
+          hopperAddress: secondHopperAddress,
+          source: { _tag: 'Player', ownerId: playerOwnerId, slot: 0 },
+          destination: { _tag: 'Container', address: secondHopperAddress, slot: 0 },
+          blockWrite: batchFor(revisionBeforeSecondTransfer, dimensionRevisionBeforeSecondTransfer, secondHopperAddress),
+        })
+        expect(Schema.decodeUnknownSync(HopperTransferOutcomeSchema)(secondTransfer)).toMatchObject({
+          _tag: 'Committed',
+          transfer: { direction: 'PlayerToContainer', item: 'stone', count: 1 },
+        })
+        const revisionAfterSecondTransfer = yield* coordinator.revision
+        const dimensionRevisionAfterSecondTransfer = yield* coordinator.dimensionRevision('overworld')
+        expect(Schema.decodeUnknownSync(HopperCooldownOutcomeSchema)(yield* hopperService.advanceCooldown({
+          address: secondHopperAddress,
+          ticks: 8,
+          expectedRevision: revisionAfterSecondTransfer,
+          expectedDimensionRevision: dimensionRevisionAfterSecondTransfer,
+        }))).toMatchObject({ _tag: 'Advanced', hopper: { cooldownTicks: 0 } })
+        const revisionAfterSecondCooldown = yield* coordinator.revision
+        const dimensionRevisionAfterSecondCooldown = yield* coordinator.dimensionRevision('overworld')
+        const secondRetransfer = yield* hopperService.transfer({
+          hopperAddress: secondHopperAddress,
+          source: { _tag: 'Container', address: secondHopperAddress, slot: 0 },
+          destination: { _tag: 'Player', ownerId: playerOwnerId, slot: 0 },
+          blockWrite: batchFor(revisionAfterSecondCooldown, dimensionRevisionAfterSecondCooldown, secondHopperAddress),
+        })
+        expect(Schema.decodeUnknownSync(HopperTransferOutcomeSchema)(secondRetransfer)).toMatchObject({
+          _tag: 'Committed',
+          transfer: { direction: 'ContainerToPlayer', item: 'stone', count: 1 },
+        })
+      }),
+    ),
+  )
+
+  it.effect('returns transfer rejections without starting a hopper cooldown', () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeFixture()
+      const emptyPlayerFixture = yield* makeFixture(emptyPlayerStorage())
+      const sourceAddress = addressAt(26)
+      const destinationAddress = addressAt(27)
+      const hopperAddress = addressAt(28)
+      yield* fixture.containerService.createContainerAt(sourceAddress)
+      yield* fixture.containerService.createContainerAt(destinationAddress)
+      const containerRejected = yield* fixture.hopperService.transfer({
+        hopperAddress,
+        source: { _tag: 'Container', address: sourceAddress, slot: 0 },
+        destination: { _tag: 'Container', address: destinationAddress, slot: 0 },
+        blockWrite: batchFor(2, 0, hopperAddress),
+      })
+      expect(Schema.decodeUnknownSync(HopperTransferOutcomeSchema)(containerRejected))
+        .toMatchObject({ _tag: 'TransferRejected', transfer: { _tag: 'ContainerMove', outcome: { _tag: 'EmptySource' } } })
+      expect((yield* fixture.coordinator.snapshot(HOPPER_REPLICATED_OWNER_ID, HopperServiceSnapshotSchema)).state.hoppers)
+        .toEqual([])
+      expect(yield* fixture.coordinator.revision).toBe(2)
+
+      const playerDestination = addressAt(29)
+      yield* emptyPlayerFixture.containerService.createContainerAt(playerDestination)
+      const playerRejected = yield* emptyPlayerFixture.hopperService.transfer({
+        hopperAddress: addressAt(30),
+        source: { _tag: 'Player', ownerId: playerOwnerId, slot: 0 },
+        destination: { _tag: 'Container', address: playerDestination, slot: 0 },
+        blockWrite: batchFor(1, 0, addressAt(30)),
+      })
+      expect(Schema.decodeUnknownSync(HopperTransferOutcomeSchema)(playerRejected))
+        .toMatchObject({ _tag: 'TransferRejected', transfer: { _tag: 'PlayerTransfer', outcome: { _tag: 'EmptySource' } } })
+      expect((yield* emptyPlayerFixture.coordinator.snapshot(HOPPER_REPLICATED_OWNER_ID, HopperServiceSnapshotSchema)).state.hoppers)
+        .toEqual([])
+      expect(yield* emptyPlayerFixture.coordinator.revision).toBe(1)
+    }),
   )
 
   it('rejects hopper outcomes with missing or null required fields', () => {

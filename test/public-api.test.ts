@@ -23,6 +23,9 @@ import {
   HopperCooldownOutcomeSchema,
   TntAdvanceOutcomeSchema,
   TntDetonationCommitOutcomeSchema,
+  TntServiceFailureSchema,
+  TntServiceSnapshotErrorSchema,
+  TntServiceSnapshotSuccessSchema,
   ReplicatedBlockChangeSchema,
   WorldBlockReadSchema,
   WorldReadSnapshotSchema,
@@ -422,7 +425,10 @@ const integratedPublicRuntimeExports = [
   'ProjectileServiceLayer',
   'makeProjectileService',
   'TntServiceSnapshotSchema',
+  'TntServiceSnapshotErrorSchema',
+  'TntServiceSnapshotSuccessSchema',
   'TntServiceErrorSchema',
+  'TntServiceFailureSchema',
   'TntPrimeOutcomeSchema',
   'TntAdvanceOutcomeSchema',
   'TntDetonationCommitOutcomeSchema',
@@ -497,6 +503,9 @@ it('publishes the C1-C5 service and schema entry points', () => {
   expect(HopperCooldownOutcomeSchema).toBeDefined()
   expect(TntAdvanceOutcomeSchema).toBeDefined()
   expect(TntDetonationCommitOutcomeSchema).toBeDefined()
+  expect(TntServiceFailureSchema).toBeDefined()
+  expect(TntServiceSnapshotErrorSchema).toBeDefined()
+  expect(TntServiceSnapshotSuccessSchema).toBeDefined()
   expect(ReplicatedBlockChangeSchema).toBeDefined()
   expect(WorldBlockReadSchema).toBeDefined()
   expect(WorldReadSnapshotSchema).toBeDefined()

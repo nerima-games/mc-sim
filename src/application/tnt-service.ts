@@ -34,6 +34,7 @@ import {
 import {
   makeReplicatedOwnerId,
   ReplicatedOwnerIdSchema,
+  replicatedSnapshotSchema,
   type ReplicatedOwnerId,
   type ReplicatedSnapshot,
 } from './replicated-state.js'
@@ -102,6 +103,17 @@ export const TntServiceSnapshotSchema: Schema.Codec<
   tnts: Schema.Array(PrimedTntRecordSchema),
 })
 
+export const TntServiceSnapshotSuccessSchema: Schema.Codec<
+  ReplicatedSnapshot<typeof TntServiceSnapshotSchema>,
+  unknown
+> = replicatedSnapshotSchema(TntServiceSnapshotSchema)
+
+export type TntServiceSnapshotError = Schema.SchemaError | WorldCommitCoordinatorError
+export const TntServiceSnapshotErrorSchema: Schema.Codec<TntServiceSnapshotError, unknown> = Schema.Union([
+  SchemaErrorSchema,
+  WorldCommitCoordinatorErrorSchema,
+])
+
 export const TNT_REPLICATED_OWNER_ID: ReplicatedOwnerId = makeReplicatedOwnerId('tnt')
 
 export const INITIAL_TNT_SERVICE_SNAPSHOT: TntServiceSnapshot = { tnts: [] }
@@ -120,6 +132,8 @@ const TntServiceFailureBase: Schema.Class<
   YieldableError
 > = Schema.TaggedError<TntServiceFailureShape>()('TntServiceFailure', TntServiceFailureFieldsSchema)
 export class TntServiceFailure extends TntServiceFailureBase {}
+
+export const TntServiceFailureSchema: Schema.Codec<TntServiceFailure, unknown> = Schema.instanceOf(TntServiceFailure)
 
 export type TntPrimeRequest = Readonly<{
   id: EntityId
@@ -148,9 +162,7 @@ export type TntAdvanceRequest = Readonly<{
   limits?: Partial<ExplosionLimits>
 }>
 
-const TntExplosionPlanSchema: Schema.Codec<ExplosionPlan, unknown> = Schema.declare(
-  Schema.is(ExplosionPlanSchema),
-)
+const TntExplosionPlanSchema = ExplosionPlanSchema
 
 const PrimedTntPlanSchema: Schema.Codec<PrimedTntPlan, unknown> = Schema.Struct({
   before: PrimedTntStateSchema,

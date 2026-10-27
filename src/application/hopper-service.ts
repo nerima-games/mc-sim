@@ -35,6 +35,7 @@ import {
 } from './world-commit-coordinator.js'
 
 export type HopperCooldownTicks = number & Brand.Brand<'HopperCooldownTicks'>
+type HopperRemainingCooldownTicks = number & Brand.Brand<'HopperRemainingCooldownTicks'>
 
 export const HopperCooldownTicksSchema: Schema.Codec<HopperCooldownTicks, number> =
   Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }))
@@ -43,22 +44,24 @@ export const HopperCooldownTicksSchema: Schema.Codec<HopperCooldownTicks, number
 const NonNegativeSafeIntegerSchema: Schema.Codec<number, number> = Schema.Int.check(
   Schema.isBetween({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
 )
+const HopperRemainingCooldownTicksSchema: Schema.Codec<HopperRemainingCooldownTicks, number> =
+  NonNegativeSafeIntegerSchema.pipe(Schema.brand('HopperRemainingCooldownTicks'))
 const PositiveSafeIntegerSchema: Schema.Codec<number, number> = Schema.Int.check(
   Schema.isBetween({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
 )
 
-export const HOPPER_TRANSFER_COOLDOWN_TICKS: HopperCooldownTicks =
-  Schema.decodeUnknownSync(HopperCooldownTicksSchema)(8)
+export const HOPPER_TRANSFER_COOLDOWN_TICKS: HopperRemainingCooldownTicks =
+  Schema.decodeUnknownSync(HopperRemainingCooldownTicksSchema)(8)
 export const HOPPER_REPLICATED_OWNER_ID: ReplicatedOwnerId = makeReplicatedOwnerId('hopper-runtime')
 
 export type HopperRuntimeState = Readonly<{
   address: BlockAddress
-  cooldownTicks: HopperCooldownTicks
+  cooldownTicks: HopperRemainingCooldownTicks
 }>
 
 const HopperRuntimeStateSchema: Schema.Codec<HopperRuntimeState, unknown> = Schema.Struct({
   address: BlockAddressSchema,
-  cooldownTicks: HopperCooldownTicksSchema,
+  cooldownTicks: HopperRemainingCooldownTicksSchema,
 })
 
 export type HopperServiceSnapshot = Readonly<{ hoppers: ReadonlyArray<HopperRuntimeState> }>
@@ -249,9 +252,6 @@ export const makeHopperService = (): Effect.Effect<
     Effect.flatMap(Schema.decodeUnknownEffect(HopperTransferRequestSchema)(request), (decoded) =>
       Effect.gen(function* () {
         const { hopperAddress, source, destination, blockWrite } = decoded
-        if (source._tag === 'Player' && destination._tag === 'Player') {
-          return { _tag: 'InvalidRequest', reason: 'player-to-player' } as const
-        }
         const dimensions = [
           hopperAddress.dimension,
           endpointDimension(source),
@@ -271,7 +271,8 @@ export const makeHopperService = (): Effect.Effect<
         const current = yield* snapshot()
         const existing = recordAt(current.state, hopperAddress)
         if (existing !== undefined && existing.cooldownTicks > 0) {
-          return { _tag: 'CoolingDown', ticks: existing.cooldownTicks } as const
+          const ticks = yield* Schema.decodeUnknownEffect(HopperCooldownTicksSchema)(existing.cooldownTicks)
+          return { _tag: 'CoolingDown', ticks } as const
         }
 
         const nextHopper: HopperRuntimeState = {
@@ -288,18 +289,10 @@ export const makeHopperService = (): Effect.Effect<
           additionalChanges,
         }
         let outcome: HopperDomainTransfer
-        if (source._tag === 'Container' && destination._tag === 'Container') {
-          outcome = {
-            _tag: 'ContainerMove',
-            outcome: yield* storage.moveContainerItem({
-              sourceAddress: source.address,
-              sourceSlot: source.slot,
-              destinationAddress: destination.address,
-              destinationSlot: destination.slot,
-              count: 1,
-            }, options),
+        if (source._tag === 'Player') {
+          if (destination._tag === 'Player') {
+            return { _tag: 'InvalidRequest', reason: 'player-to-player' } as const
           }
-        } else if (source._tag === 'Player' && destination._tag === 'Container') {
           outcome = {
             _tag: 'PlayerTransfer',
             outcome: yield* storage.transferContainerItem({
@@ -311,7 +304,18 @@ export const makeHopperService = (): Effect.Effect<
               count: 1,
             }, options),
           }
-        } else if (source._tag === 'Container' && destination._tag === 'Player') {
+        } else if (destination._tag === 'Container') {
+          outcome = {
+            _tag: 'ContainerMove',
+            outcome: yield* storage.moveContainerItem({
+              sourceAddress: source.address,
+              sourceSlot: source.slot,
+              destinationAddress: destination.address,
+              destinationSlot: destination.slot,
+              count: 1,
+            }, options),
+          }
+        } else {
           outcome = {
             _tag: 'PlayerTransfer',
             outcome: yield* storage.transferContainerItem({
@@ -323,8 +327,6 @@ export const makeHopperService = (): Effect.Effect<
               count: 1,
             }, options),
           }
-        } else {
-          return { _tag: 'InvalidRequest', reason: 'player-to-player' } as const
         }
         if (outcome._tag === 'ContainerMove') {
           if (outcome.outcome._tag !== 'Moved') return { _tag: 'TransferRejected', transfer: outcome } as const

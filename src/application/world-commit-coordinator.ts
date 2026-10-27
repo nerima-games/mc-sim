@@ -401,28 +401,21 @@ const repeatedBlockPosition = (edits: WorldWriteBatch['edits']): BlockPosition |
 }
 
 const invalidBatchError = (
-  dimension: Dimension,
-  edits: WorldWriteBatch['edits'],
   error: ChunkWriteInvalidBatch,
-): WorldWriteInvalidBatch | WorldCommitBlockWriteInvalidPosition | WorldCommitBlockWritePrepareInvalid => {
+): WorldWriteInvalidBatch | WorldCommitBlockWritePrepareInvalid => {
   if (error.reason === 'empty' || error.reason === 'duplicate-position') {
     return new WorldWriteInvalidBatch({ reason: error.reason })
-  }
-  if (error.reason === 'out-of-world') {
-    const edit = edits.find(({ position }) => position.y < 0 || position.y >= CHUNK_HEIGHT)
-    if (edit !== undefined) return new WorldCommitBlockWriteInvalidPosition({ dimension, position: edit.position })
   }
   return new WorldCommitBlockWritePrepareInvalid({ reason: error.reason })
 }
 
 const mapChunkWritePrepareError = (
   dimension: Dimension,
-  edits: WorldWriteBatch['edits'],
   error: ChunkWriteInvalidBatch | ChunkWriteChunkUnavailable,
-): WorldWriteChunkUnavailable | WorldWriteInvalidBatch | WorldCommitBlockWriteInvalidPosition | WorldCommitBlockWritePrepareInvalid =>
+): WorldWriteChunkUnavailable | WorldWriteInvalidBatch | WorldCommitBlockWritePrepareInvalid =>
   error._tag === 'ChunkWriteChunkUnavailable'
     ? new WorldWriteChunkUnavailable({ dimension, chunk: chunkKeyOfPosition(error.position) })
-    : invalidBatchError(dimension, edits, error)
+    : invalidBatchError(error)
 
 const mapChunkWritePublishError = (
   dimension: Dimension,
@@ -552,7 +545,6 @@ const revisionConflict = (
   current: CoordinatorState,
   expectedRevision: WorldRevision,
   expectedDimensions: ReadonlyArray<DimensionRevisionExpectation>,
-  block: PreparedBlockWrite,
 ): WorldRevisionConflict | DimensionRevisionConflict | undefined => {
   if (current.revision !== expectedRevision) {
     return new WorldRevisionConflict({ expected: expectedRevision, actual: current.revision })
@@ -564,16 +556,6 @@ const revisionConflict = (
         dimension: expectation.dimension,
         expected: expectation.expectedRevision,
         actual,
-      })
-    }
-  }
-  if (block._tag === 'Some') {
-    const expectedBlockRevision = current.dimensionRevisions.get(block.batch.dimension) ?? makeDimensionRevision(0)
-    if (expectedBlockRevision !== block.batch.expectedDimensionRevision) {
-      return new DimensionRevisionConflict({
-        dimension: block.batch.dimension,
-        expected: block.batch.expectedDimensionRevision,
-        actual: expectedBlockRevision,
       })
     }
   }
@@ -664,12 +646,11 @@ export const makeWorldCommitCoordinator = (
         }
 
         const blocks: Array<WorldBlockRead> = []
-        for (const read of decodedReads) {
-          if (chunkStores === undefined) {
-            return yield* Effect.fail(new WorldCommitChunkStoreUnavailable({ dimension: read.dimension }))
+        if (chunkStores !== undefined) {
+          for (const read of decodedReads) {
+            const reading = yield* chunkStores.forDimension(read.dimension).getBlock(read.position)
+            blocks.push({ ...read, reading })
           }
-          const reading = yield* chunkStores.forDimension(read.dimension).getBlock(read.position)
-          blocks.push({ ...read, reading })
         }
         return {
           world: current.world,
@@ -684,7 +665,7 @@ export const makeWorldCommitCoordinator = (
         const inputs = yield* restore(prepareCommitInputs(request, world, registry, chunkStores))
         const { expectedRevision, expectedDimensions, preparedChanges, block } = inputs
         const current = yield* Ref.get(committed)
-        const conflict = revisionConflict(current, expectedRevision, expectedDimensions, block)
+        const conflict = revisionConflict(current, expectedRevision, expectedDimensions)
         if (conflict !== undefined) return yield* Effect.fail(conflict)
 
         let preparedBlockWrite: Readonly<{
@@ -695,7 +676,7 @@ export const makeWorldCommitCoordinator = (
         if (block._tag === 'Some') {
           const chunkStore = block.registry.forDimension(block.batch.dimension)
           const token = yield* restore(chunkStore.prepare(block.edits).pipe(
-            Effect.mapError((error) => mapChunkWritePrepareError(block.batch.dimension, block.edits, error)),
+            Effect.mapError((error) => mapChunkWritePrepareError(block.batch.dimension, error)),
           ))
           preparedBlockWrite = { chunkStore, dimension: block.batch.dimension, token }
         }
