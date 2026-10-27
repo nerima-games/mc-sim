@@ -80,6 +80,7 @@ export type FurnaceOutcome = FurnaceAdvanceResult & Readonly<{
 
 export type FurnaceTransferSlot = 'input' | 'fuel'
 export type FurnaceTransferRejection =
+  | { readonly _tag: 'InvalidInput'; readonly field: 'inventory' | 'furnace' | 'slot' | 'item' | 'count' }
   | { readonly _tag: 'InvalidCount'; readonly count: number }
   | { readonly _tag: 'InsufficientItems'; readonly available: number }
   | { readonly _tag: 'WrongItem'; readonly expected: ItemType }
@@ -97,6 +98,7 @@ export type FurnaceTransferSelection =
   | { readonly _tag: 'Ready'; readonly current: ItemStack | undefined; readonly selected: ItemStack }
   | { readonly _tag: 'Rejected'; readonly result: FurnaceTransferRejection }
 export type FurnaceCollectionResult =
+  | { readonly _tag: 'InvalidInput'; readonly field: 'inventory' | 'furnace' }
   | { readonly _tag: 'Collected'; readonly output: ItemStack }
   | { readonly _tag: 'Empty' }
   | { readonly _tag: 'NoRoom' }
@@ -136,6 +138,17 @@ const isFiniteNonNegative = (value: unknown): value is number =>
 const isFinitePositive = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value) && value > 0
 const isSlot = (value: unknown): value is Slot => value === undefined || isItemStack(value)
+const isInventoryEnvelope = (value: unknown): value is Inventory =>
+  isRecord(value) && Array.isArray(value['slots'])
+const isInventory = (value: unknown): value is Inventory =>
+  isInventoryEnvelope(value) && value.slots.every(isSlot)
+const isTransferSlot = (value: unknown): value is FurnaceTransferSlot =>
+  value === 'input' || value === 'fuel'
+const isFurnaceState = (value: unknown): value is FurnaceState => {
+  if (!isRecord(value)) return false
+  const fields = ['station', 'input', 'fuel', 'output', 'fuelTimeRemainingSecs', 'fuelTimeTotalSecs', 'cookProgressSecs']
+  return fields.every((field) => Object.hasOwn(value, field)) && Result.isSuccess(furnaceState(value))
+}
 const validateSlot = (value: unknown, path: string): Result.Result<Slot, FurnaceStateFailure> => {
   if (value === undefined) return Result.succeed(undefined)
   if (!isRecord(value) || Object.keys(value).some((key) => !['item', 'count', 'components'].includes(key))) {
@@ -314,7 +327,22 @@ export const selectFurnaceTransfer = (
   count: number,
 ): FurnaceTransferSelection => {
   if (!Number.isSafeInteger(count) || count <= 0) {
+    if (!Number.isFinite(count)) {
+      return { _tag: 'Rejected', result: { _tag: 'InvalidInput', field: 'count' } }
+    }
     return { _tag: 'Rejected', result: { _tag: 'InvalidCount', count } }
+  }
+  if (!isInventoryEnvelope(inventory)) {
+    return { _tag: 'Rejected', result: { _tag: 'InvalidInput', field: 'inventory' } }
+  }
+  if (!isFurnaceState(furnace)) {
+    return { _tag: 'Rejected', result: { _tag: 'InvalidInput', field: 'furnace' } }
+  }
+  if (!isTransferSlot(slot)) {
+    return { _tag: 'Rejected', result: { _tag: 'InvalidInput', field: 'slot' } }
+  }
+  if (!isItemType(item)) {
+    return { _tag: 'Rejected', result: { _tag: 'InvalidInput', field: 'item' } }
   }
   const totalAvailable = countOf(inventory, item)
   if (totalAvailable < count) {
@@ -329,7 +357,7 @@ export const selectFurnaceTransfer = (
     return { _tag: 'Rejected', result: { _tag: 'InsufficientItems', available: 0 } }
   }
   const available = inventory.slots.reduce(
-    (total, held) => total + (held !== undefined && itemStacksCanMerge(held, selected) ? held.count : 0),
+    (total, held) => total + (isItemStack(held) && itemStacksCanMerge(held, selected) ? held.count : 0),
     0,
   )
   if (available < count) return { _tag: 'Rejected', result: { _tag: 'InsufficientItems', available } }
@@ -347,12 +375,15 @@ export const transferToFurnace = (
 ): FurnaceTransferOutcome => {
   const selection = selectFurnaceTransfer(inventory, furnace, slot, item, count)
   if (selection._tag === 'Rejected') return { inventory, furnace, result: selection.result }
+  if (!isInventory(inventory)) {
+    return { inventory, furnace, result: { _tag: 'InvalidInput', field: 'inventory' } }
+  }
   const { current, selected } = selection
   const slots = [...inventory.slots]
   let remaining = count
   for (let index = slots.length - 1; index >= 0 && remaining > 0; index -= 1) {
     const held = slots[index]
-    if (held === undefined || !itemStacksCanMerge(held, selected)) continue
+    if (!isItemStack(held) || !itemStacksCanMerge(held, selected)) continue
     const taken = Math.min(held.count, remaining)
     if (held.count !== taken) {
       const reduced = itemStackWithCount(held, held.count - taken)
@@ -380,6 +411,12 @@ export const collectFurnaceOutput = (
   inventory: Inventory,
   furnace: FurnaceState,
 ): FurnaceCollectionOutcome => {
+  if (!isInventory(inventory)) {
+    return { inventory, furnace, result: { _tag: 'InvalidInput', field: 'inventory' } }
+  }
+  if (!isFurnaceState(furnace)) {
+    return { inventory, furnace, result: { _tag: 'InvalidInput', field: 'furnace' } }
+  }
   if (furnace.output === undefined) return { inventory, furnace, result: { _tag: 'Empty' } }
   const inserted = addItemStack(inventory, furnace.output)
   if (Result.isFailure(inserted)) return { inventory, furnace, result: { _tag: 'ItemStackFailure', error: inserted.failure } }
