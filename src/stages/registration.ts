@@ -131,6 +131,19 @@ export type SimPhysicsConfig = {
   readonly jumpSpeed: number
 }
 
+export type SimPhysicsConfigError = Readonly<{
+  readonly _tag: 'SimPhysicsConfigError'
+  readonly field: 'walkSpeed' | 'jumpSpeed'
+}>
+
+const invalidSimPhysicsConfig = (config: SimPhysicsConfig): SimPhysicsConfigError | undefined => {
+  if (!Number.isFinite(config.walkSpeed) || config.walkSpeed < 0)
+    return { _tag: 'SimPhysicsConfigError', field: 'walkSpeed' }
+  if (!Number.isFinite(config.jumpSpeed) || config.jumpSpeed < 0)
+    return { _tag: 'SimPhysicsConfigError', field: 'jumpSpeed' }
+  return undefined
+}
+
 export type LandingImpact = {
   readonly fallDistance: number
   readonly impactVelocityY: number
@@ -413,8 +426,10 @@ export const makeSimStages: Effect.Effect<
 
 export const makeSimStagesWithPhysics = (
   config: SimPhysicsConfig,
-): Effect.Effect<ReadonlyArray<StageRegistration>, never, TimeService | PlayerService | CropService> =>
-  Effect.gen(function* () {
+): Effect.Effect<ReadonlyArray<StageRegistration>, SimPhysicsConfigError, TimeService | PlayerService | CropService> => {
+  const error = invalidSimPhysicsConfig(config)
+  if (error !== undefined) return Effect.fail(error)
+  return Effect.gen(function* () {
     const time = yield* TimeService
     const player = yield* PlayerService
     const crops = yield* CropService
@@ -422,6 +437,7 @@ export const makeSimStagesWithPhysics = (
     yield* Ref.set(state.physicsConfig, Option.some(config))
     return simStages(state, time, player, crops)
   })
+}
 
 /**
  * mc-sim as a `GameModule` (plan.md §4.1).
@@ -517,10 +533,12 @@ export const makeControllableSimStagesWithPhysics = (
     readonly stages: ReadonlyArray<StageRegistration>
     readonly input: SimInputPort
   },
-  never,
+  SimPhysicsConfigError,
   TimeService | PlayerService | CropService
-> =>
-  Effect.gen(function* () {
+> => {
+  const error = invalidSimPhysicsConfig(config)
+  if (error !== undefined) return Effect.fail(error)
+  return Effect.gen(function* () {
     const time = yield* TimeService
     const player = yield* PlayerService
     const crops = yield* CropService
@@ -528,3 +546,4 @@ export const makeControllableSimStagesWithPhysics = (
     yield* Ref.set(state.physicsConfig, Option.some(config))
     return { state, stages: simStages(state, time, player, crops), input: makeSimInputPort(state) }
   })
+}

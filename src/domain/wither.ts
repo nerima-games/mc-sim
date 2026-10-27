@@ -1,5 +1,5 @@
-import { Brand, Result } from 'effect'
-import { PositionAxis, position, type DeltaTimeSecs, type Position } from '@nerima-games/mc-kernel'
+import { Brand, Result, Schema, SchemaIssue } from 'effect'
+import { DeltaTimeSecs, PositionAxis, position, type Position } from '@nerima-games/mc-kernel'
 
 export const WITHER_MAX_HEALTH = 300
 export const WITHER_SPAWN_CHARGE_SECS = 10
@@ -110,6 +110,8 @@ const positionOf = (x: number, y: number, z: number): Position =>
 const nonNegative = (value: number): number => Math.max(0, finite(value))
 const repairPosition = (value: Position): Position =>
   positionOf(finite(value?.x), finite(value?.y), finite(value?.z))
+const invalidNumber = (value: unknown): Brand.BrandError =>
+  new Brand.BrandError(new SchemaIssue.InvalidType(Schema.Number.ast, value))
 
 const phaseForHealth = (healthPoints: number): Exclude<WitherPhase, 'charging'> =>
   healthPoints <= 0 ? 'dead' : healthPoints <= WITHER_ARMOUR_THRESHOLD ? 'armoured' : 'airborne'
@@ -170,11 +172,12 @@ const accelerateAndClamp = (velocity: Position, acceleration: Position, delta: n
 
 export const stepWither = (
   state: WitherState,
-  deltaTimeSecs: DeltaTimeSecs,
+  deltaTimeSecs: unknown,
   targetPosition?: Position,
 ): Result.Result<WitherStep, WitherStepFailure> => Result.gen(function* () {
+  if (typeof deltaTimeSecs !== 'number') return yield* Result.fail(invalidNumber(deltaTimeSecs))
+  const delta = yield* DeltaTimeSecs.result(deltaTimeSecs)
   if (state.phase === 'dead') return { state, spawnExplosion: undefined }
-  const delta = nonNegative(deltaTimeSecs)
 
   if (state.phase === 'charging') {
     const chargeRemainingSecs = WitherChargeRemainingSecs(Math.max(0, state.chargeRemainingSecs - delta))
@@ -209,10 +212,11 @@ export const stepWither = (
 
 export const damageWither = (
   state: WitherState,
-  amount: WitherDamageAmount,
+  amount: unknown,
   kind: WitherDamageKind,
-): WitherDamageResult => {
-  const damage = nonNegative(amount)
+): Result.Result<WitherDamageResult, WitherStepFailure> => Result.gen(function* () {
+  if (typeof amount !== 'number') return yield* Result.fail(invalidNumber(amount))
+  const damage = yield* WitherDamageAmount.result(amount)
   const ignored = state.phase === 'dead' || state.phase === 'charging' || (state.phase === 'armoured' && kind === 'ranged')
   if (ignored || damage === 0) return { state, appliedDamage: WitherDamageAmount(0), ignored, death: undefined }
 
@@ -226,7 +230,7 @@ export const damageWither = (
       }
     : undefined
   return { state: next, appliedDamage: WitherDamageAmount(state.healthPoints - healthPoints), ignored: false, death }
-}
+})
 
 export const witherSkullProjectile = (
   origin: Position,

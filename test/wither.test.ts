@@ -29,7 +29,7 @@ const cell = (x: number, y: number, z: number) => ({
 const step = (state: WitherState, seconds: number, target?: Parameters<typeof stepWither>[2]) =>
   Result.getOrThrow(stepWither(state, DeltaTimeSecs(seconds), target))
 const damage = (state: WitherState, amount: number, kind: Parameters<typeof damageWither>[2]) =>
-  damageWither(state, WitherDamageAmount(amount), kind)
+  Result.getOrThrow(damageWither(state, WitherDamageAmount(amount), kind))
 
 describe('wither scalar brands', () => {
   it('returns BrandError results for invalid constructor inputs', () => {
@@ -202,6 +202,21 @@ describe('wither lifecycle', () => {
       expect(result.success.state.velocity).toEqual(position(5, 0, 0))
       expect(result.success.state.feetPosition).toEqual(position(1.55e308, 0, 0))
     }
+  })
+
+  it('returns typed failures for invalid raw timestep and damage values', () => {
+    const state = createWither(position(0, 0, 0))
+
+    const stepResult = stepWither(state, null)
+    const damageResult = damageWither(state, null, 'melee')
+
+    expect(Result.isFailure(stepResult)).toBe(true)
+    if (Result.isFailure(stepResult)) expect(stepResult.failure._tag).toBe('BrandError')
+    expect(Result.isFailure(damageResult)).toBe(true)
+    if (Result.isFailure(damageResult)) expect(damageResult.failure._tag).toBe('BrandError')
+
+    expect(Result.isFailure(stepWither(state, Number.NaN))).toBe(true)
+    expect(Result.isFailure(damageWither(state, Number.NaN, 'melee'))).toBe(true)
   })
 
   it('returns a BrandError when the next position is not finite', () => {

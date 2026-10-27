@@ -1,14 +1,14 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Option, Result } from 'effect'
 import { targetBlockFromCamera, targetBlockFromPlayerPose } from '../src/domain/block-targeting'
-import { cameraPoseOf, INITIAL_PLAYER_POSE, withFeetPosition } from '../src/domain/camera-pose'
+import { cameraPoseOf as cameraPoseOfResult, INITIAL_PLAYER_POSE, withFeetPosition } from '../src/domain/camera-pose'
 import { MonotonicTimeSecs, PositionAxis, position as kernelPosition } from '@nerima-games/mc-kernel'
 
 const position = (x: number, y: number, z: number) =>
   kernelPosition(PositionAxis(x), PositionAxis(y), PositionAxis(z))
 
 const cameraAt = (x: number, y: number, z: number) =>
-  cameraPoseOf(withFeetPosition(INITIAL_PLAYER_POSE, position(x, y, z)), MonotonicTimeSecs(0))
+  Result.getOrThrow(cameraPoseOfResult(withFeetPosition(INITIAL_PLAYER_POSE, position(x, y, z)), MonotonicTimeSecs(0)))
 
 describe('targetBlockFromCamera', () => {
   it('returns the aimed block and the empty cell on the entered face', () => {

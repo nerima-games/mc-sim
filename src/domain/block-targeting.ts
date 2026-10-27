@@ -34,7 +34,8 @@ const targetBlockFromAim = (
       yawRadians,
       pitchRadians,
     }
-    const hit = yield* voxelRaycast(validAim.position, forwardVector(validAim), distance, isTargetable)
+    const direction = yield* forwardVector(validAim)
+    const hit = yield* voxelRaycast(validAim.position, direction, distance, isTargetable)
     if (Option.isNone(hit)) return Option.none()
 
     const positionX = yield* PositionAxis.result(hit.value.bx)

@@ -11,13 +11,13 @@
  * camera is computable HERE, in Node, with no renderer in the process.
  */
 import { describe, expect, it } from '@effect/vitest'
-import { Effect } from 'effect'
+import { Effect, Result } from 'effect'
 import {
   applyLook,
-  cameraPoseOf,
+  cameraPoseOf as cameraPoseOfResult,
   clampPitch,
   EYE_LEVEL_OFFSET,
-  forwardVector,
+  forwardVector as forwardVectorResult,
   INITIAL_PLAYER_POSE,
   PITCH_EPSILON,
   PITCH_MAX_RADIANS,
@@ -30,6 +30,14 @@ import { MonotonicTimeSecs, PositionAxis, position as coordinatePosition } from 
 const AT = MonotonicTimeSecs(500)
 const position = (x: number, y: number, z: number) =>
   coordinatePosition(PositionAxis(x), PositionAxis(y), PositionAxis(z))
+const success = <A, E>(result: Result.Result<A, E>): A => {
+  if (Result.isFailure(result)) throw new Error('expected a valid camera pose result')
+  return result.success
+}
+const cameraPoseOf = (pose: Parameters<typeof cameraPoseOfResult>[0], capturedAtSecs: Parameters<typeof cameraPoseOfResult>[1]) =>
+  success(cameraPoseOfResult(pose, capturedAtSecs))
+const forwardVector = (orientation: Parameters<typeof forwardVectorResult>[0]) =>
+  success(forwardVectorResult(orientation))
 
 describe('pitch clamping', () => {
   it.effect('stops just short of vertical, so yaw never becomes unrecoverable', () =>
@@ -70,6 +78,14 @@ describe('pitch clamping', () => {
 })
 
 describe('CameraPoseSnapshot production', () => {
+  it.effect('returns a typed failure for invalid runtime pose values', () =>
+    Effect.sync(() => {
+      const invalid = cameraPoseOfResult({ ...INITIAL_PLAYER_POSE, yawRadians: Number.NaN }, AT)
+
+      expect(Result.isFailure(invalid)).toBe(true)
+    }),
+  )
+
   it.effect('applies the eye offset HERE, not in the renderer', () =>
     Effect.sync(() => {
       // If the renderer applied it, "which block am I targeting" and "which
@@ -102,6 +118,14 @@ describe('CameraPoseSnapshot production', () => {
 })
 
 describe('forwardVector — the sanctioned replacement for camera.getWorldDirection()', () => {
+  it.effect('returns a typed failure for invalid runtime angles', () =>
+    Effect.sync(() => {
+      const invalid = forwardVectorResult({ yawRadians: Number.NaN, pitchRadians: 0 })
+
+      expect(Result.isFailure(invalid)).toBe(true)
+    }),
+  )
+
   it.effect('yaw 0 looks down -Z', () =>
     Effect.sync(() => {
       const forward = forwardVector(cameraPoseOf(INITIAL_PLAYER_POSE, AT))

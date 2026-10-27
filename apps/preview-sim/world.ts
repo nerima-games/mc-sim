@@ -888,7 +888,7 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
           lastDeltaSecs: book.lastDeltaSecs,
           pose: yield* player.pose,
           cameraPose: snapshot,
-          forward: Camera.forwardVector(snapshot),
+          forward: yield* Effect.fromResult(Camera.forwardVector(snapshot)),
           poseSnapshotAgeSecs: Camera.snapshotAgeSecs(snapshot, clockPortNow),
           timeState,
           timeOfDay: Time.timeOfDay(timeState),

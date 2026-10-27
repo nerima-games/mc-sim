@@ -97,7 +97,7 @@ export type PlayerServiceApi = {
    */
   readonly setDimension: (dimension: Dimension) => Effect.Effect<void>
   /** Build the render pose using the supplied simulation clock. */
-  readonly cameraPose: Effect.Effect<CameraPoseSnapshot, never, ClockPort>
+  readonly cameraPose: Effect.Effect<CameraPoseSnapshot, Camera.CameraPoseError, ClockPort>
   /**
    * THE WORLD-LOAD PATH. Both halves of the player's location, together.
    *
@@ -216,7 +216,7 @@ export const makePlayerService = (
       }),
       setDimension: (dimension) => Ref.update(state, (current) => ({ ...current, dimension })),
       cameraPose: Effect.flatMap(monotonicSecs, (now) =>
-        Effect.map(Ref.get(state), (current) => Camera.cameraPoseOf(current.pose, now)),
+        Effect.flatMap(Ref.get(state), (current) => Effect.fromResult(Camera.cameraPoseOf(current.pose, now))),
       ),
       snapshot: Effect.flatMap(WorldCommitCoordinator, (coordinator) =>
         coordinator.snapshot(PLAYER_REPLICATED_OWNER_ID, PlayerServiceSnapshotSchema),

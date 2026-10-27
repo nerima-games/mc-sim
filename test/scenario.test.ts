@@ -123,7 +123,7 @@ describe('deterministic scenario: spawn -> look -> mine -> assert', () => {
 
         // Yaw pi/2 with zero pitch looks down -X. Computed from the snapshot,
         // with no THREE camera in the process to ask.
-        const flat = forwardVector({ ...pose, pitchRadians: angleRadians(0) })
+        const flat = Result.getOrThrow(forwardVector({ ...pose, pitchRadians: angleRadians(0) }))
         expect(flat.x).toBeCloseTo(-1, 12)
         expect(flat.z).toBeCloseTo(0, 12)
 

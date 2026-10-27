@@ -60,12 +60,14 @@ import {
   type LandingImpact,
   type MovementIntent,
   type SimPhysicsConfig,
+  type SimPhysicsConfigError,
 } from '../src/stages/registration'
 import * as PublicApi from '../src/index'
 import type {
   LandingImpact as PublicLandingImpact,
   MovementIntent as PublicMovementIntent,
   SimPhysicsConfig as PublicSimPhysicsConfig,
+  SimPhysicsConfigError as PublicSimPhysicsConfigError,
 } from '../src/index'
 import {
   EXPERIENCE_MODULE_STAGE_PREFIXES,
@@ -153,6 +155,22 @@ describe('§2.3-1 zero edges between experience modules', () => {
         expect(isExperienceModule).toBe(false)
       }
     }),
+  )
+})
+
+describe('physics configuration validation', () => {
+  it.effect('returns typed failures for non-finite speeds before building a stage', () =>
+    Effect.gen(function* () {
+      const walkFailure: SimPhysicsConfigError = yield* Effect.flip(
+        makeControllableSimStagesWithPhysics({ ...AirPhysicsConfig, walkSpeed: Number.NaN }),
+      )
+      const jumpFailure: SimPhysicsConfigError = yield* Effect.flip(
+        makeSimStagesWithPhysics({ ...AirPhysicsConfig, jumpSpeed: Number.POSITIVE_INFINITY }),
+      )
+
+      expect(walkFailure).toStrictEqual({ _tag: 'SimPhysicsConfigError', field: 'walkSpeed' })
+      expect(jumpFailure).toStrictEqual({ _tag: 'SimPhysicsConfigError', field: 'jumpSpeed' })
+    }).pipe(Effect.provide(SimulationLayer)),
   )
 })
 
@@ -674,12 +692,12 @@ describe('mc-sim is a real GameModule', () => {
       > = simModule.frameStages
       const physicsNeedsBoth: Effect.Effect<
         ReadonlyArray<StageRegistration>,
-        never,
+        SimPhysicsConfigError,
         PlayerService | TimeService | CropService
       > = makeSimStagesWithPhysics(AirPhysicsConfig)
       const controllableNeedsBoth: Effect.Effect<
         { readonly state: unknown; readonly stages: ReadonlyArray<StageRegistration> },
-        never,
+        SimPhysicsConfigError,
         PlayerService | TimeService | CropService
       > = makeControllableSimStagesWithPhysics(AirPhysicsConfig)
 
@@ -693,6 +711,7 @@ describe('mc-sim is a real GameModule', () => {
   it('exports physical factories and their config types from the package root', () => {
     const intent: PublicMovementIntent = { forward: 1, strafe: 0 }
     const config: PublicSimPhysicsConfig = AirPhysicsConfig
+    const configError: PublicSimPhysicsConfigError = { _tag: 'SimPhysicsConfigError', field: 'walkSpeed' }
     const registrationIntent: MovementIntent = intent
     const impact: PublicLandingImpact = { fallDistance: 3, impactVelocityY: -4 }
     const registrationImpact: LandingImpact = impact
@@ -703,6 +722,7 @@ describe('mc-sim is a real GameModule', () => {
     )
     expect(PublicApi.resetLandingImpact).toBe(resetLandingImpact)
     expect(config).toBe(AirPhysicsConfig)
+    expect(configError.field).toBe('walkSpeed')
     expect(registrationIntent).toStrictEqual(intent)
     expect(registrationImpact).toStrictEqual(impact)
   })

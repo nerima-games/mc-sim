@@ -53,8 +53,9 @@
  * The simulation's answer to "where is the player looking" is unaffected by
  * whether a sword is currently swinging.
  */
-import type { CameraPoseSnapshot, MonotonicTimeSecs, Position } from "@nerima-games/mc-kernel"
-import { AngleRadians, PositionAxis, position } from "@nerima-games/mc-kernel"
+import { Brand, Result } from 'effect'
+import type { CameraPoseSnapshot, MonotonicTimeSecs, Position } from '@nerima-games/mc-kernel'
+import { AngleRadians, MonotonicTimeSecs as MonotonicTimeSecsValue, PositionAxis, position } from '@nerima-games/mc-kernel'
 
 /**
  * Pitch bound, radians.
@@ -130,16 +131,26 @@ export const withFeetPosition = (pose: PlayerPose, feetPosition: Position): Play
  * which the player experiences as "I clicked the block above the one I aimed
  * at".
  */
-export const cameraPoseOf = (pose: PlayerPose, capturedAtSecs: MonotonicTimeSecs): CameraPoseSnapshot => ({
-  position: position(
-    PositionAxis(pose.feetPosition.x),
-    PositionAxis(pose.feetPosition.y + EYE_LEVEL_OFFSET),
-    PositionAxis(pose.feetPosition.z),
-  ),
-  yawRadians: AngleRadians(pose.yawRadians),
-  pitchRadians: AngleRadians(pose.pitchRadians),
-  capturedAtSecs,
-})
+export type CameraPoseError = Brand.BrandError
+
+export const cameraPoseOf = (
+  pose: PlayerPose,
+  capturedAtSecs: MonotonicTimeSecs,
+): Result.Result<CameraPoseSnapshot, CameraPoseError> =>
+  Result.gen(function* () {
+    const x = yield* PositionAxis.result(pose.feetPosition.x)
+    const y = yield* PositionAxis.result(pose.feetPosition.y + EYE_LEVEL_OFFSET)
+    const z = yield* PositionAxis.result(pose.feetPosition.z)
+    const yawRadians = yield* AngleRadians.result(pose.yawRadians)
+    const pitchRadians = yield* AngleRadians.result(pose.pitchRadians)
+    const capturedAt = yield* MonotonicTimeSecsValue.result(capturedAtSecs)
+    return {
+      position: position(x, y, z),
+      yawRadians,
+      pitchRadians,
+      capturedAtSecs: capturedAt,
+    }
+  })
 
 /**
  * Unit forward vector implied by a snapshot.
@@ -152,16 +163,18 @@ export const cameraPoseOf = (pose: PlayerPose, capturedAtSecs: MonotonicTimeSecs
  * Convention: yaw 0 looks down -Z, yaw increases towards -X (THREE's 'YXZ'
  * Euler order, matching ts-minecraft/packages/app/application/frame/stages/camera-stage.ts:67).
  */
-export type CameraOrientation = Pick<CameraPoseSnapshot, 'yawRadians' | 'pitchRadians'>
+export type CameraOrientation = Readonly<{ yawRadians: number; pitchRadians: number }>
 
-export const forwardVector = (snapshot: CameraOrientation): Position => {
-  const cosPitch = Math.cos(snapshot.pitchRadians)
-  return position(
-    PositionAxis(-Math.sin(snapshot.yawRadians) * cosPitch),
-    PositionAxis(Math.sin(snapshot.pitchRadians)),
-    PositionAxis(-Math.cos(snapshot.yawRadians) * cosPitch),
-  )
-}
+export const forwardVector = (snapshot: CameraOrientation): Result.Result<Position, CameraPoseError> =>
+  Result.gen(function* () {
+    const yawRadians = yield* AngleRadians.result(snapshot.yawRadians)
+    const pitchRadians = yield* AngleRadians.result(snapshot.pitchRadians)
+    const cosPitch = Math.cos(pitchRadians)
+    const x = yield* PositionAxis.result(-Math.sin(yawRadians) * cosPitch)
+    const y = yield* PositionAxis.result(Math.sin(pitchRadians))
+    const z = yield* PositionAxis.result(-Math.cos(yawRadians) * cosPitch)
+    return position(x, y, z)
+  })
 
 /**
  * Age of a snapshot at a given instant, in seconds. Negative under clock skew,

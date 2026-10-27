@@ -39,6 +39,9 @@ import * as PublicTesting from '../src/testing/index.js'
 import type * as PublicTestingTypes from '../src/testing/index.js'
 
 type IntegratedPublicTypeSurface = readonly [
+  PublicApiTypes.CameraPoseError,
+  PublicApiTypes.CameraOrientation,
+  PublicApiTypes.SimPhysicsConfigError,
   PublicApiTypes.RecipeGridDimension,
   PublicApiTypes.RecipeId,
   PublicApiTypes.RecipeIngredientCount,
@@ -230,6 +233,7 @@ type IntegratedPublicTypeSurface = readonly [
   PublicApiTypes.WitherExplosionPower,
   PublicApiTypes.WitherHealthPoints,
   PublicApiTypes.WitherProjectileSpeed,
+  PublicApiTypes.WitherStepFailure,
   PublicApiTypes.WitherSummonMaterial,
   PublicTestingTypes.HeadlessHarnessStages,
   PublicTestingTypes.HeadlessHarnessSessionFactoryApi,
