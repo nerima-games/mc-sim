@@ -113,6 +113,7 @@ const expectedExports = [
   'MAX_CATCH_UP_TICKS',
   'MAX_DAY_LENGTH_SECS',
   'MAX_EXHAUSTION',
+  'MAX_EXPLOSION_RADIUS',
   'MAX_FOV_DEGREES',
   'MAX_FRAME_DELTA_SECS',
   'MAX_MOUSE_SENSITIVITY',
@@ -582,6 +583,7 @@ const expectedExports = [
   'tagged',
   'tntOwnerRegistration',
   'validateBrewingSnapshot',
+  'validateExplosionRequest',
   'worldContainerId',
   'worldContainerIdAt',
 ].sort()
