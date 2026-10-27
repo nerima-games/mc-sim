@@ -1,6 +1,7 @@
 import { Context, Effect, Layer, Result, Schema } from 'effect'
-import { RecipeExperience, type ItemStack, type RecipeExperience as RecipeExperienceValue, type WorldRevision } from '@nerima-games/mc-kernel'
+import { isItemStack, RecipeExperience, type ItemStack, type RecipeExperience as RecipeExperienceValue, type WorldRevision } from '@nerima-games/mc-kernel'
 import type { Inventory } from '../domain/inventory.js'
+import { INVENTORY_SLOT_COUNT } from '../domain/inventory.js'
 import {
   advanceFurnace,
   collectFurnaceOutput,
@@ -27,6 +28,12 @@ export type FurnaceServiceState = Readonly<{
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const isValidInventory = (value: unknown): value is Inventory =>
+  isRecord(value) &&
+  Array.isArray(value['slots']) &&
+  value['slots'].length === INVENTORY_SLOT_COUNT &&
+  value['slots'].every((slot) => slot === undefined || isItemStack(slot))
 
 const isFurnaceServiceState = (value: unknown): value is FurnaceServiceState => {
   if (!isRecord(value) || Object.keys(value).length !== 2) return false
@@ -141,7 +148,13 @@ const prepareFurnaceOutputCollection = (
   ownerId: ReplicatedOwnerId,
   inventory: Inventory,
 ): Effect.Effect<FurnaceCollectionCandidate, FurnaceServiceError, WorldCommitCoordinator> =>
-  Effect.flatMap(WorldCommitCoordinator, (coordinator) =>
+  !isValidInventory(inventory)
+    ? Effect.fail({
+        _tag: 'FurnaceStateValidationFailure',
+        path: 'inventory',
+        reason: 'expected a valid player inventory',
+      })
+    : Effect.flatMap(WorldCommitCoordinator, (coordinator) =>
     Effect.map(coordinator.snapshot(ownerId, FurnaceServiceStateSchema), (snapshot) => {
       const outcome = collectFurnaceOutput(inventory, snapshot.state.furnace)
       const ownerCandidate = outcome.result._tag === 'Collected'

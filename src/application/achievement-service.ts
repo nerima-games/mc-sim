@@ -1,5 +1,7 @@
 import {
   AchievementIdSchema,
+  EntityIdSchema,
+  SimulationTickSchema,
   WorldIdSchema,
   WorldRevisionSchema,
 } from '@nerima-games/mc-kernel'
@@ -123,7 +125,7 @@ export type AchievementServiceApi = Readonly<{
   readonly finalizeCommittedUnlock: (
     pending: PendingAchievementUnlock,
     delta: ReplicatedWorldDelta<ReplicatedOwnerChange>,
-  ) => Effect.Effect<void, AchievementCommitMismatch>
+  ) => Effect.Effect<void, AchievementCommitMismatch | Schema.SchemaError>
   /** Standalone transaction for callers that do not group this candidate with other owners. */
   readonly unlock: (request: AchievementUnlockRequest) => Effect.Effect<void, AchievementServiceError>
 }>
@@ -178,6 +180,12 @@ const matchesCandidate = (
   return decoded._tag === 'Success' && statisticsEqual(decoded.success, expected)
 }
 
+const AchievementUnlockRequestSchema = Schema.Struct({
+  achievement: AchievementIdSchema,
+  player: EntityIdSchema,
+  tick: SimulationTickSchema,
+})
+
 export const makeAchievementService = (): Effect.Effect<
   AchievementServiceApi,
   never,
@@ -191,16 +199,17 @@ export const makeAchievementService = (): Effect.Effect<
 
     const stageUnlock: AchievementServiceApi['stageUnlock'] = (request) =>
       Effect.gen(function* () {
+        const validRequest = yield* Schema.decodeUnknownEffect(AchievementUnlockRequestSchema)(request)
         const persisted = yield* coordinator.snapshot(
           ACHIEVEMENT_REPLICATED_OWNER_ID,
           AchievementStatisticsSchema,
         )
         const local = yield* statistics.snapshot
         const current = mergeStatistics(local, persisted.state)
-        if (Statistics.isUnlocked(current, request.achievement)) {
+        if (Statistics.isUnlocked(current, validRequest.achievement)) {
           return {
             _tag: 'AchievementAlreadyUnlocked',
-            achievement: request.achievement,
+            achievement: validRequest.achievement,
           }
         }
 
@@ -210,13 +219,13 @@ export const makeAchievementService = (): Effect.Effect<
           expectedRevision: persisted.revision,
           candidate: {
             ownerId: ACHIEVEMENT_REPLICATED_OWNER_ID,
-            state: Statistics.unlock(current, request.achievement),
+            state: Statistics.unlock(current, validRequest.achievement),
           },
           event: {
             _tag: 'AchievementUnlocked',
-            tick: request.tick,
-            player: request.player,
-            achievement: request.achievement,
+            tick: validRequest.tick,
+            player: validRequest.player,
+            achievement: validRequest.achievement,
           },
         }
       })

@@ -322,13 +322,17 @@ describe('player storage', () => {
       expect(yield* service.damageAt({ _tag: 'Inventory', slotIndex: 1 }, 1)).toMatchObject({
         _tag: 'NotDamageable',
       })
-      expect(yield* service.click({
+      const invalidClick = yield* Effect.result(service.click({
         _tag: 'LeftClick', slotIndex: 2,
         carried: {
           ...itemStack('iron_boots', 1),
           durability: { current: 1, max: 64 },
         },
-      })).toMatchObject({ _tag: 'InvalidCount' })
+      }))
+      expect(invalidClick._tag).toBe('Failure')
+      if (invalidClick._tag === 'Failure') {
+        expect(invalidClick.failure).toMatchObject({ _tag: 'ItemValidationFailure', field: 'click.carried' })
+      }
       expect(bytes(yield* service.storageSnapshot)).toBe(before)
     }),
   )
@@ -804,11 +808,19 @@ describe('player storage', () => {
       yield* service.add('arrow', 1)
       const before = yield* service.storageSnapshot
 
-      for (const count of [0, -1, 1.5, Number.NaN]) {
+      for (const count of [0, -1, 1.5]) {
         expect(yield* service.consumeAndDamageAt({
           consume: { item: 'arrow', count },
           damage: { location: { _tag: 'Inventory', slotIndex: 0 }, expectedItem: 'bow', amount: 1 },
         })).toStrictEqual({ _tag: 'InvalidConsumableCount', count })
+      }
+      const nonFiniteCount = yield* Effect.result(service.consumeAndDamageAt({
+        consume: { item: 'arrow', count: Number.NaN },
+        damage: { location: { _tag: 'Inventory', slotIndex: 0 }, expectedItem: 'bow', amount: 1 },
+      }))
+      expect(nonFiniteCount._tag).toBe('Failure')
+      if (nonFiniteCount._tag === 'Failure') {
+        expect(nonFiniteCount.failure).toMatchObject({ _tag: 'ItemValidationFailure', reason: 'invalid-type' })
       }
       expect(yield* service.storageSnapshot).toStrictEqual(before)
     }),
@@ -821,11 +833,19 @@ describe('player storage', () => {
       yield* service.add('arrow', 1)
       const before = yield* service.storageSnapshot
 
-      for (const amount of [0, -1, 1.5, Number.NaN]) {
+      for (const amount of [0, -1, 1.5]) {
         expect(yield* service.consumeAndDamageAt({
           consume: { item: 'arrow', count: 1 },
           damage: { location: { _tag: 'Inventory', slotIndex: 0 }, expectedItem: 'bow', amount },
         })).toStrictEqual({ _tag: 'InvalidDamageAmount', amount })
+      }
+      const nonFiniteAmount = yield* Effect.result(service.consumeAndDamageAt({
+        consume: { item: 'arrow', count: 1 },
+        damage: { location: { _tag: 'Inventory', slotIndex: 0 }, expectedItem: 'bow', amount: Number.NaN },
+      }))
+      expect(nonFiniteAmount._tag).toBe('Failure')
+      if (nonFiniteAmount._tag === 'Failure') {
+        expect(nonFiniteAmount.failure).toMatchObject({ _tag: 'ItemValidationFailure', reason: 'invalid-type' })
       }
       expect(yield* service.storageSnapshot).toStrictEqual(before)
     }),

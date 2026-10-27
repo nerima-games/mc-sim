@@ -202,7 +202,9 @@ describe('AchievementService', () => {
         expect(result._tag).toBe('Failure')
         if (result._tag === 'Failure') {
           expect(result.failure).toBeInstanceOf(AchievementCommitMismatch)
-          expect(result.failure.reason).toBe('owner-state')
+          if (result.failure instanceof AchievementCommitMismatch) {
+            expect(result.failure.reason).toBe('owner-state')
+          }
         }
 
         expect(mismatchedDelta.changes).toHaveLength(1)
@@ -219,7 +221,9 @@ describe('AchievementService', () => {
         expect(mismatchedValueResult._tag).toBe('Failure')
         if (mismatchedValueResult._tag === 'Failure') {
           expect(mismatchedValueResult.failure).toBeInstanceOf(AchievementCommitMismatch)
-          expect(mismatchedValueResult.failure.reason).toBe('owner-state')
+          if (mismatchedValueResult.failure instanceof AchievementCommitMismatch) {
+            expect(mismatchedValueResult.failure.reason).toBe('owner-state')
+          }
         }
       }
 
@@ -278,7 +282,9 @@ describe('AchievementService', () => {
       expect(wrongWorld._tag).toBe('Failure')
       if (wrongWorld._tag === 'Failure') {
         expect(wrongWorld.failure).toBeInstanceOf(AchievementCommitMismatch)
-        expect(wrongWorld.failure.reason).toBe('world')
+        if (wrongWorld.failure instanceof AchievementCommitMismatch) {
+          expect(wrongWorld.failure.reason).toBe('world')
+        }
       }
 
       const wrongRevision = yield* Effect.result(service.finalizeCommittedUnlock(pending, {
@@ -288,7 +294,9 @@ describe('AchievementService', () => {
       expect(wrongRevision._tag).toBe('Failure')
       if (wrongRevision._tag === 'Failure') {
         expect(wrongRevision.failure).toBeInstanceOf(AchievementCommitMismatch)
-        expect(wrongRevision.failure.reason).toBe('revision')
+        if (wrongRevision.failure instanceof AchievementCommitMismatch) {
+          expect(wrongRevision.failure.reason).toBe('revision')
+        }
       }
       expect(yield* statistics.snapshot).toStrictEqual({ counters: {}, unlocked: [] })
 

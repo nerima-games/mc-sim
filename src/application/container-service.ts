@@ -32,6 +32,18 @@ export const PlayerStorageSnapshotSchema: Schema.Codec<
   PlayerStorage.validatePlayerStorageSnapshot(value)._tag === 'Valid',
 )
 
+const ContainerKindSchema = Schema.Literals([
+  'chest',
+  'shulker_box',
+  'dispenser',
+  'dropper',
+  'hopper',
+])
+
+const decodeContainerKind = (kind: unknown) => kind === undefined
+  ? Effect.succeed<Container.ContainerKind | undefined>(undefined)
+  : Schema.decodeUnknownEffect(ContainerKindSchema)(kind)
+
 export const containerStorageOwnerRegistration = (
   initialState: Container.ContainerStorageSnapshot = Container.snapshotContainerStorage(
     Container.emptyContainerStorage(),
@@ -172,22 +184,24 @@ export const makeContainerStorageService = (): Effect.Effect<
           Container.findContainer(storageOf(snapshot.state), Container.worldContainerIdAt(address)) ?? null,
         ),
       createContainerAt: (address, kind, options = {}) =>
-        Effect.flatMap(currentSnapshot(), (current): Effect.Effect<
-          Container.CreateContainerResult,
-          ContainerStorageServiceFailure
-        > => {
-          const outcome = Container.createContainer(
-            storageOf(current.state),
-            Container.worldContainerIdAt(address),
-            kind,
-          )
-          if (outcome.result._tag !== 'Created') return Effect.succeed(outcome.result)
-          const state = Container.snapshotContainerStorage(outcome.storage)
-          return Effect.as(
-            commitStorage(current.revision, state, [address], options),
-            outcome.result,
-          )
-        }),
+        Effect.flatMap(decodeContainerKind(kind), (validKind) =>
+          Effect.flatMap(currentSnapshot(), (current): Effect.Effect<
+            Container.CreateContainerResult,
+            ContainerStorageServiceFailure
+          > => {
+            const outcome = Container.createContainer(
+              storageOf(current.state),
+              Container.worldContainerIdAt(address),
+              validKind,
+            )
+            if (outcome.result._tag !== 'Created') return Effect.succeed(outcome.result)
+            const state = Container.snapshotContainerStorage(outcome.storage)
+            return Effect.as(
+              commitStorage(current.revision, state, [address], options),
+              outcome.result,
+            )
+          }),
+        ),
       transferContainerItem: (request, options = {}) =>
         Effect.flatMap(currentSnapshot(), (containerSnapshot): Effect.Effect<
           Container.ContainerTransferResult,

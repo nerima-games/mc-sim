@@ -14,7 +14,7 @@ import * as Craft from '../domain/crafting.js'
 import * as Eq from '../domain/equipment.js'
 import * as Hotbar from '../domain/hotbar.js'
 import * as Inv from '../domain/inventory.js'
-import type { ItemType } from '@nerima-games/mc-kernel'
+import { itemValidationFailure, type ItemType } from '@nerima-games/mc-kernel'
 import * as Storage from '../domain/player-storage.js'
 import * as Recipe from '../domain/recipe.js'
 import { STARTER_RECIPES } from '../domain/recipe-data.js'
@@ -73,6 +73,12 @@ export type InventoryQuickMoveResult =
 export type InventorySortResult =
   | { readonly _tag: 'Sorted' }
   | { readonly _tag: 'NoChange' }
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const invalidInventoryInput = (field: string): Inv.ItemStackFailure =>
+  itemValidationFailure(field, 'expected a valid inventory input', 'invalid-type')
 
 /** A world-container address owned by the host's dimension and block coordinates. */
 export type ContainerPositionAddress = {
@@ -175,7 +181,7 @@ export type InventoryServiceApi = {
   /** Atomically consume inventory items and damage the expected item at a captured location. */
   readonly consumeAndDamageAt: (
     request: Storage.ConsumeAndDamageAtRequest,
-  ) => Effect.Effect<Storage.ConsumeAndDamageAtResult>
+  ) => Effect.Effect<Storage.ConsumeAndDamageAtResult, Inv.ItemStackFailure>
   /** Create one fixed-capacity container under a stable host-defined id. */
   readonly createContainer: (
     id: Container.ContainerId,
@@ -255,7 +261,7 @@ export type InventoryServiceApi = {
    * public, pure, and returns both numbers, so calling it before `restore`
    * gives the full accounting and costs one repair that is idempotent.
    */
-  readonly restore: (inventory: Inv.Inventory) => Effect.Effect<number, Inv.ItemStackFailure | Storage.PlayerStorageFailure>
+  readonly restore: (inventory: unknown) => Effect.Effect<number, Inv.ItemStackFailure | Storage.PlayerStorageFailure>
   /**
    * Empty the inventory.
    *
@@ -329,8 +335,11 @@ type InventoryServiceMutationFailure = Inv.ItemStackFailure | Storage.PlayerStor
 export const makeInventoryService = (
   initial: Inv.Inventory = Inv.emptyInventory(),
   recipeTableInput?: Recipe.RecipeTable,
-): Effect.Effect<InventoryServiceApi, Inv.ItemStackFailure | Recipe.RecipeFailure | Storage.PlayerStorageFailure> =>
-  Effect.flatMap(Effect.fromResult(Inv.normaliseInventory(initial)), (normalised) =>
+): Effect.Effect<InventoryServiceApi, Inv.ItemStackFailure | Recipe.RecipeFailure | Storage.PlayerStorageFailure> => {
+  if (!isRecord(initial) || !Array.isArray(initial['slots'])) {
+    return Effect.fail(invalidInventoryInput('initial'))
+  }
+  return Effect.flatMap(Effect.fromResult(Inv.normaliseInventory(initial)), (normalised) =>
     Effect.flatMap(
       Effect.fromResult(recipeTableInput === undefined ? STARTER_RECIPES : Result.succeed(recipeTableInput)),
       (recipeTable) =>
@@ -390,20 +399,34 @@ export const makeInventoryService = (
         if (Result.isFailure(outcome)) return [Result.fail(outcome.failure), current]
         return stateWithInventory(current, outcome.success.inventory, outcome.success.result)
       }),
-    click: (click) =>
-      modifyResult<InventoryClickResult, InventoryServiceMutationFailure>((current) => {
-        const beforeDurability = current.player.inventoryDurability[click.slotIndex]
-        const outcome = clickInventory(current.player.inventory, click)
+    click: (click) => {
+      const clickValue: unknown = click
+      if (!isRecord(clickValue)) {
+        return Effect.fail(invalidInventoryInput('click'))
+      }
+      const tag = clickValue['_tag']
+      const slotIndex = clickValue['slotIndex']
+      if ((tag !== 'LeftClick' && tag !== 'RightClick') || typeof slotIndex !== 'number') {
+        return Effect.fail(invalidInventoryInput('click'))
+      }
+      const carried = clickValue['carried']
+      if (!validCarried(carried)) {
+        return Effect.fail(invalidInventoryInput('click.carried'))
+      }
+      const validClick: InventoryClick = { _tag: tag, slotIndex, carried }
+      return modifyResult<InventoryClickResult, InventoryServiceMutationFailure>((current) => {
+        const beforeDurability = current.player.inventoryDurability[validClick.slotIndex]
+        const outcome = clickInventory(current.player.inventory, validClick)
         if (Result.isFailure(outcome)) return [Result.fail(outcome.failure), current]
         const updatedPlayer = Storage.withInventory(current.player, outcome.success.inventory)
         if (Result.isFailure(updatedPlayer)) return [Result.fail(updatedPlayer.failure), current]
         let next = updatedPlayer.success
         if ((outcome.success.result._tag === 'Placed' || outcome.success.result._tag === 'Swapped' ||
-             outcome.success.result._tag === 'Merged') && click.carried !== undefined &&
-            Eq.isDamageableItemType(click.carried.item)) {
-          const durability = click.carried.durability ?? Eq.durabilityForItem(click.carried.item)
+             outcome.success.result._tag === 'Merged') && validClick.carried !== undefined &&
+            Eq.isDamageableItemType(validClick.carried.item)) {
+          const durability = validClick.carried.durability ?? Eq.durabilityForItem(validClick.carried.item)
           const values = [...next.inventoryDurability]
-          values[click.slotIndex] = { ...durability }
+          values[validClick.slotIndex] = { ...durability }
           next = { ...next, inventoryDurability: values }
         }
         const result = (outcome.success.result._tag === 'PickedUp' || outcome.success.result._tag === 'Swapped') &&
@@ -413,7 +436,8 @@ export const makeInventoryService = (
           ? { ...outcome.success.result, carried: { ...outcome.success.result.carried, durability: beforeDurability } }
           : outcome.success.result
         return [Result.succeed(result), { ...current, player: next }]
-      }),
+      })
+    },
     getSlot: (slotIndex) => Ref.get(state).pipe(
       Effect.map((current) => isValidSlotIndex(slotIndex) ? carriedAt(current.player, slotIndex) : undefined),
     ),
@@ -427,6 +451,9 @@ export const makeInventoryService = (
       modifyResult<InventorySetSlotResult, Inv.ItemStackFailure>((current) => {
         if (!isValidSlotIndex(slotIndex)) {
           return [Result.succeed({ _tag: 'InvalidSlot' }), current]
+        }
+        if (slot !== undefined && !isRecord(slot)) {
+          return [Result.succeed({ _tag: 'InvalidStack' }), current]
         }
         if (!validCarried(slot)) {
           return [Result.succeed({ _tag: 'InvalidStack' }), current]
@@ -555,11 +582,21 @@ export const makeInventoryService = (
         const outcome = Storage.damageAt(current.player, location, amount)
         return [outcome.result, { ...current, player: outcome.storage }]
       }),
-    consumeAndDamageAt: (request) =>
-      Ref.modify(state, (current) => {
+    consumeAndDamageAt: (request) => {
+      if (!isRecord(request) ||
+          !isRecord(request['consume']) ||
+          !isRecord(request['damage']) ||
+          typeof request['consume']['count'] !== 'number' ||
+          !Number.isFinite(request['consume']['count']) ||
+          typeof request['damage']['amount'] !== 'number' ||
+          !Number.isFinite(request['damage']['amount'])) {
+        return Effect.fail(invalidInventoryInput('consumeAndDamageAt'))
+      }
+      return Ref.modify(state, (current) => {
         const outcome = Storage.consumeAndDamageAt(current.player, request)
         return [outcome.result, { ...current, player: outcome.storage }]
-      }),
+      })
+    },
     createContainer: (id, kind) =>
       Ref.modify(state, (current) => {
         const outcome = Container.createContainer(current.containers, id, kind)
@@ -646,12 +683,18 @@ export const makeInventoryService = (
         const outcome = Container.drainContainer(current.containers, id)
         return [outcome.result, { ...current, containers: outcome.storage }]
       }),
-    restore: (inventory) =>
-      modifyResult<number, InventoryServiceMutationFailure>((current) => {
+    restore: (inventory) => {
+      if (!isRecord(inventory) ||
+          !Array.isArray(inventory['slots']) ||
+          !inventory['slots'].every((slot) => slot === undefined || isRecord(slot))) {
+        return Effect.fail(invalidInventoryInput('inventory'))
+      }
+      return modifyResult<number, InventoryServiceMutationFailure>((current) => {
         const outcome = Inv.normaliseInventory(inventory)
         if (Result.isFailure(outcome)) return [Result.fail(outcome.failure), current]
         return stateWithInventory(current, outcome.success.inventory, outcome.success.leftover)
-      }),
+      })
+    },
     reset: Ref.set(state, {
       player: Storage.emptyPlayerStorage(),
       containers: Container.emptyContainerStorage(),
@@ -669,6 +712,7 @@ export const makeInventoryService = (
       ),
     ),
   )
+}
 
 export const InventoryServiceLayer = (
   initial: Inv.Inventory = Inv.emptyInventory(),

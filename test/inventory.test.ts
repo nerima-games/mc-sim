@@ -636,6 +636,15 @@ describe('REGRESSION: InventoryService.restore is the guarded path, and reports 
     }),
   )
 
+  it.effect('a null constructor envelope returns the declared typed failure', () =>
+    Effect.gen(function* () {
+      const outcome = yield* Effect.result(makeInventoryService(null as never))
+
+      expect(Result.isFailure(outcome)).toBe(true)
+      if (Result.isFailure(outcome)) expect(outcome.failure._tag).toBeDefined()
+    }),
+  )
+
   it.effect('restore resolves to the leftover, which the caller drops on the ground', () =>
     Effect.gen(function* () {
       const service = yield* makeInventoryService()
@@ -1128,10 +1137,15 @@ describe('InventoryService concurrency', () => {
         _tag: 'InvalidSlot',
         carried: undefined,
       })
-      expect(yield* service.click(invalidCount)).toStrictEqual({
-        _tag: 'InvalidCount',
-        carried: invalidCount.carried,
-      })
+      const invalidClick = yield* Effect.result(service.click(invalidCount))
+      expect(Result.isFailure(invalidClick)).toBe(true)
+      if (Result.isFailure(invalidClick)) {
+        expect(invalidClick.failure).toMatchObject({
+          _tag: 'ItemValidationFailure',
+          field: 'click.carried',
+          reason: 'invalid-type',
+        })
+      }
       expect(yield* service.snapshot).toBe(before)
     }),
   )
