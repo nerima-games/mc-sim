@@ -309,6 +309,7 @@ export const advance = (
   const dayLengthTicks = ValidTimeDayLengthTicks.result(dayLengthTicksValue)
   if (Result.isFailure(dayLengthTicks)) return Result.fail(dayLengthTicks.failure)
 
+  if (typeof dt !== 'number') return Result.fail(invalidTimeStateValue(dt))
   const delta = DeltaTimeSecs.result(dt)
   if (Result.isFailure(delta)) return Result.fail(delta.failure)
 
@@ -318,7 +319,7 @@ export const advance = (
   if (Result.isFailure(currentTicks)) return Result.fail(currentTicks.failure)
 
   const nextTicks = FiniteTimeTicks.result(currentTicks.success + delta.success * TICKS_PER_SECOND)
-  return Result.map(nextTicks, (ticks) => ({ ...candidate, ticks, dayLengthTicks: dayLengthTicks.success }))
+  return Result.map(nextTicks, (ticks) => ({ ticks, dayLengthTicks: dayLengthTicks.success }))
 }
 
 /**
@@ -331,15 +332,19 @@ export const advance = (
 export const simulationTickToDayFraction = (
   rawTick: number,
   dayLengthTicks: number,
-): Result.Result<InterpolationFraction, Brand.BrandError> =>
-  Result.flatMap(SimulationTick.result(rawTick), (tick) =>
+): Result.Result<InterpolationFraction, Brand.BrandError> => {
+  if (typeof rawTick !== 'number') return Result.fail(invalidTimeStateValue(rawTick))
+  if (typeof dayLengthTicks !== 'number') return Result.fail(invalidTimeStateValue(dayLengthTicks))
+
+  return Result.flatMap(SimulationTick.result(rawTick), (tick) =>
     Result.flatMap(PositiveTickCount.result(dayLengthTicks), (dayTicks) =>
       InterpolationFraction.result(Math.min(MAX_TIME_FRACTION, (tick % dayTicks) / dayTicks)),
     ),
   )
+}
 
 export const setDayLength = (state: TimeState, seconds: FixedDurationSecs): TimeState => {
-  const base = isValidTimeState(state) ? state : normaliseTimeState(state)
+  const base = normaliseTimeState(state)
   return {
     ...base,
     dayLengthTicks: clampDayLengthSecs(seconds) * TICKS_PER_SECOND,
@@ -354,7 +359,7 @@ export const setDayLength = (state: TimeState, seconds: FixedDurationSecs): Time
  * i.e. it moves within day zero — matching the reference.
  */
 export const setTimeOfDay = (state: TimeState, fraction: InterpolationFraction): TimeState => {
-  const base = isValidTimeState(state) ? state : normaliseTimeState(state)
+  const base = normaliseTimeState(state)
   return {
     ...base,
     ticks: Math.floor(clampFraction(fraction) * base.dayLengthTicks),
