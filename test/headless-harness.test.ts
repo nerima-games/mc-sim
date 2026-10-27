@@ -105,9 +105,9 @@ const makeRuntime = (
         const index = sessions.length
         events.push(`open:${index}`)
         const randomAtOpen = yield* Random.next
-        const intents: IntentQueueType['Service'] = yield* Effect.gen(function* () {
+        const intents: IntentQueueType['Service'] = yield* Effect.orDie(Effect.gen(function* () {
           return yield* IntentQueue
-        }).pipe(Effect.provide(IntentQueueLayer({ capacity: makeQueueCapacity(capacity) })))
+        }).pipe(Effect.provide(IntentQueueLayer({ capacity: makeQueueCapacity(capacity) }))))
         const record: SessionRecord = {
           worldSeed,
           closed: [],
@@ -217,6 +217,29 @@ describe('HeadlessHarness lifecycle and stepping', () => {
       expect(runtime.sessions[0]?.ticks).toEqual([1, 2, 3])
       expect(runtime.sessions[0]?.ready).toEqual([[], ['due-at-two'], ['next-admission']])
       expect(runtime.sessions[0]?.clockAtTick).toEqual([50, 100, 150])
+    }).pipe(Effect.provide(harnessLayer(runtime.service)))
+  })
+
+  it.effect('returns typed schema failures for malformed enqueue and step inputs before mutation', () => {
+    const runtime = makeRuntime()
+    return Effect.gen(function* () {
+      const harness = yield* HeadlessHarness
+      yield* harness.reset(resetInput(5, 7))
+
+      const malformedEnqueue = yield* Effect.result(harness.enqueue({} as never))
+      expect(Result.isFailure(malformedEnqueue)).toBe(true)
+      if (Result.isFailure(malformedEnqueue)) expect(malformedEnqueue.failure._tag).toBe('SchemaError')
+
+      expect(yield* harness.enqueue(makeIntent('valid-after-malformed', 1))).toBe(0)
+
+      const malformedStep = yield* Effect.result(harness.step(Number.POSITIVE_INFINITY as never))
+      expect(Result.isFailure(malformedStep)).toBe(true)
+      if (Result.isFailure(malformedStep)) expect(malformedStep.failure._tag).toBe('SchemaError')
+      expect(runtime.sessions[0]?.ticks).toEqual([])
+
+      yield* harness.step(makeTickCount(1))
+      expect(runtime.sessions[0]?.ticks).toEqual([1])
+      expect(runtime.sessions[0]?.ready).toEqual([['valid-after-malformed']])
     }).pipe(Effect.provide(harnessLayer(runtime.service)))
   })
 

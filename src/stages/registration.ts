@@ -133,14 +133,58 @@ export type SimPhysicsConfig = {
 
 export type SimPhysicsConfigError = Readonly<{
   readonly _tag: 'SimPhysicsConfigError'
-  readonly field: 'walkSpeed' | 'jumpSpeed'
+  readonly field: 'config' | 'resolve' | 'walkSpeed' | 'jumpSpeed'
 }>
 
-const invalidSimPhysicsConfig = (config: SimPhysicsConfig): SimPhysicsConfigError | undefined => {
-  if (!Number.isFinite(config.walkSpeed) || config.walkSpeed < 0)
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const isFiniteNumber = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value)
+
+const isNonnegativeFiniteNumber = (value: unknown): value is number =>
+  isFiniteNumber(value) && value >= 0
+
+const isOptionalFunction = (value: unknown): boolean =>
+  value === undefined || typeof value === 'function'
+
+const hasValidResolveCallbacks = (
+  resolve: Readonly<Record<string, unknown>>,
+  environment: Readonly<Record<string, unknown>>,
+): boolean =>
+  typeof environment['blockAt'] === 'function' &&
+  typeof resolve['blockPropertiesAt'] === 'function' &&
+  isOptionalFunction(environment['blockShapeAt']) &&
+  isOptionalFunction(resolve['blockShapeAt']) &&
+  isOptionalFunction(resolve['bouncinessAt'])
+
+const hasValidResolveDimensions = (resolve: Readonly<Record<string, unknown>>): boolean => {
+  const halfWidth = resolve['halfWidth']
+  const halfHeight = resolve['halfHeight']
+  const stepHeight = resolve['stepHeight']
+  return isFiniteNumber(halfWidth) &&
+    isFiniteNumber(halfHeight) && halfHeight > 0 &&
+    (stepHeight === undefined || isFiniteNumber(stepHeight))
+}
+
+const hasValidResolveConfig = (value: unknown): boolean => {
+  if (!isRecord(value)) return false
+  const environment = value['environment']
+  if (!isRecord(environment)) return false
+  return hasValidResolveCallbacks(value, environment) && hasValidResolveDimensions(value)
+}
+
+const invalidSimPhysicsConfig = (config: unknown): SimPhysicsConfigError | undefined => {
+  if (!isRecord(config)) return { _tag: 'SimPhysicsConfigError', field: 'config' }
+
+  const walkSpeed = config['walkSpeed']
+  const jumpSpeed = config['jumpSpeed']
+  if (!isNonnegativeFiniteNumber(walkSpeed))
     return { _tag: 'SimPhysicsConfigError', field: 'walkSpeed' }
-  if (!Number.isFinite(config.jumpSpeed) || config.jumpSpeed < 0)
+  if (!isNonnegativeFiniteNumber(jumpSpeed))
     return { _tag: 'SimPhysicsConfigError', field: 'jumpSpeed' }
+  if (!hasValidResolveConfig(config['resolve'])) return { _tag: 'SimPhysicsConfigError', field: 'resolve' }
+
   return undefined
 }
 
