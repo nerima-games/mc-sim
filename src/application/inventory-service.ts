@@ -275,7 +275,7 @@ export type InventoryServiceApi = {
    * alternative is mx-ui keeping its own copy — which is plan.md §2.3-1's
    * failure mode with a table instead of a rule.
    */
-  readonly recipes: Effect.Effect<Recipe.RecipeTable, Inv.ItemStackFailure>
+  readonly recipes: Effect.Effect<Recipe.RecipeTable, Inv.ItemStackFailure | Recipe.RecipeFailure>
   /**
    * What `grid` would make, without making it.
    *
@@ -327,7 +327,7 @@ type InventoryServiceState = {
 export const makeInventoryService = (
   initial: Inv.Inventory = Inv.emptyInventory(),
   recipeTableInput?: Recipe.RecipeTable,
-): Effect.Effect<InventoryServiceApi, Inv.ItemStackFailure> =>
+): Effect.Effect<InventoryServiceApi, Inv.ItemStackFailure | Recipe.RecipeFailure> =>
   Effect.flatMap(Effect.fromResult(Inv.normaliseInventory(initial)), (normalised) =>
     Effect.flatMap(
       Effect.fromResult(recipeTableInput === undefined ? STARTER_RECIPES : Result.succeed(recipeTableInput)),
@@ -673,5 +673,5 @@ export const makeInventoryService = (
 export const InventoryServiceLayer = (
   initial: Inv.Inventory = Inv.emptyInventory(),
   recipeTable?: Recipe.RecipeTable,
-): Layer.Layer<InventoryService, Inv.ItemStackFailure> =>
+): Layer.Layer<InventoryService, Inv.ItemStackFailure | Recipe.RecipeFailure> =>
   Layer.effect(InventoryService, makeInventoryService(initial, recipeTable))

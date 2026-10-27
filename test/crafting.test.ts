@@ -22,7 +22,12 @@ import {
   type ItemStack,
 } from '../src/domain/inventory'
 import type { ItemType } from '@nerima-games/mc-kernel'
-import { craftGrid as craftGridResult, shapelessRecipe as shapelessRecipeResult, type CraftGrid } from '../src/domain/recipe'
+import {
+  RecipeGridDimension,
+  craftGrid as craftGridResult,
+  shapelessRecipe as shapelessRecipeResult,
+  type CraftGrid,
+} from '../src/domain/recipe'
 import { STARTER_RECIPES as starterRecipesResult } from '../src/domain/recipe-data'
 
 const requireSuccess = <A, E>(result: Result.Result<A, E>): A => {
@@ -126,8 +131,8 @@ describe('ingredientCost', () => {
       // A cell holding 12 planks still costs one plank, which is the rule that
       // makes "hold a stack in the grid and craft repeatedly" work.
       const fat: CraftGrid = {
-        width: 1,
-        height: 2,
+        width: RecipeGridDimension(1),
+        height: RecipeGridDimension(2),
         cells: [itemStack('oak_planks', 12), itemStack('oak_planks', 3)],
       }
       expect([...ingredientCost(fat)]).toStrictEqual([['oak_planks', 2]])
@@ -481,8 +486,8 @@ describe('craftFromGrid', () => {
     Effect.sync(() => {
       const before = stocked([['oak_planks', 64]])
       const fat: CraftGrid = {
-        width: 1,
-        height: 2,
+        width: RecipeGridDimension(1),
+        height: RecipeGridDimension(2),
         cells: [itemStack('oak_planks', 32), itemStack('oak_planks', 32)],
       }
       const after = craftFromGrid(before, STARTER_RECIPES, fat)

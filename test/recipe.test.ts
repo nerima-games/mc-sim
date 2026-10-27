@@ -15,11 +15,14 @@ import {
   craftGrid as craftGridResult,
   exactly,
   matchRecipe,
+  RecipeGridDimension,
   shapedRecipe as shapedRecipeResult,
   shapelessRecipe as shapelessRecipeResult,
   type CraftGrid,
   type Recipe,
+  type RecipeOptions,
   type RecipePattern,
+  type ShapedRecipe,
   type RecipeTable,
 } from '../src/domain/recipe'
 import { STARTER_RECIPES as starterRecipesResult } from '../src/domain/recipe-data'
@@ -42,7 +45,8 @@ const shapedRecipe = (
   rows: Parameters<typeof shapedRecipeResult>[1],
   key: Parameters<typeof shapedRecipeResult>[2],
   output: ItemStack,
-) => requireSuccess(shapedRecipeResult(id, rows, key, Result.succeed(output)))
+  options?: RecipeOptions,
+) => requireSuccess(shapedRecipeResult(id, rows, key, Result.succeed(output), options))
 const shapelessRecipe = (
   id: Parameters<typeof shapelessRecipeResult>[0],
   items: Parameters<typeof shapelessRecipeResult>[1],
@@ -149,7 +153,7 @@ const gridFromPattern = (pattern: RecipePattern, mirrored: boolean): CraftGrid =
       const x = index % pattern.width
       const y = Math.floor(index / pattern.width)
       const cell = pattern.cells[y * pattern.width + (mirrored ? pattern.width - 1 - x : x)]
-      return cell?.item
+      return cell?._tag === 'Exact' ? cell.item : undefined
     }),
   )
 
@@ -159,8 +163,21 @@ const canonicalGrid = (recipe: Recipe): CraftGrid =>
     : craftGrid(
         recipe.ingredients.length,
         1,
-        recipe.ingredients.map((ingredient) => ingredient.item),
+        recipe.ingredients.map((ingredient) =>
+          ingredient._tag === 'Exact'
+            ? ingredient.item
+            : ingredient._tag === 'AnyOf'
+              ? ingredient.options.find((option) => option._tag === 'Exact')?.item
+              : undefined,
+        ),
       )
+
+const ingredientKey = (cell: RecipePattern['cells'][number]): string => {
+  if (cell === undefined) return ''
+  if (cell._tag === 'Exact') return `Exact:${cell.item}:${cell.count}`
+  if (cell._tag === 'ItemTag') return `ItemTag:${cell.tag}:${cell.count}`
+  return `AnyOf:${cell.count}:${cell.options.map((option) => ingredientKey(option)).sort().join(',')}`
+}
 
 /**
  * Whether a pattern is unchanged by the horizontal flip — and so can say nothing
@@ -169,17 +186,17 @@ const canonicalGrid = (recipe: Recipe): CraftGrid =>
 const isOwnMirror = (pattern: RecipePattern): boolean =>
   pattern.cells.every(
     (cell, index) =>
-      cell?.item ===
-      pattern.cells[
-        Math.floor(index / pattern.width) * pattern.width +
-          (pattern.width - 1 - (index % pattern.width))
-      ]?.item,
+      ingredientKey(cell) ===
+      ingredientKey(
+        pattern.cells[
+          Math.floor(index / pattern.width) * pattern.width +
+            (pattern.width - 1 - (index % pattern.width))
+        ],
+      ),
   )
 
-const shapedIn = (table: RecipeTable): ReadonlyArray<{ id: string; pattern: RecipePattern }> =>
-  table.flatMap((recipe) =>
-    recipe._tag === 'Shaped' ? [{ id: recipe.id, pattern: recipe.pattern }] : [],
-  )
+const shapedIn = (table: RecipeTable): ReadonlyArray<ShapedRecipe> =>
+  table.filter((recipe): recipe is ShapedRecipe => recipe._tag === 'Shaped')
 
 // ---------------------------------------------------------------------------
 
@@ -289,7 +306,8 @@ describe('shaped matching translates', () => {
       expect(matchedId(gridOf('BB', ' S', ' S'))).toBe('mc-sim:stone-hoe')
       expect(matchedId(gridOf('II', ' S', ' S'))).toBe('mc-sim:iron-hoe')
       expect(matchedId(gridOf('DD', ' S', ' S'))).toBe('mc-sim:diamond-hoe')
-      expect(matchedId(gridOf('PP', 'S ', 'S '))).toBe('mc-sim:wooden-hoe')
+      // W1 leaves the default shaped-recipe symmetry setting disabled.
+      expect(matchedId(gridOf('PP', 'S ', 'S '))).toBe('NoMatch')
     }),
   )
 
@@ -368,81 +386,92 @@ describe('shaped matching translates', () => {
       // ...and the table checker sees the two as the duplicate they are.
       const both = STARTER_RECIPES.filter((recipe) => recipe.id === 'mc-sim:glowstone')
       expect(conflictsIn([...both, padded])).toStrictEqual([
-        { reason: 'same-shape', recipeIds: ['mc-sim:glowstone', 'test:glowstone-padded'] },
+        { reason: 'same-shape', firstId: 'mc-sim:glowstone', secondId: 'test:glowstone-padded' },
       ])
     }),
   )
 
-  it.effect('a row MISSING from the array — not merely blank — reads as an empty row too', () =>
+  it.effect('a sparse row is rejected while a dense blank border is trimmed', () =>
     Effect.sync(() => {
-      // `trimPattern` reads `rows[y] ?? ''` because `noUncheckedIndexedAccess`
-      // types every array read as possibly-undefined. That is not paranoia about
-      // something that cannot happen: `rows.length` is a plain writable number
-      // property, so extending it past the last pushed element leaves a genuine
-      // gap — a real `undefined`, with no cast and no `any` — which is exactly
-      // what a sparse array is. This constructs one without escaping the type.
+      // Extending the array length leaves a genuine gap without a cast.
       const rows: Array<string> = ['PPP', ' S ']
       rows.length = 3
 
-      const withGap = shapedRecipe(
+      const withGap = shapedRecipeResult(
         'test:gap-row',
         rows,
         { P: 'oak_planks', S: 'stick' },
-        itemStack('stick', 1),
+        Result.succeed(itemStack('stick', 1)),
       )
 
-      // The missing row occupies nothing, so it cannot widen the trimmed box —
-      // the result is identical to never having written a third row at all.
-      expect(withGap.pattern).toStrictEqual({
-        width: 3,
-        height: 2,
-        cells: [exactly('oak_planks'), exactly('oak_planks'), exactly('oak_planks'), undefined, exactly('stick'), undefined],
-      })
+      expect(Result.isFailure(withGap)).toBe(true)
+
+      const withTrailingBlank = shapedRecipe(
+        'test:trailing-blank-row',
+        ['PPP', ' S ', '   '],
+        { P: 'oak_planks', S: 'stick' },
+        itemStack('stick', 1),
+      )
+      expect(withTrailingBlank.pattern.height).toBe(2)
+      expect(withTrailingBlank.pattern.cells).toStrictEqual([
+        requireSuccess(exactly('oak_planks')),
+        requireSuccess(exactly('oak_planks')),
+        requireSuccess(exactly('oak_planks')),
+        undefined,
+        requireSuccess(exactly('stick')),
+        undefined,
+      ])
     }),
   )
 
-  it.effect('a pattern with no legend hit anywhere trims to the canonical empty pattern', () =>
+  it.effect('a pattern with no legend hit is rejected before entering the table', () =>
     Effect.sync(() => {
-      // Every character in every row is either a space or, here, absent from
-      // the (empty) legend — so `trimPattern` never finds an occupied cell and
-      // takes the `maxX < 0` early return instead of computing a box.
-      const blank = shapedRecipe('test:blank', ['   ', '   '], {}, itemStack('stick', 1))
-      expect(blank.pattern).toStrictEqual({ width: 0, height: 0, cells: [] })
-
-      // A zero-size pattern cannot equal any grid's occupied box, so it is
-      // unmatchable rather than a silent universal match.
-      expect(matchedId(gridOf('GG', 'GG'), [blank])).toBe('NoMatch')
+      const blank = shapedRecipeResult('test:blank', ['   ', '   '], {}, Result.succeed(itemStack('stick', 1)))
+      expect(Result.isFailure(blank)).toBe(true)
     }),
   )
 })
 
 /*
- * Both blocks below run against `STARTER_RECIPES` — the table `InventoryService`
- * hands to mx-ui — and not against fixtures. That keeps the matcher properties
- * covered by rows the simulation actually publishes: asymmetric shaped rows
- * exercise the horizontal mirror, while distinct shapeless rows exercise
- * permutation. Ambiguity-only recipes remain local to the tests that need them.
+ * Shaped mirror behavior is opt in through `assumeSymmetry`; the starter corpus
+ * keeps the kernel default. Shapeless permutation remains covered by the
+ * published starter rows below.
  */
-describe('shaped matching mirrors horizontally, and only horizontally', () => {
-  it.effect('an asymmetric shape matches its left-right mirror, as vanilla does', () =>
+describe('shaped matching mirrors only when symmetry is enabled', () => {
+  it.effect('the asymmetric starter shape does not match its mirror by default', () =>
     Effect.sync(() => {
       // Vanilla's flint and steel: an iron ingot above and left of a flint.
       expect(matchedId(gridOf('I ', ' F'))).toBe('mc-sim:flint-and-steel')
-      expect(matchedId(gridOf(' I', 'F '))).toBe('mc-sim:flint-and-steel')
+      expect(matchedId(gridOf(' I', 'F '))).toBe('NoMatch')
+      const symmetric = shapedRecipe(
+        'test:symmetric-flint-and-steel',
+        ['I ', ' F'],
+        { I: 'iron_ingot', F: 'flint' },
+        itemStack('flint_and_steel', 1),
+        { assumeSymmetry: true },
+      )
+      expect(matchedId(gridOf(' I', 'F '), [symmetric])).toBe('test:symmetric-flint-and-steel')
     }),
   )
 
-  it.effect('the mirror travels with the translation, at every position', () =>
+  it.effect('an enabled mirror travels with the translation, at every position', () =>
     Effect.sync(() => {
+      const symmetric = shapedRecipe(
+        'test:symmetric-flint-and-steel',
+        ['I ', ' F'],
+        { I: 'iron_ingot', F: 'flint' },
+        itemStack('flint_and_steel', 1),
+        { assumeSymmetry: true },
+      )
       for (const [ox, oy] of [0, 1].flatMap((y) => [0, 1].map((x) => [x, y] as const))) {
         const mirrored = placeAt(3, 3, [
           [ox + 1, oy, 'iron_ingot'],
           [ox, oy + 1, 'flint'],
         ])
-        expect({ ox, oy, id: matchedId(mirrored) }).toStrictEqual({
+        expect({ ox, oy, id: matchedId(mirrored, [symmetric]) }).toStrictEqual({
           ox,
           oy,
-          id: 'mc-sim:flint-and-steel',
+          id: 'test:symmetric-flint-and-steel',
         })
       }
     }),
@@ -454,15 +483,22 @@ describe('shaped matching mirrors horizontally, and only horizontally', () => {
       // nor its horizontal mirror. Accepting it would invent recipes.
       expect(matchedId(gridOf(' F', 'I '))).toBe('NoMatch')
       expect(matchedId(gridOf('F ', ' I'))).toBe('NoMatch')
+      const symmetric = shapedRecipe(
+        'test:symmetric-flint-and-steel',
+        ['I ', ' F'],
+        { I: 'iron_ingot', F: 'flint' },
+        itemStack('flint_and_steel', 1),
+        { assumeSymmetry: true },
+      )
+      expect(matchedId(gridOf(' F', 'I '), [symmetric])).toBe('NoMatch')
+      expect(matchedId(gridOf('F ', ' I'), [symmetric])).toBe('NoMatch')
     }),
   )
 
-  it.effect('REGRESSION: a shipped recipe distinguishes the mirror, so deleting it breaks the game', () =>
+  it.effect('starter recipes leave symmetry disabled for every asymmetric shape', () =>
     Effect.sync(() => {
-      // At least one shipped pattern is NOT its own mirror, and the mirrored
-      // layout of every such pattern must still match its own recipe. Keeping
-      // the assertion data-driven means adding an official row cannot silently
-      // leave its mirror behavior untested.
+      // At least one shipped pattern is not its own mirror. Its flipped layout
+      // does not match that recipe unless symmetry is enabled.
       const shaped = shapedIn(STARTER_RECIPES)
       expect(shaped.length).toBeGreaterThan(0)
 
@@ -474,8 +510,7 @@ describe('shaped matching mirrors horizontally, and only horizontally', () => {
         // Laid out as written, and laid out flipped. Both are the same recipe.
         expect({ id: recipe.id, plain: matchedId(gridFromPattern(recipe.pattern, false)) })
           .toStrictEqual({ id: recipe.id, plain: recipe.id })
-        expect({ id: recipe.id, flipped: matchedId(gridFromPattern(recipe.pattern, true)) })
-          .toStrictEqual({ id: recipe.id, flipped: recipe.id })
+        expect(matchedId(gridFromPattern(recipe.pattern, true), [recipe])).toBe('NoMatch')
       }
     }),
   )
@@ -609,7 +644,7 @@ describe('the ambiguity rule', () => {
       const beta = shapelessRecipe('test:beta', ['dirt', 'dirt'], itemStack('sand', 1))
 
       expect(conflictsIn([beta, alpha])).toStrictEqual([
-        { reason: 'same-ingredients', recipeIds: ['test:alpha', 'test:beta'] },
+        { reason: 'same-ingredients', firstId: 'test:beta', secondId: 'test:alpha' },
       ])
     }),
   )
@@ -620,12 +655,12 @@ describe('the ambiguity rule', () => {
       const two = shapedRecipe('test:same', ['D'], { D: 'dirt' }, itemStack('sand', 1))
 
       expect(conflictsIn([one, two])).toStrictEqual([
-        { reason: 'duplicate-id', recipeIds: ['test:same', 'test:same'] },
+        { reason: 'duplicate-id', firstId: 'test:same', secondId: 'test:same' },
       ])
     }),
   )
 
-  it.effect('a mirrored duplicate is a duplicate — conflictsIn is not fooled by the flip', () =>
+  it.effect('a mirrored pattern is not a same-shape conflict by default', () =>
     Effect.sync(() => {
       const flipped = shapedRecipe(
         'test:flint-and-steel-mirror',
@@ -634,16 +669,10 @@ describe('the ambiguity rule', () => {
         itemStack('flint_and_steel', 1),
       )
 
-      // The SHIPPED asymmetric recipe is the left-hand side, so the two halves
-      // of the mirror rule — matching and conflict detection — are asserted
-      // against one pattern rather than two hand-copied ones, and that pattern
-      // is the one mx-ui is handed.
       const shipped = STARTER_RECIPES.filter((recipe) => recipe.id === 'mc-sim:flint-and-steel')
       expect(shipped).toHaveLength(1)
 
-      expect(conflictsIn([...shipped, flipped])).toStrictEqual([
-        { reason: 'same-shape', recipeIds: ['mc-sim:flint-and-steel', 'test:flint-and-steel-mirror'] },
-      ])
+      expect(conflictsIn([...shipped, flipped])).toStrictEqual([])
     }),
   )
 
@@ -653,7 +682,7 @@ describe('the ambiguity rule', () => {
       // conflict entries — enough for `Array.prototype.sort` to actually invoke
       // the comparator (it never does for zero or one element), which is the
       // only way to exercise both of its branches: two entries that share
-      // `recipeIds[0]` (tie-broken on `recipeIds[1]`) and two that do not.
+      // `firstId` is equal and cases where it differs.
       const a = shapelessRecipe('test:conflict-a', ['dirt', 'dirt'], itemStack('gravel', 1))
       const b = shapelessRecipe('test:conflict-b', ['dirt', 'dirt'], itemStack('sand', 1))
       const c = shapelessRecipe('test:conflict-c', ['dirt', 'dirt'], itemStack('bowl', 1))
@@ -669,9 +698,9 @@ describe('the ambiguity rule', () => {
       // table[1] is the gap; table.length is 4.
 
       expect(conflictsIn(table)).toStrictEqual([
-        { reason: 'same-ingredients', recipeIds: ['test:conflict-a', 'test:conflict-b'] },
-        { reason: 'same-ingredients', recipeIds: ['test:conflict-a', 'test:conflict-c'] },
-        { reason: 'same-ingredients', recipeIds: ['test:conflict-b', 'test:conflict-c'] },
+        { reason: 'same-ingredients', firstId: 'test:conflict-a', secondId: 'test:conflict-b' },
+        { reason: 'same-ingredients', firstId: 'test:conflict-a', secondId: 'test:conflict-c' },
+        { reason: 'same-ingredients', firstId: 'test:conflict-b', secondId: 'test:conflict-c' },
       ])
     }),
   )
@@ -706,13 +735,13 @@ describe('matching is total', () => {
     Effect.sync(() => {
       // mx-ui builds these from screen state; a short array must produce
       // NoMatch inside a frame, not a defect.
-      const ragged: CraftGrid = { width: 3, height: 3, cells: [] }
+      const ragged: CraftGrid = {
+        width: RecipeGridDimension(3),
+        height: RecipeGridDimension(3),
+        cells: [],
+      }
       expect(matchedId(ragged)).toBe('NoMatch')
       expect(cellAt(ragged, 2, 2)).toBeUndefined()
-
-      const negative: CraftGrid = { width: -2, height: -2, cells: [] }
-      expect(matchedId(negative)).toBe('NoMatch')
-      expect(cellAt(negative, 0, 0)).toBeUndefined()
     }),
   )
 
@@ -721,4 +750,10 @@ describe('matching is total', () => {
       expect(matchRecipe([], gridOf('GG', 'GG'))).toStrictEqual({ _tag: 'NoMatch' })
     }),
   )
+})
+
+describe('craft grid validation', () => {
+  it('returns a typed failure for a dimension outside the supported range', () => {
+    expect(Result.isFailure(craftGridResult(-2, 3, []))).toBe(true)
+  })
 })

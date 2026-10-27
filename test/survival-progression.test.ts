@@ -1,14 +1,20 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect, Result } from 'effect'
 import { type ItemType } from '@nerima-games/mc-kernel'
-import { type Recipe } from '../src/domain/recipe'
+import { type CraftingIngredient, type Recipe } from '../src/domain/recipe'
 import { STARTER_RECIPES } from '../src/domain/recipe-data'
 import { STARTER_FUEL_RULES, STARTER_SMELTING_RECIPES } from '../src/domain/smelting-data'
 
-const ingredientsOf = (recipe: Recipe): ReadonlyArray<ItemType> =>
+const ingredientAvailable = (ingredient: CraftingIngredient, reachable: ReadonlySet<ItemType>): boolean => {
+  if (ingredient._tag === 'Exact') return reachable.has(ingredient.item)
+  if (ingredient._tag === 'AnyOf') return ingredient.options.some((option) => ingredientAvailable(option, reachable))
+  return false
+}
+
+const ingredientsOf = (recipe: Recipe): ReadonlyArray<CraftingIngredient> =>
   recipe._tag === 'Shaped'
-    ? recipe.pattern.cells.flatMap((cell) => (cell === undefined ? [] : [cell.item]))
-    : recipe.ingredients.map((ingredient) => ingredient.item)
+    ? recipe.pattern.cells.flatMap((cell) => (cell === undefined ? [] : [cell]))
+    : recipe.ingredients
 
 /**
  * Closes over recipes while treating each gathered resource as renewable. The
@@ -25,7 +31,7 @@ const reachableFrom = (startingItems: ReadonlySet<ItemType>): ReadonlySet<ItemTy
   while (changed) {
     changed = false
     for (const recipe of recipes) {
-      if (!ingredientsOf(recipe).every((item) => reachable.has(item))) continue
+      if (!ingredientsOf(recipe).every((ingredient) => ingredientAvailable(ingredient, reachable))) continue
       if (reachable.has(recipe.output.item)) continue
       reachable.add(recipe.output.item)
       changed = true
