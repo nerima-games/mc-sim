@@ -42,6 +42,8 @@ export type AddStoredStackResult =
 
 export type EquipFromInventoryResult =
   | { readonly _tag: 'Equipped'; readonly item: Eq.EquipmentItem }
+  | { readonly _tag: 'EquipmentFailure'; readonly error: Eq.EquipmentItemFailure }
+  | { readonly _tag: 'InvalidDurability'; readonly item: Inv.ItemStack }
   | { readonly _tag: 'InvalidInventorySlot' }
   | { readonly _tag: 'InvalidEquipmentSlot' }
   | { readonly _tag: 'Empty' }
@@ -60,6 +62,7 @@ export type UnequipToInventoryResult =
 export type DamageAtResult =
   | Eq.DamageEquipmentResult
   | { readonly _tag: 'InvalidLocation' }
+  | { readonly _tag: 'InvalidDurability'; readonly item: Inv.ItemStack }
 
 export type ConsumeAndDamageAtRequest = {
   readonly consume: {
@@ -92,10 +95,22 @@ export type ConsumeAndDamageAtResult =
       readonly actualItem: Inv.ItemStack['item'] | null
     }
   | { readonly _tag: 'NotDamageable'; readonly item: Inv.ItemStack }
+  | { readonly _tag: 'InvalidDurability'; readonly item: Inv.ItemStack }
+  | { readonly _tag: 'EquipmentFailure'; readonly error: Eq.EquipmentItemFailure }
+  | { readonly _tag: 'StorageFailure'; readonly error: PlayerStorageFailure }
+  | { readonly _tag: 'DamageRejected'; readonly damage: Exclude<DamageAtResult, AppliedDamageResult> }
   | { readonly _tag: 'InsufficientConsumable'; readonly available: number }
   | { readonly _tag: 'ItemStackFailure'; readonly error: Inv.ItemStackFailure }
 
 export type StorageOutcome<A> = { readonly storage: PlayerStorage; readonly result: A }
+
+export type InvalidInventoryDurability = {
+  readonly _tag: 'InvalidInventoryDurability'
+  readonly slotIndex: number
+  readonly item: Inv.ItemStack['item']
+}
+
+export type PlayerStorageFailure = Eq.EquipmentItemFailure | InvalidInventoryDurability
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -140,19 +155,36 @@ export const storageFromInventory = (inventory: Inv.Inventory): PlayerStorage =>
 })
 
 /** Preserve durability for unchanged slots and initialise newly inserted tools. */
-export const withInventory = (storage: PlayerStorage, inventory: Inv.Inventory): PlayerStorage => ({
-  ...storage,
-  inventory,
-  inventoryDurability: inventory.slots.map((slot, index) => {
-    if (slot === undefined) return null
+export const withInventory = (
+  storage: PlayerStorage,
+  inventory: Inv.Inventory,
+): Result.Result<PlayerStorage, PlayerStorageFailure> => {
+  const durabilityResults = inventory.slots.map((slot, index) => {
+    if (slot === undefined) return Result.succeed(null)
     const previous = storage.inventory.slots[index]
     const previousDurability = storage.inventoryDurability[index]
-    return previous !== undefined && itemStackEqualsIgnoringCount(previous, slot) &&
-      Eq.isValidDurabilityForItem(slot.item, previousDurability)
-      ? copyDurability(previousDurability)
-      : Eq.durabilityForItem(slot.item)
-  }),
-})
+    if (previous !== undefined && itemStackEqualsIgnoringCount(previous, slot)) {
+      if (Eq.isDamageableItemType(slot.item)) {
+        return Eq.isValidDurabilityForItem(slot.item, previousDurability)
+          ? Result.succeed(copyDurability(previousDurability))
+          : Result.fail<InvalidInventoryDurability>({
+              _tag: 'InvalidInventoryDurability', slotIndex: index, item: slot.item,
+            })
+      }
+      return previousDurability === null
+        ? Result.succeed(null)
+        : Result.fail<InvalidInventoryDurability>({
+            _tag: 'InvalidInventoryDurability', slotIndex: index, item: slot.item,
+          })
+    }
+    return Result.succeed(Eq.durabilityForItem(slot.item))
+  })
+  return Result.map(Result.all(durabilityResults), (inventoryDurability) => ({
+    ...storage,
+    inventory,
+    inventoryDurability,
+  }))
+}
 
 /** Insert one validated stack while preserving its exact durability. */
 export const addStoredStack = (
@@ -227,10 +259,13 @@ export const equipFromInventory = (
   if (occupied !== null) return { storage, result: { _tag: 'Occupied', item: occupied } }
 
   const storedDurability = storage.inventoryDurability[inventorySlot]
-  const durability = Eq.isValidDurabilityForItem(stack.item, storedDurability)
-    ? storedDurability
-    : Eq.durabilityForItem(stack.item)
-  const item = Eq.equipmentItem(stack, durability)
+  if (!Eq.isValidDurabilityForItem(stack.item, storedDurability)) {
+    return { storage, result: { _tag: 'InvalidDurability', item: stack } }
+  }
+  const item = Eq.equipmentItem(stack, storedDurability)
+  if (Result.isFailure(item)) {
+    return { storage, result: { _tag: 'EquipmentFailure', error: item.failure } }
+  }
   const slots = [...storage.inventory.slots]
   slots[inventorySlot] = undefined
   const inventoryDurability = [...storage.inventoryDurability]
@@ -238,10 +273,10 @@ export const equipFromInventory = (
   return {
     storage: {
       inventory: { slots },
-      equipment: Eq.equip(storage.equipment, equipmentSlot, item).equipment,
+      equipment: Eq.equip(storage.equipment, equipmentSlot, item.success).equipment,
       inventoryDurability,
     },
-    result: { _tag: 'Equipped', item },
+    result: { _tag: 'Equipped', item: item.success },
   }
 }
 
@@ -295,11 +330,17 @@ export const damageAt = (
   const item = storage.inventory.slots[location.slotIndex]
   if (item === undefined) return { storage, result: { _tag: 'Empty' } }
   const durability = storage.inventoryDurability[location.slotIndex]
-  if (durability === null || durability === undefined) {
+  if (!Eq.isDamageableItemType(item.item)) {
     return { storage, result: { _tag: 'NotDamageable', item: { ...item, durability: null } } }
+  }
+  if (!Eq.isValidDurabilityForItem(item.item, durability)) {
+    return { storage, result: { _tag: 'InvalidDurability', item } }
   }
   const applied = Math.min(amount, durability.current)
   const equippedItem = Eq.equipmentItem(item, durability)
+  if (Result.isFailure(equippedItem)) {
+    return { storage, result: { _tag: 'EquipmentFailure', error: equippedItem.failure } }
+  }
   const slots = [...storage.inventory.slots]
   const inventoryDurability = [...storage.inventoryDurability]
   if (applied === durability.current) {
@@ -307,14 +348,21 @@ export const damageAt = (
     inventoryDurability[location.slotIndex] = null
     return {
       storage: { ...storage, inventory: { slots }, inventoryDurability },
-      result: { _tag: 'Broken', item: equippedItem, applied },
+      result: { _tag: 'Broken', item: equippedItem.success, applied },
     }
   }
-  const damaged = { ...durability, current: durability.current - applied }
-  inventoryDurability[location.slotIndex] = damaged
+  const damaged = Eq.durability(durability.current - applied, durability.max)
+  if (Result.isFailure(damaged)) {
+    return { storage, result: { _tag: 'EquipmentFailure', error: damaged.failure } }
+  }
+  const damagedItem = Eq.equipmentItem(item, damaged.success)
+  if (Result.isFailure(damagedItem)) {
+    return { storage, result: { _tag: 'EquipmentFailure', error: damagedItem.failure } }
+  }
+  inventoryDurability[location.slotIndex] = damaged.success
   return {
     storage: { ...storage, inventoryDurability },
-    result: { _tag: 'Damaged', item: Eq.equipmentItem(item, damaged), applied },
+    result: { _tag: 'Damaged', item: damagedItem.success, applied },
   }
 }
 
@@ -403,8 +451,11 @@ export const consumeAndDamageAt = (
   }
 
   const targetDurability = targetDurabilityAt(storage, request.damage.location)
-  if (targetDurability === null || targetDurability === undefined) {
+  if (!Eq.isDamageableItemType(target.item)) {
     return { storage, result: { _tag: 'NotDamageable', item: target } }
+  }
+  if (!Eq.isValidDurabilityForItem(target.item, targetDurability)) {
+    return { storage, result: { _tag: 'InvalidDurability', item: target } }
   }
 
   const { available, excludedSlot } = planConsumable(storage, request)
@@ -422,13 +473,16 @@ export const consumeAndDamageAt = (
     return { storage, result: { _tag: 'ItemStackFailure', error: inventoryResult.failure } }
   }
 
-  const damaged = damageAt(
-    withInventory(storage, inventoryResult.success),
-    request.damage.location,
-    request.damage.amount,
-  )
+  const updatedInventory = withInventory(storage, inventoryResult.success)
+  if (Result.isFailure(updatedInventory)) {
+    return { storage, result: { _tag: 'StorageFailure', error: updatedInventory.failure } }
+  }
+  const damaged = damageAt(updatedInventory.success, request.damage.location, request.damage.amount)
   if (damaged.result._tag !== 'Damaged' && damaged.result._tag !== 'Broken') {
-    return { storage, result: { _tag: 'NotDamageable', item: target } }
+    if (damaged.result._tag === 'EquipmentFailure' || damaged.result._tag === 'InvalidDurability') {
+      return { storage, result: damaged.result }
+    }
+    return { storage, result: { _tag: 'DamageRejected', damage: damaged.result } }
   }
   const appliedDamage: AppliedDamageResult = damaged.result
   return {
