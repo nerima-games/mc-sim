@@ -232,7 +232,7 @@ describe('DomainEventBus', () => {
     }),
   )
 
-  it.effect('does not send a pending publication to a subscriber that opens during backpressure', () =>
+  it.effect('does not send an in-flight publication to a subscriber that acquires during backpressure', () =>
     Effect.gen(function* () {
       const capacity = yield* Schema.decodeUnknownEffect(EventSubscriberCapacitySchema)(1)
       const events = yield* decodeEvents()
@@ -242,6 +242,8 @@ describe('DomainEventBus', () => {
         const firstRead = yield* Deferred.make<void>()
         const releaseFirst = yield* Deferred.make<void>()
         const probeReceived = yield* Deferred.make<void>()
+        const publicationAttempted = yield* Deferred.make<void>()
+        const acquisitionAttempted = yield* Deferred.make<void>()
         const originalSubscriber = yield* Effect.forkChild(
           bus.events.pipe(
             Stream.take(3),
@@ -259,10 +261,18 @@ describe('DomainEventBus', () => {
         yield* Deferred.await(firstRead)
         yield* bus.publish(events.blockBroken)
 
-        const pendingPublication = yield* Effect.forkChild(bus.publish(events.explosion))
+        const pendingPublication = yield* Effect.forkChild(
+          Effect.gen(function* () {
+            yield* Deferred.succeed(publicationAttempted, undefined)
+            yield* bus.publish(events.explosion)
+          }),
+        )
+        yield* Deferred.await(publicationAttempted)
         yield* Effect.yieldNow
         const lateSubscriber = yield* Effect.forkChild(
-          bus.events.pipe(
+          Stream.unwrap(
+            Deferred.succeed(acquisitionAttempted, undefined).pipe(Effect.as(bus.events)),
+          ).pipe(
             Stream.tap((event) =>
               event._tag === 'AchievementUnlocked'
                 ? Deferred.succeed(probeReceived, undefined)
@@ -272,6 +282,9 @@ describe('DomainEventBus', () => {
             Stream.runCollect,
           ),
         )
+        // This barrier places the late subscription attempt after publish starts
+        // while the original subscriber still blocks the full queue.
+        yield* Deferred.await(acquisitionAttempted)
         yield* Effect.yieldNow
 
         yield* Deferred.succeed(releaseFirst, undefined)
