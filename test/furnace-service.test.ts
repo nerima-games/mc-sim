@@ -27,11 +27,18 @@ const must = <A, E>(result: Result.Result<A, E>): A => {
 }
 
 const furnaceOwnerId = Schema.decodeUnknownSync(ReplicatedOwnerIdSchema)('test:furnace')
+const playerOwnerId = Schema.decodeUnknownSync(ReplicatedOwnerIdSchema)('test:player')
+const PlayerTransferStateSchema = Schema.Struct({ inventory: Schema.Unknown, experience: Schema.Finite })
 
 const makeFurnaceFixture = Effect.gen(function* () {
   const world = yield* Schema.decodeUnknownEffect(WorldIdSchema)('furnace-service-test')
   const registration = must(makeFurnaceServiceRegistration(furnaceOwnerId))
-  const coordinator = yield* makeWorldCommitCoordinator({ world, owners: [registration] })
+  const playerRegistration = {
+    ownerId: playerOwnerId,
+    schema: PlayerTransferStateSchema,
+    initialState: { inventory: emptyInventory(), experience: 0 },
+  }
+  const coordinator = yield* makeWorldCommitCoordinator({ world, owners: [registration, playerRegistration] })
   const furnace = yield* makeFurnaceService(furnaceOwnerId)
   return { furnace, coordinator }
 })
@@ -61,18 +68,82 @@ describe('FurnaceService', () => {
         expect(outcome.smeltedCount).toBe(1)
         expect((yield* furnace.snapshot).output?.item).toBe('iron_ingot')
 
-        const committed = yield* coordinator.snapshot(furnaceOwnerId, FurnaceServiceStateSchema)
-        expect(committed.state.furnace.output?.item).toBe('iron_ingot')
-        expect(committed.state.experience).toBeGreaterThan(0)
+        const furnaceBeforeOutput = yield* coordinator.snapshot(furnaceOwnerId, FurnaceServiceStateSchema)
+        expect(furnaceBeforeOutput.state.furnace.output?.item).toBe('iron_ingot')
+        expect(furnaceBeforeOutput.state.experience).toBeGreaterThan(0)
+        const playerBeforeOutput = yield* coordinator.snapshot(playerOwnerId, PlayerTransferStateSchema)
 
-        const collected = yield* furnace.collectOutput(emptyInventory())
-        expect(collected.result._tag).toBe('Collected')
-        expect(collected.inventory.slots.some((slot) => slot?.item === 'iron_ingot')).toBe(true)
+        const output = yield* furnace.prepareCollectOutput(emptyInventory())
+        expect(output.outcome.result._tag).toBe('Collected')
+        expect(output.outcome.inventory.slots.some((slot) => slot?.item === 'iron_ingot')).toBe(true)
+        const outputFurnaceCandidate = output.ownerCandidate
+        if (outputFurnaceCandidate === undefined) throw new Error('collected output missing furnace candidate')
+
+        const failedOutputCommit = yield* Effect.result(coordinator.commit({
+          expectedRevision: output.expectedRevision,
+          expectedDimensions: [],
+          changes: [
+            outputFurnaceCandidate,
+            { ownerId: playerOwnerId, state: { inventory: output.outcome.inventory, experience: 'invalid' } },
+          ],
+        }))
+        expect(Result.isFailure(failedOutputCommit)).toBe(true)
+        expect(yield* coordinator.snapshot(furnaceOwnerId, FurnaceServiceStateSchema)).toStrictEqual(furnaceBeforeOutput)
+        expect(yield* coordinator.snapshot(playerOwnerId, PlayerTransferStateSchema)).toStrictEqual(playerBeforeOutput)
+
+        yield* coordinator.commit({
+          expectedRevision: output.expectedRevision,
+          expectedDimensions: [],
+          changes: [
+            outputFurnaceCandidate,
+            {
+              ownerId: playerOwnerId,
+              state: { ...playerBeforeOutput.state, inventory: output.outcome.inventory },
+            },
+          ],
+        })
+        const playerAfterOutput = yield* coordinator.snapshot(playerOwnerId, PlayerTransferStateSchema)
+        expect(playerAfterOutput.state.inventory).toStrictEqual(output.outcome.inventory)
         expect((yield* furnace.snapshot).output).toBeUndefined()
 
-        const experience = yield* furnace.collectExperience
-        expect(experience).toBeGreaterThan(0)
-        expect(yield* furnace.collectExperience).toBe(0)
+        const experience = yield* furnace.prepareCollectExperience
+        expect(experience.experience).toBeGreaterThan(0)
+        const experienceFurnaceCandidate = experience.ownerCandidate
+        if (experienceFurnaceCandidate === undefined) throw new Error('collected experience missing furnace candidate')
+        const furnaceBeforeExperience = yield* coordinator.snapshot(furnaceOwnerId, FurnaceServiceStateSchema)
+
+        const failedExperienceCommit = yield* Effect.result(coordinator.commit({
+          expectedRevision: experience.expectedRevision,
+          expectedDimensions: [],
+          changes: [
+            experienceFurnaceCandidate,
+            {
+              ownerId: playerOwnerId,
+              state: { ...playerAfterOutput.state, experience: Number.NaN },
+            },
+          ],
+        }))
+        expect(Result.isFailure(failedExperienceCommit)).toBe(true)
+        expect(yield* coordinator.snapshot(furnaceOwnerId, FurnaceServiceStateSchema)).toStrictEqual(furnaceBeforeExperience)
+        expect(yield* coordinator.snapshot(playerOwnerId, PlayerTransferStateSchema)).toStrictEqual(playerAfterOutput)
+
+        yield* coordinator.commit({
+          expectedRevision: experience.expectedRevision,
+          expectedDimensions: [],
+          changes: [
+            experienceFurnaceCandidate,
+            {
+              ownerId: playerOwnerId,
+              state: { ...playerAfterOutput.state, experience: experience.experience },
+            },
+          ],
+        })
+        expect((yield* coordinator.snapshot(furnaceOwnerId, FurnaceServiceStateSchema)).state.experience).toBe(0)
+        expect((yield* coordinator.snapshot(playerOwnerId, PlayerTransferStateSchema)).state.experience).toBe(experience.experience)
+
+        const noExperience = yield* furnace.prepareCollectExperience
+        expect(noExperience.experience).toBe(0)
+        expect(noExperience.ownerCandidate).toBeUndefined()
       }),
     ),
   )
@@ -123,15 +194,16 @@ describe('FurnaceService', () => {
         yield* furnace.advance(10)
         const readyToCollect = yield* furnace.snapshot
 
-        const blocked = yield* furnace.collectOutput({
+        const blocked = yield* furnace.prepareCollectOutput({
           slots: Array.from({ length: 36 }, () => must(itemStack('cobblestone', 64))),
         })
-        expect(blocked.result._tag).toBe('NoRoom')
-        expect(yield* furnace.snapshot).toBe(readyToCollect)
+        expect(blocked.outcome.result._tag).toBe('NoRoom')
+        expect(blocked.ownerCandidate).toBeUndefined()
+        expect(yield* furnace.snapshot).toStrictEqual(readyToCollect)
 
         const invalidRestore = yield* Effect.result(furnace.restore({}))
         expect(Result.isFailure(invalidRestore)).toBe(true)
-        expect(yield* furnace.snapshot).toBe(readyToCollect)
+        expect(yield* furnace.snapshot).toStrictEqual(readyToCollect)
       }),
     ),
   )

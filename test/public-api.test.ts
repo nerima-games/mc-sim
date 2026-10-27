@@ -507,8 +507,9 @@ it.effect('matches explosion outputs recorded from the pre-migration main revisi
         })),
         ...(row.input.limits === undefined ? {} : { limits: row.input.limits }),
       })
+      if (Result.isFailure(result)) throw result.failure
 
-      expect(result).toEqual(row.expected)
+      expect(result.success).toEqual(row.expected)
     }
   }),
 )

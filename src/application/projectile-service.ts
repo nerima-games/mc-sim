@@ -2,6 +2,7 @@ import {
   BlockAddressSchema,
   DIMENSIONS,
   DimensionIdSchema,
+  DeltaTimeSecs,
   DomainEventSchema,
   EntityIdSchema,
   ProjectileIdSchema,
@@ -19,7 +20,7 @@ import {
   type WorldRevision,
 } from '@nerima-games/mc-kernel'
 import * as Physics from '@nerima-games/mc-physics'
-import { Context, Effect, Layer, Schema } from 'effect'
+import { Context, Effect, Layer, Result, Schema } from 'effect'
 import type { YieldableError } from 'effect/Cause'
 import {
   WorldCommitCoordinator,
@@ -33,7 +34,9 @@ import {
 import { DomainEventBus } from './domain-event-bus.js'
 
 const PositionAxisSchema = Schema.Finite.pipe(Schema.brand('PositionAxis'))
-const FixedDurationSecsSchema = Schema.Finite.pipe(Schema.brand('FixedDurationSecs'))
+const FixedDurationSecsSchema = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)).pipe(
+  Schema.brand('FixedDurationSecs'),
+)
 const BlocksPerSecondSchema = Schema.Finite.pipe(Schema.brand('BlocksPerSecond'))
 
 const PhysicsPositionSchema = Schema.Struct({
@@ -141,6 +144,8 @@ type ProjectileServiceFailureReason =
   | 'projectile-id-already-exists'
   | 'unknown-projectile'
   | 'invalid-launch'
+  | 'invalid-step-duration'
+  | 'invalid-physics-result'
   | 'block-address-unavailable'
   | 'block-address-dimension-mismatch'
 
@@ -156,6 +161,8 @@ const ProjectileServiceFailureBase: new (
       'projectile-id-already-exists',
       'unknown-projectile',
       'invalid-launch',
+      'invalid-step-duration',
+      'invalid-physics-result',
       'block-address-unavailable',
       'block-address-dimension-mismatch',
     ]),
@@ -321,12 +328,19 @@ export const makeProjectileService = (): Effect.Effect<
           return yield* Effect.fail(new ProjectileServiceFailure({ reason: 'unknown-projectile' }))
         }
 
+        const deltaTime = DeltaTimeSecs.result(request.deltaTime)
+        if (Result.isFailure(deltaTime)) {
+          return yield* Effect.fail(new ProjectileServiceFailure({ reason: 'invalid-step-duration' }))
+        }
         const stepped = Physics.stepProjectile(
           record.projectile,
-          request.deltaTime,
+          deltaTime.success,
           request.world,
           record.profile,
         )
+        if (stepped.projectile.state === 'despawned' && stepped.projectile.reason === 'invalid') {
+          return yield* Effect.fail(new ProjectileServiceFailure({ reason: 'invalid-physics-result' }))
+        }
         const projectile = yield* Schema.decodeUnknownEffect(ProjectileSchema)(stepped.projectile)
         const nextState = {
           projectiles: current.state.projectiles.map((entry) =>

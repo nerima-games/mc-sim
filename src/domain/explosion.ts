@@ -1,4 +1,5 @@
-import { PositionAxis, position, type Position } from '@nerima-games/mc-kernel'
+import { DamageAmountSchema, PositionAxis, position, type Position } from '@nerima-games/mc-kernel'
+import { Result, Schema } from 'effect'
 import type { EntityId } from './entity-types.js'
 
 export type ExplosionBlockPosition = {
@@ -50,6 +51,14 @@ export type ExplosionRequest = {
   readonly limits?: Partial<ExplosionLimits>
 }
 
+export type ExplosionValidationFailure = Readonly<{
+  readonly _tag: 'ExplosionValidationFailure'
+  readonly path: string
+  readonly reason: string
+}>
+
+export const MAX_EXPLOSION_RADIUS = 64
+
 export type ExplosionPlan = {
   readonly center: Position
   readonly radius: number
@@ -69,6 +78,32 @@ export type ExplosionMutation = Pick<ExplosionPlan, 'destroyedBlocks' | 'entityE
  */
 export type ExplosionCommit = (mutation: ExplosionMutation) => void
 
+const validationFailure = (path: string, reason: string): ExplosionValidationFailure => ({
+  _tag: 'ExplosionValidationFailure',
+  path,
+  reason,
+})
+
+export const validateExplosionRequest = (
+  request: ExplosionRequest,
+): Result.Result<void, ExplosionValidationFailure> => {
+  if (!Number.isFinite(request.radius) || request.radius < 0 || request.radius > MAX_EXPLOSION_RADIUS) {
+    return Result.fail(validationFailure('radius', `must be finite and between 0 and ${MAX_EXPLOSION_RADIUS}`))
+  }
+  if (!Number.isFinite(request.seed)) return Result.fail(validationFailure('seed', 'must be finite'))
+  const coordinates = [
+    ['center.x', request.center.x],
+    ['center.y', request.center.y],
+    ['center.z', request.center.z],
+  ] as const
+  for (const [path, value] of coordinates) {
+    if (!Number.isFinite(value)) return Result.fail(validationFailure(path, 'must be finite'))
+    if (Math.abs(value) + request.radius > Number.MAX_SAFE_INTEGER) {
+      return Result.fail(validationFailure(path, 'must remain within safe block coordinates'))
+    }
+  }
+  return Result.succeed(undefined)
+}
 const finite = (value: number, fallback: number): number => Number.isFinite(value) ? value : fallback
 const positiveInteger = (value: number | undefined, fallback: number): number =>
   value === undefined || !Number.isFinite(value) ? fallback : Math.max(0, Math.floor(value))
@@ -88,7 +123,7 @@ const HASH_SCALE = 43_758.5453
 const hashUnit = (seed: number, x: number, y: number, z: number): number => {
   const value =
     Math.sin(
-      finite(seed, 0) * HASH_SEED_FACTOR +
+      seed * HASH_SEED_FACTOR +
         x * HASH_X_FACTOR +
         y * HASH_Y_FACTOR +
         z * HASH_Z_FACTOR,
@@ -296,7 +331,8 @@ const planDestroyedBlocks = (
           continue
         }
         const blast = radius * (0.7 + hashUnit(seed, x, y, z) * 0.6) - distance - ray.attenuation
-        if (blast > Math.max(0, finite(block.resistance, 0))) destroyedBlocks.push(target)
+        const resistance = Number.isFinite(block.resistance) ? Math.max(0, block.resistance) : 0
+        if (blast > resistance) destroyedBlocks.push(target)
       }
     }
   }
@@ -304,14 +340,15 @@ const planDestroyedBlocks = (
   return { destroyedBlocks, visitedBlocks, truncated }
 }
 
-export const planExplosion = (request: ExplosionRequest): ExplosionPlan => {
-  const center = positionOf(
-    finite(request.center.x, 0),
-    finite(request.center.y, 0),
-    finite(request.center.z, 0),
-  )
-  const radius = Math.max(0, finite(request.radius, 0))
-  const seed = finite(request.seed, 0)
+export const planExplosion = (
+  request: ExplosionRequest,
+): Result.Result<ExplosionPlan, ExplosionValidationFailure> => {
+  const requestResult = validateExplosionRequest(request)
+  if (Result.isFailure(requestResult)) return Result.fail(requestResult.failure)
+
+  const center = positionOf(request.center.x, request.center.y, request.center.z)
+  const radius = request.radius
+  const seed = request.seed
   const limits = normaliseLimits(request.limits)
   const blockPlan = planDestroyedBlocks(request, center, radius, seed, limits)
   const entityEffects: ExplosionEntityEffect[] = []
@@ -321,15 +358,26 @@ export const planExplosion = (request: ExplosionRequest): ExplosionPlan => {
   for (let index = 0; index < entityCount; index += 1) {
     const entity = request.entities[index]
     if (entity !== undefined) {
+      const { feetPosition } = entity
+      if (
+        !Number.isFinite(feetPosition.x) ||
+        !Number.isFinite(feetPosition.y) ||
+        !Number.isFinite(feetPosition.z)
+      ) {
+        return Result.fail(validationFailure(`entities[${index}].feetPosition`, 'coordinates must be finite'))
+      }
       const target = {
-        x: entity.feetPosition.x,
-        y: entity.feetPosition.y + 0.9,
-        z: entity.feetPosition.z,
+        x: feetPosition.x,
+        y: feetPosition.y + 0.9,
+        z: feetPosition.z,
       }
       const dx = target.x - center.x
       const dy = target.y - center.y
       const dz = target.z - center.z
       const distance = Math.hypot(dx, dy, dz)
+      if (!Number.isFinite(distance)) {
+        return Result.fail(validationFailure(`entities[${index}].feetPosition`, 'distance from center must be finite'))
+      }
       if (radius > 0 && distance <= radius) {
         const exposure = entityExposure(center, entity, request.blocks, limits.maxRaySteps)
         if (exposure > 0) {
@@ -347,13 +395,18 @@ export const planExplosion = (request: ExplosionRequest): ExplosionPlan => {
               (target.z - center.z) / directionLength,
             )
           }
+          const damage =
+            (impact * impact + impact) *
+              0.5 *
+              7 *
+              radius +
+            1
+          const damageResult = Schema.decodeUnknownResult(DamageAmountSchema)(damage)
+          if (Result.isFailure(damageResult) || damage > Number.MAX_SAFE_INTEGER) {
+            return Result.fail(validationFailure(`entities[${index}].damage`, 'must be a finite, positive, safe amount'))
+          }
           entityEffects.push({
-            damage:
-              (impact * impact + impact) *
-                0.5 *
-                7 *
-                radius +
-              1,
+            damage: damageResult.success,
             exposure,
             id: entity.id,
             knockback: positionOf(
@@ -367,7 +420,7 @@ export const planExplosion = (request: ExplosionRequest): ExplosionPlan => {
     }
   }
 
-  return {
+  return Result.succeed({
     center,
     radius,
     seed,
@@ -376,7 +429,7 @@ export const planExplosion = (request: ExplosionRequest): ExplosionPlan => {
     visitedBlocks: blockPlan.visitedBlocks,
     limits,
     truncated,
-  }
+  })
 }
 
 /** Delegate the entire planned mutation to one host-owned atomic transaction. */

@@ -103,14 +103,14 @@ export const brewingState = (
   const thirdBottle = validateSlot(third, 'bottles[2]')
   const ingredient = validateSlot(input['ingredient'], 'ingredient')
   const fuel = validateSlot(input['fuel'], 'fuel')
-  const rawCharges = input['fuelCharges'] ?? 0
+  const rawCharges = Object.hasOwn(input, 'fuelCharges') ? input['fuelCharges'] : 0
   if (typeof rawCharges !== 'number' || !Number.isInteger(rawCharges)) {
     return Result.fail(invalid('fuelCharges', 'must be an integer'))
   }
   const charges = BrewingFuelCharges.result(rawCharges)
-  const rawProgress = input['brewProgressSecs'] ?? 0
-  if (!isFiniteNonNegative(rawProgress) || rawProgress > BREWING_TIME_SECS) {
-    return Result.fail(invalid('brewProgressSecs', 'must be finite and within the brew duration'))
+  const rawProgress = Object.hasOwn(input, 'brewProgressSecs') ? input['brewProgressSecs'] : 0
+  if (!isFiniteNonNegative(rawProgress) || rawProgress >= BREWING_TIME_SECS) {
+    return Result.fail(invalid('brewProgressSecs', 'must be finite and less than the brew duration'))
   }
   const progress = FixedDurationSecs.result(rawProgress)
   return Result.map(

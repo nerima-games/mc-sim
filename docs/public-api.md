@@ -1054,10 +1054,9 @@ mc-sim と一緒に到着する」と書いているものが `countOfKind` で�
 
 ## 8. 爆発計画
 
-**mc-physics への委譲に伴う破壊的変更。** `domain/explosion.ts` /
-`domain/primed-tnt.ts` は独自実装（xorshift ベースの破壊ハッシュ）を廃止し、
-`@nerima-games/mc-physics`（= mc-kernel 実装）への named re-export に置き換わった。
-本節は**この新 API を現状として**記述する。旧実装からの非互換点:
+**爆発計画 API の破壊的変更。** `domain/explosion.ts` が爆発を計画し、
+`domain/primed-tnt.ts` が fuse の進行と爆発計画を組み合わせる。両 API は不正な値を成功値へ
+置き換えず、型付き検証失敗を返す。本節はこの API を記述する。旧 API からの非互換点は次のとおりである。
 
 - **同一 seed の破壊パターンが変わる**(旧 xorshift ハッシュ → kernel の `Math.sin` ベースの
   ハッシュ)。保存済み seed をリプレイして同一の破壊結果を期待するホスト・fixture は影響を受ける。
@@ -1086,7 +1085,35 @@ type ExplosionLimits = {
 
 declare const DEFAULT_EXPLOSION_LIMITS: ExplosionLimits
 
-declare const planExplosion: (request: ExplosionRequest) => ExplosionPlan
+type ExplosionEntity = {
+  readonly id: EntityId
+  readonly feetPosition: Position
+}
+
+type ExplosionRequest = {
+  readonly center: Position
+  readonly radius: number
+  readonly seed: number
+  readonly blocks: ExplosionBlockReader
+  readonly entities: ReadonlyArray<ExplosionEntity>
+  readonly limits?: Partial<ExplosionLimits>
+}
+
+type ExplosionValidationFailure = Readonly<{
+  readonly _tag: 'ExplosionValidationFailure'
+  readonly path: string
+  readonly reason: string
+}>
+
+declare const MAX_EXPLOSION_RADIUS = 64
+
+declare const validateExplosionRequest: (
+  request: ExplosionRequest,
+) => Result.Result<void, ExplosionValidationFailure>
+
+declare const planExplosion: (
+  request: ExplosionRequest,
+) => Result.Result<ExplosionPlan, ExplosionValidationFailure>
 
 type ExplosionCommit = (mutation: ExplosionMutation) => void
 
@@ -1096,9 +1123,14 @@ declare const applyExplosionPlan: (
 ) => void
 ```
 
-`planExplosion` は純粋関数である。同じ seed・snapshot・入力には同じ結果を返し、距離減衰、
-ブロック耐性、遮蔽を計算する。reader が `undefined` を返すセルは未ロード境界として扱い、
-その先へ ray を進めず、破壊対象にも含めない。
+`validateExplosionRequest`と`planExplosion`は不正な入力を`Failure`として返す。中心座標とseedは有限値、
+radiusは0以上`MAX_EXPLOSION_RADIUS`以下でなければならない。各中心座標の絶対値とradiusの和も`Number.MAX_SAFE_INTEGER`を
+超えてはならない。`planExplosion`は有効な入力に対して純粋であり、
+同じseed・snapshot・入力には同じ結果を返す。距離減衰、ブロック耐性、遮蔽を計算する。readerが
+`undefined`を返すセルは未ロード境界として扱う。その先へrayを進めず、破壊対象にも含めない。
+
+エンティティへのダメージはkernelの`DamageAmountSchema`で検査し、有限で正かつ`Number.MAX_SAFE_INTEGER`以下の
+値だけを計画に含める。`planExplosion`が`Failure`を返した場合、呼び出し側は`applyExplosionPlan`を呼ばない。
 
 計算量は `maxVisitedBlocks`・`maxRaySteps`・`maxAffectedEntities` で制限できる。
 上限に達した計画は `truncated: true` を返すため、ホストは適用・延期・破棄を明示的に選べる。
@@ -1108,13 +1140,13 @@ declare const applyExplosionPlan: (
 原子性とロールバックは具体的な保存先を所有するホストの責務であり、host は自分の
 `Ref.modify` や Effect の中から `commit` を直接呼ぶ（`Effect` の `E` / `R` はもう関与しない）。
 
-**`commit` は throw しないこと。** 型付き失敗チャネル（旧 `Effect` の `E`）は無くなったため、
-`commit` の内部で失敗しうる処理を行う呼び出し側は、その呼び出しを自前で `try`/`catch` すること。
+**`commit` は throw しない同期関数でなければならない。** この API は失敗を型付き結果として返さず、
+部分適用を取り消す機構も持たない。爆発 mutation を不可分に適用できるホストの更新境界だけを渡す。
 
 ### 8.1 Primed TNT
 
-`domain/primed-tnt.ts` も同じく `@nerima-games/mc-physics`（= mc-kernel）への re-export である。
-host 所有の fuse snapshot を 1 要求あたり最大 `MAX_TNT_FUSE_ADVANCE_SECS`（10）秒だけ進める。
+`domain/primed-tnt.ts` は host 所有の fuse snapshot を 1 要求あたり最大
+`MAX_TNT_FUSE_ADVANCE_SECS`（10）秒だけ進め、起爆時に `domain/explosion.ts` の計画を返す。
 
 ```typescript
 type PrimedTntState =
@@ -1125,9 +1157,27 @@ declare const DEFAULT_TNT_FUSE_SECS = 4
 
 declare const MAX_TNT_FUSE_ADVANCE_SECS = 10
 
-declare const primeTnt: (fuseSecs?: number) => PrimedTntState
+type PrimedTntRequest = Omit<ExplosionRequest, 'limits'> & {
+  readonly state: PrimedTntState
+  readonly deltaTimeSecs: number
+  readonly limits?: Partial<ExplosionLimits>
+}
 
-declare const planPrimedTnt: (request: PrimedTntRequest) => PrimedTntPlan
+type PrimedTntValidationFailure = Readonly<{
+  readonly _tag: 'PrimedTntValidationFailure'
+  readonly path: string
+  readonly reason: string
+}>
+
+type PrimedTntFailure = PrimedTntValidationFailure | ExplosionValidationFailure
+
+declare const primeTnt: (
+  fuseSecs?: number,
+) => Result.Result<PrimedTntState, PrimedTntValidationFailure>
+
+declare const planPrimedTnt: (
+  request: PrimedTntRequest,
+) => Result.Result<PrimedTntPlan, PrimedTntFailure>
 
 type PrimedTntCommit = (mutation: PrimedTntMutation) => void
 
@@ -1137,12 +1187,13 @@ declare const applyPrimedTntPlan: (
 ) => void
 ```
 
-`primeTnt` の `fuseSecs` は省略可能で、省略時は `DEFAULT_TNT_FUSE_SECS`（4 秒）。非有限な値は
-0 に丸める（`Number.isFinite` で弾き、負値は 0 にクランプ）。
+`primeTnt`の`fuseSecs`は省略可能で、省略時は`DEFAULT_TNT_FUSE_SECS`（4秒）。負数または非有限値を
+渡すと`PrimedTntValidationFailure`を返す。
 
-`planPrimedTnt` は fuse が尽きた呼び出しでだけ既存の `planExplosion` を呼び、終端状態
-（`kind: 'detonated'`）への再入力から二度目の爆発を生成しない。上限を超えた時間は
-`deferredSecs` として返す。
+`planPrimedTnt`はfuseの残り時間とdeltaが有限かつ非負であることを検査する。中心座標、radius、
+seedも進行前に検査する。いずれかが不正なら`PrimedTntFailure`を返し、呼び出し側は状態をcommitしない。
+fuseが尽きたときだけ`planExplosion`を呼び、終端状態（`kind: 'detonated'`）への再入力では二度目の爆発を
+生成しない。上限を超えた時間は`deferredSecs`として返す。
 
 `applyPrimedTntPlan` は `expected` snapshot、次の fuse 状態、任意の爆発 mutation を
 一つの `PrimedTntMutation` に束ね、`commit` を **1 回だけ、同期的に**呼ぶ。`explosion`
@@ -1150,8 +1201,8 @@ declare const applyPrimedTntPlan: (
 host は同じ更新単位（`Ref.modify` など）の中で `expected` を比較してから、
 TNT entity の更新または除去と block/entity effects を一括適用する。
 
-**`commit` は throw しないこと。** §8 と同じ理由で型付き失敗チャネルは無い。失敗しうる処理は
-呼び出し側が `try`/`catch` する。
+**`commit` は throw しない同期関数にする。** §8 と同じく、この API は失敗を型付き結果として返さず、
+部分適用を戻す機構もない。TNT の状態と爆発 mutation を同じ不可分の更新境界で適用できるときだけ呼ぶ。
 
 ## 9. Projectile
 

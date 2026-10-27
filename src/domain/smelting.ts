@@ -519,6 +519,16 @@ const advanceCookingInterval = (
   })
 }
 
+const completedCookProgressFailure = (
+  state: FurnaceState,
+  recipes: ReadonlyArray<SmeltingRecipeInput>,
+): FurnaceFailure | undefined => {
+  if (state.input === undefined) return undefined
+  const recipe = smeltingRecipeFor(recipes, state.input, state.station)
+  if (recipe === undefined || state.cookProgressSecs < recipeDuration(recipe)) return undefined
+  return validationFailure('cookProgressSecs', 'must be less than the matched recipe duration')
+}
+
 export const advanceFurnace = (
   state: FurnaceState,
   elapsedSecs: number,
@@ -535,6 +545,8 @@ export const advanceFurnace = (
   if (Result.isFailure(fuelTable)) return Result.fail(fuelTable.failure)
 
   let current = validatedState.success
+  const completedProgressFailure = completedCookProgressFailure(current, recipeTable.success)
+  if (completedProgressFailure !== undefined) return Result.fail(completedProgressFailure)
   let remaining: number = elapsed.success
   let smeltedCount = 0
   let experienceGained = 0

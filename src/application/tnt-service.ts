@@ -8,7 +8,7 @@ import {
   type WorldRevision,
   position,
 } from '@nerima-games/mc-kernel'
-import { Context, Effect, Layer, Schema } from 'effect'
+import { Context, Effect, Layer, Result, Schema } from 'effect'
 import type { YieldableError } from 'effect/Cause'
 import type {
   ExplosionBlockReader,
@@ -89,7 +89,7 @@ export const TNT_REPLICATED_OWNER_ID: ReplicatedOwnerId = makeReplicatedOwnerId(
 
 export const INITIAL_TNT_SERVICE_SNAPSHOT: TntServiceSnapshot = { tnts: [] }
 
-type TntServiceFailureReason = 'tnt-already-primed' | 'unknown-tnt'
+type TntServiceFailureReason = 'tnt-already-primed' | 'unknown-tnt' | 'invalid-input'
 
 type TntServiceFailureFields = Readonly<{ reason: TntServiceFailureReason }>
 
@@ -97,7 +97,7 @@ const TntServiceFailureBase: new (
   args: TntServiceFailureFields,
 ) => YieldableError & { readonly _tag: 'TntServiceFailure' } & TntServiceFailureFields =
   Schema.TaggedError<TntServiceFailure>()('TntServiceFailure', {
-    reason: Schema.Literals(['tnt-already-primed', 'unknown-tnt']),
+    reason: Schema.Literals(['tnt-already-primed', 'unknown-tnt', 'invalid-input']),
   })
 
 export class TntServiceFailure extends TntServiceFailureBase {}
@@ -193,6 +193,12 @@ export const makeTntService = (
     const snapshot = () => coordinator.snapshot(ownerId, TntServiceSnapshotSchema)
 
     const prime: TntServiceApi['prime'] = (request) => Effect.gen(function* () {
+      const primedState = primeTnt(
+        request.fuseSecs === undefined ? DEFAULT_TNT_FUSE_SECS : request.fuseSecs,
+      )
+      if (Result.isFailure(primedState)) {
+        return yield* Effect.fail(new TntServiceFailure({ reason: 'invalid-input' }))
+      }
       const current = yield* snapshot()
       if (current.state.tnts.some(({ id }) => id === request.id)) {
         return yield* Effect.fail(new TntServiceFailure({ reason: 'tnt-already-primed' }))
@@ -205,7 +211,7 @@ export const makeTntService = (
             id: request.id,
             dimension: request.dimension,
             center: request.center,
-            state: primeTnt(request.fuseSecs ?? DEFAULT_TNT_FUSE_SECS),
+            state: primedState.success,
           },
         ],
       }
@@ -243,7 +249,7 @@ export const makeTntService = (
         }))
       }
 
-      const plan = planPrimedTnt({
+      const planResult = planPrimedTnt({
         state: tnt.state,
         deltaTimeSecs: request.deltaTimeSecs,
         center: recordCenter(tnt.center),
@@ -253,6 +259,10 @@ export const makeTntService = (
         entities: request.entities,
         ...(request.limits === undefined ? {} : { limits: request.limits }),
       })
+      if (Result.isFailure(planResult)) {
+        return yield* Effect.fail(new TntServiceFailure({ reason: 'invalid-input' }))
+      }
+      const plan = planResult.success
 
       if (plan.explosion !== undefined) {
         const next: TntServiceSnapshot = {

@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from '@effect/vitest'
+import { Result } from 'effect'
 import {
   applyExplosionPlan,
   DEFAULT_EXPLOSION_LIMITS,
-  planExplosion,
+  planExplosion as planExplosionResult,
   type ExplosionBlockPosition,
 } from '../src/domain/explosion'
 import { EntityHealthPoints, EntityId, EntityKind, type Entity } from '../src/domain/entity'
@@ -10,6 +11,13 @@ import { PositionAxis, position as coordinatePosition } from '@nerima-games/mc-k
 
 const position = (x: number, y: number, z: number) =>
   coordinatePosition(PositionAxis(x), PositionAxis(y), PositionAxis(z))
+
+const unwrap = <A, E>(result: Result.Result<A, E>): A => {
+  if (Result.isFailure(result)) throw result.failure
+  return result.success
+}
+const planExplosion = (request: Parameters<typeof planExplosionResult>[0]) =>
+  unwrap(planExplosionResult(request))
 
 const key = ({ x, y, z }: ExplosionBlockPosition): string => `${x},${y},${z}`
 const air = () => ({ resistance: 0, destructible: false })
@@ -159,16 +167,32 @@ describe('planExplosion', () => {
     expect(shielded.destroyedBlocks).not.toContainEqual({ x: 8, y: 0, z: 0 })
   })
 
-  it('treats a non-finite center, radius, or seed as zero instead of propagating NaN', () => {
+  it('returns typed validation failures for invalid center, radius, seed, and damage', () => {
+    const request = {
+      center: position(0.5, 0.5, 0.5),
+      radius: 4,
+      seed: 1,
+      blocks: world([]),
+      entities: [],
+    }
     const center = JSON.parse('{"x":0.5,"y":0.5,"z":0.5}')
     center.x = Number.NaN
-    const plan = planExplosion({
-      center, radius: Number.NaN, seed: Number.NaN,
-      blocks: world([]), entities: [],
+    expect(Result.isFailure(planExplosionResult({ ...request, center }))).toBe(true)
+    expect(Result.isFailure(planExplosionResult({ ...request, radius: -1 }))).toBe(true)
+    expect(Result.isFailure(planExplosionResult({ ...request, radius: Number.POSITIVE_INFINITY }))).toBe(true)
+    expect(Result.isFailure(planExplosionResult({ ...request, radius: 65 }))).toBe(true)
+    expect(Result.isFailure(planExplosionResult({ ...request, seed: Number.NaN }))).toBe(true)
+
+    const entityAtCenter = entity('center', 0, -0.9, 0)
+    const boundedDamage = planExplosionResult({
+      ...request,
+      center: position(0, 0, 0),
+      radius: 64,
+      entities: [entityAtCenter],
     })
-    expect(plan.center).toStrictEqual({ x: 0, y: 0.5, z: 0.5 })
-    expect(plan.radius).toBe(0)
-    expect(plan.seed).toBe(0)
+    expect(Result.isSuccess(boundedDamage)).toBe(true)
+    if (Result.isFailure(boundedDamage)) throw boundedDamage.failure
+    expect(boundedDamage.success.entityEffects[0]?.damage).toBe(449)
   })
 
   it('never crosses an unloaded cell when a large explosion shares radial traces', () => {

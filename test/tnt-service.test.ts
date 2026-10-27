@@ -182,6 +182,52 @@ describe('TntService', () => {
       expect((yield* tnt.snapshot).revision).toBe(revision(1))
     }).pipe(Effect.provide(layer())))
 
+  it.effect('rejects invalid fuse and explosion inputs without committing the TNT owner', () =>
+    Effect.gen(function* () {
+      const tnt = yield* TntService
+      const invalidPrime = yield* Effect.result(tnt.prime({
+        id: entity,
+        dimension: 'overworld',
+        center: { x: 0, y: 0, z: 0 },
+        fuseSecs: -1,
+        expectedRevision: revision(0),
+        expectedDimensionRevision: dimensionRevision(0),
+      }))
+      expect(Result.isFailure(invalidPrime)).toBe(true)
+      if (Result.isFailure(invalidPrime)) {
+        expect(invalidPrime.failure).toMatchObject({ _tag: 'TntServiceFailure', reason: 'invalid-input' })
+      }
+      expect((yield* tnt.snapshot).state.tnts).toHaveLength(0)
+      expect((yield* tnt.snapshot).revision).toBe(revision(0))
+
+      yield* tnt.prime({
+        id: entity,
+        dimension: 'overworld',
+        center: { x: 0, y: 0, z: 0 },
+        fuseSecs: 4,
+        expectedRevision: revision(0),
+        expectedDimensionRevision: dimensionRevision(0),
+      })
+      const invalidAdvances = [
+        advanceRequest(1, 1, -1),
+        { ...advanceRequest(1, 1, 1), radius: -1 },
+        { ...advanceRequest(1, 1, 1), radius: 65 },
+        { ...advanceRequest(1, 1, 1), seed: Number.NaN },
+      ]
+      for (const request of invalidAdvances) {
+        const result = yield* Effect.result(tnt.advance(request))
+        expect(Result.isFailure(result)).toBe(true)
+        if (Result.isFailure(result)) {
+          expect(result.failure).toMatchObject({ _tag: 'TntServiceFailure', reason: 'invalid-input' })
+        }
+      }
+      expect((yield* tnt.snapshot).state.tnts[0]?.state).toEqual({
+        kind: 'primed',
+        remainingFuseSecs: 4,
+      })
+      expect((yield* tnt.snapshot).revision).toBe(revision(1))
+    }).pipe(Effect.provide(layer())))
+
   it.effect('returns already-detonated without committing another change', () =>
     Effect.gen(function* () {
       const tnt = yield* TntService

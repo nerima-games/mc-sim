@@ -324,6 +324,64 @@ describe('ProjectileService', () => {
     }),
   )
 
+  it.effect('rejects an invalid step duration without committing or publishing', () =>
+    Effect.gen(function* () {
+      const { coordinator, published, service } = yield* fixture()
+      yield* service.launch(launchRequest())
+      const before = yield* service.snapshot
+      const publishedBefore = yield* Ref.get(published)
+      const invalidRequest = {
+        projectileId,
+        tick: tickZero,
+        expectedRevision: revisionOne,
+        expectedDimensionRevision: dimensionRevisionOne,
+        deltaTime: DeltaTimeSecs(0.1),
+        world: emptyWorld,
+        blockAddressOfHit: () => undefined,
+      }
+      Reflect.set(invalidRequest, 'deltaTime', Number.NaN)
+      const invalidStep = yield* Effect.result(service.step(invalidRequest))
+
+      expect(invalidStep._tag).toBe('Failure')
+      if (invalidStep._tag === 'Failure') {
+        expect(invalidStep.failure).toMatchObject({ reason: 'invalid-step-duration' })
+      }
+      expect((yield* service.snapshot).state).toStrictEqual(before.state)
+      expect(yield* Ref.get(published)).toStrictEqual(publishedBefore)
+      expect(yield* coordinator.revision).toBe(revisionOne)
+    }),
+  )
+
+  it.effect('rejects invalid physics output without committing or publishing', () =>
+    Effect.gen(function* () {
+      const { coordinator, published, service } = yield* fixture()
+      const invalidProfile = {
+        ...Physics.SNOWBALL_PROFILE,
+        gravity: Physics.BlocksPerSecondSquared(Number.MAX_VALUE),
+      }
+      yield* service.launch(launchRequest({ kind: 'projectile', profile: invalidProfile }))
+      const before = yield* service.snapshot
+      const publishedBefore = yield* Ref.get(published)
+      const invalidPhysics = yield* Effect.result(service.step({
+        projectileId,
+        tick: tickZero,
+        expectedRevision: revisionOne,
+        expectedDimensionRevision: dimensionRevisionOne,
+        deltaTime: DeltaTimeSecs(2),
+        world: emptyWorld,
+        blockAddressOfHit: () => undefined,
+      }))
+
+      expect(invalidPhysics._tag).toBe('Failure')
+      if (invalidPhysics._tag === 'Failure') {
+        expect(invalidPhysics.failure).toMatchObject({ reason: 'invalid-physics-result' })
+      }
+      expect((yield* service.snapshot).state).toStrictEqual(before.state)
+      expect(yield* Ref.get(published)).toStrictEqual(publishedBefore)
+      expect(yield* coordinator.revision).toBe(revisionOne)
+    }),
+  )
+
   it.effect('steps only the selected projectile when the owner contains multiple projectiles', () =>
     Effect.gen(function* () {
       const { service } = yield* fixture()
