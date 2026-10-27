@@ -486,7 +486,6 @@ const startFuelBurn = (
 type CookingInterval = Readonly<{
   readonly state: FurnaceState
   readonly remaining: number
-  readonly progressed: boolean
   readonly smelted: boolean
 }>
 
@@ -497,21 +496,19 @@ const advanceCookingInterval = (
 ): Result.Result<CookingInterval, FurnaceFailure> => {
   const cookRemaining = recipeDuration(recipe) - state.cookProgressSecs
   const step = Math.min(remaining, cookRemaining, state.fuelTimeRemainingSecs)
-  if (step <= 0) return Result.succeed({ state, remaining, progressed: false, smelted: false })
   const fuelTimeRemainingSecs = FixedDurationSecs.result(state.fuelTimeRemainingSecs - step)
   const cookProgressSecs = FixedDurationSecs.result(state.cookProgressSecs + step)
   return Result.flatMap(Result.all([fuelTimeRemainingSecs, cookProgressSecs]), ([fuelRemaining, cookProgress]) => {
     const nextState = { ...state, fuelTimeRemainingSecs: fuelRemaining, cookProgressSecs: cookProgress }
     const nextRemaining = remaining - step
     if (cookProgress < recipeDuration(recipe)) {
-      return Result.succeed<CookingInterval>({ state: nextState, remaining: nextRemaining, progressed: true, smelted: false })
+      return Result.succeed<CookingInterval>({ state: nextState, remaining: nextRemaining, smelted: false })
     }
     return Result.flatMap(consumeOne(nextState.input), (input) =>
       Result.flatMap(appendOutput(nextState.output, recipeOutput(recipe)), (output) =>
         Result.map(resetCookProgress({ ...nextState, input, output }), (completedState): CookingInterval => ({
           state: completedState,
           remaining: nextRemaining,
-          progressed: true,
           smelted: true,
         })),
       ),
@@ -581,7 +578,6 @@ export const advanceFurnace = (
       smeltedCount += 1
       experienceGained += recipeExperience(recipe)
     }
-    if (!interval.success.progressed) break
   }
 
   return Result.map(

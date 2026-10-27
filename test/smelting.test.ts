@@ -745,7 +745,10 @@ describe('furnace boundary validation', () => {
         toFurnaceState(furnaceWith({ input: itemStack('raw_iron', 1), cookElapsedSecs: 10 })),
         1,
       )
-      expect(Result.isFailure(completed)).toBe(true)
+      expect(completed).toMatchObject({
+        _tag: 'Failure',
+        failure: { _tag: 'FurnaceStateValidationFailure', path: 'cookProgressSecs' },
+      })
     }),
   )
 
