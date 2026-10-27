@@ -1,14 +1,37 @@
 import {
+  EntityHealthPoints,
   ExperienceDelta,
   ExperienceCost,
   ExperienceLevel,
   ExperienceProgress,
+  DamageCause,
+  ExhaustionAmount,
+  FoodTimerSecs,
+  HungerPoints,
+  FoodSaturation,
   TotalExperience,
   type Vitals,
 } from './vitals-model.js'
+import { isValidVitals, normaliseVitals } from './vitals-validation.js'
 import { clamp, delta } from './vitals-number.js'
 
 const MAX_EXPERIENCE_LEVEL = Number.MAX_SAFE_INTEGER
+
+const safeVitals = (vitals: Vitals): Vitals => {
+  if (
+    isValidVitals(vitals) &&
+    EntityHealthPoints.is(vitals.healthPoints) &&
+    EntityHealthPoints.is(vitals.maxHealthPoints) &&
+    HungerPoints.is(vitals.hungerPoints) &&
+    HungerPoints.is(vitals.maxHungerPoints) &&
+    FoodSaturation.is(vitals.saturation) &&
+    ExhaustionAmount.is(vitals.exhaustion) &&
+    FoodTimerSecs.is(vitals.foodTimerSecs) &&
+    TotalExperience.is(vitals.totalExperience) &&
+    (vitals.lastDamageCause === undefined || DamageCause.is(vitals.lastDamageCause))
+  ) return vitals
+  return normaliseVitals(vitals)
+}
 
 const costAtLevel = (atLevel: number): number => {
   if (atLevel <= 15) return 2 * atLevel + 7
@@ -51,23 +74,25 @@ export const levelForTotalExperience = (totalExperience: TotalExperience): Exper
 }
 
 export const experienceLevel = (vitals: Vitals): ExperienceLevel =>
-  levelForTotalExperience(vitals.totalExperience)
+  levelForTotalExperience(safeVitals(vitals).totalExperience)
 
 export const experienceProgress = (vitals: Vitals): ExperienceProgress => {
-  const level = experienceLevel(vitals)
+  const base = safeVitals(vitals)
+  const level = levelForTotalExperience(base.totalExperience)
   const cost = experienceCostOfLevel(level)
-  const total = Number.isFinite(vitals.totalExperience)
-    ? Math.max(0, vitals.totalExperience)
+  const total = Number.isFinite(base.totalExperience)
+    ? Math.max(0, base.totalExperience)
     : 0
   return ExperienceProgress(clamp((total - totalExperienceAtLevel(level)) / cost, 0, 1))
 }
 
 export const addExperience = (vitals: Vitals, amount: ExperienceDelta): Vitals => {
+  const base = safeVitals(vitals)
   const awarded = delta(amount)
-  if (awarded === 0) return vitals
+  if (awarded === 0) return base
 
   return {
-    ...vitals,
-    totalExperience: TotalExperience(Math.min(Number.MAX_VALUE, Math.max(0, vitals.totalExperience + awarded))),
+    ...base,
+    totalExperience: TotalExperience(Math.min(Number.MAX_VALUE, Math.max(0, base.totalExperience + awarded))),
   }
 }
