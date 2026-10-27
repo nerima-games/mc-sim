@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Cause, Effect, Exit } from 'effect'
+import { Cause, Effect, Exit, Result } from 'effect'
 import {
   makeSettingsService,
   SettingsService,
@@ -525,6 +525,26 @@ describe('SettingsService', () => {
 
       expect(Exit.isFailure(invalidAction) && Cause.hasFails(invalidAction.cause)).toBe(true)
       expect(Exit.isFailure(invalidCode) && Cause.hasFails(invalidCode.cause)).toBe(true)
+      expect(yield* settings.snapshot).toEqual(DEFAULT_SETTINGS)
+    }),
+  )
+
+  it.effect('runtime non-string rebind inputs fail through the typed channel and leave settings unchanged', () =>
+    Effect.gen(function* () {
+      const settings = yield* makeSettingsService()
+      const invalidAction = yield* Effect.result(
+        Reflect.apply(settings.rebindKey, undefined, [null, 'Space']) as Effect.Effect<void, unknown, never>,
+      )
+      const invalidCode = yield* Effect.result(
+        Reflect.apply(settings.rebindKey, undefined, ['jump', Number.POSITIVE_INFINITY]) as Effect.Effect<void, unknown, never>,
+      )
+      const invalidUnbind = yield* Effect.result(
+        Reflect.apply(settings.unbindKey, undefined, [false]) as Effect.Effect<void, unknown, never>,
+      )
+
+      expect(Result.isFailure(invalidAction)).toBe(true)
+      expect(Result.isFailure(invalidCode)).toBe(true)
+      expect(Result.isFailure(invalidUnbind)).toBe(true)
       expect(yield* settings.snapshot).toEqual(DEFAULT_SETTINGS)
     }),
   )

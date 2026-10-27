@@ -14,7 +14,7 @@
  * — an existence check fused with the insert, and a damage transition that
  * computes `justDied` inside the same step so the death signal fires once.
  */
-import { Brand, Context, Effect, Layer, Ref, Result } from 'effect'
+import { Brand, Context, Effect, Layer, Ref, Result, Schema, SchemaIssue } from 'effect'
 import { FixedDurationSecs, InterpolationFraction, type DeltaTimeSecs } from '@nerima-games/mc-kernel'
 import * as Time from '../domain/time-of-day.js'
 
@@ -95,6 +95,12 @@ const TimeServiceBase: Context.ServiceClass<TimeService, '@nerima-games/mc-sim/T
 
 export class TimeService extends TimeServiceBase {}
 
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const invalidInitialTimeState = (value: unknown): Brand.BrandError =>
+  new Brand.BrandError(new SchemaIssue.InvalidType(Schema.Struct({}).ast, value))
+
 /**
  * Build a TimeService over a fresh Ref.
  *
@@ -113,8 +119,9 @@ export class TimeService extends TimeServiceBase {}
  */
 export const makeTimeService = (
   initial: Time.TimeState = Time.INITIAL_TIME_STATE,
-): Effect.Effect<TimeServiceApi> =>
-  Effect.map(Ref.make(Time.normaliseTimeState(initial)), (state) => ({
+): Effect.Effect<TimeServiceApi, Brand.BrandError> => {
+  if (!isRecord(initial)) return Effect.fail(invalidInitialTimeState(initial))
+  return Effect.map(Ref.make(Time.normaliseTimeState(initial)), (state) => ({
     advance: (dt) =>
       Ref.modify(state, (current) => {
         const next = Time.advance(current, dt)
@@ -139,7 +146,8 @@ export const makeTimeService = (
     snapshot: Ref.get(state),
     restore: (next) => Ref.set(state, Time.normaliseTimeState(next)),
   }))
+}
 
 export const TimeServiceLayer = (
   initial: Time.TimeState = Time.INITIAL_TIME_STATE,
-): Layer.Layer<TimeService> => Layer.effect(TimeService, makeTimeService(initial))
+): Layer.Layer<TimeService, Brand.BrandError> => Layer.effect(TimeService, makeTimeService(initial))

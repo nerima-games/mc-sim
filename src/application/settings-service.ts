@@ -53,7 +53,7 @@
  * and the frame already visits every consumer once. A consumer reads `snapshot`
  * on the frame it cares about.
  */
-import { Brand, Context, Effect, Layer, Ref } from 'effect'
+import { Brand, Context, Effect, Layer, Ref, Schema, SchemaIssue } from 'effect'
 import { applySettings, normaliseSettings, rebindKey, unbindKey } from '../domain/settings.js'
 import { DEFAULT_SETTINGS, type Settings } from '../domain/settings.js'
 import { InputAction, KeyCode } from '@nerima-games/mc-kernel'
@@ -99,6 +99,9 @@ const SettingsServiceBase: Context.ServiceClass<
 
 export class SettingsService extends SettingsServiceBase {}
 
+const invalidKeyString = (value: unknown): Brand.BrandError =>
+  new Brand.BrandError(new SchemaIssue.InvalidType(Schema.String.ast, value))
+
 /**
  * Build a SettingsService over a fresh Ref.
  *
@@ -120,12 +123,15 @@ export const makeSettingsService = (
       }),
     rebindKey: (action, code) =>
       Effect.gen(function* () {
+        if (typeof action !== 'string') return yield* Effect.fail(invalidKeyString(action))
         const inputAction = yield* Effect.fromResult(InputAction.result(action))
+        if (typeof code !== 'string') return yield* Effect.fail(invalidKeyString(code))
         const keyCode = yield* Effect.fromResult(KeyCode.result(code))
         yield* Ref.update(state, (current) => rebindKey(current, inputAction, keyCode))
       }),
     unbindKey: (action) =>
       Effect.gen(function* () {
+        if (typeof action !== 'string') return yield* Effect.fail(invalidKeyString(action))
         const inputAction = yield* Effect.fromResult(InputAction.result(action))
         yield* Ref.update(state, (current) => unbindKey(current, inputAction))
       }),

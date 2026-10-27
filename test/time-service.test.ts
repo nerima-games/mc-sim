@@ -103,6 +103,15 @@ describe('REGRESSION: restore repairs a corrupt save instead of reporting perman
     }),
   )
 
+  it.effect('a null constructor envelope returns the declared typed failure', () =>
+    Effect.gen(function* () {
+      const outcome = yield* Effect.result(makeTimeService(null as never))
+
+      expect(Result.isFailure(outcome)).toBe(true)
+      if (Result.isFailure(outcome)) expect(outcome.failure._tag).toBe('BrandError')
+    }),
+  )
+
   it.effect('setDayLength changes the clock denominator', () =>
     Effect.gen(function* () {
       const time = yield* makeTimeService()

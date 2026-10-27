@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Effect, Layer, Schema } from 'effect'
-import { INITIAL_PLAYER_DIMENSION, makePlayerService } from '../src/application/player-service'
+import { Effect, Layer, Result, Schema } from 'effect'
+import { INITIAL_PLAYER_DIMENSION, makePlayerService, type PlayerServiceInputError } from '../src/application/player-service'
 import { PLAYER_REPLICATED_OWNER_ID, PlayerServiceSnapshotSchema } from '../src/application/replicated-state'
 import { INITIAL_PLAYER_POSE } from '../src/domain/camera-pose'
 import {
@@ -54,6 +54,27 @@ describe('the dimension is state, and it is the player’s', () => {
       const player = yield* makePlayerService()
       yield* player.setDimension('end')
       expect(yield* player.dimension).toBe('end')
+    }),
+  )
+
+  it.effect('a runtime dimension outside the kernel union fails without poisoning player state', () =>
+    Effect.gen(function* () {
+      const player = yield* makePlayerService()
+      const outcome = yield* Effect.result(
+        Reflect.apply(player.setDimension, undefined, [null]) as Effect.Effect<void, PlayerServiceInputError>,
+      )
+
+      expect(Result.isFailure(outcome)).toBe(true)
+      if (Result.isFailure(outcome)) {
+        expect(outcome.failure).toStrictEqual({
+          _tag: 'PlayerServiceInputError',
+          reason: 'invalid-dimension',
+          field: 'dimension',
+        })
+      }
+      expect(yield* player.dimension).toBe(INITIAL_PLAYER_DIMENSION)
+      const candidate = yield* player.replicatedCandidate
+      expect(Result.isSuccess(Schema.decodeUnknownResult(PlayerServiceSnapshotSchema)(candidate))).toBe(true)
     }),
   )
 })

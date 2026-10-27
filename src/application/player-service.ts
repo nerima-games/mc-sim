@@ -12,10 +12,10 @@
  * stamp is what lets a renderer running ahead of or behind the simulation
  * measure the gap instead of silently drawing a stale pose.
  */
-import { Context, Effect, Layer, Ref, Schema } from 'effect'
+import { Context, Effect, Layer, Ref, Result, Schema } from 'effect'
 import * as Camera from '../domain/camera-pose.js'
 import type { CameraPoseSnapshot, Dimension, DimensionRevision, Position, WorldRevision } from "@nerima-games/mc-kernel"
-import { ClockPort, monotonicSecs } from "@nerima-games/mc-kernel"
+import { ClockPort, DIMENSIONS, monotonicSecs } from "@nerima-games/mc-kernel"
 import {
   PLAYER_REPLICATED_OWNER_ID,
   PlayerServiceSnapshotSchema,
@@ -95,7 +95,7 @@ export type PlayerServiceApi = {
    * `test/player-service.test.ts` pins that both orders leave the same state, so
    * a caller doing them in either order is safe.
    */
-  readonly setDimension: (dimension: Dimension) => Effect.Effect<void>
+  readonly setDimension: (dimension: Dimension) => Effect.Effect<void, PlayerServiceInputError>
   /** Build the render pose using the supplied simulation clock. */
   readonly cameraPose: Effect.Effect<CameraPoseSnapshot, Camera.CameraPoseError, ClockPort>
   /**
@@ -147,8 +147,8 @@ export class PlayerService extends PlayerServiceBase {}
 
 export type PlayerServiceInputError = Readonly<{
   _tag: 'PlayerServiceInputError'
-  reason: 'invalid-look' | 'invalid-pose' | 'invalid-position'
-  field: 'pose' | 'deltaYaw' | 'deltaPitch' | 'yawRadians' | 'pitchRadians' | 'feetPosition' | 'feetPosition.x' | 'feetPosition.y' | 'feetPosition.z'
+  reason: 'invalid-look' | 'invalid-pose' | 'invalid-position' | 'invalid-dimension'
+  field: 'pose' | 'deltaYaw' | 'deltaPitch' | 'yawRadians' | 'pitchRadians' | 'feetPosition' | 'feetPosition.x' | 'feetPosition.y' | 'feetPosition.z' | 'dimension'
 }>
 
 const inputError = (
@@ -202,7 +202,14 @@ export const makePlayerService = (
         if (!Number.isFinite(deltaPitch))
           return [Effect.fail(inputError('invalid-look', 'deltaPitch')), current]
 
-        const next = Camera.applyLook(current.pose, deltaYaw, deltaPitch)
+        const result = Camera.applyLook(current.pose, deltaYaw, deltaPitch)
+        if (Result.isFailure(result)) {
+          const field = Number.isFinite(current.pose.yawRadians + deltaYaw)
+            ? 'pitchRadians'
+            : 'yawRadians'
+          return [Effect.fail(inputError('invalid-look', field)), current]
+        }
+        const next = result.success
         const nextError = invalidPoseError(next, 'invalid-look')
         return nextError === undefined
           ? [Effect.succeed(next), { ...current, pose: next }]
@@ -214,7 +221,10 @@ export const makePlayerService = (
           return [Effect.fail(inputError('invalid-position', positionField)), current]
         return [Effect.void, { ...current, pose: Camera.withFeetPosition(current.pose, feetPosition) }]
       }),
-      setDimension: (dimension) => Ref.update(state, (current) => ({ ...current, dimension })),
+      setDimension: (dimension) =>
+        DIMENSIONS.includes(dimension)
+          ? Ref.update(state, (current) => ({ ...current, dimension }))
+          : Effect.fail(inputError('invalid-dimension', 'dimension')),
       cameraPose: Effect.flatMap(monotonicSecs, (now) =>
         Effect.flatMap(Ref.get(state), (current) => Effect.fromResult(Camera.cameraPoseOf(current.pose, now))),
       ),
