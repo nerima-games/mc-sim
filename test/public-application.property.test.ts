@@ -2717,7 +2717,13 @@ it('hotbar, intent queue, and game-loop inputs stay bounded or return typed outc
 
       await Effect.runPromise(loop.start(() => Effect.void))
       try {
-        await runEffectResult(loop.advanceFrame, [amount])
+        await assertEffectResult(
+          'GameLoop.advanceFrame',
+          loop.advanceFrame,
+          [amount],
+          PublicApplication.FixedStepAdvanceSchema,
+          PublicApplication.FixedStepFailureSchema,
+        )
         await assertEffectResult(
           'GameLoop.submitFrame', loop.submitFrame, [value], Schema.Undefined, Schema.Never,
         )
