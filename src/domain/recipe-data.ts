@@ -6,13 +6,28 @@
  */
 import { Result } from 'effect'
 import {
-  shapedRecipe,
-  shapelessRecipe,
+  shapedRecipe as createShapedRecipe,
+  shapelessRecipe as createShapelessRecipe,
+  type CraftingIngredientInput,
+  type RecipeFailure,
   type RecipeTable,
-} from './recipe.js'
-import { itemStack, type ItemStackFailure } from './inventory.js'
+} from './recipe-core.js'
+import { itemStack, type ItemStack, type ItemStackFailure } from './inventory.js'
 
-export const STARTER_RECIPES: Result.Result<RecipeTable, ItemStackFailure> = Result.all([
+const shapedRecipe = (
+  id: string,
+  rows: ReadonlyArray<string>,
+  key: Readonly<Record<string, CraftingIngredientInput>>,
+  output: Result.Result<ItemStack, ItemStackFailure>,
+): Result.Result<RecipeTable[number], RecipeFailure> => createShapedRecipe(id, rows, key, output)
+
+const shapelessRecipe = (
+  id: string,
+  ingredients: ReadonlyArray<CraftingIngredientInput>,
+  output: Result.Result<ItemStack, ItemStackFailure>,
+): Result.Result<RecipeTable[number], RecipeFailure> => createShapelessRecipe(id, ingredients, output)
+
+export const STARTER_RECIPES: Result.Result<RecipeTable, RecipeFailure> = Result.all([
   shapelessRecipe('mc-sim:bone-meal', ['bone'], itemStack('bone_meal', 3)),
   shapelessRecipe('mc-sim:oak-planks', ['oak_log'], itemStack('oak_planks', 4)),
   shapedRecipe('mc-sim:stick', ['P', 'P'], { P: 'oak_planks' }, itemStack('stick', 4)),
