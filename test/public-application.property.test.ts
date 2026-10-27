@@ -2116,6 +2116,61 @@ it('fishing, projectile, and TNT coordinators return typed outcomes for hostile 
     return { outcome, before, after }
   }
 
+  const captureTntOutcome = async (
+    propertyName: string,
+    effect: Effect.Effect<unknown, unknown, never>,
+    successSchema: Schema.ConstraintDecoder<unknown>,
+    failureSchema: Schema.ConstraintDecoder<unknown>,
+  ): Promise<Result.Result<unknown, unknown>> => {
+    const outcome = await Effect.runPromise(Effect.result(effect))
+    const schema = Result.isFailure(outcome) ? failureSchema : successSchema
+    const value = Result.isFailure(outcome) ? outcome.failure : outcome.success
+    expect(Schema.is(schema)(value), propertyName + ' runtime Schema').toBe(true)
+    const decoded = Schema.decodeUnknownResult(schema, { onExcessProperty: 'error' })(value)
+    expect(decoded._tag, propertyName + ' decoding').toBe('Success')
+    return outcome
+  }
+
+  const requireTntSuccess = <A>(
+    outcome: Result.Result<unknown, unknown>,
+    schema: Schema.ConstraintDecoder<A>,
+  ): A => {
+    if (Result.isFailure(outcome)) throw outcome.failure
+    const decoded = Schema.decodeUnknownResult(schema, { onExcessProperty: 'error' })(outcome.success)
+    expect(decoded._tag, 'TNT success decoding').toBe('Success')
+    if (Result.isFailure(decoded)) throw decoded.failure
+    return decoded.success
+  }
+
+  const captureTntSnapshot = async (propertyName: string) => {
+    const outcome = await captureTntOutcome(
+      propertyName,
+      services.tnt.snapshot,
+      PublicApplication.TntServiceSnapshotSuccessSchema,
+      PublicApplication.TntServiceSnapshotErrorSchema,
+    )
+    return requireTntSuccess(outcome, PublicApplication.TntServiceSnapshotSuccessSchema)
+  }
+
+  const assertTntOperation = async (
+    propertyName: string,
+    effect: Effect.Effect<unknown, unknown, never>,
+    successSchema: Schema.ConstraintDecoder<unknown>,
+  ) => {
+    const before = await captureTntSnapshot(propertyName + ' snapshot before')
+    const outcome = await captureTntOutcome(
+      propertyName,
+      effect,
+      successSchema,
+      PublicApplication.TntServiceErrorSchema,
+    )
+    const after = await captureTntSnapshot(propertyName + ' snapshot after')
+    const ids = after.state.tnts.map((tnt) => tnt.id)
+    expect(new Set(ids).size).toBe(ids.length)
+    if (Result.isFailure(outcome)) expect(after).toEqual(before)
+    return { outcome, before, after }
+  }
+
   const projectileBounds: Physics.AABB = {
     minX: PositionAxis(-100),
     minY: PositionAxis(-100),
@@ -2193,6 +2248,133 @@ it('fishing, projectile, and TNT coordinators return typed outcomes for hostile 
         expect(stepped.after.state.projectiles).toHaveLength(stepped.before.state.projectiles.length)
         expect(stepped.after.state.projectiles.find(({ id }) => id === projectileId)?.projectile).toEqual(step.projectile)
       }
+    }),
+    checks,
+  )
+
+  const invalidTntPrimeRevision = await Effect.runPromise(services.coordinator.revision)
+  const invalidTntPrimeDimensionRevision = await Effect.runPromise(services.coordinator.dimensionRevision('overworld'))
+  const invalidTntPrime = await assertTntOperation(
+    'TntService.prime invalid fuse',
+    invokeEffect(services.tnt.prime, [{
+      id: Schema.decodeUnknownSync(EntityIdSchema)('property-tnt-invalid-prime'),
+      dimension: 'overworld',
+      center: { x: 0, y: 64, z: 0 },
+      fuseSecs: -1,
+      expectedRevision: invalidTntPrimeRevision,
+      expectedDimensionRevision: invalidTntPrimeDimensionRevision,
+    }]),
+    PublicApplication.TntPrimeOutcomeSchema,
+  )
+  expect(Result.isFailure(invalidTntPrime.outcome)).toBe(true)
+  if (Result.isFailure(invalidTntPrime.outcome)) {
+    expect(invalidTntPrime.outcome.failure).toMatchObject({ _tag: 'TntServiceFailure', reason: 'invalid-input' })
+  }
+
+  let validTntTrial = 0
+  await fc.assert(
+    fc.asyncProperty(fc.integer({ min: 1, max: 1_000_000 }), async (index) => {
+      const trialId = validTntTrial++
+      const id = Schema.decodeUnknownSync(EntityIdSchema)(`property-tnt-${index}-${trialId}`)
+      const initialRevision = await Effect.runPromise(services.coordinator.revision)
+      const initialDimensionRevision = await Effect.runPromise(services.coordinator.dimensionRevision('overworld'))
+      const primed = await assertTntOperation(
+        'TntService.prime valid input',
+        invokeEffect(services.tnt.prime, [{
+          id,
+          dimension: 'overworld',
+          center: { x: 0, y: 64, z: 0 },
+          fuseSecs: 2.5,
+          expectedRevision: initialRevision,
+          expectedDimensionRevision: initialDimensionRevision,
+        }]),
+        PublicApplication.TntPrimeOutcomeSchema,
+      )
+      expect(Result.isSuccess(primed.outcome), JSON.stringify(primed.outcome)).toBe(true)
+      if (Result.isFailure(primed.outcome)) return
+      const primeOutcome = requireTntSuccess(primed.outcome, PublicApplication.TntPrimeOutcomeSchema)
+      expect(primeOutcome.revision).toEqual(primed.after.revision)
+      expect(primed.after.state.tnts).toContainEqual({
+        id,
+        dimension: 'overworld',
+        center: { x: 0, y: 64, z: 0 },
+        state: { kind: 'primed', remainingFuseSecs: 2.5 },
+      })
+      expect(primed.after.revision).not.toEqual(primed.before.revision)
+
+      const invalidAdvanceRevision = await Effect.runPromise(services.coordinator.revision)
+      const invalidAdvanceDimensionRevision = await Effect.runPromise(services.coordinator.dimensionRevision('overworld'))
+      const invalidAdvance = await assertTntOperation(
+        'TntService.advance invalid delta',
+        invokeEffect(services.tnt.advance, [{
+          id,
+          deltaTimeSecs: -1,
+          expectedRevision: invalidAdvanceRevision,
+          expectedDimensionRevision: invalidAdvanceDimensionRevision,
+          radius: 1,
+          seed: 17,
+          blocks: () => undefined,
+          entities: [],
+        }]),
+        PublicApplication.TntAdvanceOutcomeSchema,
+      )
+      expect(Result.isFailure(invalidAdvance.outcome)).toBe(true)
+      if (Result.isFailure(invalidAdvance.outcome)) {
+        expect(invalidAdvance.outcome.failure).toMatchObject({ _tag: 'TntServiceFailure', reason: 'invalid-input' })
+      }
+
+      const fuseRevision = await Effect.runPromise(services.coordinator.revision)
+      const fuseDimensionRevision = await Effect.runPromise(services.coordinator.dimensionRevision('overworld'))
+      const fuseAdvanced = await assertTntOperation(
+        'TntService.advance valid fuse step',
+        invokeEffect(services.tnt.advance, [{
+          id,
+          deltaTimeSecs: 1,
+          expectedRevision: fuseRevision,
+          expectedDimensionRevision: fuseDimensionRevision,
+          radius: 1,
+          seed: 17,
+          blocks: () => undefined,
+          entities: [],
+        }]),
+        PublicApplication.TntAdvanceOutcomeSchema,
+      )
+      expect(Result.isSuccess(fuseAdvanced.outcome), JSON.stringify(fuseAdvanced.outcome)).toBe(true)
+      if (Result.isFailure(fuseAdvanced.outcome)) return
+      const fuseOutcome = requireTntSuccess(fuseAdvanced.outcome, PublicApplication.TntAdvanceOutcomeSchema)
+      expect(fuseOutcome._tag).toBe('FuseAdvanced')
+      if (fuseOutcome._tag !== 'FuseAdvanced') return
+      expect(fuseOutcome.plan.after).toEqual({ kind: 'primed', remainingFuseSecs: 1.5 })
+      expect(fuseOutcome.revision).toEqual(fuseAdvanced.after.revision)
+      expect(fuseAdvanced.after.state.tnts.find((tnt) => tnt.id === id)?.state).toEqual(fuseOutcome.plan.after)
+
+      const detonationRevision = await Effect.runPromise(services.coordinator.revision)
+      const detonationDimensionRevision = await Effect.runPromise(services.coordinator.dimensionRevision('overworld'))
+      const detonation = await assertTntOperation(
+        'TntService.advance detonation candidate',
+        invokeEffect(services.tnt.advance, [{
+          id,
+          deltaTimeSecs: 1.5,
+          expectedRevision: detonationRevision,
+          expectedDimensionRevision: detonationDimensionRevision,
+          radius: 1,
+          seed: 23,
+          blocks: () => undefined,
+          entities: [],
+        }]),
+        PublicApplication.TntAdvanceOutcomeSchema,
+      )
+      expect(Result.isSuccess(detonation.outcome), JSON.stringify(detonation.outcome)).toBe(true)
+      if (Result.isFailure(detonation.outcome)) return
+      const detonationOutcome = requireTntSuccess(detonation.outcome, PublicApplication.TntAdvanceOutcomeSchema)
+      expect(detonationOutcome._tag).toBe('DetonationPlanned')
+      if (detonationOutcome._tag !== 'DetonationPlanned') return
+      expect(detonationOutcome.plan.after).toEqual({ kind: 'detonated' })
+      expect(detonationOutcome.ownerCandidate.state.tnts.find((tnt) => tnt.id === id)?.state)
+        .toEqual({ kind: 'detonated' })
+      expect(detonation.after).toEqual(detonation.before)
+      expect(detonation.after.state.tnts.find((tnt) => tnt.id === id)?.state)
+        .toEqual({ kind: 'primed', remainingFuseSecs: 1.5 })
     }),
     checks,
   )
@@ -2281,24 +2463,52 @@ it('fishing, projectile, and TNT coordinators return typed outcomes for hostile 
           .toEqual(step.projectile)
       }
 
-      await runEffectResult(services.tnt.prime, [{
-        id: value,
-        dimension: value,
-        center: { x: amount, y: value, z: amount },
-        fuseSecs: amount,
-        expectedRevision: amount,
-        expectedDimensionRevision: amount,
-      }])
-      await runEffectResult(services.tnt.advance, [{
-        id: value,
-        deltaTimeSecs: amount,
-        expectedRevision: amount,
-        expectedDimensionRevision: amount,
-        radius: amount,
-        seed: amount,
-        blocks: {},
-        entities: [],
-      }])
+      const tntPrime = await assertTntOperation(
+        'TntService.prime hostile input',
+        invokeEffect(services.tnt.prime, [{
+          id: value,
+          dimension: value,
+          center: { x: amount, y: value, z: amount },
+          fuseSecs: amount,
+          expectedRevision: amount,
+          expectedDimensionRevision: amount,
+        }]),
+        PublicApplication.TntPrimeOutcomeSchema,
+      )
+      if (Result.isSuccess(tntPrime.outcome)) {
+        const primeOutcome = requireTntSuccess(tntPrime.outcome, PublicApplication.TntPrimeOutcomeSchema)
+        expect(tntPrime.after.state.tnts).toHaveLength(tntPrime.before.state.tnts.length + 1)
+        expect(tntPrime.after.state.tnts.some((tnt) => tnt.id === value)).toBe(true)
+        expect(tntPrime.after.revision).toEqual(primeOutcome.revision)
+      }
+      const tntAdvance = await assertTntOperation(
+        'TntService.advance hostile input',
+        invokeEffect(services.tnt.advance, [{
+          id: value,
+          deltaTimeSecs: amount,
+          expectedRevision: amount,
+          expectedDimensionRevision: amount,
+          radius: amount,
+          seed: amount,
+          blocks: () => undefined,
+          entities: [],
+        }]),
+        PublicApplication.TntAdvanceOutcomeSchema,
+      )
+      if (Result.isSuccess(tntAdvance.outcome)) {
+        const advanceOutcome = requireTntSuccess(tntAdvance.outcome, PublicApplication.TntAdvanceOutcomeSchema)
+        if (advanceOutcome._tag === 'FuseAdvanced') {
+          expect(tntAdvance.after.revision).toEqual(advanceOutcome.revision)
+          expect(tntAdvance.after.state.tnts.find((tnt) => tnt.id === value)?.state)
+            .toEqual(advanceOutcome.plan.after)
+        } else if (advanceOutcome._tag === 'AlreadyDetonated') {
+          expect(tntAdvance.after).toEqual(tntAdvance.before)
+        } else {
+          expect(tntAdvance.after).toEqual(tntAdvance.before)
+          expect(advanceOutcome.ownerCandidate.state.tnts.find((tnt) => tnt.id === value)?.state)
+            .toEqual({ kind: 'detonated' })
+        }
+      }
     }),
     checks,
   )
