@@ -32,7 +32,7 @@
  * risk taken on speculation. `DamageOutcome.died` is the same information handed
  * to the caller that caused it, in the same frame.
  */
-import { Context, Effect, Layer, Ref } from 'effect'
+import { Context, Effect, Layer, Ref, Schema } from 'effect'
 import type { DeltaTimeSecs, FoodNutrition } from '@nerima-games/mc-kernel'
 import * as Vitals from '../domain/vitals.js'
 
@@ -50,6 +50,13 @@ export type DamageOutcome = {
   readonly vitals: Vitals.Vitals
   readonly died: boolean
 }
+
+export const DamageOutcomeSchema: Schema.Schema<DamageOutcome> = Schema.Struct({
+  vitals: Vitals.VitalsSchema,
+  died: Schema.Boolean,
+})
+export const VitalsServiceNoErrorSchema: Schema.Schema<never> = Schema.Never
+export const VitalsServiceVoidSchema: Schema.Schema<void> = Schema.Undefined
 
 export type VitalsServiceApi = {
   /** Whole state, for persistence. */
@@ -129,18 +136,19 @@ export const makeVitalsService = (
         const next = Vitals.heal(current, amount)
         return [next, next]
       }),
-    addExhaustion: (amount) => Ref.update(state, (current) => Vitals.addExhaustion(current, amount)),
+    addExhaustion: (amount) =>
+      Ref.update(state, (current) => Vitals.addExhaustion(current, amount)).pipe(Effect.asVoid),
     eat: (foodPoints, saturationModifier) =>
-      Ref.update(state, (current) => Vitals.eat(current, foodPoints, saturationModifier)),
+      Ref.update(state, (current) => Vitals.eat(current, foodPoints, saturationModifier)).pipe(Effect.asVoid),
     advanceFoodTimer: (dt) => Ref.modify(state, (current) => Vitals.advanceFoodTimer(current, dt)),
     addExperience: (amount) =>
       Ref.modify(state, (current) => {
         const next = Vitals.addExperience(current, amount)
         return [next, next]
       }),
-    respawn: Ref.update(state, Vitals.respawn),
-    restore: (next) => Ref.set(state, Vitals.normaliseVitals(next)),
-    reset: Ref.set(state, Vitals.SPAWN_VITALS),
+    respawn: Ref.update(state, Vitals.respawn).pipe(Effect.asVoid),
+    restore: (next) => Ref.set(state, Vitals.normaliseVitals(next)).pipe(Effect.asVoid),
+    reset: Ref.set(state, Vitals.SPAWN_VITALS).pipe(Effect.asVoid),
   }))
 
 export const VitalsServiceLayer = (

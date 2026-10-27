@@ -4,6 +4,7 @@ import {
   FoodSaturation,
   type DeltaTimeSecs,
 } from '@nerima-games/mc-kernel'
+import { Schema } from 'effect'
 import {
   EXHAUSTION_PER_POINT,
   EXHAUSTION_PER_REGEN,
@@ -22,6 +23,7 @@ import { isValidVitals, normaliseVitals } from './vitals-validation.js'
 import { clamp, delta } from './vitals-number.js'
 
 export type FoodTickSignal = 'none' | 'regen' | 'starve'
+export const FoodTickSignalSchema: Schema.Schema<FoodTickSignal> = Schema.Literals(['none', 'regen', 'starve'])
 
 const safeVitals = (vitals: Vitals): Vitals => {
   if (

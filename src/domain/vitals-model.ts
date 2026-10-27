@@ -1,6 +1,6 @@
 /** Core immutable state and configuration for the vitals simulation. */
 
-import { Brand } from 'effect'
+import { Brand, Schema } from 'effect'
 import {
   EntityHealthPoints,
   FoodSaturation,
@@ -105,6 +105,66 @@ export const SaturationModifier: Brand.Constructor<SaturationModifier> = Brand.m
     ? true
     : `SaturationModifier must be finite and non-negative, received ${String(value)}`,
 )
+
+const EntityHealthPointsSchema: Schema.Codec<EntityHealthPoints, number> = Schema.Finite.pipe(
+  Schema.fromBrand('EntityHealthPoints', EntityHealthPoints),
+)
+const FoodSaturationSchema: Schema.Codec<FoodSaturation, number> = Schema.Finite.pipe(
+  Schema.fromBrand('FoodSaturation', FoodSaturation),
+)
+const DamageCauseSchema: Schema.Codec<DamageCause, string> = Schema.String.pipe(
+  Schema.fromBrand('SimDamageCause', DamageCause),
+)
+const HungerPointsSchema: Schema.Codec<HungerPoints, number> = Schema.Finite.pipe(
+  Schema.fromBrand('HungerPoints', HungerPoints),
+)
+const ExhaustionAmountSchema: Schema.Codec<ExhaustionAmount, number> = Schema.Finite.pipe(
+  Schema.fromBrand('ExhaustionAmount', ExhaustionAmount),
+)
+const FoodTimerSecsSchema: Schema.Codec<FoodTimerSecs, number> = Schema.Finite.pipe(
+  Schema.fromBrand('FoodTimerSecs', FoodTimerSecs),
+)
+const TotalExperienceSchema: Schema.Codec<TotalExperience, number> = Schema.Finite.pipe(
+  Schema.fromBrand('TotalExperience', TotalExperience),
+)
+const ExperienceLevelSchema: Schema.Codec<ExperienceLevel, number> = Schema.Number.pipe(
+  Schema.fromBrand('ExperienceLevel', ExperienceLevel),
+)
+const ExperienceProgressSchema: Schema.Codec<ExperienceProgress, number> = Schema.Finite.pipe(
+  Schema.fromBrand('ExperienceProgress', ExperienceProgress),
+)
+
+const VitalsFieldsSchema = Schema.Struct({
+  healthPoints: EntityHealthPointsSchema,
+  maxHealthPoints: EntityHealthPointsSchema,
+  hungerPoints: HungerPointsSchema,
+  maxHungerPoints: HungerPointsSchema,
+  saturation: FoodSaturationSchema,
+  exhaustion: ExhaustionAmountSchema,
+  foodTimerSecs: FoodTimerSecsSchema,
+  totalExperience: TotalExperienceSchema,
+  lastDamageCause: Schema.Union([DamageCauseSchema, Schema.Undefined]),
+})
+
+export const VitalsSchema: Schema.Schema<Vitals> = VitalsFieldsSchema.check(
+  Schema.makeFilter((vitals) =>
+    vitals.maxHealthPoints > 0 &&
+    vitals.healthPoints <= vitals.maxHealthPoints &&
+    vitals.hungerPoints <= vitals.maxHungerPoints &&
+    vitals.saturation <= vitals.hungerPoints &&
+    vitals.exhaustion < EXHAUSTION_PER_POINT &&
+    vitals.foodTimerSecs < FOOD_TICK_SECS,
+  ),
+)
+
+export const VitalsViewSchema: Schema.Schema<VitalsView> = Schema.Struct({
+  healthPoints: EntityHealthPointsSchema,
+  maxHealthPoints: EntityHealthPointsSchema,
+  hungerPoints: HungerPointsSchema,
+  maxHungerPoints: HungerPointsSchema,
+  experienceLevel: ExperienceLevelSchema,
+  experienceProgress: ExperienceProgressSchema,
+})
 
 export type Damage = {
   readonly amount: DamageAmount
