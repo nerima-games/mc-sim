@@ -178,6 +178,10 @@ describe('planExplosion', () => {
     const center = JSON.parse('{"x":0.5,"y":0.5,"z":0.5}')
     center.x = Number.NaN
     expect(Result.isFailure(planExplosionResult({ ...request, center }))).toBe(true)
+    expect(planExplosionResult({ ...request, center: null as never })).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'ExplosionValidationFailure', path: 'center', reason: 'expected a position' },
+    })
     expect(Result.isFailure(planExplosionResult({ ...request, radius: -1 }))).toBe(true)
     expect(Result.isFailure(planExplosionResult({ ...request, radius: Number.POSITIVE_INFINITY }))).toBe(true)
     expect(Result.isFailure(planExplosionResult({ ...request, radius: 65 }))).toBe(true)
@@ -361,6 +365,31 @@ describe('planExplosion', () => {
     })
     expect(limitsReads).toBe(2)
     expect(blockReads).toBe(0)
+  })
+
+  it('returns a block-reader failure from entity exposure after block planning skips reads', () => {
+    let blockReads = 0
+    const result = planExplosionResult({
+      center: position(0.5, 0.5, 0.5),
+      radius: 2,
+      seed: 1,
+      blocks: () => {
+        blockReads += 1
+        return null as never
+      },
+      entities: [entity('exposure-target', 0.5, 0, 0.5)],
+      limits: { maxVisitedBlocks: 0 },
+    })
+
+    expect(result).toMatchObject({
+      _tag: 'Failure',
+      failure: {
+        _tag: 'ExplosionValidationFailure',
+        path: 'blocks[0,0,0]',
+        reason: 'expected a block snapshot',
+      },
+    })
+    expect(blockReads).toBe(3)
   })
 
   it('never crosses an unloaded cell when a large explosion shares radial traces', () => {
