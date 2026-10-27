@@ -85,6 +85,29 @@ describe('performAutoSaveTick', () => {
 })
 
 describe('REGRESSION: Schedule.spaced, not Schedule.fixed', () => {
+  it.effect('converts a throwing Duration value getter into a typed interval failure', () =>
+    Effect.gen(function* () {
+      let valueReads = 0
+      const interval = new Proxy(Duration.millis(100), {
+        get(target, property, receiver) {
+          if (property === 'value') {
+            valueReads += 1
+            throw new Error('hostile Duration value getter')
+          }
+          return Reflect.get(target, property, receiver)
+        },
+      })
+
+      const result = yield* Effect.result(autoSaveSchedule(interval))
+
+      expect(valueReads).toBeGreaterThan(0)
+      expect(result).toMatchObject({
+        _tag: 'Failure',
+        failure: { _tag: 'InvalidAutoSaveInterval' },
+      })
+    }),
+  )
+
   it.effect('the interval is measured from the END of the previous run', () =>
     Effect.gen(function* () {
       // The observable difference: with a 100 ms interval and a tick that takes
