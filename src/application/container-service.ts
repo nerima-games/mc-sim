@@ -3,6 +3,7 @@ import { ITEM_TYPES, type BlockAddress, type Dimension, type WorldRevision } fro
 import * as Container from '../domain/container-storage.js'
 import * as PlayerStorage from '../domain/player-storage.js'
 import * as Inv from '../domain/inventory.js'
+import * as Eq from '../domain/equipment.js'
 import { SchemaErrorSchema } from '../schema-errors.js'
 import { ContainerStoredStackSchema } from './inventory-service.js'
 import {
@@ -20,22 +21,6 @@ import {
 
 export const CONTAINER_STORAGE_REPLICATED_OWNER_ID: ReplicatedOwnerId = makeReplicatedOwnerId('container-storage')
 
-export const ContainerStorageSnapshotSchema: Schema.Codec<
-  Container.ContainerStorageSnapshot,
-  Container.ContainerStorageSnapshot
-> = Schema.declare<Container.ContainerStorageSnapshot>(
-  (value: unknown): value is Container.ContainerStorageSnapshot =>
-  Container.validateContainerStorageSnapshot(value)._tag === 'Valid',
-)
-
-export const PlayerStorageSnapshotSchema: Schema.Codec<
-  PlayerStorage.PlayerStorage,
-  PlayerStorage.PlayerStorage
-> = Schema.declare<PlayerStorage.PlayerStorage>(
-  (value: unknown): value is PlayerStorage.PlayerStorage =>
-  PlayerStorage.validatePlayerStorageSnapshot(value)._tag === 'Valid',
-)
-
 const ContainerKindSchema = Schema.Literals([
   'chest',
   'shulker_box',
@@ -46,12 +31,59 @@ const ContainerKindSchema = Schema.Literals([
 
 type AnySchema = Schema.Schema<unknown>
 
-const ContainerSchema: AnySchema = Schema.declare<Container.Container>((value): value is Container.Container =>
-  Container.validateContainerStorageSnapshot({
-    version: Container.CONTAINER_STORAGE_SNAPSHOT_VERSION,
-    containers: [value],
-  })._tag === 'Valid',
+const ContainerIdSchema = Schema.String.check(
+  Schema.makeFilter((id) => id.length > 0 && id.trim() === id),
 )
+
+const ContainerStoredStackValueSchema = ContainerStoredStackSchema as unknown as Schema.Codec<
+  Container.ContainerStoredStack,
+  unknown
+>
+const ContainerSlotSchema = Schema.NullOr(ContainerStoredStackValueSchema)
+
+const ContainerSchema: Schema.Codec<Container.Container, unknown> = Schema.Struct({
+  id: ContainerIdSchema,
+  kind: ContainerKindSchema,
+  slots: Schema.Array(ContainerSlotSchema),
+}).check(Schema.makeFilter(({ kind, slots }) => slots.length === Container.containerCapacity(kind)))
+
+export const ContainerStorageSnapshotSchema: Schema.Codec<Container.ContainerStorageSnapshot, unknown> = Schema.Struct({
+  version: Schema.Literal(Container.CONTAINER_STORAGE_SNAPSHOT_VERSION),
+  containers: Schema.Array(ContainerSchema),
+}).check(Schema.makeFilter(({ containers }) => {
+  const ids = new Set(containers.map((container) => container.id))
+  return ids.size === containers.length
+}))
+
+const ItemStackValueSchema = Inv.ItemStackSchema as unknown as Schema.Codec<Inv.ItemStack, unknown>
+const InventorySlotSchema: Schema.Codec<Inv.Slot, unknown> = Schema.Union([
+  ItemStackValueSchema,
+  Schema.Undefined,
+])
+
+const PlayerInventorySchema: Schema.Codec<Inv.Inventory, unknown> = Schema.Struct({
+  slots: Schema.Array(InventorySlotSchema),
+}).check(Schema.makeFilter(({ slots }) => slots.length === Inv.INVENTORY_SLOT_COUNT))
+
+const DurabilityValueSchema = Eq.DurabilitySchema as unknown as Schema.Codec<Eq.Durability, unknown>
+const InventoryDurabilitySchema: Schema.Codec<PlayerStorage.PlayerStorage['inventoryDurability'], unknown> =
+  Schema.Array(Schema.NullOr(DurabilityValueSchema))
+    .check(Schema.makeFilter((values) => values.length === Inv.INVENTORY_SLOT_COUNT))
+
+const EquipmentValueSchema = Eq.EquipmentSchema as unknown as Schema.Codec<Eq.Equipment, unknown>
+
+export const PlayerStorageSnapshotSchema: Schema.Codec<PlayerStorage.PlayerStorage, unknown> = Schema.Struct({
+  inventory: PlayerInventorySchema,
+  equipment: EquipmentValueSchema,
+  inventoryDurability: InventoryDurabilitySchema,
+}).check(Schema.makeFilter(({ inventory, inventoryDurability }) =>
+  inventory.slots.every((slot, index) => {
+    const durability = inventoryDurability[index]
+    if (slot === undefined) return durability === null
+    return Eq.isDamageableItemType(slot.item)
+      ? Eq.isValidDurabilityForItem(slot.item, durability)
+      : durability === null
+  })))
 
 const SafeIntegerSchema = Schema.Int.check(Schema.makeFilter(Number.isSafeInteger))
 const PositiveSafeIntegerSchema = Schema.Int.check(Schema.makeFilter((value) => Number.isSafeInteger(value) && value > 0))
