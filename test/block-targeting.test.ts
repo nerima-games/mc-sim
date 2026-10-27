@@ -57,6 +57,20 @@ describe('targetBlockFromCamera', () => {
     if (Result.isFailure(target)) expect(target.failure).toHaveProperty('_tag', 'BrandError')
     expect(raycastCalled).toBe(false)
   })
+
+  it('returns typed input failures for malformed aims and callbacks', () => {
+    const malformedAim = targetBlockFromCamera(null as never, 5, () => true)
+    const malformedCallback = targetBlockFromCamera(cameraAt(0.5, 0, 2.5), 5, null as never)
+
+    expect(malformedAim).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'BlockTargetInputError', field: 'aim' },
+    })
+    expect(malformedCallback).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'BlockTargetInputError', field: 'isTargetable' },
+    })
+  })
 })
 
 describe('targetBlockFromPlayerPose', () => {
@@ -85,5 +99,26 @@ describe('targetBlockFromPlayerPose', () => {
 
     expect(Result.isFailure(target)).toBe(true)
     if (Result.isFailure(target)) expect(target.failure).toHaveProperty('_tag', 'BrandError')
+  })
+
+  it('returns a typed input failure for a non-record player pose', () => {
+    expect(targetBlockFromPlayerPose(null as never, 5, () => true)).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'BlockTargetInputError', field: 'playerPose' },
+    })
+  })
+
+  it('returns typed input failures for a malformed feet position and callback', () => {
+    expect(targetBlockFromPlayerPose({
+      ...INITIAL_PLAYER_POSE,
+      feetPosition: null,
+    } as never, 5, () => true)).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'BlockTargetInputError', field: 'playerPose.feetPosition' },
+    })
+    expect(targetBlockFromPlayerPose(INITIAL_PLAYER_POSE, 5, null as never)).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'BlockTargetInputError', field: 'isTargetable' },
+    })
   })
 })
