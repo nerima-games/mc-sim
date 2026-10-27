@@ -10,10 +10,13 @@ import {
 import {
   ChunkAxis,
   DIMENSIONS,
+  EntityIdSchema,
   DimensionRevisionSchema,
+  ProjectileIdSchema,
   SaveSliceIdSchema,
   SaveVersionSchema,
   SimulationTick,
+  SimulationTickSchema,
   WorldIdSchema,
   chunkCoord,
 } from '@nerima-games/mc-kernel'
@@ -46,6 +49,7 @@ import {
 import { makePlayerService } from '../src/application/player-service.js'
 import { makeSettingsService } from '../src/application/settings-service.js'
 import { makeWeatherService } from '../src/application/weather-service.js'
+import type { FishingState } from '../src/domain/fishing.js'
 import { makeSimFrameState, makeSimInputPort, makeSimStagesWithPhysics } from '../src/stages/registration.js'
 import {
   assertEffectOutcome,
@@ -1930,18 +1934,151 @@ it('fishing, projectile, and TNT coordinators return typed outcomes for hostile 
   )
   const services = await Effect.runPromise(
     Effect.gen(function* () {
-      const fishing = yield* PublicApplication.makeFishingService(fishOwner)
+      const fishing = yield* Effect.result(PublicApplication.makeFishingService(fishOwner))
       const projectiles = yield* PublicApplication.makeProjectileService()
       const tnt = yield* PublicApplication.makeTntService()
       return { fishing, projectiles, tnt }
     }).pipe(Effect.provide(environment)),
   )
+  if (Result.isFailure(services.fishing)) {
+    const decoded = Schema.decodeUnknownResult(
+      PublicApplication.FishingServiceErrorSchema,
+      { onExcessProperty: 'error' },
+    )(services.fishing.failure)
+    expect(decoded._tag, 'FishingService construction error Schema').toBe('Success')
+    throw services.fishing.failure
+  }
+  const fishing = services.fishing.success
+
+  const captureFishingOutcome = async (
+    propertyName: string,
+    effect: Effect.Effect<unknown, unknown, never>,
+    successSchema: Schema.ConstraintDecoder<unknown>,
+  ): Promise<Result.Result<unknown, unknown>> => {
+    const outcome = await Effect.runPromise(Effect.result(effect))
+    const conforms = Result.isFailure(outcome)
+      ? Schema.is(PublicApplication.FishingServiceErrorSchema)(outcome.failure)
+      : Schema.is(successSchema)(outcome.success)
+    expect(conforms, propertyName + ' runtime Schema').toBe(true)
+    const decoded = Result.isFailure(outcome)
+      ? Schema.decodeUnknownResult(PublicApplication.FishingServiceErrorSchema, { onExcessProperty: 'error' })(outcome.failure)
+      : Schema.decodeUnknownResult(successSchema, { onExcessProperty: 'error' })(outcome.success)
+    expect(decoded._tag, propertyName).toBe('Success')
+    return outcome
+  }
+
+  const requireFishingSuccess = <A>(
+    outcome: Result.Result<unknown, unknown>,
+    schema: Schema.ConstraintDecoder<A>,
+  ): A => {
+    if (Result.isFailure(outcome)) throw outcome.failure
+    const decoded = Schema.decodeUnknownResult(schema, { onExcessProperty: 'error' })(outcome.success)
+    expect(decoded._tag, 'Fishing success decoding').toBe('Success')
+    if (Result.isFailure(decoded)) throw decoded.failure
+    return decoded.success
+  }
+
+  const captureFishingState = async (propertyName: string): Promise<FishingState> => {
+    const snapshot = await captureFishingOutcome(
+      propertyName,
+      fishing.snapshot,
+      PublicApplication.FishingServiceSnapshotSuccessSchema,
+    )
+    return requireFishingSuccess(snapshot, PublicApplication.FishingStateSchema)
+  }
+
+  const assertFishingStateInvariants = (state: FishingState): void => {
+    const actors = state.rods.map((rod) => rod.actor)
+    expect(new Set(actors).size).toBe(actors.length)
+  }
+
+  const assertFishingOperation = async (
+    propertyName: string,
+    effect: Effect.Effect<unknown, unknown, never>,
+    successSchema: Schema.ConstraintDecoder<unknown>,
+  ): Promise<Readonly<{
+    outcome: Result.Result<unknown, unknown>
+    before: FishingState
+    after: FishingState
+  }>> => {
+    const before = await captureFishingState(propertyName + ' snapshot before')
+    const outcome = await captureFishingOutcome(propertyName, effect, successSchema)
+    const after = await captureFishingState(propertyName + ' snapshot after')
+    if (Result.isFailure(outcome)) expect(after).toEqual(before)
+    else assertFishingStateInvariants(after)
+    return { outcome, before, after }
+  }
+
+  expect(await captureFishingState('FishingService.snapshot initial')).toEqual({ rods: [] })
+
+  await fc.assert(
+    fc.asyncProperty(fc.integer({ min: 1, max: 1_000_000 }), async (index) => {
+      const actor = Schema.decodeUnknownSync(EntityIdSchema)(`property-angler-${index}`)
+      const bobber = Schema.decodeUnknownSync(ProjectileIdSchema)(`property-bobber-${index}`)
+      const tick = Schema.decodeUnknownSync(SimulationTickSchema)(index)
+
+      const cast = await assertFishingOperation(
+        'FishingService.cast valid input',
+        invokeEffect(fishing.cast, [actor, bobber]),
+        PublicApplication.FishingServiceCastSuccessSchema,
+      )
+      expect(Result.isSuccess(cast.outcome)).toBe(true)
+      if (Result.isSuccess(cast.outcome)) {
+        expect(cast.after.rods).toContainEqual({ actor, bobber, phase: 'cast' })
+      }
+
+      const bite = await assertFishingOperation(
+        'FishingService.bite valid input',
+        invokeEffect(fishing.bite, [actor]),
+        PublicApplication.FishingServiceBiteSuccessSchema,
+      )
+      expect(Result.isSuccess(bite.outcome)).toBe(true)
+      if (Result.isSuccess(bite.outcome)) {
+        expect(bite.after.rods.find((rod) => rod.actor === actor)?.phase).toBe('bite')
+      }
+
+      const reel = await assertFishingOperation(
+        'FishingService.reel valid input',
+        invokeEffect(fishing.reel, [actor, tick]),
+        PublicApplication.FishingServiceReelSuccessSchema,
+      )
+      expect(Result.isSuccess(reel.outcome)).toBe(true)
+      if (Result.isSuccess(reel.outcome)) {
+        expect(reel.outcome.success).toMatchObject({ _tag: 'Caught' })
+        expect(reel.after).toEqual({ rods: [] })
+      }
+    }),
+    checks,
+  )
 
   await fc.assert(
     fc.asyncProperty(fc.tuple(hostileValue, hostileNumber), async ([value, amount]) => {
-      await runEffectResult(services.fishing.cast, [value, value])
-      await runEffectResult(services.fishing.bite, [value])
-      await runEffectResult(services.fishing.reel, [value, amount])
+      const cast = await assertFishingOperation(
+        'FishingService.cast',
+        invokeEffect(fishing.cast, [value, value]),
+        PublicApplication.FishingServiceCastSuccessSchema,
+      )
+      if (Result.isSuccess(cast.outcome)) {
+        expect(cast.after.rods.length).toBe(cast.before.rods.length + 1)
+        expect(cast.after.rods).toContainEqual({ actor: value, bobber: value, phase: 'cast' })
+      }
+      const bite = await assertFishingOperation(
+        'FishingService.bite',
+        invokeEffect(fishing.bite, [value]),
+        PublicApplication.FishingServiceBiteSuccessSchema,
+      )
+      if (Result.isSuccess(bite.outcome)) {
+        expect(bite.after.rods.find((rod) => rod.actor === value)?.phase).toBe('bite')
+      }
+      const reel = await assertFishingOperation(
+        'FishingService.reel',
+        invokeEffect(fishing.reel, [value, amount]),
+        PublicApplication.FishingServiceReelSuccessSchema,
+      )
+      if (Result.isSuccess(reel.outcome)) {
+        expect(reel.after.rods.some((rod) => rod.actor === value)).toBe(false)
+        expect(reel.outcome.success).toMatchObject({ _tag: expect.stringMatching(/^(NoBite|Caught)$/) })
+      }
 
       const launch = {
         projectileId: value,

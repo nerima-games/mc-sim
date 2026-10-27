@@ -69,6 +69,15 @@ export class FishingInvalidLootRoll extends FishingInvalidLootRollBase {}
 
 export type FishingFailure = FishingInvalidState | FishingInvalidLootRoll
 
+export const FishingInvalidStateSchema: Schema.Codec<FishingInvalidState, unknown> =
+  Schema.instanceOf(FishingInvalidState)
+export const FishingInvalidLootRollSchema: Schema.Codec<FishingInvalidLootRoll, unknown> =
+  Schema.instanceOf(FishingInvalidLootRoll)
+export const FishingFailureSchema: Schema.Codec<FishingFailure, unknown> = Schema.Union([
+  FishingInvalidStateSchema,
+  FishingInvalidLootRollSchema,
+])
+
 export type FishingReelPlan = Readonly<{
   state: FishingState
   outcome: Readonly<{ _tag: 'NoBite' }> | Readonly<{ _tag: 'Caught'; bobber: ProjectileId }>

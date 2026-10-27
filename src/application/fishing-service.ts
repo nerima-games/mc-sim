@@ -1,4 +1,5 @@
 import {
+  ITEM_TYPES,
   EntityIdSchema,
   ProjectileIdSchema,
   SimulationTickSchema,
@@ -17,12 +18,14 @@ import {
 } from './domain-event-bus.js'
 import {
   WorldCommitCoordinator,
+  WorldCommitCoordinatorErrorSchema,
   type WorldCommitCoordinatorApi,
   type WorldCommitCoordinatorError,
   type ReplicatedOwnerRegistration,
 } from './world-commit-coordinator.js'
 import {
   FishingStateSchema,
+  FishingFailureSchema,
   castFishingRod,
   emptyFishingState,
   fishingLootForSample,
@@ -31,6 +34,8 @@ import {
   type FishingFailure,
   type FishingState,
 } from '../domain/fishing.js'
+import { BrandErrorSchema } from '../domain/inventory.js'
+import { SchemaErrorSchema } from '../schema-errors.js'
 
 export type FishingReelOutcome =
   | Readonly<{ _tag: 'NoBite' }>
@@ -40,6 +45,23 @@ export type FishingServiceError = FishingFailure
   | Schema.SchemaError
   | Brand.BrandError
   | WorldCommitCoordinatorError
+
+export const FishingServiceErrorSchema: Schema.Codec<FishingServiceError, unknown> = Schema.Union([
+  FishingFailureSchema,
+  SchemaErrorSchema,
+  BrandErrorSchema,
+  WorldCommitCoordinatorErrorSchema,
+])
+
+export const FishingServiceSnapshotSuccessSchema: Schema.Codec<FishingState, unknown> = FishingStateSchema
+export const FishingServiceCastSuccessSchema: Schema.Codec<void, undefined> = Schema.Undefined
+export const FishingServiceBiteSuccessSchema: Schema.Codec<void, undefined> = Schema.Undefined
+export const FishingServiceReelSuccessSchema: Schema.Codec<FishingReelOutcome, unknown> = Schema.Union([
+  Schema.TaggedStruct('NoBite', {}),
+  Schema.TaggedStruct('Caught', {
+    item: Schema.Literals(ITEM_TYPES),
+  }),
+])
 
 export type FishingServiceApi = Readonly<{
   snapshot: Effect.Effect<FishingState, FishingServiceError>

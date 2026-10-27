@@ -110,7 +110,7 @@ export type WorldCommitCoordinatorError =
   | ReplicatedOwnerUnknown
   | ReplicatedOwnerDuplicate
 
-export const WorldCommitCoordinatorErrorSchema: Schema.Schema<WorldCommitCoordinatorError> = Schema.Union([
+export const WorldCommitCoordinatorErrorSchema: Schema.Codec<WorldCommitCoordinatorError, unknown> = Schema.Union([
   Schema.Struct({
     _tag: Schema.Literal('WorldCommitCoordinatorInvalidOptions'),
     value: Schema.Unknown,
