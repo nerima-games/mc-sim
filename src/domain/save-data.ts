@@ -1,6 +1,7 @@
 import {
   DIMENSIONS,
   isItemStack,
+  itemStackEqualsIgnoringCount,
   itemStackFromUnknown,
   type Dimension,
   type ItemStack,
@@ -24,12 +25,14 @@ const valueWithNull = (value: unknown): unknown => {
   if (typeof value !== 'object' || value === null) return value
   return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, entry === undefined ? null : valueWithNull(entry)]))
 }
-const wireItemStack = Schema.Struct({
+type WireItemStack = Readonly<{ item: string; count: number; components: unknown }>
+
+const wireItemStack: Schema.Codec<WireItemStack, WireItemStack> = Schema.Struct({
   item: Schema.String,
   count: Schema.Number,
   components: Schema.Unknown,
 })
-const itemStack = Schema.Unknown.pipe(
+export const LegacyItemStackSchema: Schema.Codec<ItemStack, unknown> = Schema.Unknown.pipe(
   Schema.decodeTo(
     Schema.declare((value: unknown): value is ItemStack => isItemStack(value)).annotate({
       message: 'expected a canonical ItemStack from mc-kernel',
@@ -38,16 +41,18 @@ const itemStack = Schema.Unknown.pipe(
       decode: (value) => {
         const decoded = Schema.decodeUnknownResult(wireItemStack)(value)
         if (Result.isFailure(decoded)) return Effect.fail(decoded.failure.issue)
-        if (decoded.success.components === null || decoded.success.components === undefined) {
+        if (decoded.success.components === undefined) {
           return Effect.fail(new SchemaIssue.InvalidValue(
             { message: 'expected a canonical ItemStack from mc-kernel' },
             value,
           ))
         }
-        const stack = itemStackFromUnknown(decoded.success.item, decoded.success.count, {
-          components: valueWithUndefined(decoded.success.components),
-        })
-        if (Result.isFailure(stack)) {
+        const stack = decoded.success.components === null
+          ? itemStackFromUnknown(decoded.success.item, decoded.success.count)
+          : itemStackFromUnknown(decoded.success.item, decoded.success.count, {
+            components: valueWithUndefined(decoded.success.components),
+          })
+        if (Result.isFailure(stack) || !isItemStack(stack.success)) {
           return Effect.fail(new SchemaIssue.InvalidValue(
             { message: 'expected a canonical ItemStack from mc-kernel' },
             value,
@@ -55,7 +60,22 @@ const itemStack = Schema.Unknown.pipe(
         }
         return Effect.succeed(stack.success)
       },
-      encode: (value) => Effect.succeed(valueWithNull(value)),
+      encode: (value) => {
+        const defaultStack = itemStackFromUnknown(value.item, 1)
+        if (Result.isFailure(defaultStack) || !isItemStack(defaultStack.success)) {
+          return Effect.fail(new SchemaIssue.InvalidValue(
+            { message: 'expected a canonical ItemStack from mc-kernel' },
+            value,
+          ))
+        }
+        return Effect.succeed({
+          item: value.item,
+          count: value.count,
+          components: itemStackEqualsIgnoringCount(value, defaultStack.success)
+            ? null
+            : valueWithNull(value.components),
+        })
+      },
     }),
   ),
 )
@@ -99,16 +119,18 @@ type SimulationSaveFor<Stack> = {
 export type SimulationSave = SimulationSaveFor<ItemStack>
 type SimulationSaveEncoded = SimulationSaveFor<unknown>
 
-export const SIMULATION_SAVE_SCHEMA: Schema.Codec<SimulationSave, SimulationSaveEncoded> = Schema.Struct({
+export const LegacySimulationSaveV3Schema: Schema.Codec<SimulationSave, SimulationSaveEncoded> = Schema.Struct({
   dimension,
   tick: integer.check(Schema.isGreaterThanOrEqualTo(0)),
   player: Schema.Struct({
     position,
-    inventory: Schema.Array(Schema.Union([Schema.Null, itemStack])),
+    inventory: Schema.Array(Schema.Union([Schema.Null, LegacyItemStackSchema])),
     selectedHotbarSlot,
   }),
   statistics,
 })
+
+export const SIMULATION_SAVE_SCHEMA: Schema.Codec<SimulationSave, SimulationSaveEncoded> = LegacySimulationSaveV3Schema
 
 export const SIMULATION_SAVE_FORMAT: SaveFormat<SimulationSave, SimulationSaveEncoded> = Result.getOrThrow(defineFormat({
   name: '@nerima-games/mc-sim/simulation',
