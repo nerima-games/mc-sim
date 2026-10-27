@@ -33,11 +33,11 @@ import * as Camera from '../domain/camera-pose.js'
 import * as Inventory from '../domain/inventory.js'
 import * as PlayerStorage from '../domain/player-storage.js'
 import { LegacyItemStackSchema } from '../domain/save-data.js'
+import { makeCoreTick, type CoreTickOptions } from '../application/core.js'
 import {
   ACHIEVEMENT_OWNER_REGISTRATION,
   AchievementServiceLayer,
 } from '../application/achievement-service.js'
-import { makeCoreTick } from '../application/core.js'
 import {
   DomainEventBus,
   DomainEventBusLayer,
@@ -91,6 +91,8 @@ export type HeadlessHarnessSession = {
   readonly saveSlices: ReadonlyArray<HeadlessSaveSlice>
 }
 
+export type HeadlessHarnessStages = CoreTickOptions['stages']
+
 type PlayerSliceState = Readonly<{
   dimension: Dimension
   pose: Camera.PlayerPose
@@ -112,10 +114,14 @@ export type HeadlessSessionRestoreError =
   | SaveSliceNotRegistered
 
 export type HeadlessHarnessSessionFactoryApi = {
-  readonly open: (worldSeed: NoiseSeed) => Effect.Effect<HeadlessHarnessSession>
+  readonly open: (
+    worldSeed: NoiseSeed,
+    stages: HeadlessHarnessStages,
+  ) => Effect.Effect<HeadlessHarnessSession>
   readonly openRestored?: (
     worldSeed: NoiseSeed,
     legacySave: unknown,
+    stages: HeadlessHarnessStages,
   ) => Effect.Effect<HeadlessHarnessSession, HeadlessSessionRestoreError>
 }
 
@@ -334,6 +340,7 @@ export const disposeOnBuildFailure = (
 
 const createSession = (
   worldSeed: NoiseSeed,
+  stages: HeadlessHarnessStages,
 ): Effect.Effect<Readonly<{
   session: HeadlessHarnessSession
   registrations: SimulationSaveV3Registrations<SaveRestoreServiceError, never>
@@ -362,28 +369,7 @@ const createSession = (
     const core = yield* Effect.orDie(makeCoreTick({
       coordinator,
       publish: eventBus.publish,
-      stages: {
-        intentsAndRules: () => Effect.succeed({
-          changes: [],
-          expectedDimensions: [],
-          events: [],
-        }),
-        stations: () => Effect.succeed({
-          changes: [],
-          expectedDimensions: [],
-          events: [],
-        }),
-        environment: () => Effect.succeed({
-          changes: [],
-          expectedDimensions: [],
-          events: [],
-        }),
-        entities: () => Effect.succeed({
-          changes: [],
-          expectedDimensions: [],
-          events: [],
-        }),
-      },
+      stages,
       initialTick: SimulationTick(0),
     }))
     const closed = yield* Ref.make(false)
@@ -411,10 +397,10 @@ const createSession = (
 }
 
 const factory: HeadlessHarnessSessionFactory['Service'] = {
-  open: (worldSeed) => Effect.map(createSession(worldSeed), ({ session }) => session),
-  openRestored: (worldSeed, legacySave) =>
+  open: (worldSeed, stages) => Effect.map(createSession(worldSeed, stages), ({ session }) => session),
+  openRestored: (worldSeed, legacySave, stages) =>
     Effect.gen(function* () {
-      const created = yield* createSession(worldSeed)
+      const created = yield* createSession(worldSeed, stages)
       yield* migrateSimulationSaveV3(
         legacySave,
         created.registrations,

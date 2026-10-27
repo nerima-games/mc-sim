@@ -2,6 +2,7 @@ import { it } from '@effect/vitest'
 import { NoiseSeed } from '@nerima-games/mc-worldgen'
 import { Effect, Layer, Ref, Schema } from 'effect'
 import { describe, expect } from 'vitest'
+import { IntentSchema } from '../src/application/intent-queue.js'
 import {
   HeadlessHarness,
   HeadlessHarnessTestLayer,
@@ -14,14 +15,29 @@ import {
   disposeOnBuildFailure,
   encodeInventorySaveSlot,
   type HeadlessHarnessSession,
+  type HeadlessHarnessStages,
 } from '../src/testing/session-factory.js'
 
 const makeNoiseSeed = NoiseSeed
 const makeRandomSeed = Schema.decodeUnknownSync(RandomSeedSchema)
 const makeTickCount = Schema.decodeUnknownSync(TickCountSchema)
-const harnessLayer = HeadlessHarnessTestLayer.pipe(
-  Layer.provide(HeadlessHarnessSessionFactoryLayer),
-)
+const emptyCandidate = () => ({ changes: [], expectedDimensions: [], events: [] })
+const noOpStages = (): HeadlessHarnessStages => ({
+  intentsAndRules: () => Effect.succeed(emptyCandidate()),
+  stations: () => Effect.succeed(emptyCandidate()),
+  environment: () => Effect.succeed(emptyCandidate()),
+  entities: () => Effect.succeed(emptyCandidate()),
+})
+const harnessLayer = (stages: HeadlessHarnessStages) =>
+  HeadlessHarnessTestLayer(stages).pipe(
+    Layer.provide(HeadlessHarnessSessionFactoryLayer),
+  )
+const makeIntent = (id: string) => Schema.decodeUnknownSync(IntentSchema)({
+  id,
+  targetTick: 1,
+  source: 'local',
+  payload: { _tag: 'MeleeAttack', actor: 'player-1' },
+})
 
 const legacySave = {
   dimension: 'nether',
@@ -53,7 +69,7 @@ describe('HeadlessHarnessSessionFactory', () => {
   it.effect('projects the four real save registrations', () =>
     Effect.gen(function* () {
       const factory = yield* HeadlessHarnessSessionFactory
-      const session = yield* factory.open(makeNoiseSeed(19))
+      const session = yield* factory.open(makeNoiseSeed(19), noOpStages())
 
       yield* Effect.ensuring(
         Effect.gen(function* () {
@@ -86,10 +102,28 @@ describe('HeadlessHarnessSessionFactory', () => {
     }).pipe(Effect.provide(HeadlessHarnessSessionFactoryLayer)),
   )
 
+  it.effect('passes queued intents through step to the explicitly injected intents-and-rules stage', () => {
+    const seen: Array<string> = []
+    const stages: HeadlessHarnessStages = {
+      ...noOpStages(),
+      intentsAndRules: ({ ready }) => Effect.sync(() => {
+        seen.push(...ready.map(({ intent }) => intent.id))
+        return emptyCandidate()
+      }),
+    }
+    return Effect.gen(function* () {
+      const harness = yield* HeadlessHarness
+      yield* harness.reset({ worldSeed: makeNoiseSeed(20), randomSeed: makeRandomSeed(7) })
+      yield* harness.enqueue(makeIntent('handled-by-stage'))
+      yield* harness.step(makeTickCount(1))
+      expect(seen).toEqual(['handled-by-stage'])
+    }).pipe(Effect.provide(harnessLayer(stages)))
+  })
+
   it.effect('rejects malformed inventory stacks when decoding saves and encoding snapshots', () =>
     Effect.gen(function* () {
       const factory = yield* HeadlessHarnessSessionFactory
-      const session = yield* factory.open(makeNoiseSeed(21))
+      const session = yield* factory.open(makeNoiseSeed(21), noOpStages())
 
       yield* Effect.ensuring(
         Effect.gen(function* () {
@@ -133,7 +167,7 @@ describe('HeadlessHarnessSessionFactory', () => {
       if (openRestored === undefined) {
         return yield* Effect.fail(new Error('The headless factory must support legacy restore'))
       }
-      const session = yield* openRestored(makeNoiseSeed(23), legacySave)
+      const session = yield* openRestored(makeNoiseSeed(23), legacySave, noOpStages())
 
       yield* Effect.ensuring(
         Effect.gen(function* () {
@@ -174,7 +208,7 @@ describe('HeadlessHarnessSessionFactory', () => {
   it.effect('disposes the session runtime idempotently', () =>
     Effect.gen(function* () {
       const factory = yield* HeadlessHarnessSessionFactory
-      const session = yield* factory.open(makeNoiseSeed(29))
+      const session = yield* factory.open(makeNoiseSeed(29), noOpStages())
       yield* session.close
       yield* session.close
     }).pipe(Effect.provide(HeadlessHarnessSessionFactoryLayer)),
@@ -212,7 +246,7 @@ describe('HeadlessHarnessSessionFactory', () => {
       })
       expect(yield* harness.stateHash).toBe(initialHash)
       expect(initialHash).toBe('d9d0c917df69016483e6a85577cd8bdc881a4ba5d09602909ebbbee8ac187fe3')
-    }).pipe(Effect.provide(harnessLayer)),
+    }).pipe(Effect.provide(harnessLayer(noOpStages()))),
   )
 
   it.effect('rejects a malformed save and does not publish a partial session', () =>
@@ -223,7 +257,7 @@ describe('HeadlessHarnessSessionFactory', () => {
         return yield* Effect.fail(new Error('The headless factory must support legacy restore'))
       }
       const result = yield* Effect.result(
-        openRestored(makeNoiseSeed(37), { tick: -1 }),
+        openRestored(makeNoiseSeed(37), { tick: -1 }, noOpStages()),
       )
       expect(result._tag).toBe('Failure')
     }).pipe(Effect.provide(HeadlessHarnessSessionFactoryLayer)),

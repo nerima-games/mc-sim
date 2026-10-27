@@ -6,7 +6,11 @@ import { SaveSliceIdSchema, tickDuration } from '@nerima-games/mc-kernel'
 import type { Intent, IntentSequence, IntentQueueFull } from '../application/intent-queue.js'
 import type { SimulationTick } from '@nerima-games/mc-kernel'
 import type { NoiseSeed } from '@nerima-games/mc-worldgen'
-import { HeadlessHarnessSessionFactory, type HeadlessHarnessSession } from './session-factory.js'
+import {
+  HeadlessHarnessSessionFactory,
+  type HeadlessHarnessSession,
+  type HeadlessHarnessStages,
+} from './session-factory.js'
 
 export type TickCount = number & Brand.Brand<'TickCount'>
 export type RandomSeed = number & Brand.Brand<'RandomSeed'>
@@ -194,7 +198,9 @@ const serializeJson = (
     : serializeObject(value, path, nextAncestors, serializeJson)
 }
 
-const makeHeadlessHarness: Effect.Effect<HeadlessHarnessApi, never, HeadlessHarnessSessionFactory> =
+const makeHeadlessHarness = (
+  stages: HeadlessHarnessStages,
+): Effect.Effect<HeadlessHarnessApi, never, HeadlessHarnessSessionFactory> =>
   Effect.gen(function* () {
     const factory = yield* HeadlessHarnessSessionFactory
     const testClock = yield* TestClock.testClockWith((clock) => Effect.succeed(clock))
@@ -234,7 +240,7 @@ const makeHeadlessHarness: Effect.Effect<HeadlessHarnessApi, never, HeadlessHarn
 
           const random = yield* Random.withSeed(input.randomSeed)(Random.Random)
           const clock = makeSessionClock(testClock)
-          const session = yield* withRuntimeServices(factory.open(input.worldSeed), random, clock)
+          const session = yield* withRuntimeServices(factory.open(input.worldSeed, stages), random, clock)
           yield* Ref.set(state, { tick: makeSimulationTick(0), random, clock, session })
         })),
       enqueue: (intent: Intent): Effect.Effect<
@@ -282,5 +288,7 @@ const makeHeadlessHarness: Effect.Effect<HeadlessHarnessApi, never, HeadlessHarn
     }
   })
 
-export const HeadlessHarnessTestLayer: Layer.Layer<HeadlessHarness, never, HeadlessHarnessSessionFactory> =
-  Layer.effect(HeadlessHarness, makeHeadlessHarness).pipe(Layer.provide(TestClock.layer()))
+export const HeadlessHarnessTestLayer = (
+  stages: HeadlessHarnessStages,
+): Layer.Layer<HeadlessHarness, never, HeadlessHarnessSessionFactory> =>
+  Layer.effect(HeadlessHarness, makeHeadlessHarness(stages)).pipe(Layer.provide(TestClock.layer()))

@@ -20,6 +20,7 @@ import {
   StateHashSchema,
   TickCountSchema,
   type HeadlessHarnessResetInput,
+  type HeadlessHarnessStages,
   type HeadlessSaveSlice,
 } from '../src/testing/index.js'
 import { NoiseSeed } from '@nerima-games/mc-worldgen'
@@ -53,6 +54,13 @@ const makeSaveSliceId = (value: string) => Schema.decodeUnknownSync(SaveSliceIdS
 const makeSaveVersion = (value: number) => Schema.decodeUnknownSync(SaveVersionSchema)(value)
 const makeTick = (value: number) => Schema.decodeUnknownSync(SimulationTickSchema)(value)
 const makeQueueCapacity = (value: number) => Schema.decodeUnknownSync(IntentQueueCapacitySchema)(value)
+const emptyCandidate = () => ({ changes: [], expectedDimensions: [], events: [] })
+const noOpStages: HeadlessHarnessStages = {
+  intentsAndRules: () => Effect.succeed(emptyCandidate()),
+  stations: () => Effect.succeed(emptyCandidate()),
+  environment: () => Effect.succeed(emptyCandidate()),
+  entities: () => Effect.succeed(emptyCandidate()),
+}
 
 const makeSlice = (
   id: string,
@@ -141,7 +149,7 @@ const makeRuntime = (
 }
 
 const harnessLayer = (runtime: HeadlessHarnessSessionFactory['Service']) =>
-  HeadlessHarnessTestLayer.pipe(
+  HeadlessHarnessTestLayer(noOpStages).pipe(
     Layer.provide(Layer.succeed(HeadlessHarnessSessionFactory, runtime)),
   )
 
