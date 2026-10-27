@@ -769,7 +769,9 @@ owner-only commit は dimension revision を変えない。block-only commit は
 ### Hopper、bucket、TNT の transaction port
 
 `HopperService.transfer` は hopper cell を含む `WorldWriteBatch` を受け取り、container storage、必要な
-player storage、hopper cooldown、block edits を同じ coordinator commit に渡す。player-to-player 転送、
+player storage、hopper cooldown、block edits を同じ coordinator commit に渡す。`ContainerStorageCommitOptions`
+は `expectedRevision`、任意の `blockWrite` と `additionalChanges` を受け取り、hopper は自身の runtime state を
+`additionalChanges` に渡す。player-to-player 転送、
 dimension 不一致、hopper cell を含まない batch は `InvalidRequest` になる。`advanceCooldown` は hopper
 owner state だけを commit し、revision expectation が stale なら失敗する。
 
@@ -1327,21 +1329,24 @@ The root barrel exports Effect Schemas for public operation results and their de
 | Module | Exported Schemas |
 | --- | --- |
 | `application/autosave` | `AutoSaveScheduleSchema`, `AutoSaveDaemonSchema`, `InvalidAutoSaveIntervalSchema` |
+| `application/bucket-service` | `BucketServiceErrorSchema`, `BucketUseOutcomeSchema` |
 | `application/core` | `CoreTickRunTickSuccessSchema`, `makeCoreTickErrorSchema` |
 | `application/crop-service` | `CropServiceAdvanceByBoneMealSuccessSchema`, `CropServiceAdvanceSuccessSchema`, `CropServiceCropAtSuccessSchema`, `CropServiceMatureYieldsErrorSchema`, `CropServiceMatureYieldsSuccessSchema`, `CropServiceNoFailureSchema`, `CropServicePlantSuccessSchema`, `CropServiceRemoveSuccessSchema`, `CropServiceResetSuccessSchema`, `CropServiceRestoreSuccessSchema`, `CropServiceSnapshotSuccessSchema`, `CropServiceValidationErrorSchema` |
 | `application/equipment-service` | `EquipmentServiceDamageSuccessSchema`, `EquipmentServiceEquipSuccessSchema`, `EquipmentServiceNoFailureSchema`, `EquipmentServiceResetSuccessSchema`, `EquipmentServiceRestoreSuccessSchema`, `EquipmentServiceSnapshotSuccessSchema`, `EquipmentServiceSwapSuccessSchema`, `EquipmentServiceUnequipSuccessSchema`, `EquipmentServiceValidationErrorSchema` |
 | `application/fishing-service` | `FishingServiceBiteSuccessSchema`, `FishingServiceCastSuccessSchema`, `FishingServiceErrorSchema`, `FishingServiceReelSuccessSchema`, `FishingServiceSnapshotSuccessSchema` |
+| `application/hopper-service` | `HopperCooldownOutcomeSchema`, `HopperCooldownTicksSchema`, `HopperServiceErrorSchema`, `HopperServiceSnapshotSchema`, `HopperTransferOutcomeSchema` |
 | `application/intent-queue` | `IntentQueueEnqueueFailureSchema` |
 | `application/player-service` | `PlayerServiceLookErrorSchema`, `PlayerServiceLookSuccessSchema` |
 | `application/projectile-service` | `EnderPearlImpactSchema`, `ProjectileLaunchOutcomeSchema`, `ProjectileServiceErrorSchema`, `ProjectileServiceFailureSchema`, `ProjectileServiceSnapshotErrorSchema`, `ProjectileServiceSnapshotSuccessSchema`, `ProjectileStepOutcomeSchema` |
+| `application/replicated-state` | `ReplicatedBlockChangeSchema`, `WorldBlockPositionSchema`, `WorldBlockReadSchema`, `WorldReadSnapshotSchema`, `replicatedWorldDeltaSchema` |
 | `application/save-coordinator` | `SaveCoordinatorRequestSaveSuccessSchema`, `SaveSnapshotConsistencyErrorSchema`, `saveCoordinatorRequestSaveErrorSchema` |
 | `application/save-service` | `LoadSimulationSuccessSchema`, `SaveSimulationSuccessSchema`, `SimulationSaveErrorSchema` |
 | `application/save-v3-migration` | `SimulationSaveV3MigrationSuccessSchema`, `simulationSaveV3MigrationErrorSchema` |
 | `application/statistics-service` | `StatisticsServiceRecordErrorSchema`, `StatisticsServiceRecordSuccessSchema` |
-| `application/tnt-service` | `TntAdvanceOutcomeSchema`, `TntPrimeOutcomeSchema`, `TntServiceErrorSchema`, `TntServiceFailureSchema`, `TntServiceSnapshotErrorSchema`, `TntServiceSnapshotSuccessSchema` |
+| `application/tnt-service` | `TntAdvanceOutcomeSchema`, `TntDetonationCommitOutcomeSchema`, `TntPrimeOutcomeSchema`, `TntServiceErrorSchema`, `TntServiceFailureSchema`, `TntServiceSnapshotErrorSchema`, `TntServiceSnapshotSuccessSchema` |
 | `application/vehicle-service` | `VehicleOperationErrorSchema`, `VehicleServiceDespawnSuccessSchema`, `VehicleServiceDismountSuccessSchema`, `VehicleServiceMountSuccessSchema`, `VehicleServiceNoFailureSchema`, `VehicleServiceOperationErrorSchema`, `VehicleServiceRestoreSuccessSchema`, `VehicleServiceSnapshotSuccessSchema`, `VehicleServiceSpawnSuccessSchema`, `VehicleServiceUpdateStateSuccessSchema`, `VehicleServiceUpdateTransformSuccessSchema`, `VehicleServiceUpdateVelocitySuccessSchema`, `VehicleServiceValidationErrorSchema`, `VehicleServiceVehiclesSuccessSchema`, `VehicleServiceVoidSuccessSchema` |
 | `application/vitals-service` | `DamageOutcomeSchema`, `VitalsServiceNoErrorSchema`, `VitalsServiceVoidSchema` |
-| `application/world-commit-coordinator` | `WorldCommitCoordinatorSnapshotErrorSchema` |
+| `application/world-commit-coordinator` | `ChunkStoreRevisionSchema`, `WorldCommitCoordinatorErrorSchema`, `WorldCommitCoordinatorSnapshotErrorSchema`, `WorldCommitResultSchema`, `WorldWriteStaleActualRevisionSchema` |
 | `domain/crop` | `CropLocationSchema`, `CropSnapshotSchema`, `CropStateSchema`, `CropTypeSchema`, `CropValidationErrorSchema` |
 | `domain/entity-types` | `EntityHealthPointsSchema`, `EntityRosterRepairCountSchema`, `EntityRosterSchema`, `EntitySchema`, `EntitySerialExhaustedSchema`, `EntitySerialSchema`, `RosterRepairSchema` |
 | `domain/equipment` | `DamageEquipmentResultSchema`, `DurabilitySchema`, `EquipmentItemFailureSchema`, `EquipmentItemSchema`, `EquipmentSchema`, `EquipmentSlotsSchema`, `EquipmentValidationErrorSchema` |
