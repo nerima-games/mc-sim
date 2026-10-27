@@ -49,33 +49,28 @@ import {
   type HeadlessHarnessSessionFactoryApi,
   type HeadlessHarnessStages,
 } from '../src/testing/index.js'
-import { finiteTree, isRecord, invoke } from './public-property-helpers.js'
+import { finiteTree, hostileScalarInput, isRecord, invoke, structuredInput } from './public-property-helpers.js'
 
-const hostileValue: fc.Arbitrary<unknown> = fc.oneof(
-  fc.double(),
-  fc.string({ maxLength: 16 }),
-  fc.boolean(),
-  fc.constantFrom<unknown>(
-    null,
-    undefined,
-    Number.NaN,
-    Number.POSITIVE_INFINITY,
-    Number.NEGATIVE_INFINITY,
-    Number.MAX_VALUE,
-    -Number.MAX_VALUE,
-    -1,
-    0,
-    1,
+const hostileValue = hostileScalarInput({
+  numbers: fc.oneof(
+    fc.double(),
+    fc.constantFrom<unknown>(
+      null,
+      undefined,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+      Number.MAX_VALUE,
+      -Number.MAX_VALUE,
+      -1,
+      0,
+      1,
+    ),
   ),
-)
+  maxStringLength: 16,
+})
 
-const unknownInput: fc.Arbitrary<unknown> = fc.oneof(
-  hostileValue,
-  fc.array(hostileValue, { maxLength: 4 }),
-  fc.dictionary(fc.string({ maxLength: 8 }), hostileValue, { maxKeys: 4 }),
-)
-
-const containsOnlyFiniteNumbers = finiteTree
+const unknownInput = structuredInput(hostileValue)
 
 const checks = { numRuns: 100 }
 
@@ -103,7 +98,7 @@ it('root settings normalization returns valid finite settings for hostile values
     fc.property(settingsInput, (input) => {
       const settings = normaliseSettings(input)
       expect(isValidSettings(settings)).toBe(true)
-      expect(containsOnlyFiniteNumbers(settings)).toBe(true)
+      expect(finiteTree(settings)).toBe(true)
     }),
     checks,
   )
@@ -124,7 +119,7 @@ it('time normalization and setters keep the clock valid for hostile state and sc
 
       for (const state of nextStates) {
         expect(invoke(isValidTimeState, [state])).toBe(true)
-        expect(containsOnlyFiniteNumbers(state)).toBe(true)
+        expect(finiteTree(state)).toBe(true)
       }
     }),
     checks,
@@ -139,7 +134,7 @@ it('weather validation, normalization, and transitions preserve their result con
       const input = { weather, remainingSecs }
       const normalized = normaliseWeatherState(input)
       expect(invoke(isValidWeatherState, [normalized])).toBe(true)
-      expect(containsOnlyFiniteNumbers(normalized)).toBe(true)
+      expect(finiteTree(normalized)).toBe(true)
 
       const validated = validateWeatherState(input)
       const transitioned = makeWeatherTransition(weather, remainingSecs)
@@ -148,7 +143,7 @@ it('weather validation, normalization, and transitions preserve their result con
           expect(isRecord(result.failure) && result.failure['_tag'] === 'WeatherValidationFailure').toBe(true)
         } else {
           expect(invoke(isValidWeatherState, [result.success])).toBe(true)
-          expect(containsOnlyFiniteNumbers(result.success)).toBe(true)
+          expect(finiteTree(result.success)).toBe(true)
         }
       }
     }),
@@ -192,7 +187,7 @@ it('public block targeting returns a typed failure or finite target for hostile 
         const target = result.success.value
         expect(isRecord(target)).toBe(true)
         if (!isRecord(target)) continue
-        expect(containsOnlyFiniteNumbers(target)).toBe(true)
+        expect(finiteTree(target)).toBe(true)
         expect(isRecord(target['position'])).toBe(true)
         expect(isRecord(target['adjacentPosition'])).toBe(true)
         expect(typeof target['distance']).toBe('number')
@@ -238,7 +233,7 @@ it('entity roster normalization repairs hostile scalar fields or returns its typ
       if (!isRecord(repairedRoster)) return
       expect(Array.isArray(repairedRoster['entities'])).toBe(true)
       expect(Number.isSafeInteger(repairedRoster['nextSerial'])).toBe(true)
-      expect(containsOnlyFiniteNumbers(result.success)).toBe(true)
+      expect(finiteTree(result.success)).toBe(true)
 
       if (!Array.isArray(repairedRoster['entities'])) return
       const ids: Array<unknown> = []
@@ -288,7 +283,7 @@ it('wither snapshot restoration returns finite state with repaired branded field
           WitherChargeRemainingSecs.is(restored['chargeRemainingSecs']),
       ).toBe(true)
       expect(restored['chargeRemainingSecs']).toBeLessThanOrEqual(WITHER_SPAWN_CHARGE_SECS)
-      expect(containsOnlyFiniteNumbers(restored)).toBe(true)
+      expect(finiteTree(restored)).toBe(true)
       for (const key of ['feetPosition', 'velocity']) {
         const vector = restored[key]
         expect(isRecord(vector)).toBe(true)
@@ -364,9 +359,9 @@ const inspectSessionSnapshots = (session: HeadlessHarnessSession) =>
     expect(session.saveSlices.length).toBe(4)
     for (const slice of session.saveSlices) {
       const snapshot = yield* slice.snapshot
-      expect(containsOnlyFiniteNumbers(snapshot)).toBe(true)
+      expect(finiteTree(snapshot)).toBe(true)
       const encoded = yield* Schema.encodeUnknownEffect(slice.schema)(snapshot)
-      expect(containsOnlyFiniteNumbers(encoded)).toBe(true)
+      expect(finiteTree(encoded)).toBe(true)
     }
   })
 
@@ -604,7 +599,7 @@ it('Hostile intent fields return typed HeadlessHarness.enqueue outcomes without 
         expect(Result.isSuccess(decodedQueued)).toBe(true)
         if (Result.isSuccess(decodedQueued)) {
           expect(Number.isSafeInteger(decodedQueued.success.sequence)).toBe(true)
-          expect(containsOnlyFiniteNumbers(decodedQueued.success)).toBe(true)
+          expect(finiteTree(decodedQueued.success)).toBe(true)
         }
       }
     }),

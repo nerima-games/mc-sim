@@ -3,24 +3,9 @@ import { Result, Schema } from 'effect'
 import { expect, it } from 'vitest'
 import { DeltaTimeSecs, PositionAxis, position } from '@nerima-games/mc-kernel'
 import * as Sim from '../src/index.js'
-import { finiteTree, hostileNumber, hostileValue, isRecord, unknownValue } from './public-property-helpers.js'
+import { assertResultContract, finiteTree, hostileNumber, hostileValue, isRecord, unknownValue } from './public-property-helpers.js'
 
 const checks = { numRuns: 30 }
-
-const assertResultContract = (
-  value: unknown,
-  validSuccess: (success: unknown) => boolean = finiteTree,
-): void => {
-  expect(isRecord(value)).toBe(true)
-  if (!isRecord(value)) return
-  if (value['_tag'] === 'Failure') {
-    expect(value['failure'] ?? value['error']).toBeDefined()
-    return
-  }
-  expect(value['_tag']).toBe('Success')
-  expect(finiteTree(value['success'])).toBe(true)
-  expect(validSuccess(value['success'])).toBe(true)
-}
 
 const unwrap = <A, E>(result: Result.Result<A, E>): A => {
   if (Result.isFailure(result)) throw result.failure

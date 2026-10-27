@@ -2,21 +2,15 @@ import fc from 'fast-check'
 import { Result } from 'effect'
 import { expect, it } from 'vitest'
 import * as Sim from '../src/index.js'
-import { finiteTree, hostileValue, isRecord, unknownValue as unknownEnvelope } from './public-property-helpers.js'
+import {
+  assertResultContract as assertResult,
+  finiteTree,
+  hostileValue,
+  isRecord,
+  unknownValue as unknownEnvelope,
+} from './public-property-helpers.js'
 
 const checks = { numRuns: 30 }
-
-const assertResult = (value: unknown, isValidSuccess: (success: unknown) => boolean): void => {
-  expect(isRecord(value)).toBe(true)
-  if (!isRecord(value)) return
-  if (value['_tag'] === 'Failure') {
-    expect(value['failure'] ?? value['error']).toBeDefined()
-    return
-  }
-  expect(value['_tag']).toBe('Success')
-  expect(finiteTree(value['success'])).toBe(true)
-  expect(isValidSuccess(value['success'])).toBe(true)
-}
 
 it('time-state outer envelopes normalize safely, keep getters finite, and make advance fail typed', () => {
   const state = fc.oneof(

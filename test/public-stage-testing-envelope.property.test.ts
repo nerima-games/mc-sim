@@ -5,26 +5,7 @@ import { BlockLength, HalfHeight } from '@nerima-games/mc-physics'
 import { NoiseSeed } from '@nerima-games/mc-worldgen'
 import * as App from '../src/index.js'
 import * as Testing from '../src/testing/index.js'
-import { isRecord, invoke, invokeEffect } from './public-property-helpers.js'
-
-const hostileNumber: fc.Arbitrary<unknown> = fc.oneof(
-  fc.double(),
-  fc.constantFrom<unknown>(
-    null,
-    undefined,
-    false,
-    'bad',
-    Number.NaN,
-    Number.POSITIVE_INFINITY,
-    Number.NEGATIVE_INFINITY,
-    Number.MAX_VALUE,
-    -Number.MAX_VALUE,
-    Number.MAX_SAFE_INTEGER + 1,
-    -1,
-    0,
-    1,
-  ),
-)
+import { hostileValue, isRecord, invoke, invokeEffect } from './public-property-helpers.js'
 
 const validResolve = {
   halfWidth: BlockLength(0.3),
@@ -122,7 +103,7 @@ it('stage physics constructors return typed failures for hostile config and reso
 
 it('stage physics constructors handle hostile scalar fields without throwing or succeeding invalid configs', async () => {
   await fc.assert(
-    fc.asyncProperty(fc.tuple(hostileNumber, hostileNumber), async ([walkSpeed, jumpSpeed]) => {
+    fc.asyncProperty(fc.tuple(hostileValue, hostileValue), async ([walkSpeed, jumpSpeed]) => {
       await Promise.all(stageConstructors.map(async (constructor) => {
         let effect: unknown
         expect(() => { effect = invoke(constructor, [validConfig(walkSpeed, jumpSpeed)]) }).not.toThrow()

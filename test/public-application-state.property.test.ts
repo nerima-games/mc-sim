@@ -14,41 +14,16 @@ import {
 import type { Chunk } from '@nerima-games/mc-worldgen'
 import { InMemoryStorageLayer } from '@nerima-games/mc-save'
 import * as App from '../src/index.js'
-import { finiteTree, isRecord, invokeEffect } from './public-property-helpers.js'
-
-const hostileNumber: fc.Arbitrary<unknown> = fc.oneof(
-  fc.double(),
-  fc.constantFrom<unknown>(
-    null,
-    undefined,
-    Number.NaN,
-    Number.POSITIVE_INFINITY,
-    Number.NEGATIVE_INFINITY,
-    Number.MAX_VALUE,
-    -Number.MAX_VALUE,
-    -1,
-    0,
-    1,
-  ),
-)
-
-const hostileScalar: fc.Arbitrary<unknown> = fc.oneof(
+import {
+  assertEffectOutcome,
+  finiteTree,
   hostileNumber,
-  fc.string({ maxLength: 24 }),
-  fc.boolean(),
-)
+  hostileScalarInput,
+  isRecord,
+  invokeEffect,
+} from './public-property-helpers.js'
 
-const assertEffectResult = <A>(
-  outcome: Result.Result<A, unknown>,
-  validSuccess: (value: A) => boolean = finiteTree,
-): void => {
-  if (Result.isFailure(outcome)) {
-    expect(isRecord(outcome.failure) && typeof outcome.failure['_tag'] === 'string').toBe(true)
-    return
-  }
-  expect(finiteTree(outcome.success)).toBe(true)
-  expect(validSuccess(outcome.success)).toBe(true)
-}
+const hostileScalar = hostileScalarInput({ numbers: hostileNumber, maxStringLength: 24 })
 
 const checks = { numRuns: 40, seed: 0x4d435349 }
 const world = Schema.decodeUnknownSync(WorldIdSchema)('public-application-state-property')
@@ -233,7 +208,7 @@ it('EntityManager construction repairs hostile saved fields and sweep keeps its 
         }],
       }
       const managerOutcome = await Effect.runPromise(Effect.result(invokeEffect(App.makeEntityManager, [roster])))
-      assertEffectResult(managerOutcome, (manager) => isRecord(manager) && typeof manager['snapshot'] === 'object')
+        assertEffectOutcome(managerOutcome, (manager) => isRecord(manager) && typeof manager['snapshot'] === 'object')
       if (Result.isFailure(managerOutcome)) return
       const snapshot = await Effect.runPromise(managerOutcome.success.snapshot)
       expect(finiteTree(snapshot)).toBe(true)
@@ -294,20 +269,20 @@ it('PlayerService moveTo, setDimension, and replicated candidate submission pres
         y: hostile,
         z: hostile,
       }])))
-      assertEffectResult(move, (value) => value === undefined)
+      assertEffectOutcome(move, (value) => value === undefined)
       const dimensionResult = await Effect.runPromise(
         Effect.result(invokeEffect(player.setDimension, [dimension])),
       )
-      assertEffectResult(dimensionResult, (value) => value === undefined)
+      assertEffectOutcome(dimensionResult, (value) => value === undefined)
       if (Result.isSuccess(dimensionResult)) expect(DIMENSIONS).toContain(dimension)
 
       const candidate = await Effect.runPromise(Effect.result(player.replicatedCandidate))
-      assertEffectResult(candidate, (value) => Result.isSuccess(Schema.decodeUnknownResult(App.PlayerServiceSnapshotSchema)(value)))
+      assertEffectOutcome(candidate, (value) => Result.isSuccess(Schema.decodeUnknownResult(App.PlayerServiceSnapshotSchema)(value)))
       const submitted = await Effect.runPromise(Effect.provide(
         Effect.result(invokeEffect(player.submitReplicatedCandidate, revisions)),
         coordinatorLayer,
       ))
-      assertEffectResult(submitted, (value) =>
+      assertEffectOutcome(submitted, (value) =>
         Result.isSuccess(Schema.decodeUnknownResult(App.replicatedWorldDeltaSchema(App.ReplicatedOwnerChangeSchema))(value)),
       )
       const committed = await Effect.runPromise(Effect.provide(
@@ -330,17 +305,17 @@ it('SettingsService candidates, updates, and key mutations keep a valid snapshot
       const settings = await Effect.runPromise(App.makeSettingsService())
       const patch = { renderDistance, masterVolume: volume, uiScale }
       const candidate = await Effect.runPromise(Effect.result(invokeEffect(settings.candidate, [patch])))
-      assertEffectResult(candidate, App.isValidSettings)
+      assertEffectOutcome(candidate, App.isValidSettings)
       const beforeUpdate = await Effect.runPromise(settings.snapshot)
       expect(App.isValidSettings(beforeUpdate)).toBe(true)
 
       const updated = await Effect.runPromise(Effect.result(invokeEffect(settings.update, [patch])))
-      assertEffectResult(updated, App.isValidSettings)
+      assertEffectOutcome(updated, App.isValidSettings)
       for (const outcome of [
         await Effect.runPromise(Effect.result(invokeEffect(settings.rebindKey, [action, code]))),
         await Effect.runPromise(Effect.result(invokeEffect(settings.unbindKey, [action]))),
       ]) {
-        assertEffectResult(outcome, (value) => value === undefined)
+        assertEffectOutcome(outcome, (value) => value === undefined)
       }
       expect(App.isValidSettings(await Effect.runPromise(settings.snapshot))).toBe(true)
       },
@@ -376,7 +351,7 @@ it('TimeService candidate, setters, configureDay, and restore keep a finite vali
     fc.asyncProperty(fc.tuple(hostileScalar, hostileScalar), async ([first, second]) => {
       const time = await Effect.runPromise(App.makeTimeService())
       const candidate = await Effect.runPromise(Effect.result(invokeEffect(time.advanceCandidate, [first])))
-      assertEffectResult(candidate, App.isValidTimeState)
+      assertEffectOutcome(candidate, App.isValidTimeState)
 
       await Effect.runPromise(invokeEffect(time.setDayLength, [first]))
       expect(App.isValidTimeState(await Effect.runPromise(time.snapshot))).toBe(true)

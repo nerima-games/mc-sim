@@ -3,50 +3,37 @@ import { Duration, Effect, Layer, Result, Schedule, Schema } from 'effect'
 import { expect, it } from 'vitest'
 import { BlockAddressSchema, DomainEventSchema, isItemStack, WorldIdSchema } from '@nerima-games/mc-kernel'
 import * as App from '../src/index.js'
-import { finiteTree, isRecord, invokeEffect } from './public-property-helpers.js'
+import {
+  assertEffectOutcome,
+  finiteTree,
+  hostileScalarInput,
+  isRecord,
+  invokeEffect,
+  structuredInput,
+} from './public-property-helpers.js'
 
-const hostileScalar: fc.Arbitrary<unknown> = fc.oneof(
-  fc.double(),
-  fc.string(),
-  fc.boolean(),
-  fc.constantFrom<unknown>(
-    null,
-    undefined,
-    Number.NaN,
-    Number.POSITIVE_INFINITY,
-    Number.NEGATIVE_INFINITY,
-    Number.MAX_VALUE,
-    -Number.MAX_VALUE,
-    -1,
-    0,
-    1,
-    1_000_000_000_000,
+const hostileScalar = hostileScalarInput({
+  numbers: fc.oneof(
+    fc.double(),
+    fc.constantFrom<unknown>(
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+      Number.MAX_VALUE,
+      -Number.MAX_VALUE,
+      -1,
+      0,
+      1,
+      1_000_000_000_000,
+    ),
   ),
-)
+  includeNullish: true,
+})
 
-const hostileValue: fc.Arbitrary<unknown> = fc.oneof(
-  hostileScalar,
-  fc.array(hostileScalar, { maxLength: 4 }),
-  fc.dictionary(fc.string({ maxLength: 8 }), hostileScalar, { maxKeys: 4 }),
-)
-
-const hasFailureTag = (value: unknown): boolean =>
-  isRecord(value) && typeof value['_tag'] === 'string'
+const hostileValue = structuredInput(hostileScalar)
 
 const hasAllowedTag = (value: unknown, tags: ReadonlyArray<string>): boolean =>
   isRecord(value) && typeof value['_tag'] === 'string' && tags.includes(value['_tag']) && finiteTree(value)
-
-const assertEffectOutcome = <A>(
-  outcome: Result.Result<A, unknown>,
-  validSuccess: (value: A) => boolean = finiteTree,
-): void => {
-  if (Result.isFailure(outcome)) {
-    expect(hasFailureTag(outcome.failure)).toBe(true)
-    return
-  }
-  expect(finiteTree(outcome.success)).toBe(true)
-  expect(validSuccess(outcome.success)).toBe(true)
-}
 
 const checks = { numRuns: 100 }
 
@@ -108,8 +95,8 @@ it('makeInventoryService returns its typed failure for a null constructor envelo
   await fc.assert(
     fc.asyncProperty(fc.constant(null), async (initial) => {
       const outcome = await Effect.runPromise(Effect.result(invokeEffect(App.makeInventoryService, [initial])))
+      assertEffectOutcome(outcome)
       expect(Result.isFailure(outcome)).toBe(true)
-      if (Result.isFailure(outcome)) expect(hasFailureTag(outcome.failure)).toBe(true)
     }),
     checks,
   )
@@ -148,12 +135,12 @@ it('DomainEventBus.publish rejects malformed fields or publishes schema-valid ev
     fc.asyncProperty(fc.tuple(hostileScalar, hostileScalar, hostileScalar), async ([tick, player, achievement]) => {
       const event = { _tag: 'AchievementUnlocked', tick, player, achievement }
       const outcome = await Effect.runPromise(Effect.result(invokeEffect(bus.publish, [event])))
+      assertEffectOutcome(outcome)
       if (validDomainEvent(event)) {
         expect(Result.isSuccess(outcome)).toBe(true)
         if (Result.isSuccess(outcome)) expect(outcome.success).toBeUndefined()
       } else {
         expect(Result.isFailure(outcome)).toBe(true)
-        if (Result.isFailure(outcome)) expect(hasFailureTag(outcome.failure)).toBe(true)
       }
     }),
     checks,

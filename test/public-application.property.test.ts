@@ -19,35 +19,19 @@ import { makePlayerService } from '../src/application/player-service.js'
 import { makeSettingsService } from '../src/application/settings-service.js'
 import { makeWeatherService } from '../src/application/weather-service.js'
 import { makeSimFrameState, makeSimInputPort, makeSimStagesWithPhysics } from '../src/stages/registration.js'
-import { finiteTree, isRecord, invoke, invokeEffect } from './public-property-helpers.js'
+import {
+  finiteTree,
+  hostileNumberOrNullish,
+  hostileValue as sharedHostileValue,
+  isRecord,
+  invoke,
+  invokeEffect,
+} from './public-property-helpers.js'
 
-const hostileNumber: fc.Arbitrary<unknown> = fc.oneof(
-  fc.double(),
-  fc.constantFrom<unknown>(
-    null,
-    undefined,
-    Number.NaN,
-    Number.POSITIVE_INFINITY,
-    Number.NEGATIVE_INFINITY,
-    Number.MAX_VALUE,
-    -Number.MAX_VALUE,
-    -1,
-    0,
-    1,
-  ),
-)
-
+const hostileNumber = hostileNumberOrNullish
 const hostileValue: fc.Arbitrary<unknown> = fc.oneof(
   fc.anything({ maxDepth: 3 }),
-  fc.constantFrom<unknown>(
-    null,
-    undefined,
-    Number.NaN,
-    Number.POSITIVE_INFINITY,
-    Number.NEGATIVE_INFINITY,
-    Number.MAX_VALUE,
-    -Number.MAX_VALUE,
-  ),
+  sharedHostileValue,
 )
 
 const successValue = (value: Readonly<Record<string, unknown>>): unknown =>
