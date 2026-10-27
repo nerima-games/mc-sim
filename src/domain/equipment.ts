@@ -158,8 +158,9 @@ export const DurabilitySchema: Schema.Codec<Durability> = Schema.Struct({
   max: PositiveSafeIntegerSchema,
 }).check(Schema.makeFilter(({ current, max }) => current <= max))
 
-const StackCountSchema = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: MAX_STACK_COUNT }))
-  .pipe(Schema.brand('StackCount')) as Schema.Codec<ItemStack['count'], number>
+const StackCountSchema: Schema.Codec<ItemStack['count'], number> = Schema.Int
+  .check(Schema.isBetween({ minimum: 1, maximum: MAX_STACK_COUNT }))
+  .pipe(Schema.brand('StackCount'))
 
 const ItemComponentsSchema = Schema.declare(isItemComponents)
 

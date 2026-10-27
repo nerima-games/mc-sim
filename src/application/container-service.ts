@@ -35,11 +35,7 @@ const ContainerIdSchema = Schema.String.check(
   Schema.makeFilter((id) => id.length > 0 && id.trim() === id),
 )
 
-const ContainerStoredStackValueSchema = ContainerStoredStackSchema as unknown as Schema.Codec<
-  Container.ContainerStoredStack,
-  unknown
->
-const ContainerSlotSchema = Schema.NullOr(ContainerStoredStackValueSchema)
+const ContainerSlotSchema = Schema.NullOr(ContainerStoredStackSchema)
 
 const ContainerSchema: Schema.Codec<Container.Container, unknown> = Schema.Struct({
   id: ContainerIdSchema,
@@ -55,9 +51,8 @@ export const ContainerStorageSnapshotSchema: Schema.Codec<Container.ContainerSto
   return ids.size === containers.length
 }))
 
-const ItemStackValueSchema = Inv.ItemStackSchema as unknown as Schema.Codec<Inv.ItemStack, unknown>
 const InventorySlotSchema: Schema.Codec<Inv.Slot, unknown> = Schema.Union([
-  ItemStackValueSchema,
+  Inv.ItemStackSchema,
   Schema.Undefined,
 ])
 
@@ -65,16 +60,13 @@ const PlayerInventorySchema: Schema.Codec<Inv.Inventory, unknown> = Schema.Struc
   slots: Schema.Array(InventorySlotSchema),
 }).check(Schema.makeFilter(({ slots }) => slots.length === Inv.INVENTORY_SLOT_COUNT))
 
-const DurabilityValueSchema = Eq.DurabilitySchema as unknown as Schema.Codec<Eq.Durability, unknown>
 const InventoryDurabilitySchema: Schema.Codec<PlayerStorage.PlayerStorage['inventoryDurability'], unknown> =
-  Schema.Array(Schema.NullOr(DurabilityValueSchema))
+  Schema.Array(Schema.NullOr(Eq.DurabilitySchema))
     .check(Schema.makeFilter((values) => values.length === Inv.INVENTORY_SLOT_COUNT))
-
-const EquipmentValueSchema = Eq.EquipmentSchema as unknown as Schema.Codec<Eq.Equipment, unknown>
 
 export const PlayerStorageSnapshotSchema: Schema.Codec<PlayerStorage.PlayerStorage, unknown> = Schema.Struct({
   inventory: PlayerInventorySchema,
-  equipment: EquipmentValueSchema,
+  equipment: Eq.EquipmentSchema,
   inventoryDurability: InventoryDurabilitySchema,
 }).check(Schema.makeFilter(({ inventory, inventoryDurability }) =>
   inventory.slots.every((slot, index) => {
