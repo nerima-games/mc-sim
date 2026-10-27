@@ -15,7 +15,7 @@
 import { Context, Effect, Layer, Ref, Result, Schema } from 'effect'
 import * as Camera from '../domain/camera-pose.js'
 import type { CameraPoseSnapshot, Dimension, DimensionRevision, Position, WorldRevision } from "@nerima-games/mc-kernel"
-import { ClockPort, DIMENSIONS, monotonicSecs } from "@nerima-games/mc-kernel"
+import { ClockPort, DimensionIdSchema, monotonicSecs } from "@nerima-games/mc-kernel"
 import {
   PLAYER_REPLICATED_OWNER_ID,
   PlayerServiceSnapshotSchema,
@@ -151,6 +151,23 @@ export type PlayerServiceInputError = Readonly<{
   field: 'pose' | 'deltaYaw' | 'deltaPitch' | 'yawRadians' | 'pitchRadians' | 'feetPosition' | 'feetPosition.x' | 'feetPosition.y' | 'feetPosition.z' | 'dimension'
 }>
 
+export const PlayerServiceInputErrorSchema: Schema.Codec<PlayerServiceInputError, PlayerServiceInputError> = Schema.Struct({
+  _tag: Schema.Literal('PlayerServiceInputError'),
+  reason: Schema.Literals(['invalid-look', 'invalid-pose', 'invalid-position', 'invalid-dimension']),
+  field: Schema.Literals([
+    'pose',
+    'deltaYaw',
+    'deltaPitch',
+    'yawRadians',
+    'pitchRadians',
+    'feetPosition',
+    'feetPosition.x',
+    'feetPosition.y',
+    'feetPosition.z',
+    'dimension',
+  ]),
+})
+
 const inputError = (
   reason: PlayerServiceInputError['reason'],
   field: PlayerServiceInputError['field'],
@@ -185,6 +202,8 @@ export const makePlayerService = (
   Effect.gen(function* () {
     const initialError = invalidPoseError(initial, 'invalid-pose')
     if (initialError !== undefined) return yield* Effect.fail(initialError)
+    if (!Schema.is(DimensionIdSchema)(initialDimension))
+      return yield* Effect.fail(inputError('invalid-dimension', 'dimension'))
 
     const state = yield* Ref.make<PlayerState>({ pose: initial, dimension: initialDimension })
     const modify = <A>(f: (current: PlayerState) => readonly [Effect.Effect<A, PlayerServiceInputError>, PlayerState]) =>
@@ -222,8 +241,8 @@ export const makePlayerService = (
         return [Effect.void, { ...current, pose: Camera.withFeetPosition(current.pose, feetPosition) }]
       }),
       setDimension: (dimension) =>
-        DIMENSIONS.includes(dimension)
-          ? Ref.update(state, (current) => ({ ...current, dimension }))
+        Schema.is(DimensionIdSchema)(dimension)
+          ? Effect.map(Ref.update(state, (current) => ({ ...current, dimension })), () => undefined)
           : Effect.fail(inputError('invalid-dimension', 'dimension')),
       cameraPose: Effect.flatMap(monotonicSecs, (now) =>
         Effect.flatMap(Ref.get(state), (current) => Effect.fromResult(Camera.cameraPoseOf(current.pose, now))),
@@ -268,9 +287,15 @@ export const makePlayerService = (
         ),
       restore: (pose, dimension) => {
         const error = invalidPoseError(pose, 'invalid-pose')
-        return error === undefined ? Ref.set(state, { pose, dimension }) : Effect.fail(error)
+        if (error !== undefined) return Effect.fail(error)
+        return Schema.is(DimensionIdSchema)(dimension)
+          ? Effect.map(Ref.set(state, { pose, dimension }), () => undefined)
+          : Effect.fail(inputError('invalid-dimension', 'dimension'))
       },
-      reset: Ref.set(state, { pose: Camera.INITIAL_PLAYER_POSE, dimension: INITIAL_PLAYER_DIMENSION }),
+      reset: Effect.map(
+        Ref.set(state, { pose: Camera.INITIAL_PLAYER_POSE, dimension: INITIAL_PLAYER_DIMENSION }),
+        () => undefined,
+      ),
     }
   })
 

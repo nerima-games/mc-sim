@@ -1,7 +1,12 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect, Layer, Result, Schema } from 'effect'
 import { vi } from 'vitest'
-import { INITIAL_PLAYER_DIMENSION, makePlayerService, type PlayerServiceInputError } from '../src/application/player-service'
+import {
+  INITIAL_PLAYER_DIMENSION,
+  makePlayerService,
+  PlayerServiceInputErrorSchema,
+  type PlayerServiceInputError,
+} from '../src/application/player-service'
 import { PLAYER_REPLICATED_OWNER_ID, PlayerServiceSnapshotSchema } from '../src/application/replicated-state'
 import * as Camera from '../src/domain/camera-pose'
 import { INITIAL_PLAYER_POSE } from '../src/domain/camera-pose'
@@ -79,6 +84,20 @@ describe('the dimension is state, and it is the player’s', () => {
       expect(Result.isSuccess(Schema.decodeUnknownResult(PlayerServiceSnapshotSchema)(candidate))).toBe(true)
     }),
   )
+
+  it.effect('construction rejects a runtime dimension outside the kernel union', () =>
+    Effect.gen(function* () {
+      const invalidDimension = 'moon' as Dimension
+      const failure = yield* Effect.flip(makePlayerService(INITIAL_PLAYER_POSE, invalidDimension))
+
+      expect(failure).toStrictEqual({
+        _tag: 'PlayerServiceInputError',
+        reason: 'invalid-dimension',
+        field: 'dimension',
+      })
+      expect(Schema.is(PlayerServiceInputErrorSchema)(failure)).toBe(true)
+    }),
+  )
 })
 
 /**
@@ -152,6 +171,26 @@ describe('REGRESSION: restore carries both halves of a location', () => {
       yield* player.restore(INITIAL_PLAYER_POSE, 'overworld')
 
       expect(yield* player.dimension).toBe('overworld')
+    }),
+  )
+
+  it.effect('restore rejects a runtime dimension and preserves both state fields', () =>
+    Effect.gen(function* () {
+      const player = yield* makePlayerService()
+      const beforePose = { ...INITIAL_PLAYER_POSE, feetPosition: position(14, 63, -9) }
+      yield* player.restore(beforePose, 'end')
+      const invalidDimension = 'moon' as Dimension
+
+      const failure = yield* Effect.flip(player.restore(INITIAL_PLAYER_POSE, invalidDimension))
+
+      expect(failure).toStrictEqual({
+        _tag: 'PlayerServiceInputError',
+        reason: 'invalid-dimension',
+        field: 'dimension',
+      })
+      expect(Schema.is(PlayerServiceInputErrorSchema)(failure)).toBe(true)
+      expect(yield* player.pose).toStrictEqual(beforePose)
+      expect(yield* player.dimension).toBe('end')
     }),
   )
 })
