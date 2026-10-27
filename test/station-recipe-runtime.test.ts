@@ -223,10 +223,14 @@ describe('smithing recipe runtime', () => {
     expect(smithingInput(null)).toMatchObject({ _tag: 'Failure' })
     expect(smithingInput({ base: null })).toMatchObject({ _tag: 'Failure' })
     const invalidStation = { station: 'invalid station!' }
-    expect(matchSmithingRecipe(input, invalidStation, [untagged])).toMatchObject({ _tag: 'Failure' })
-    expect(matchSmithingRecipes(input, invalidStation, [untagged])).toMatchObject({ _tag: 'Failure' })
-    expect(matchesSmithingRecipe(untagged, input, invalidStation)).toMatchObject({ _tag: 'Failure' })
-    expect(applySmithing(input, invalidStation, [untagged])).toMatchObject({ _tag: 'Failure' })
+    const invalidStationFailure = {
+      _tag: 'Failure',
+      failure: { _tag: 'StationRecipeValidationFailure', path: 'context' },
+    }
+    expect(matchSmithingRecipe(input, invalidStation, [untagged])).toMatchObject(invalidStationFailure)
+    expect(matchSmithingRecipes(input, invalidStation, [untagged])).toMatchObject(invalidStationFailure)
+    expect(matchesSmithingRecipe(untagged, input, invalidStation)).toMatchObject(invalidStationFailure)
+    expect(applySmithing(input, invalidStation, [untagged])).toMatchObject(invalidStationFailure)
     expect(matchSmithingRecipe(input, { station: ' ' }, [untagged])).toMatchObject({ _tag: 'Failure' })
     expect(matchSmithingRecipe(input, { station: 'bad station' }, [untagged])).toMatchObject({ _tag: 'Failure' })
     expect(matchSmithingRecipe(input, {}, [{}])).toMatchObject({ _tag: 'Failure' })
