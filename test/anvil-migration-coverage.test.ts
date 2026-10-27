@@ -575,6 +575,33 @@ describe('anvil transformations', () => {
       },
     })
   })
+
+  it('reports invalid repair-cost paths when finalizing malformed canonical payloads', () => {
+    const operation = transformation({ operationCost: 5, rightContributed: true })
+    const rightWithLowerCost = canonicalRight(canonicalPayload('iron_ingot', { repairCost: -2 }))
+    const rightWithHigherCost = canonicalRight(canonicalPayload('iron_ingot', { repairCost: -1 }))
+
+    expect(finalizeAnvilPlan(
+      canonicalPayload('iron_sword', { repairCost: -1 }),
+      rightWithLowerCost,
+      null,
+      operation,
+    )).toMatchObject({
+      ok: false,
+      reason: 'invalid-input',
+      issues: [{ path: '$.state.left.repairCost', reason: 'repair cost must be a non-negative safe integer' }],
+    })
+    expect(finalizeAnvilPlan(
+      canonicalPayload('iron_sword', { repairCost: -2 }),
+      rightWithHigherCost,
+      null,
+      operation,
+    )).toMatchObject({
+      ok: false,
+      reason: 'invalid-input',
+      issues: [{ path: '$.state.right.payload.repairCost', reason: 'repair cost must be a non-negative safe integer' }],
+    })
+  })
 })
 
 describe('anvil planning and application', () => {
@@ -624,6 +651,91 @@ describe('anvil planning and application', () => {
       payload('iron_sword', { durability: { current: 10, max: 100 } }),
       inputStack(payload('iron_sword', { durability: { current: 20, max: 80 } })),
     ), rules)).toMatchObject({ ok: false, reason: 'incompatible-input' })
+  })
+
+  it('rejects forged compiled maps and accepts valid repair maps', () => {
+    const sharpness = AnvilEnchantmentId('minecraft:sharpness')
+    const smite = AnvilEnchantmentId('minecraft:smite')
+    const compiled = compile(ruleSet(
+      [enchantmentRule(sharpness)],
+      [{ target: 'iron_sword', material: 'iron_ingot', durabilityPerUnit: 20 }],
+    ))
+    const repairState = state(
+      payload('iron_sword', { durability: { current: 80, max: 100 } }),
+      inputStack(payload('iron_ingot')),
+    )
+
+    const validPlan = planAnvil(repairState, compiled)
+    expect(validPlan).toMatchObject({
+      ok: true,
+      levelCost: 1,
+      materialCost: 1,
+      output: { durability: { current: 100, max: 100 }, repairCost: 1 },
+    })
+
+    const sharpnessRule = compiled.enchantments.get(sharpness)
+    const repairRule = compiled.repairMaterials.get('iron_sword')?.get('iron_ingot')
+    const repairRules = compiled.repairMaterials.get('iron_sword')
+    if (sharpnessRule === undefined || repairRule === undefined || repairRules === undefined) {
+      throw new Error('compiled anvil rules are missing')
+    }
+
+    const forgedEnchantments = new Map(compiled.enchantments)
+    forgedEnchantments.set(sharpness, { ...sharpnessRule, id: smite })
+    expect(planAnvil(repairState, { ...compiled, enchantments: forgedEnchantments })).toMatchObject({
+      ok: false,
+      reason: 'invalid-rules',
+    })
+
+    const forgedNonSet = new Map(compiled.enchantments)
+    forgedNonSet.set(sharpness, { ...sharpnessRule, applicableItems: [] as never })
+    expect(planAnvil(repairState, { ...compiled, enchantments: forgedNonSet })).toMatchObject({
+      ok: false,
+      reason: 'invalid-rules',
+    })
+
+    const forgedNonStringSet = new Map(compiled.enchantments)
+    forgedNonStringSet.set(sharpness, { ...sharpnessRule, applicableItems: new Set([1]) as never })
+    expect(planAnvil(repairState, { ...compiled, enchantments: forgedNonStringSet })).toMatchObject({
+      ok: false,
+      reason: 'invalid-rules',
+    })
+
+    const forgedByMaterial = new Map(repairRules)
+    forgedByMaterial.set('iron_ingot', { ...repairRule, target: 'iron_axe' })
+    const forgedRepairMaterials = new Map(compiled.repairMaterials)
+    forgedRepairMaterials.set('iron_sword', forgedByMaterial)
+    expect(planAnvil(repairState, { ...compiled, repairMaterials: forgedRepairMaterials })).toMatchObject({
+      ok: false,
+      reason: 'invalid-rules',
+    })
+
+    const forgedRepairValues = new Map(compiled.repairMaterials)
+    forgedRepairValues.set('iron_sword', 'not a map' as never)
+    expect(planAnvil(repairState, { ...compiled, repairMaterials: forgedRepairValues })).toMatchObject({
+      ok: false,
+      reason: 'invalid-rules',
+    })
+
+    const forgedRepairTarget = new Map(compiled.repairMaterials)
+    forgedRepairTarget.set(1 as never, new Map())
+    expect(planAnvil(repairState, { ...compiled, repairMaterials: forgedRepairTarget })).toMatchObject({
+      ok: false,
+      reason: 'invalid-rules',
+    })
+  })
+
+  it('rejects rule sets whose getters throw during validation', () => {
+    const throwingRules: AnvilRuleSet = {
+      get enchantments(): ReadonlyArray<AnvilEnchantmentRule> {
+        throw new Error('rules are unavailable')
+      },
+    }
+
+    expect(planAnvil(state(payload('iron_sword')), throwingRules)).toMatchObject({
+      ok: false,
+      reason: 'invalid-rules',
+    })
   })
 
   it('applies costs, preserves failed input, and leaves only unconsumed repair material', () => {
