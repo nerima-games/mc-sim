@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect } from 'effect'
-import { DeltaTimeSecs } from '@nerima-games/mc-kernel'
+import { DeltaTimeSecs, foodComponentOf } from '@nerima-games/mc-kernel'
 import {
   addExhaustion,
   addExperience,
@@ -215,15 +215,17 @@ describe('hunger: saturation, exhaustion and the cascade', () => {
     }),
   )
 
-  it.effect('the saturation term is food * modifier * 2, as in the reference', () =>
+  it.effect('kernel bread saturation is an absolute gain; sim eat takes a modifier', () =>
     Effect.sync(() => {
-      // player-hunger-resolution.ts:52. Bread is 5 food, modifier 0.6, so the
-      // reserve gains 6 — which the cap above would hide if the bar were low.
+      // Kernel bread stores a gain of 6. Sim keeps the reference modifier input,
+      // so 5 food uses 0.6 and adds 5 * 0.6 * 2 = 6 saturation.
+      expect(foodComponentOf('bread')).toMatchObject({ nutrition: 5, saturation: 6 })
       const peckish = withVitals({ hungerPoints: 10, saturation: 0 })
       const fed = eat(peckish, 5, 0.6)
 
       expect(fed.hungerPoints).toBe(15)
       expect(fed.saturation).toBe(6)
+      expect(eat(peckish, 5, 6).saturation).toBe(15)
     }),
   )
 })

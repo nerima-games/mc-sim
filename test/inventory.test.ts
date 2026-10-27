@@ -116,6 +116,66 @@ describe('legacy stack fallback', () => {
     const result = addItemStack(emptyInventory(), legacy)
     expect(result.inventory.slots[0]?.count).toBe(1)
   })
+
+  it('returns a typed failure for malformed present components', () => {
+    const original = emptyInventory()
+    const malformed = { ...itemStack('stone', 1), components: {} } as unknown as ItemStack
+    const result = addItemStackResult(original, malformed)
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) expect(result.failure).toMatchObject({ _tag: 'ItemValidationFailure' })
+
+    const undefinedComponents = { ...itemStack('stone', 1), components: undefined } as unknown as ItemStack
+    const undefinedResult = addItemStackResult(original, undefinedComponents)
+    expect(undefinedResult).toMatchObject({
+      _tag: 'Failure', failure: { _tag: 'ItemValidationFailure', reason: 'invalid-type' },
+    })
+    expect(original).toStrictEqual(emptyInventory())
+  })
+
+  it('propagates malformed stored components from every inventory transition', () => {
+    const malformed = { ...itemStack('stone', 1), components: {} } as unknown as ItemStack
+    const inventory: Inventory = { slots: [malformed, ...emptyInventory().slots.slice(1)] }
+
+    expect(addItemResult(inventory, 'stone', 1)).toMatchObject({
+      _tag: 'Failure', failure: { _tag: 'ItemValidationFailure' },
+    })
+    expect(removeItemAtResult(inventory, 0, 'stone', 1)).toMatchObject({
+      _tag: 'Failure', failure: { _tag: 'ItemValidationFailure' },
+    })
+    expect(removeItemResult(inventory, 'stone', 1)).toMatchObject({
+      _tag: 'Failure', failure: { _tag: 'ItemValidationFailure' },
+    })
+    expect(normaliseInventoryResult(inventory)).toMatchObject({
+      _tag: 'Failure', failure: { _tag: 'ItemValidationFailure' },
+    })
+  })
+
+  it('propagates component failures if a caller changes a stack during a transition', () => {
+    const components = itemStack('stone', 1).components
+    const changingStack = (validReads: number): ItemStack => {
+      let reads = 0
+      return {
+        ...itemStack('stone', 1),
+        get components() {
+          reads += 1
+          return reads <= validReads ? components : undefined
+        },
+      } as unknown as ItemStack
+    }
+    const overflowSlots = [...emptyInventory().slots, undefined]
+
+    const outcomes = Array.from({ length: 24 }, (_, index) => {
+      const validReads = index + 1
+      return [
+        addItemResult({ slots: [changingStack(validReads), ...emptyInventory().slots.slice(1)] }, 'stone', 1),
+        addItemStackResult(emptyInventory(), changingStack(validReads)),
+        normaliseInventoryResult({ slots: [changingStack(validReads), ...emptyInventory().slots.slice(1)] }),
+        normaliseInventoryResult({ slots: [...overflowSlots, changingStack(validReads)] }),
+      ]
+    }).flat()
+
+    expect(outcomes.some(Result.isFailure)).toBe(true)
+  })
 })
 
 describe('addItem', () => {
@@ -904,6 +964,39 @@ describe('InventoryService concurrency', () => {
         }),
       ).toStrictEqual({ _tag: 'Swapped', carried: itemStack('dirt', 7) })
       expect(slotAt(yield* service.snapshot, 1)).toStrictEqual(itemStack('stone', 6))
+    }),
+  )
+
+  it.effect('does not default invalid storage results in add or click transitions', () =>
+    Effect.gen(function* () {
+      const addService = yield* makeInventoryService()
+      yield* addService.add('stone', 65)
+      const addStorage = yield* addService.storageSnapshot
+      ;(addStorage.inventoryDurability as Array<{ readonly current: number; readonly max: number } | null>)[0] = {
+        current: 1,
+        max: 1,
+      }
+
+      const addFailure = yield* Effect.result(addService.add('dirt', 1))
+      expect(addFailure).toMatchObject({
+        _tag: 'Failure', failure: { _tag: 'InvalidInventoryDurability', slotIndex: 0, item: 'stone' },
+      })
+
+      const clickService = yield* makeInventoryService()
+      yield* clickService.add('stone', 65)
+      const clickStorage = yield* clickService.storageSnapshot
+      ;(clickStorage.inventoryDurability as Array<{ readonly current: number; readonly max: number } | null>)[0] = {
+        current: 1,
+        max: 1,
+      }
+
+      const clickFailure = yield* Effect.result(clickService.click({
+        _tag: 'LeftClick', slotIndex: 1, carried: undefined,
+      }))
+      expect(clickFailure).toMatchObject({
+        _tag: 'Failure', failure: { _tag: 'InvalidInventoryDurability', slotIndex: 0, item: 'stone' },
+      })
+      expect(slotAt(yield* clickService.snapshot, 1)).toStrictEqual(itemStack('stone', 1))
     }),
   )
 

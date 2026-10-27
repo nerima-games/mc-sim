@@ -1,7 +1,7 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect } from 'effect'
 import { makeVitalsService, VitalsServiceLayer, VitalsService } from '../src/application/vitals-service'
-import { DeltaTimeSecs } from '@nerima-games/mc-kernel'
+import { DeltaTimeSecs, foodComponentOf } from '@nerima-games/mc-kernel'
 import { isDead, isValidVitals, SPAWN_VITALS, type Vitals } from '../src/domain/vitals'
 
 const dt = (seconds: number): DeltaTimeSecs => DeltaTimeSecs(seconds)
@@ -105,7 +105,7 @@ describe('heal and eat go through the same Ref the rest of the service does', ()
     }),
   )
 
-  it.effect('eat raises hunger and saturation, and the change persists in the Ref', () =>
+  it.effect('eat accepts the sim modifier and persists the change in the Ref', () =>
     Effect.gen(function* () {
       const vitals = yield* makeVitalsService({
         ...SPAWN_VITALS,
@@ -113,8 +113,9 @@ describe('heal and eat go through the same Ref the rest of the service does', ()
         saturation: 0,
       })
 
-      // Same numbers as the domain-level 'saturation term is food * modifier *
-      // 2' test: bread is 5 food, modifier 0.6, so the reserve gains 6.
+      // Kernel bread stores absolute saturation gain 6. This sim service keeps
+      // the modifier contract, so its caller supplies 0.6 for 5 food.
+      expect(foodComponentOf('bread')).toMatchObject({ nutrition: 5, saturation: 6 })
       yield* vitals.eat(5, 0.6)
       const fed = yield* vitals.snapshot
 

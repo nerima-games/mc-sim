@@ -1,5 +1,16 @@
 import type { ItemStack } from './inventory.js'
-import { isItemStack, type ItemType } from '@nerima-games/mc-kernel'
+import { Brand, Result } from 'effect'
+import type {
+  DamageableItemType as KernelDamageableItemType,
+  EquippableItemType as KernelEquippableItemType,
+  ItemDurabilityDefinition as KernelItemDurabilityDefinition,
+} from '@nerima-games/mc-kernel/domain/equipment'
+import {
+  EQUIPMENT_CATALOG as KERNEL_EQUIPMENT_CATALOG,
+  ITEM_DURABILITY_CATALOG as KERNEL_ITEM_DURABILITY_CATALOG,
+} from '@nerima-games/mc-kernel/domain/equipment'
+import { ItemDamage, MaxDamage, isItemStack, type ItemType } from '@nerima-games/mc-kernel'
+import { buildRuntimeEquipmentCatalog } from './equipment-catalog.js'
 
 export const EQUIPMENT_SLOTS = ['head', 'chest', 'legs', 'feet', 'offhand'] as const
 
@@ -9,58 +20,48 @@ export type EquipmentDefinition = {
   readonly slot: EquipmentSlot
 }
 
-export type ItemDurabilityDefinition = {
-  readonly maxDurability: number
+export type ItemDurabilityDefinition = KernelItemDurabilityDefinition
+
+export type EquippableItemType =
+  | 'iron_helmet'
+  | 'iron_chestplate'
+  | 'iron_leggings'
+  | 'iron_boots'
+  | 'flint_and_steel'
+  | 'shears'
+  | 'wooden_pickaxe'
+  | 'stone_pickaxe'
+  | 'iron_pickaxe'
+  | 'diamond_pickaxe'
+  | 'wooden_hoe'
+  | 'stone_hoe'
+  | 'iron_hoe'
+  | 'diamond_hoe'
+  | 'wooden_sword'
+  | 'stone_sword'
+  | 'iron_sword'
+  | 'diamond_sword'
+
+const RUNTIME_EQUIPPABLE_ITEMS: ReadonlyArray<EquippableItemType> = [
+  'iron_helmet', 'iron_chestplate', 'iron_leggings', 'iron_boots',
+  'flint_and_steel', 'shears', 'wooden_pickaxe', 'stone_pickaxe', 'iron_pickaxe', 'diamond_pickaxe',
+  'wooden_hoe', 'stone_hoe', 'iron_hoe', 'diamond_hoe',
+  'wooden_sword', 'stone_sword', 'iron_sword', 'diamond_sword',
+] satisfies ReadonlyArray<KernelEquippableItemType>
+
+export type DamageableItemType = KernelDamageableItemType
+
+export function isEquipmentSlot(value: unknown): value is EquipmentSlot {
+  return typeof value === 'string' && EQUIPMENT_SLOTS.some((slot) => slot === value)
 }
 
-/** The single source of truth for item/slot compatibility. */
-export const EQUIPMENT_CATALOG = {
-  iron_helmet: { slot: 'head' },
-  iron_chestplate: { slot: 'chest' },
-  iron_leggings: { slot: 'legs' },
-  iron_boots: { slot: 'feet' },
-  flint_and_steel: { slot: 'offhand' },
-  shears: { slot: 'offhand' },
-  wooden_pickaxe: { slot: 'offhand' },
-  stone_pickaxe: { slot: 'offhand' },
-  iron_pickaxe: { slot: 'offhand' },
-  diamond_pickaxe: { slot: 'offhand' },
-  wooden_hoe: { slot: 'offhand' },
-  stone_hoe: { slot: 'offhand' },
-  iron_hoe: { slot: 'offhand' },
-  diamond_hoe: { slot: 'offhand' },
-  wooden_sword: { slot: 'offhand' },
-  stone_sword: { slot: 'offhand' },
-  iron_sword: { slot: 'offhand' },
-  diamond_sword: { slot: 'offhand' },
-} as const
+/** Runtime slot choices are restricted to the sim's supported subset of the kernel catalog. */
+export const EQUIPMENT_CATALOG: Readonly<Partial<Record<EquippableItemType, EquipmentDefinition>>> =
+  buildRuntimeEquipmentCatalog(RUNTIME_EQUIPPABLE_ITEMS, KERNEL_EQUIPMENT_CATALOG, isEquipmentSlot)
 
-/** The single source of truth for per-item durability, independent of equipment slots. */
-export const ITEM_DURABILITY_CATALOG = {
-  iron_helmet: { maxDurability: 165 },
-  iron_chestplate: { maxDurability: 240 },
-  iron_leggings: { maxDurability: 225 },
-  iron_boots: { maxDurability: 195 },
-  flint_and_steel: { maxDurability: 64 },
-  shears: { maxDurability: 238 },
-  wooden_pickaxe: { maxDurability: 59 },
-  stone_pickaxe: { maxDurability: 131 },
-  iron_pickaxe: { maxDurability: 250 },
-  diamond_pickaxe: { maxDurability: 1561 },
-  wooden_hoe: { maxDurability: 59 },
-  stone_hoe: { maxDurability: 131 },
-  iron_hoe: { maxDurability: 250 },
-  diamond_hoe: { maxDurability: 1561 },
-  wooden_sword: { maxDurability: 59 },
-  stone_sword: { maxDurability: 131 },
-  iron_sword: { maxDurability: 250 },
-  diamond_sword: { maxDurability: 1561 },
-  bow: { maxDurability: 384 },
-  fishing_rod: { maxDurability: 64 },
-} as const
-
-export type EquippableItemType = keyof typeof EQUIPMENT_CATALOG
-export type DamageableItemType = keyof typeof ITEM_DURABILITY_CATALOG
+/** Static durability values are owned by the kernel catalog. */
+export const ITEM_DURABILITY_CATALOG: Readonly<Record<DamageableItemType, ItemDurabilityDefinition>> =
+  KERNEL_ITEM_DURABILITY_CATALOG
 
 export const isEquippableItemType = (item: ItemType): item is EquippableItemType =>
   Object.hasOwn(EQUIPMENT_CATALOG, item)
@@ -100,6 +101,9 @@ export type EquipmentValidationError = {
   readonly reason: string
 }
 
+export type DurabilityFailure = Brand.BrandError | EquipmentValidationError
+export type EquipmentItemFailure = DurabilityFailure
+
 export type EquipmentValidationResult =
   | { readonly _tag: 'Valid'; readonly equipment: Equipment }
   | { readonly _tag: 'Invalid'; readonly error: EquipmentValidationError }
@@ -113,6 +117,7 @@ export type DamageEquipmentResult =
   | { readonly _tag: 'InvalidAmount'; readonly amount: number }
   | { readonly _tag: 'Empty' }
   | { readonly _tag: 'NotDamageable'; readonly item: EquipmentItem }
+  | { readonly _tag: 'EquipmentFailure'; readonly error: EquipmentItemFailure }
   | {
       readonly _tag: 'Damaged'
       readonly item: EquipmentItem
@@ -134,9 +139,6 @@ const hasExactKeys = (value: Record<string, unknown>, expected: ReadonlyArray<st
 
 const validPositiveSafeInteger = (value: unknown): value is number =>
   typeof value === 'number' && Number.isSafeInteger(value) && value > 0
-
-export const isEquipmentSlot = (value: unknown): value is EquipmentSlot =>
-  typeof value === 'string' && EQUIPMENT_SLOTS.some((slot) => slot === value)
 
 export const isDurability = (value: unknown): value is Durability => {
   if (!isRecord(value) || !hasExactKeys(value, ['current', 'max'])) return false
@@ -183,25 +185,38 @@ export const isEquipmentItemForSlot = (
   item: EquipmentItem,
 ): item is ValidEquipmentItem => equipmentDefinitionFor(item.item)?.slot === slot && isEquipmentItem(item)
 
-export const durability = (current: number, max: number): Durability => {
-  const value: Durability = { current, max }
-  if (!isDurability(value)) {
-    throw new RangeError('Durability requires positive safe integers with current <= max')
+export const durability = (current: number, max: number): Result.Result<Durability, DurabilityFailure> => {
+  const currentResult = ItemDamage.result(current)
+  if (Result.isFailure(currentResult)) return Result.fail(currentResult.failure)
+  const maxResult = MaxDamage.result(max)
+  if (Result.isFailure(maxResult)) return Result.fail(maxResult.failure)
+  if (currentResult.success <= 0 || currentResult.success > maxResult.success) {
+    return Result.fail({
+      _tag: 'EquipmentValidationError',
+      path: 'durability',
+      reason: 'current must be positive and no greater than max',
+    })
   }
-  return value
+  return Result.succeed({ current: currentResult.success, max: maxResult.success })
 }
 
 /** Add equipment state without changing the ItemStack fields consumed by inventory code. */
 export const equipmentItem = (
   stack: ItemStack,
   itemDurability: Durability | null = durabilityForItem(stack.item),
-): EquipmentItem => {
+): Result.Result<EquipmentItem, EquipmentItemFailure> => {
   const value: EquipmentItem = {
     ...stack,
     durability: itemDurability === null ? null : { ...itemDurability },
   }
-  if (!isEquipmentItem(value)) throw new RangeError('Invalid equipment item')
-  return value
+  if (!isEquipmentItem(value)) {
+    return Result.fail({
+      _tag: 'EquipmentValidationError',
+      path: 'item',
+      reason: 'expected a damageable item stack with count 1 and exact durability',
+    })
+  }
+  return Result.succeed(value)
 }
 
 const copyEquipmentItem = (item: ValidEquipmentItem): ValidEquipmentItem => ({
@@ -288,13 +303,11 @@ export const damageEquipment = (
     }
   }
 
-  const damaged: EquipmentItem = {
-    ...item,
-    durability: {
-      current: item.durability.current - applied,
-      max: item.durability.max,
-    },
+  const nextDurability = durability(item.durability.current - applied, item.durability.max)
+  if (Result.isFailure(nextDurability)) {
+    return { equipment, result: { _tag: 'EquipmentFailure', error: nextDurability.failure } }
   }
+  const damaged: EquipmentItem = { ...item, durability: nextDurability.success }
   return {
     equipment: { slots: { ...equipment.slots, [slot]: damaged } },
     result: { _tag: 'Damaged', item: damaged, applied },

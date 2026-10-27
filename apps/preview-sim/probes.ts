@@ -27,6 +27,7 @@ import { makeGameLoop } from '../../src/application/game-loop'
 import { makeInventoryService } from '../../src/application/inventory-service'
 import { makeTimeService } from '../../src/application/time-service'
 import { itemStack } from '../../src/domain/inventory'
+import type { PlayerStorageFailure } from '../../src/domain/player-storage'
 import type { RecipeFailure } from '../../src/domain/recipe'
 import {
   clampFrameDelta,
@@ -542,13 +543,14 @@ const FOOTER: ReadonlyArray<string> = [
  * value reaches an export — including this private intermediate, since
  * `export const statsReport` below is typed by referring to it. None of the
  * (`Effect.provide` supplies `TestClock.layer()` and `Effect.scoped` closes the
- * child-fiber scope). Inventory operations can fail with `ItemStackFailure`, and
- * starter recipe construction can fail with `RecipeFailure`, so both channels
- * are preserved for the caller instead of becoming a report line.
+ * child-fiber scope). Inventory operations can fail with `ItemStackFailure` or
+ * `PlayerStorageFailure`, and starter recipe construction can fail with
+ * `RecipeFailure`, so all channels are preserved for the caller instead of
+ * becoming a report line.
  */
 const statsReportEffect: Effect.Effect<
   ReadonlyArray<string>,
-  ItemStackFailure | RecipeFailure,
+  ItemStackFailure | PlayerStorageFailure | RecipeFailure,
   never
 > = Effect.gen(function* () {
   const parts = [
@@ -566,6 +568,6 @@ const statsReportEffect: Effect.Effect<
 
 export const statsReport: Effect.Effect<
   ReadonlyArray<string>,
-  ItemStackFailure | RecipeFailure,
+  ItemStackFailure | PlayerStorageFailure | RecipeFailure,
   never
 > = statsReportEffect

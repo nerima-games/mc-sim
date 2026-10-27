@@ -106,6 +106,7 @@ import {
 } from '@nerima-games/mc-physics'
 import { InventoryService, InventoryServiceLayer } from '../application/inventory-service.js'
 import type { ItemStackFailure } from '../domain/inventory.js'
+import type { PlayerStorageFailure } from '../domain/player-storage.js'
 import type { RecipeFailure } from '../domain/recipe.js'
 import { CropService, CropServiceLayer, type CropServiceApi } from '../application/crop-service.js'
 import { PlayerService, PlayerServiceLayer, type PlayerServiceApi } from '../application/player-service.js'
@@ -460,7 +461,7 @@ export const makeSimStagesWithPhysics = (
  */
 export const simModule: GameModule<
   InventoryService | PlayerService | TimeService | CropService,
-  ItemStackFailure | RecipeFailure,
+  ItemStackFailure | RecipeFailure | PlayerStorageFailure,
   never,
   PlayerService | TimeService | CropService
 > = {

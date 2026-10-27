@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { Result } from 'effect'
 
 import {
   ENCHANTMENT_TABLE_BOOK,
@@ -12,12 +13,27 @@ import {
 } from '../src/domain/enchantment-table-data'
 import { SUPPORTED_VANILLA_ENCHANTMENT_IDS } from '../src/domain/enchantment-data'
 import {
-  calculateEnchantmentTableLevelCost,
-  enchantmentTableCostAtLevel,
+  calculateEnchantmentTableLevelCost as calculateLevelCostResult,
+  enchantmentTableCostAtLevel as costAtLevelResult,
   enchantmentTableOutputItemOf,
-  generateEnchantmentTableOffers,
+  generateEnchantmentTableOffers as generateOffersResult,
+  type CalculateEnchantmentTableLevelCostInput,
+  type GenerateEnchantmentOffersInput,
   type EnchantmentTableRandom,
 } from '../src/domain/enchantment-table'
+
+const unwrap = <A, E>(value: Result.Result<A, E>): A => {
+  if (Result.isSuccess(value)) return value.success
+  throw new Error('Expected a successful enchantment table result')
+}
+
+const enchantmentTableCostAtLevel = (cost: { readonly base: number; readonly perLevelAboveFirst: number }, level: number) =>
+  unwrap(costAtLevelResult(cost, level))
+
+const calculateEnchantmentTableLevelCost = (input: CalculateEnchantmentTableLevelCostInput): number =>
+  unwrap(calculateLevelCostResult(input))
+
+const generateEnchantmentTableOffers = (input: GenerateEnchantmentOffersInput) => unwrap(generateOffersResult(input))
 
 const zeroRandom = (): EnchantmentTableRandom => ({
   nextInt: () => 0,
@@ -48,7 +64,7 @@ describe('enchantment table data', () => {
     expect(Object.keys(VANILLA_ENCHANTMENT_TABLE_RULES).sort()).toStrictEqual(
       [...SUPPORTED_VANILLA_ENCHANTMENT_IDS].sort(),
     )
-    expect(Object.keys(VANILLA_ENCHANTMENT_TABLE_RULES)).toHaveLength(32)
+    expect(Object.keys(VANILLA_ENCHANTMENT_TABLE_RULES)).toHaveLength(43)
     expect(ENCHANTMENT_TABLE_SLOT_COUNT).toBe(3)
     expect(enchantmentTableRuleFor('protection')).toStrictEqual({
       maxLevel: 4,
@@ -149,52 +165,60 @@ describe('enchantment table level calculation', () => {
   })
 
   it('rejects invalid levels, bookshelf counts, slots, and random integers', () => {
-    expect(() => enchantmentTableCostAtLevel({ base: 1, perLevelAboveFirst: 1 }, 0)).toThrow(RangeError)
-    expect(() => enchantmentTableCostAtLevel({ base: 1, perLevelAboveFirst: 1 }, 1.5)).toThrow(RangeError)
-    expect(() => enchantmentTableCostAtLevel({ base: 1, perLevelAboveFirst: 1 }, Number.NaN)).toThrow(RangeError)
-    expect(() =>
-      calculateEnchantmentTableLevelCost({
+    for (const level of [0, 1.5, Number.NaN]) {
+      expect(Result.isFailure(costAtLevelResult({ base: 1, perLevelAboveFirst: 1 }, level))).toBe(true)
+    }
+    expect(Result.isFailure(calculateLevelCostResult({
         item: ENCHANTMENT_TABLE_BOOK,
         bookshelfCount: 1.5,
         random: zeroRandom(),
         slot: 0,
-      }),
-    ).toThrow(RangeError)
-    expect(() =>
-      calculateEnchantmentTableLevelCost({
+      }))).toBe(true)
+    expect(Result.isFailure(calculateLevelCostResult({
         item: ENCHANTMENT_TABLE_BOOK,
         bookshelfCount: Number.POSITIVE_INFINITY,
         random: zeroRandom(),
         slot: 0,
-      }),
-    ).toThrow(RangeError)
-    expect(() =>
-      calculateEnchantmentTableLevelCost({
+      }))).toBe(true)
+    expect(Result.isFailure(calculateLevelCostResult({
         item: ENCHANTMENT_TABLE_BOOK,
         bookshelfCount: 0,
         random: zeroRandom(),
         slot: 3 as 0,
-      }),
-    ).toThrow(RangeError)
+      }))).toBe(true)
 
     for (const nextInt of [-1, 8, 1.5, Number.NaN]) {
-      expect(() =>
-        calculateEnchantmentTableLevelCost({
+      expect(Result.isFailure(calculateLevelCostResult({
           item: ENCHANTMENT_TABLE_BOOK,
           bookshelfCount: 0,
           random: { nextInt: () => nextInt, nextFloat: () => 0 },
           slot: 0,
-        }),
-      ).toThrow(RangeError)
+        }))).toBe(true)
     }
+  })
+
+  it('propagates an invalid second bookshelf random draw', () => {
+    let calls = 0
+    const random: EnchantmentTableRandom = {
+      nextInt: (bound) => ++calls === 2 ? bound : 0,
+      nextFloat: () => 0,
+    }
+
+    expect(calculateLevelCostResult({
+      item: ENCHANTMENT_TABLE_BOOK,
+      bookshelfCount: 3,
+      random,
+      slot: 0,
+    })).toMatchObject({
+      _tag: 'Failure', failure: { _tag: 'EnchantmentTableFailure', reason: 'invalid-random-integer' },
+    })
   })
 })
 
 describe('enchantment table offers', () => {
   it('returns empty slots for unchantable inputs and maps book output', () => {
-    expect(
-      generateEnchantmentTableOffers({ item: 'dirt', bookshelfCount: 0, random: zeroRandom() }),
-    ).toStrictEqual([undefined, undefined, undefined])
+    expect(generateEnchantmentTableOffers({ item: 'dirt', bookshelfCount: 0, random: zeroRandom() }))
+      .toStrictEqual([undefined, undefined, undefined])
     expect(enchantmentTableOutputItemOf(ENCHANTMENT_TABLE_BOOK)).toBe('enchanted_book')
     expect(enchantmentTableOutputItemOf('bow')).toBe('bow')
   })
@@ -253,13 +277,66 @@ describe('enchantment table offers', () => {
 
   it('rejects invalid random floats', () => {
     for (const nextFloat of [Number.NaN, -0.1, 1]) {
-      expect(() =>
-        generateEnchantmentTableOffers({
+      expect(Result.isFailure(generateOffersResult({
           item: 'iron_sword',
           bookshelfCount: 0,
           random: { nextInt: () => 0, nextFloat: () => nextFloat },
-        }),
-      ).toThrow(RangeError)
+        }))).toBe(true)
     }
+  })
+
+  it('propagates failures at every random draw used to create an offer', () => {
+    const invalidAt = (call: number): EnchantmentTableRandom => {
+      let calls = 0
+      return {
+        nextInt: (bound) => ++calls === call ? bound : bound - 1,
+        nextFloat: () => 0.5,
+      }
+    }
+
+    for (const call of [1, 2, 3, 4, 5]) {
+      expect(generateOffersResult({
+        item: 'iron_sword',
+        bookshelfCount: ENCHANTMENT_TABLE_MAX_BOOKSHELVES,
+        random: invalidAt(call),
+      })).toMatchObject({
+        _tag: 'Failure', failure: { _tag: 'EnchantmentTableFailure', reason: 'invalid-random-integer' },
+      })
+    }
+
+    let floatCalls = 0
+    expect(generateOffersResult({
+      item: 'iron_sword',
+      bookshelfCount: ENCHANTMENT_TABLE_MAX_BOOKSHELVES,
+      random: {
+        nextInt: (bound) => bound - 1,
+        nextFloat: () => ++floatCalls === 2 ? 1 : 0.5,
+      },
+    })).toMatchObject({
+      _tag: 'Failure', failure: { _tag: 'EnchantmentTableFailure', reason: 'invalid-random-float' },
+    })
+
+    let intCalls = 0
+    expect(generateOffersResult({
+      item: 'iron_sword',
+      bookshelfCount: ENCHANTMENT_TABLE_MAX_BOOKSHELVES,
+      random: {
+        nextInt: (bound) => {
+          intCalls += 1
+          return intCalls === 6 ? bound : intCalls === 5 ? 0 : bound - 1
+        },
+        nextFloat: () => 0.5,
+      },
+    })).toMatchObject({
+      _tag: 'Failure', failure: { _tag: 'EnchantmentTableFailure', reason: 'invalid-random-integer' },
+    })
+
+    expect(generateOffersResult({
+      item: 'iron_sword',
+      bookshelfCount: Number.NaN,
+      random: zeroRandom(),
+    })).toMatchObject({
+      _tag: 'Failure', failure: { _tag: 'EnchantmentTableFailure', reason: 'invalid-bookshelf-count' },
+    })
   })
 })

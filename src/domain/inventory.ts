@@ -34,7 +34,7 @@ import { Result } from 'effect'
 import {
   StackCount,
   isItemType,
-  isItemComponents,
+  itemValidationFailure,
   itemStack as kernelItemStack,
   itemStacksCanMerge,
   maxStackCountForItem,
@@ -107,12 +107,35 @@ const heldCount = (stack: ItemStack): number =>
  * this clamp — `emptyInventory`, `addItem` and `normaliseInventory` are the
  * only constructors, and all three respect each item's kernel-defined limit.
  */
-const stackLimit = (stack: ItemStack): number =>
-  isItemComponents(stack.components) ? stack.components.maxStackSize : maxStackCountForItem(stack.item)
+const componentsFor = (
+  stack: ItemStack,
+): Result.Result<ItemStack['components'] | undefined, ItemStackFailure> => {
+  if (!Object.hasOwn(stack, 'components')) return Result.succeed(undefined)
+  if (stack.components === undefined) {
+    return Result.fail(itemValidationFailure(
+      'components',
+      'Present stack components must be valid',
+      'invalid-type',
+      stack.components,
+    ))
+  }
+  return Result.map(itemStack(stack.item, 1, { components: stack.components }), () => stack.components)
+}
 
-const derivedStack = (stack: ItemStack, count: number) =>
-  itemStack(stack.item, Math.min(stackLimit(stack), Math.max(1, Math.floor(count))),
-    isItemComponents(stack.components) ? { components: stack.components } : {})
+const stackLimit = (stack: ItemStack): Result.Result<number, ItemStackFailure> =>
+  Result.map(componentsFor(stack), (components) =>
+    components === undefined ? maxStackCountForItem(stack.item) : components.maxStackSize)
+
+const derivedStack = (stack: ItemStack, count: number): Result.Result<ItemStack, ItemStackFailure> =>
+  Result.flatMap(componentsFor(stack), (components) =>
+    Result.flatMap(
+      stackLimit(stack),
+      (limit) => itemStack(
+        stack.item,
+        Math.min(limit, Math.max(1, Math.floor(count))),
+        components === undefined ? undefined : { components },
+      ),
+    ))
 
 /** A slot is either empty (`undefined`) or holds a stack. */
 export type Slot = ItemStack | undefined
@@ -161,16 +184,23 @@ export type AddOutcome = {
  * across slots.
  */
 const addStack = (inventory: Inventory, stack: ItemStack, count: number): Result.Result<AddOutcome, ItemStackFailure> => {
+  const incomingComponents = componentsFor(stack)
+  if (Result.isFailure(incomingComponents)) return Result.fail(incomingComponents.failure)
   const slots = [...inventory.slots]
   let remaining = count
 
   for (let index = 0; index < slots.length && remaining > 0; index += 1) {
     const slot = slots[index]
-    if (slot === undefined || !itemStacksCanMerge(slot, stack)) {
+    if (slot === undefined) {
       continue
     }
+    const slotComponents = componentsFor(slot)
+    if (Result.isFailure(slotComponents)) return Result.fail(slotComponents.failure)
+    if (!itemStacksCanMerge(slot, stack)) continue
     const held = heldCount(slot)
-    const maxStackCount = stackLimit(slot)
+    const slotLimit = stackLimit(slot)
+    if (Result.isFailure(slotLimit)) return Result.fail(slotLimit.failure)
+    const maxStackCount = slotLimit.success
     if (held >= maxStackCount) {
       continue
     }
@@ -185,7 +215,9 @@ const addStack = (inventory: Inventory, stack: ItemStack, count: number): Result
     if (slots[index] !== undefined) {
       continue
     }
-    const accepted = Math.min(stackLimit(stack), remaining)
+    const incomingLimit = stackLimit(stack)
+    if (Result.isFailure(incomingLimit)) return Result.fail(incomingLimit.failure)
+    const accepted = Math.min(incomingLimit.success, remaining)
     const added = derivedStack(stack, accepted)
     if (Result.isFailure(added)) return Result.fail(added.failure)
     slots[index] = added.success
@@ -254,6 +286,8 @@ export const removeItemAt = (
   if (slot === undefined) {
     return Result.succeed({ inventory, result: { _tag: 'EmptySlot' } })
   }
+  const components = componentsFor(slot)
+  if (Result.isFailure(components)) return Result.fail(components.failure)
   if (slot.item !== expectedItem) {
     return Result.succeed({ inventory, result: { _tag: 'ItemMismatch', actualItem: slot.item } })
   }
@@ -284,7 +318,7 @@ export const removeItemAt = (
  *
  * TOTAL, including on an inventory this module did not build. See
  * `derivedStackCount` and `heldCount` for what an out-of-range slot does here
- * and why it cannot be allowed to throw.
+ * and why it must be returned as a failure result.
  */
 export const removeItem = (inventory: Inventory, item: ItemType, count: number): Result.Result<RemoveOutcome, ItemStackFailure> => {
   if (!Number.isInteger(count) || count <= 0) {
@@ -299,6 +333,8 @@ export const removeItem = (inventory: Inventory, item: ItemType, count: number):
     if (slot === undefined || slot.item !== item) {
       continue
     }
+    const components = componentsFor(slot)
+    if (Result.isFailure(components)) return Result.fail(components.failure)
     const held = heldCount(slot)
     const taken = Math.min(held, remaining)
     const left = held - taken
@@ -413,13 +449,17 @@ export const normaliseInventory = (inventory: Inventory): Result.Result<Normalis
       discarded += held
       continue
     }
+    const components = componentsFor(slot)
+    if (Result.isFailure(components)) return Result.fail(components.failure)
     if (index >= INVENTORY_SLOT_COUNT) {
       const stack = derivedStack(slot, 1)
       if (Result.isFailure(stack)) return Result.fail(stack.failure)
       spilled.push({ stack: stack.success, count: held })
       continue
     }
-    const maxStackCount = stackLimit(slot)
+    const stackLimitResult = stackLimit(slot)
+    if (Result.isFailure(stackLimitResult)) return Result.fail(stackLimitResult.failure)
+    const maxStackCount = stackLimitResult.success
     const normalized = derivedStack(slot, Math.min(held, maxStackCount))
     if (Result.isFailure(normalized)) return Result.fail(normalized.failure)
     slots[index] = normalized.success
@@ -430,15 +470,16 @@ export const normaliseInventory = (inventory: Inventory): Result.Result<Normalis
     }
   }
 
-  let outcome: NormaliseOutcome = { inventory: { slots }, leftover: 0, discarded }
+  let outcome: Result.Result<NormaliseOutcome, ItemStackFailure> =
+    Result.succeed({ inventory: { slots }, leftover: 0, discarded })
   for (const stack of spilled) {
-    const added = addStack(outcome.inventory, stack.stack, stack.count)
-    if (Result.isFailure(added)) return Result.fail(added.failure)
-    outcome = {
-      inventory: added.success.inventory,
-      leftover: outcome.leftover + added.success.leftover,
-      discarded: outcome.discarded,
-    }
+    outcome = Result.flatMap(outcome, (current) =>
+      Result.map(addStack(current.inventory, stack.stack, stack.count), (added) => ({
+        inventory: added.inventory,
+        leftover: current.leftover + added.leftover,
+        discarded: current.discarded,
+      })),
+    )
   }
-  return Result.succeed(outcome)
+  return outcome
 }

@@ -1,7 +1,8 @@
 import { describe, expect, it } from '@effect/vitest'
+import { Result } from 'effect'
 import type { ItemType } from '@nerima-games/mc-kernel'
 import {
-  AnvilEnchantmentId,
+  AnvilEnchantmentId as createAnvilEnchantmentId,
   type AnvilEnchantment,
   type AnvilItemPayload,
   type AnvilState,
@@ -20,6 +21,12 @@ import {
   VANILLA_ENCHANTMENT_COSTS,
   type SupportedVanillaEnchantmentId,
 } from '../src/domain/enchantment-data'
+
+const AnvilEnchantmentId = (value: string) => {
+  const result = createAnvilEnchantmentId(value)
+  if (Result.isSuccess(result)) return result.success
+  throw new Error('Expected a supported test enchantment id')
+}
 
 const enchantment = (id: string, level = 1): AnvilEnchantment => ({
   id: AnvilEnchantmentId(id),

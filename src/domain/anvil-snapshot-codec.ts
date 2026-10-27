@@ -1,9 +1,9 @@
 /* eslint-disable no-magic-numbers, no-undefined, no-ternary, prefer-destructuring, sort-keys -- Snapshot validation reports every wire-level issue with its exact path. */
-import { Brand } from 'effect'
+import { Brand, Result, Schema, SchemaTransformation } from 'effect'
 import {
   ANVIL_SNAPSHOT_VERSION,
-  AnvilCustomName,
-  AnvilEnchantmentId,
+  anvilCustomNameFromValidated,
+  anvilEnchantmentIdFromValidated,
   isCustomName,
   isEnchantmentId,
   isNonNegativeSafeInteger,
@@ -99,7 +99,7 @@ const decodeCustomName = (
   issues: Array<AnvilValidationIssue>,
 ): AnvilCustomNameType | null | undefined => {
   if (value === null) return null
-  if (typeof value === 'string' && isCustomName(value)) return AnvilCustomName(value)
+  if (typeof value === 'string' && isCustomName(value)) return anvilCustomNameFromValidated(value)
 
   issues.push({ path, reason: 'must be null or a valid custom name' })
   return
@@ -127,7 +127,7 @@ const decodeEnchantment = (
     return
   }
 
-  const canonicalId = AnvilEnchantmentId(id)
+  const canonicalId = anvilEnchantmentIdFromValidated(id)
   if (seen.has(canonicalId)) {
     issues.push({ path: `${path}.id`, reason: 'must be unique' })
     return
@@ -175,7 +175,7 @@ const decodeItemPayload = (
 
   const durability = decodeDurability(value['durability'], `${path}.durability`, issues)
 
-  const repairCostValue = value['repairCost'] ?? 0
+  const repairCostValue = value['repairCost'] === undefined ? 0 : value['repairCost']
   const repairCost = isNonNegativeSafeInteger(repairCostValue) ? repairCostValue : undefined
   if (repairCost === undefined) {
     issues.push({ path: `${path}.repairCost`, reason: 'must be a non-negative safe integer' })
@@ -215,8 +215,13 @@ const decodeRightInput = (
 
   const payload = decodeItemPayload(value['payload'], `${path}.payload`, issues)
   const countValue = value['count']
-  if (!isPositiveSafeInteger(countValue)) {
+  if (typeof countValue !== 'number') {
     issues.push({ path: `${path}.count`, reason: 'must be a positive safe integer' })
+    return
+  }
+  const count = StackCount.result(countValue)
+  if (Result.isFailure(count)) {
+    issues.push({ path: `${path}.count`, reason: count.failure.message })
     return
   }
   if (payload !== undefined && countValue > maxStackCountOfItem(payload.item)) {
@@ -229,7 +234,7 @@ const decodeRightInput = (
   }
   if (payload === undefined) return
 
-  return { payload, count: StackCount(countValue) }
+  return { payload, count: count.success }
 }
 
 const decodeState = (
@@ -287,25 +292,30 @@ export const decodeAnvilSnapshot = (value: unknown): AnvilSnapshotResult => {
     : { ok: true, snapshot: { version: ANVIL_SNAPSHOT_VERSION, state } }
 }
 
+const ANVIL_SNAPSHOT_JSON_SCHEMA = Schema.String.pipe(
+  Schema.decodeTo(Schema.Unknown, SchemaTransformation.fromJsonString()),
+)
+
 export const decodeAnvilSnapshotString = (encoded: string): AnvilSnapshotResult => {
-  try {
-    return decodeAnvilSnapshot(JSON.parse(encoded))
-  } catch {
+  const parsed = Schema.decodeUnknownResult(ANVIL_SNAPSHOT_JSON_SCHEMA)(encoded)
+  if (Result.isFailure(parsed)) {
     return { ok: false, issues: [{ path: '$', reason: 'must be valid JSON' }] }
   }
+  return decodeAnvilSnapshot(parsed.success)
 }
 
-/** Narrow external snapshot storage text to a validated branded token without throwing. */
+/** Narrow external snapshot storage text to a validated branded token. */
 export const isAnvilSnapshotString = (value: string): value is AnvilSnapshotStringType =>
   decodeAnvilSnapshotString(value).ok
 
 /** Validate an external JSON snapshot string before it becomes a branded persistence token. */
-export const AnvilSnapshotString = (value: string): AnvilSnapshotStringType => {
-  if (!isAnvilSnapshotString(value)) {
-    throw new TypeError(`Invalid AnvilSnapshotString: ${value}`)
-  }
-
-  return brandAnvilSnapshotString(value)
+export const AnvilSnapshotString = (
+  value: string,
+): Result.Result<AnvilSnapshotStringType, Extract<AnvilSnapshotResult, { readonly ok: false }>> => {
+  const decoded = decodeAnvilSnapshotString(value)
+  return decoded.ok
+    ? Result.succeed(brandAnvilSnapshotString(value))
+    : Result.fail(decoded)
 }
 
 export function encodeAnvilSnapshot(state: AnvilState): AnvilSnapshotEncodingResult

@@ -62,6 +62,7 @@ import { makeSettingsService } from '../../src/application/settings-service'
 import { makeStatisticsService } from '../../src/application/statistics-service'
 import { makeTimeService } from '../../src/application/time-service'
 import { itemStack, type ItemStackFailure } from '../../src/domain/inventory'
+import type { PlayerStorageFailure } from '../../src/domain/player-storage'
 import { makeVitalsService } from '../../src/application/vitals-service'
 import * as Camera from '../../src/domain/camera-pose'
 import {
@@ -109,6 +110,8 @@ export type LogLine = {
   readonly text: string
   readonly severity: 'note' | 'event' | 'fault'
 }
+
+type InventoryActionFailure = ItemStackFailure | PlayerStorageFailure
 
 export type WorldView = {
   readonly frame: number
@@ -395,7 +398,7 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
   /** Movement and inventory actions. `undefined` means "not one of mine". */
   const applyMovementAction = (
     action: ScriptedAction,
-  ): Effect.Effect<void, ItemStackFailure> | undefined => {
+  ): Effect.Effect<void, InventoryActionFailure> | undefined => {
     switch (action.kind) {
       case 'look':
         return guarded('look', player.look(action.deltaYaw, action.deltaPitch))
@@ -497,7 +500,7 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
   /** Save-restore and world-lifecycle actions. `undefined` means "not one of mine". */
   const applyRestoreAction = (
     action: ScriptedAction,
-  ): Effect.Effect<void, ItemStackFailure> | undefined => {
+  ): Effect.Effect<void, InventoryActionFailure> | undefined => {
     switch (action.kind) {
       case 'restoreInventory': {
         const restoreInventoryResult = Result.map(
@@ -734,7 +737,7 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
     }
   }
 
-  const applyAction = (action: ScriptedAction): Effect.Effect<void, ItemStackFailure> =>
+  const applyAction = (action: ScriptedAction): Effect.Effect<void, InventoryActionFailure> =>
     applyMovementAction(action) ??
     applyTimeAction(action) ??
     applyRestoreAction(action) ??

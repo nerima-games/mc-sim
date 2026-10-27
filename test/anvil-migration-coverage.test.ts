@@ -1,12 +1,13 @@
 import { describe, expect, it } from '@effect/vitest'
+import { Result } from 'effect'
 import { StackCount, type ItemType } from '@nerima-games/mc-kernel'
 import {
   ANVIL_MAX_CUSTOM_NAME_LENGTH,
   ANVIL_SNAPSHOT_VERSION,
-  AnvilCustomName,
-  AnvilEnchantmentId,
-  AnvilMaterialCost,
-  AnvilSnapshotString,
+  AnvilCustomName as createAnvilCustomName,
+  AnvilEnchantmentId as createAnvilEnchantmentId,
+  AnvilMaterialCost as createAnvilMaterialCost,
+  AnvilSnapshotString as createAnvilSnapshotString,
   applyAnvil,
   compileAnvilRuleSet,
   decodeAnvilSnapshot,
@@ -52,6 +53,15 @@ import {
   withRename,
   type TransformationState,
 } from '../src/domain/anvil-transformation'
+
+const unwrap = <A, E>(value: Result.Result<A, E>): A => {
+  if (Result.isSuccess(value)) return value.success
+  throw new Error('Expected a successful anvil brand result')
+}
+
+const AnvilCustomName = (value: string): AnvilCustomNameValue => unwrap(createAnvilCustomName(value))
+const AnvilEnchantmentId = (value: string): AnvilEnchantmentIdValue => unwrap(createAnvilEnchantmentId(value))
+const AnvilMaterialCost = (value: number) => unwrap(createAnvilMaterialCost(value))
 
 type PayloadOverrides = {
   readonly durability?: AnvilDurability | null
@@ -166,9 +176,9 @@ describe('anvil primitives and canonicalization', () => {
   it('validates bounded costs, safe integers, canonical ids, and custom names', () => {
     expect(AnvilMaterialCost(0)).toBe(0)
     expect(AnvilMaterialCost(99)).toBe(99)
-    expect(() => AnvilMaterialCost(-1)).toThrow()
-    expect(() => AnvilMaterialCost(100)).toThrow()
-    expect(() => AnvilMaterialCost(1.5)).toThrow()
+    expect(Result.isFailure(createAnvilMaterialCost(-1))).toBe(true)
+    expect(Result.isFailure(createAnvilMaterialCost(100))).toBe(true)
+    expect(Result.isFailure(createAnvilMaterialCost(1.5))).toBe(true)
 
     expect(isNonNegativeSafeInteger(0)).toBe(true)
     expect(isNonNegativeSafeInteger(Number.MAX_SAFE_INTEGER)).toBe(true)
@@ -191,7 +201,10 @@ describe('anvil primitives and canonicalization', () => {
     expect(isAnvilEnchantmentId('minecraft:sharpness')).toBe(true)
     expect(isAnvilEnchantmentId('bad id')).toBe(false)
     expect(AnvilEnchantmentId('minecraft:sharpness')).toBe('minecraft:sharpness')
-    expect(() => AnvilEnchantmentId('bad id')).toThrow(TypeError)
+    expect(createAnvilEnchantmentId('bad id')).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'AnvilPrimitiveFailure', brand: 'AnvilEnchantmentId', value: 'bad id' },
+    })
 
     const longestName = 'x'.repeat(ANVIL_MAX_CUSTOM_NAME_LENGTH)
     expect(isCustomName('Named blade')).toBe(true)
@@ -204,7 +217,10 @@ describe('anvil primitives and canonicalization', () => {
     expect(isAnvilCustomName('Named blade')).toBe(true)
     expect(isAnvilCustomName('')).toBe(false)
     expect(AnvilCustomName('Named blade')).toBe('Named blade')
-    expect(() => AnvilCustomName('')).toThrow(TypeError)
+    expect(createAnvilCustomName('')).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'AnvilPrimitiveFailure', brand: 'AnvilCustomName', value: '' },
+    })
   })
 
   it('sorts enchantments canonically without changing the input array', () => {
@@ -627,6 +643,22 @@ describe('anvil planning and application', () => {
     ), repairRules)
     expect(partial).toMatchObject({ ok: true, state: { right: { count: 2 } } })
 
+    let rightReads = 0
+    const changingRight: AnvilState = {
+      left: payload('iron_sword', { durability: { current: 50, max: 100 } }),
+      get right() {
+        rightReads += 1
+        return inputStack(payload('iron_ingot'), rightReads === 1 ? 2 : 1)
+      },
+      rename: null,
+      experienceLevels: 10,
+    }
+    expect(applyAnvil(changingRight, repairRules)).toMatchObject({
+      ok: false,
+      reason: 'invalid-input',
+      issues: [{ path: '$.state.right.count', reason: expect.stringContaining('StackCount') }],
+    })
+
     const insufficient = state(payload('iron_sword'), null, AnvilCustomName('New'), 0)
     expect(applyAnvil(insufficient, ruleSet())).toMatchObject({
       ok: false,
@@ -685,7 +717,7 @@ describe('anvil snapshot encoding and decoding', () => {
     expect(decodeAnvilSnapshot(encoded.snapshot)).toStrictEqual(snapshot)
     expect(decodeAnvilSnapshotString(encoded.encoded)).toStrictEqual(snapshot)
     expect(isAnvilSnapshotString(encoded.encoded)).toBe(true)
-    expect(AnvilSnapshotString(encoded.encoded)).toBe(encoded.encoded)
+    expect(unwrap(createAnvilSnapshotString(encoded.encoded))).toBe(encoded.encoded)
   })
 
   it('reports malformed top-level, state, item, durability, and right-input values', () => {
@@ -742,15 +774,34 @@ describe('anvil snapshot encoding and decoding', () => {
         { path: '$.version', reason: `must be ${String(ANVIL_SNAPSHOT_VERSION)}` },
         { path: '$.state.extraStateField', reason: 'is not a field of this format' },
         { path: '$.state.left.extraItemField', reason: 'is not a field of this format' },
+        { path: '$.state.left.item', reason: 'must be a known item type' },
         { path: '$.state.left.durability', reason: 'must be null or valid remaining durability' },
         { path: '$.state.left.enchantments', reason: 'must be an array' },
         { path: '$.state.left.repairCost', reason: 'must be a non-negative safe integer' },
         { path: '$.state.left.customName', reason: 'must be null or a valid custom name' },
         { path: '$.state.right.extraStackField', reason: 'is not a field of this format' },
-        { path: '$.state.right.count', reason: 'must be a positive safe integer' },
+        { path: '$.state.right.payload.item', reason: 'must be a known item type' },
+        { path: '$.state.right.payload.durability', reason: 'must be null or valid remaining durability' },
+        { path: '$.state.right.payload.enchantments', reason: 'must be an array' },
+        { path: '$.state.right.count', reason: 'StackCount must be an integer in [1, 99], received 0' },
         { path: '$.state.rename', reason: 'must be null or a valid custom name' },
         { path: '$.state.experienceLevels', reason: 'must be a non-negative safe integer' },
       ]),
+    })
+    expect(decodeAnvilSnapshot({
+      version: ANVIL_SNAPSHOT_VERSION,
+      state: {
+        left: null,
+        right: {
+          payload: { item: 'iron_ingot', durability: null, enchantments: [], repairCost: 0, customName: null },
+          count: '1',
+        },
+        rename: null,
+        experienceLevels: 0,
+      },
+    })).toMatchObject({
+      ok: false,
+      issues: [{ path: '$.state.right.count', reason: 'must be a positive safe integer' }],
     })
     expect(encodeAnvilSnapshot(state(
       payload('iron_sword', { durability: { current: 0, max: 100 } }),
@@ -803,6 +854,11 @@ describe('anvil snapshot encoding and decoding', () => {
       ok: false,
       issues: [{ path: '$.state.right.count', reason: 'exceeds the item stack limit' }],
     })
+    const outsideKernelCount = state(payload('stone'), inputStack(payload('stone'), 100))
+    expect(snapshotAnvilState(outsideKernelCount)).toMatchObject({
+      ok: false,
+      issues: [{ path: '$.state.right.count', reason: expect.stringContaining('StackCount') }],
+    })
     const stackedDurability = state(
       payload('iron_sword'),
       inputStack(payload('stone', { durability: { current: 1, max: 2 } }), 2),
@@ -837,7 +893,22 @@ describe('anvil snapshot encoding and decoding', () => {
     })
     expect(decodeAnvilSnapshotString(JSON.stringify(optionalDefaults))).toMatchObject({ ok: true })
     expect(isAnvilSnapshotString('{')).toBe(false)
-    expect(() => AnvilSnapshotString('{')).toThrow(TypeError)
+    expect(createAnvilSnapshotString('{')).toMatchObject({
+      _tag: 'Failure',
+      failure: { ok: false, issues: [{ path: '$', reason: 'must be valid JSON' }] },
+    })
+
+    const explicitNullRepairCost = {
+      ...optionalDefaults,
+      state: {
+        ...optionalDefaults.state,
+        left: { ...optionalDefaults.state.left, repairCost: null },
+      },
+    }
+    expect(decodeAnvilSnapshot(explicitNullRepairCost)).toMatchObject({
+      ok: false,
+      issues: [{ path: '$.state.left.repairCost', reason: 'must be a non-negative safe integer' }],
+    })
 
     const inheritedSnapshot = Object.setPrototypeOf(
       { version: ANVIL_SNAPSHOT_VERSION, state: optionalDefaults.state },

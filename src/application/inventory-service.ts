@@ -120,21 +120,21 @@ export type InventoryServiceApi = {
    * gameplay's, and `BlockDrop.affectedByFortune` exists so gameplay can make
    * them. mc-sim's part is to be told a number.
    */
-  readonly add: (item: ItemType, count: number) => Effect.Effect<number, Inv.ItemStackFailure>
+  readonly add: (item: ItemType, count: number) => Effect.Effect<number, Inv.ItemStackFailure | Storage.PlayerStorageFailure>
   /** Insert one exact item stack, preserving durability and returning anything that did not fit. */
   readonly addStoredStack: (
     stack: Container.ContainerStoredStack,
   ) => Effect.Effect<Storage.AddStoredStackResult>
   /** Take items. Resolves to the number actually taken. */
-  readonly remove: (item: ItemType, count: number) => Effect.Effect<number, Inv.ItemStackFailure>
+  readonly remove: (item: ItemType, count: number) => Effect.Effect<number, Inv.ItemStackFailure | Storage.PlayerStorageFailure>
   /** Remove exactly `count` items from the selected slot when its item still matches. */
   readonly removeAt: (
     slotIndex: number,
     expectedItem: ItemType,
     count: number,
-  ) => Effect.Effect<Inv.RemoveAtResult, Inv.ItemStackFailure>
+  ) => Effect.Effect<Inv.RemoveAtResult, Inv.ItemStackFailure | Storage.PlayerStorageFailure>
   /** Atomically apply one left or right slot click and return the new carried stack. */
-  readonly click: (click: InventoryClick) => Effect.Effect<InventoryClickResult, Inv.ItemStackFailure>
+  readonly click: (click: InventoryClick) => Effect.Effect<InventoryClickResult, Inv.ItemStackFailure | Storage.PlayerStorageFailure>
   /** Read one slot including tool durability without exposing mutable state. */
   readonly getSlot: (slotIndex: number) => Effect.Effect<InventoryCarriedSlot>
   /** Read the nine hotbar slots in their player-inventory order. */
@@ -143,16 +143,16 @@ export type InventoryServiceApi = {
   readonly setSlot: (
     slotIndex: number,
     slot: InventoryCarriedSlot,
-  ) => Effect.Effect<InventorySetSlotResult, Inv.ItemStackFailure>
+  ) => Effect.Effect<InventorySetSlotResult, Inv.ItemStackFailure | Storage.PlayerStorageFailure>
   /** Move, merge, or exchange two player inventory slots atomically. */
   readonly moveStack: (
     sourceIndex: number,
     targetIndex: number,
-  ) => Effect.Effect<InventoryMoveResult, Inv.ItemStackFailure>
+  ) => Effect.Effect<InventoryMoveResult, Inv.ItemStackFailure | Storage.PlayerStorageFailure>
   /** Shift-click a stack between the main inventory and hotbar. */
-  readonly quickMove: (slotIndex: number) => Effect.Effect<InventoryQuickMoveResult, Inv.ItemStackFailure>
+  readonly quickMove: (slotIndex: number) => Effect.Effect<InventoryQuickMoveResult, Inv.ItemStackFailure | Storage.PlayerStorageFailure>
   /** Canonically sort inventory stacks while keeping durability attached. */
-  readonly sortInventory: Effect.Effect<InventorySortResult, Inv.ItemStackFailure>
+  readonly sortInventory: Effect.Effect<InventorySortResult, Inv.ItemStackFailure | Storage.PlayerStorageFailure>
   readonly countOf: (item: ItemType) => Effect.Effect<number>
   readonly snapshot: Effect.Effect<Inv.Inventory>
   readonly equipmentSnapshot: Effect.Effect<Eq.Equipment>
@@ -255,7 +255,7 @@ export type InventoryServiceApi = {
    * public, pure, and returns both numbers, so calling it before `restore`
    * gives the full accounting and costs one repair that is idempotent.
    */
-  readonly restore: (inventory: Inv.Inventory) => Effect.Effect<number, Inv.ItemStackFailure>
+  readonly restore: (inventory: Inv.Inventory) => Effect.Effect<number, Inv.ItemStackFailure | Storage.PlayerStorageFailure>
   /**
    * Empty the inventory.
    *
@@ -297,7 +297,7 @@ export type InventoryServiceApi = {
    * Every failure leaves the inventory byte-identical; see
    * `domain/crafting.ts`.
    */
-  readonly craft: (grid: Recipe.CraftGrid) => Effect.Effect<Craft.CraftResult, Craft.CraftFailure>
+  readonly craft: (grid: Recipe.CraftGrid) => Effect.Effect<Craft.CraftResult, Craft.CraftFailure | Storage.PlayerStorageFailure>
 }
 
 const InventoryServiceBase: Context.ServiceClass<
@@ -313,6 +313,8 @@ type InventoryServiceState = {
   readonly containers: Container.ContainerStorage
 }
 
+type InventoryServiceMutationFailure = Inv.ItemStackFailure | Storage.PlayerStorageFailure
+
 /**
  * Build an InventoryService over a fresh Ref.
  *
@@ -327,7 +329,7 @@ type InventoryServiceState = {
 export const makeInventoryService = (
   initial: Inv.Inventory = Inv.emptyInventory(),
   recipeTableInput?: Recipe.RecipeTable,
-): Effect.Effect<InventoryServiceApi, Inv.ItemStackFailure | Recipe.RecipeFailure> =>
+): Effect.Effect<InventoryServiceApi, Inv.ItemStackFailure | Recipe.RecipeFailure | Storage.PlayerStorageFailure> =>
   Effect.flatMap(Effect.fromResult(Inv.normaliseInventory(initial)), (normalised) =>
     Effect.flatMap(
       Effect.fromResult(recipeTableInput === undefined ? STARTER_RECIPES : Result.succeed(recipeTableInput)),
@@ -353,15 +355,23 @@ export const makeInventoryService = (
               : [Result.succeed(result), { ...current, player: player.success }]
           }
 
+          const stateWithInventory = <A>(
+            current: InventoryServiceState,
+            inventory: Inv.Inventory,
+            result: A,
+          ): readonly [Result.Result<A, Storage.PlayerStorageFailure>, InventoryServiceState] => {
+            const player = Storage.withInventory(current.player, inventory)
+            return Result.isFailure(player)
+              ? [Result.fail(player.failure), current]
+              : [Result.succeed(result), { ...current, player: player.success }]
+          }
+
           return {
     add: (item, count) =>
-      modifyResult<number, Inv.ItemStackFailure>((current) => {
+      modifyResult<number, InventoryServiceMutationFailure>((current) => {
         const outcome = Inv.addItem(current.player.inventory, item, count)
         if (Result.isFailure(outcome)) return [Result.fail(outcome.failure), current]
-        return [Result.succeed(outcome.success.leftover), {
-          ...current,
-          player: Storage.withInventory(current.player, outcome.success.inventory),
-        }]
+        return stateWithInventory(current, outcome.success.inventory, outcome.success.leftover)
       }),
     addStoredStack: (stack) =>
       Ref.modify(state, (current) => {
@@ -369,29 +379,25 @@ export const makeInventoryService = (
         return [outcome.result, { ...current, player: outcome.storage }]
       }),
     remove: (item, count) =>
-      modifyResult<number, Inv.ItemStackFailure>((current) => {
+      modifyResult<number, InventoryServiceMutationFailure>((current) => {
         const outcome = Inv.removeItem(current.player.inventory, item, count)
         if (Result.isFailure(outcome)) return [Result.fail(outcome.failure), current]
-        return [Result.succeed(outcome.success.removed), {
-          ...current,
-          player: Storage.withInventory(current.player, outcome.success.inventory),
-        }]
+        return stateWithInventory(current, outcome.success.inventory, outcome.success.removed)
       }),
     removeAt: (slotIndex, expectedItem, count) =>
-      modifyResult<Inv.RemoveAtResult, Inv.ItemStackFailure>((current) => {
+      modifyResult<Inv.RemoveAtResult, InventoryServiceMutationFailure>((current) => {
         const outcome = Inv.removeItemAt(current.player.inventory, slotIndex, expectedItem, count)
         if (Result.isFailure(outcome)) return [Result.fail(outcome.failure), current]
-        return [Result.succeed(outcome.success.result), {
-          ...current,
-          player: Storage.withInventory(current.player, outcome.success.inventory),
-        }]
+        return stateWithInventory(current, outcome.success.inventory, outcome.success.result)
       }),
     click: (click) =>
-      modifyResult<InventoryClickResult, Inv.ItemStackFailure>((current) => {
+      modifyResult<InventoryClickResult, InventoryServiceMutationFailure>((current) => {
         const beforeDurability = current.player.inventoryDurability[click.slotIndex]
         const outcome = clickInventory(current.player.inventory, click)
         if (Result.isFailure(outcome)) return [Result.fail(outcome.failure), current]
-        let next = Storage.withInventory(current.player, outcome.success.inventory)
+        const updatedPlayer = Storage.withInventory(current.player, outcome.success.inventory)
+        if (Result.isFailure(updatedPlayer)) return [Result.fail(updatedPlayer.failure), current]
+        let next = updatedPlayer.success
         if ((outcome.success.result._tag === 'Placed' || outcome.success.result._tag === 'Swapped' ||
              outcome.success.result._tag === 'Merged') && click.carried !== undefined &&
             Eq.isDamageableItemType(click.carried.item)) {
@@ -641,13 +647,10 @@ export const makeInventoryService = (
         return [outcome.result, { ...current, containers: outcome.storage }]
       }),
     restore: (inventory) =>
-      modifyResult((current) => {
+      modifyResult<number, InventoryServiceMutationFailure>((current) => {
         const outcome = Inv.normaliseInventory(inventory)
         if (Result.isFailure(outcome)) return [Result.fail(outcome.failure), current]
-        return [Result.succeed(outcome.success.leftover), {
-          ...current,
-          player: Storage.withInventory(current.player, outcome.success.inventory),
-        }]
+        return stateWithInventory(current, outcome.success.inventory, outcome.success.leftover)
       }),
     reset: Ref.set(state, {
       player: Storage.emptyPlayerStorage(),
@@ -656,13 +659,10 @@ export const makeInventoryService = (
     recipes: Effect.succeed(recipeTable),
     previewCraft: (grid) => Effect.sync(() => Recipe.matchRecipe(recipeTable, grid)),
     craft: (grid) =>
-      modifyResult<Craft.CraftResult, Craft.CraftFailure>((current) => {
+      modifyResult<Craft.CraftResult, Craft.CraftFailure | Storage.PlayerStorageFailure>((current) => {
         const outcome = Craft.craftFromGrid(current.player.inventory, recipeTable, grid)
         if (Result.isFailure(outcome)) return [Result.fail(outcome.failure), current]
-        return [Result.succeed(outcome.success.result), {
-          ...current,
-          player: Storage.withInventory(current.player, outcome.success.inventory),
-        }]
+        return stateWithInventory(current, outcome.success.inventory, outcome.success.result)
       }),
           }
         },
@@ -673,5 +673,5 @@ export const makeInventoryService = (
 export const InventoryServiceLayer = (
   initial: Inv.Inventory = Inv.emptyInventory(),
   recipeTable?: Recipe.RecipeTable,
-): Layer.Layer<InventoryService, Inv.ItemStackFailure | Recipe.RecipeFailure> =>
+): Layer.Layer<InventoryService, Inv.ItemStackFailure | Recipe.RecipeFailure | Storage.PlayerStorageFailure> =>
   Layer.effect(InventoryService, makeInventoryService(initial, recipeTable))
