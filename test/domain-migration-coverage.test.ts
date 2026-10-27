@@ -5,7 +5,6 @@ import {
   NON_PLACEABLE_ITEM_TYPES,
   PLACEABLE_ITEM_TYPES,
   StackCount,
-  itemStackFromUnknown,
 } from '@nerima-games/mc-kernel'
 import { placeableBlockFromItem } from '../src/domain/block-interaction'
 import {
@@ -294,17 +293,14 @@ describe('domain migration coverage', () => {
     expect(isValidSettings({ ...DEFAULT_SETTINGS, keyBindings: { jump: '' } })).toBe(false)
   })
 
-  it('preserves inventory and furnace state when collecting an invalid output stack fails', () => {
+  it('rejects a malformed furnace output without changing the inventory', () => {
     const inventory = emptyInventory()
     const output = { ...itemStack('iron_ingot', 1) }
     expect(Reflect.set(output, 'item', 'unknown_item')).toBe(true)
     const furnace = { ...emptyFurnaceState(), output }
     const result = collectFurnaceOutput(inventory, furnace)
-    const expectedFailure = itemStackFromUnknown('unknown_item', 1)
 
-    expect(Result.isFailure(expectedFailure)).toBe(true)
-    if (Result.isSuccess(expectedFailure)) throw new Error('expected an unknown-item failure')
-    expect(result.result).toStrictEqual({ _tag: 'ItemStackFailure', error: expectedFailure.failure })
+    expect(result.result).toStrictEqual({ _tag: 'InvalidInput', field: 'furnace' })
     expect(result.inventory).toBe(inventory)
     expect(result.furnace).toBe(furnace)
   })
