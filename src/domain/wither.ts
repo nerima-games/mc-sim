@@ -44,6 +44,7 @@ export type WitherStep = {
   readonly state: WitherState
   readonly spawnExplosion: { readonly power: 7; readonly position: Position } | undefined
 }
+export type WitherStepFailure = Brand.BrandError
 
 export type WitherDamageResult = {
   readonly state: WitherState
@@ -81,9 +82,14 @@ export const createWither = (feetPosition: Position): WitherState => ({
 })
 
 const scaledDirection = (from: Position, to: Position, magnitude: number): Position => {
-  const dx = to.x - from.x
-  const dy = to.y - from.y
-  const dz = to.z - from.z
+  const scale = Math.max(
+    Math.abs(from.x), Math.abs(from.y), Math.abs(from.z),
+    Math.abs(to.x), Math.abs(to.y), Math.abs(to.z),
+  )
+  if (scale === 0) return positionOf(0, 0, 0)
+  const dx = to.x / scale - from.x / scale
+  const dy = to.y / scale - from.y / scale
+  const dz = to.z / scale - from.z / scale
   const length = Math.hypot(dx, dy, dz)
   return length === 0
     ? positionOf(0, 0, 0)
@@ -101,7 +107,7 @@ export const stepWither = (
   state: WitherState,
   deltaTimeSecs: number,
   targetPosition?: Position,
-): WitherStep => {
+): Result.Result<WitherStep, WitherStepFailure> => Result.gen(function* () {
   if (state.phase === 'dead') return { state, spawnExplosion: undefined }
   const delta = nonNegative(deltaTimeSecs)
 
@@ -125,21 +131,20 @@ export const stepWither = (
     state.velocity.y + acceleration.y * delta,
     state.velocity.z + acceleration.z * delta,
   ))
+  const feetX = yield* PositionAxis.result(state.feetPosition.x + velocity.x * delta)
+  const feetY = yield* PositionAxis.result(state.feetPosition.y + velocity.y * delta)
+  const feetZ = yield* PositionAxis.result(state.feetPosition.z + velocity.z * delta)
   return {
     state: {
       ...state,
       phase,
       healthPoints,
       velocity,
-      feetPosition: positionOf(
-        state.feetPosition.x + velocity.x * delta,
-        state.feetPosition.y + velocity.y * delta,
-        state.feetPosition.z + velocity.z * delta,
-      ),
+      feetPosition: position(feetX, feetY, feetZ),
     },
     spawnExplosion: undefined,
   }
-}
+})
 
 export const damageWither = (
   state: WitherState,
