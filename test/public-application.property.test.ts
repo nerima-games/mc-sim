@@ -155,20 +155,67 @@ it('core ticks reject or safely process hostile tick values and queued-intent co
 })
 
 it('entity manager spawn and restore repair hostile coordinates, health, serials, and roster entries', async () => {
-  const manager = await Effect.runPromise(makeEntityManager())
+  type EntityBehaviour = { readonly _tag: 'Idle' } | { readonly _tag: 'Restored' }
+  const behaviourSchema = Schema.Union([
+    Schema.TaggedStruct('Idle', {}),
+    Schema.TaggedStruct('Restored', {}),
+  ])
+  const entitySchema = PublicApplication.EntitySchema(behaviourSchema)
+  const rosterSchema = PublicApplication.EntityRosterSchema(behaviourSchema)
+  const entityOrUndefinedSchema = Schema.Union([entitySchema, Schema.Undefined])
+  const serialExhaustedSchema = PublicApplication.EntitySerialExhaustedSchema
+  const rosterRepairSchema = PublicApplication.RosterRepairSchema
   const kind = EntityKind('property-creature')
 
   await fc.assert(
     fc.asyncProperty(hostileNumber, async (value) => {
+      const manager = await Effect.runPromise(makeEntityManager<EntityBehaviour>())
       const request = {
         kind,
         feetPosition: { x: value, y: value, z: value },
         healthPoints: value,
         behaviour: { _tag: 'Idle' },
       }
-      await runEffectResult(manager.spawn, [request])
+      const spawnResult = await assertEffectResult(
+        'EntityManager.spawn hostile numeric fields', manager.spawn, [request], entitySchema, serialExhaustedSchema,
+      )
+      if (Result.isFailure(spawnResult)) {
+        expect(Schema.decodeUnknownSync(serialExhaustedSchema)(spawnResult.failure)).toStrictEqual({
+          _tag: 'EntitySerialExhausted',
+        })
+      }
+      expect(Result.isSuccess(spawnResult)).toBe(true)
+      if (Result.isFailure(spawnResult)) return
 
-      const roster = {
+      const spawned = Schema.decodeUnknownSync(entitySchema)(spawnResult.success)
+      const spawnedRoster = Schema.decodeUnknownSync(rosterSchema)(await Effect.runPromise(manager.snapshot))
+      const spawnedEntities = Schema.decodeUnknownSync(Schema.Array(entitySchema))(
+        await Effect.runPromise(manager.entities),
+      )
+      expect(spawnedRoster.entities).toContainEqual(spawned)
+      expect(spawnedEntities).toContainEqual(spawned)
+      expect(await Effect.runPromise(manager.count)).toBe(1)
+      expect(await Effect.runPromise(manager.countOfKind(kind))).toBe(1)
+
+      const foundValue = await Effect.runPromise(invokeEffect(manager.find, [spawned.id]))
+      const found = Schema.decodeUnknownSync(entityOrUndefinedSchema)(foundValue)
+      expect(found).toStrictEqual(spawned)
+      expect(foundValue).toBe(spawnResult.success)
+
+      const despawned = Schema.decodeUnknownSync(Schema.Boolean)(
+        await Effect.runPromise(manager.despawn(spawned.id)),
+      )
+      expect(despawned).toBe(true)
+      const afterDespawn = Schema.decodeUnknownSync(rosterSchema)(await Effect.runPromise(manager.snapshot))
+      expect(afterDespawn.entities).toHaveLength(0)
+      expect(await Effect.runPromise(manager.count)).toBe(0)
+      expect(await Effect.runPromise(manager.countOfKind(kind))).toBe(0)
+      expect(Schema.decodeUnknownSync(entityOrUndefinedSchema)(
+        await Effect.runPromise(invokeEffect(manager.find, [spawned.id])),
+      )).toBeUndefined()
+
+      const beforeRestore = afterDespawn
+      const roster: unknown = {
         nextSerial: value,
         entities: [
           null,
@@ -181,19 +228,91 @@ it('entity manager spawn and restore repair hostile coordinates, health, serials
           },
         ],
       }
-      await runEffectResult(manager.restore, [roster])
-
-      await Effect.runPromise(manager.snapshot)
+      const restoreResult = await assertEffectResult(
+        'EntityManager.restore hostile roster', manager.restore, [roster], rosterRepairSchema, serialExhaustedSchema,
+      )
+      if (Result.isFailure(restoreResult)) {
+        expect(Schema.decodeUnknownSync(serialExhaustedSchema)(restoreResult.failure)).toStrictEqual({
+          _tag: 'EntitySerialExhausted',
+        })
+        const unchanged = Schema.decodeUnknownSync(rosterSchema)(await Effect.runPromise(manager.snapshot))
+        expect(unchanged).toStrictEqual(beforeRestore)
+      } else {
+        const repair = Schema.decodeUnknownSync(rosterRepairSchema)(restoreResult.success)
+        expect(repair).toStrictEqual({ discarded: 1, reidentified: 1 })
+        const installed = Schema.decodeUnknownSync(rosterSchema)(await Effect.runPromise(manager.snapshot))
+        expect(installed.entities).toHaveLength(1)
+        expect(installed.entities[0]?.id).not.toBe(value)
+        expect(await Effect.runPromise(manager.count)).toBe(installed.entities.length)
+        expect(await Effect.runPromise(manager.countOfKind(kind))).toBe(installed.entities.length)
+        const restored = installed.entities[0]
+        if (restored !== undefined) {
+          expect(Schema.decodeUnknownSync(entityOrUndefinedSchema)(
+            await Effect.runPromise(invokeEffect(manager.find, [restored.id])),
+          )).toStrictEqual(restored)
+        }
+      }
     }),
     checks,
   )
 
-  const managerApi = await Effect.runPromise(makeEntityManager())
+  const exhaustedSpawnManager = await Effect.runPromise(makeEntityManager<EntityBehaviour>({
+    entities: [],
+    nextSerial: PublicApplication.EntitySerial(Number.MAX_SAFE_INTEGER),
+  }))
+  const exhaustedSpawnResult = await assertEffectResult(
+    'EntityManager.spawn serial exhaustion', exhaustedSpawnManager.spawn,
+    [{ kind, feetPosition: { x: 1, y: 64, z: 0 }, healthPoints: 20, behaviour: { _tag: 'Idle' } }],
+    entitySchema, serialExhaustedSchema,
+  )
+  if (Result.isFailure(exhaustedSpawnResult)) {
+    expect(Schema.decodeUnknownSync(serialExhaustedSchema)(exhaustedSpawnResult.failure)).toStrictEqual({
+      _tag: 'EntitySerialExhausted',
+    })
+  } else {
+    Schema.decodeUnknownSync(entitySchema)(exhaustedSpawnResult.success)
+  }
+  expect(Result.isFailure(exhaustedSpawnResult)).toBe(true)
+
+  const exhaustedSerial = PublicApplication.EntitySerial(Number.MAX_SAFE_INTEGER)
+  const duplicateId = PublicApplication.mintEntityId(exhaustedSerial)
+  const exhaustedRestoreManager = await Effect.runPromise(makeEntityManager<EntityBehaviour>())
+  const exhaustedRestoreResult = await assertEffectResult(
+    'EntityManager.restore serial exhaustion', exhaustedRestoreManager.restore,
+    [{
+      nextSerial: exhaustedSerial,
+      entities: [0, 1].map(() => ({
+        id: duplicateId,
+        kind,
+        feetPosition: { x: 0, y: 64, z: 0 },
+        healthPoints: 20,
+        behaviour: { _tag: 'Restored' },
+      })),
+    }],
+    rosterRepairSchema, serialExhaustedSchema,
+  )
+  if (Result.isFailure(exhaustedRestoreResult)) {
+    expect(Schema.decodeUnknownSync(serialExhaustedSchema)(exhaustedRestoreResult.failure)).toStrictEqual({
+      _tag: 'EntitySerialExhausted',
+    })
+  } else {
+    Schema.decodeUnknownSync(rosterRepairSchema)(exhaustedRestoreResult.success)
+  }
+  expect(Result.isFailure(exhaustedRestoreResult)).toBe(true)
+
+  const managerApi = await Effect.runPromise(makeEntityManager<EntityBehaviour>())
   await fc.assert(
     fc.asyncProperty(hostileValue, async (idOrKind) => {
-      await Effect.runPromise(invokeEffect(managerApi.find, [idOrKind]))
-      await Effect.runPromise(invokeEffect(managerApi.despawn, [idOrKind]))
-      await Effect.runPromise(invokeEffect(managerApi.countOfKind, [idOrKind]))
+      const found = Schema.decodeUnknownSync(entityOrUndefinedSchema)(
+        await Effect.runPromise(invokeEffect(managerApi.find, [idOrKind])),
+      )
+      const despawned = Schema.decodeUnknownSync(Schema.Boolean)(
+        await Effect.runPromise(invokeEffect(managerApi.despawn, [idOrKind])),
+      )
+      const count = await Effect.runPromise(invokeEffect(managerApi.countOfKind, [idOrKind]))
+      expect(found).toBeUndefined()
+      expect(despawned).toBe(false)
+      expect(count).toBe(0)
     }),
     checks,
   )

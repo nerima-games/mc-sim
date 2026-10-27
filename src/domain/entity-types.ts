@@ -1,5 +1,6 @@
-import { Brand } from 'effect'
+import { Brand, Schema } from 'effect'
 import {
+  EntityIdSchema,
   EntityHealthPoints,
   EntityRosterRepairCount,
   EntitySerial,
@@ -46,6 +47,66 @@ export type EntityRoster<S> = {
   readonly nextSerial: EntitySerial
 }
 
+const NonNegativeSafeIntegerSchema = Schema.Int.check(
+  Schema.makeFilter((value) => Number.isSafeInteger(value) && value >= 0),
+)
+
+export const EntitySerialSchema: Schema.Codec<EntitySerial, number> = NonNegativeSafeIntegerSchema.pipe(
+  Schema.brand('EntitySerial'),
+)
+
+export const EntityHealthPointsSchema: Schema.Codec<EntityHealthPoints, number> = Schema.Finite.check(
+  Schema.isGreaterThanOrEqualTo(0),
+).pipe(Schema.brand('EntityHealthPoints'))
+
+export const EntityRosterRepairCountSchema: Schema.Codec<EntityRosterRepairCount, number> =
+  NonNegativeSafeIntegerSchema.pipe(Schema.brand('EntityRosterRepairCount'))
+
+const PositionAxisSchema: Schema.Codec<PositionAxis, number> = Schema.Finite.pipe(Schema.brand('PositionAxis'))
+const EntityPositionSchema: Schema.Codec<Position, {
+  readonly x: number
+  readonly y: number
+  readonly z: number
+}> = Schema.Struct({
+  x: PositionAxisSchema,
+  y: PositionAxisSchema,
+  z: PositionAxisSchema,
+})
+
+const NonBlankEntityIdSchema: Schema.Codec<EntityId, string> = EntityIdSchema.check(Schema.isPattern(/\S/))
+const EntityKindSchema: Schema.Codec<EntityKind, string> =
+  Schema.String.check(Schema.isPattern(/\S/)).pipe(Schema.brand('EntityKind'))
+
+type EntitySchemaFields<Behaviour extends Schema.Constraint> = {
+  readonly id: typeof NonBlankEntityIdSchema
+  readonly kind: typeof EntityKindSchema
+  readonly feetPosition: typeof EntityPositionSchema
+  readonly healthPoints: typeof EntityHealthPointsSchema
+  readonly behaviour: Behaviour
+}
+
+type EntityRosterSchemaFields<Behaviour extends Schema.Constraint> = {
+  readonly entities: Schema.$Array<Schema.Struct<EntitySchemaFields<Behaviour>>>
+  readonly nextSerial: typeof EntitySerialSchema
+}
+
+export const EntitySchema = <Behaviour extends Schema.Constraint>(
+  behaviourSchema: Behaviour,
+): Schema.Struct<EntitySchemaFields<Behaviour>> => Schema.Struct({
+  id: NonBlankEntityIdSchema,
+  kind: EntityKindSchema,
+  feetPosition: EntityPositionSchema,
+  healthPoints: EntityHealthPointsSchema,
+  behaviour: behaviourSchema,
+})
+
+export const EntityRosterSchema = <Behaviour extends Schema.Constraint>(
+  behaviourSchema: Behaviour,
+): Schema.Struct<EntityRosterSchemaFields<Behaviour>> => Schema.Struct({
+  entities: Schema.Array(EntitySchema(behaviourSchema)),
+  nextSerial: EntitySerialSchema,
+})
+
 export const NO_ENTITIES: ReadonlyArray<never> = []
 
 const magnitude = (value: unknown): number =>
@@ -81,6 +142,9 @@ export type EntitySerialExhausted = {
   readonly _tag: 'EntitySerialExhausted'
 }
 
+export const EntitySerialExhaustedSchema: Schema.Codec<EntitySerialExhausted, EntitySerialExhausted> =
+  Schema.TaggedStruct('EntitySerialExhausted', {})
+
 export type DespawnOutcome<S> = {
   readonly roster: EntityRoster<S>
   readonly despawned: boolean
@@ -107,6 +171,14 @@ export type RosterRepair = {
   readonly discarded: EntityRosterRepairCount
   readonly reidentified: EntityRosterRepairCount
 }
+
+export const RosterRepairSchema: Schema.Codec<RosterRepair, {
+  readonly discarded: number
+  readonly reidentified: number
+}> = Schema.Struct({
+  discarded: EntityRosterRepairCountSchema,
+  reidentified: EntityRosterRepairCountSchema,
+})
 
 export type NormaliseRosterOutcome<S> = RosterRepair & {
   readonly roster: EntityRoster<S>
