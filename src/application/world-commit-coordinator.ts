@@ -230,18 +230,19 @@ export const makeWorldCommitCoordinator = (
     })
 
     const snapshot: WorldCommitCoordinatorApi['snapshot'] = (ownerId, schema) =>
-      Effect.flatMap(Ref.get(committed), (current): Effect.Effect<
-        ReplicatedSnapshot<typeof schema>,
-        Schema.SchemaError | ReplicatedOwnerUnknown,
-        Schema.Codec.DecodingServices<typeof schema>
-      > => {
-        const state = current.owners.get(ownerId)
-        if (state === undefined) return Effect.fail(new ReplicatedOwnerUnknown({ ownerId }))
-        return Effect.map(Schema.decodeUnknownEffect(schema)(state), (decoded) => ({
+      Effect.gen(function* () {
+        const decodedOwnerId = yield* Schema.decodeUnknownEffect(ReplicatedOwnerIdSchema)(ownerId)
+        const current = yield* Ref.get(committed)
+        const state = current.owners.get(decodedOwnerId)
+        if (state === undefined) {
+          return yield* Effect.fail(new ReplicatedOwnerUnknown({ ownerId: decodedOwnerId }))
+        }
+        const decoded = yield* Schema.decodeUnknownEffect(schema)(state)
+        return {
           world: current.world,
           revision: current.revision,
           state: decoded,
-        }))
+        }
       })
 
     const commit: WorldCommitCoordinatorApi['commit'] = (request) =>

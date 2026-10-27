@@ -91,6 +91,46 @@ const makeContainerFixture = Effect.gen(function* () {
 
 const makeInventory = () => Effect.runPromise(App.makeInventoryService())
 
+it('WorldCommitCoordinator.snapshot returns a typed unknown-owner failure for hostile IDs', async () => {
+  const snapshotSchema = Schema.Struct({ count: Schema.Int })
+  const registeredOwnerId = Schema.decodeUnknownSync(App.ReplicatedOwnerIdSchema)('snapshot-property-owner')
+  const coordinator = await Effect.runPromise(makeCoordinator([
+    { ownerId: registeredOwnerId, schema: snapshotSchema, initialState: { count: 1 } },
+  ]))
+  const validSnapshot = await Effect.runPromise(coordinator.snapshot(registeredOwnerId, snapshotSchema))
+  expect(validSnapshot).toStrictEqual({ world: worldId, revision: 0, state: { count: 1 } })
+
+  const hostileOwnerIds = fc.tuple(
+    fc.constant<unknown>(null),
+    fc.constantFrom<unknown>(false, true),
+    fc.double(),
+    fc.constantFrom<unknown>(Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY),
+    fc.constant<unknown>(''),
+    fc.oneof(fc.constant<unknown>({}), fc.record({ unexpected: fc.string() })),
+    fc.string({ minLength: 1 }).filter((candidate) => candidate !== registeredOwnerId),
+  )
+
+  await fc.assert(
+    fc.asyncProperty(hostileOwnerIds, async (candidates) => {
+      await Promise.all(candidates.map(async (candidate) => {
+        const snapshot = () => coordinator.snapshot(candidate as App.ReplicatedOwnerId, snapshotSchema)
+        expect(snapshot).not.toThrow()
+
+        const outcome = await Effect.runPromise(Effect.result(snapshot()))
+        expect(Result.isFailure(outcome)).toBe(true)
+        if (Result.isFailure(outcome)) {
+          if (typeof candidate === 'string' && candidate.length > 0) {
+            expect(outcome.failure).toBeInstanceOf(App.ReplicatedOwnerUnknown)
+          } else {
+            expect(outcome.failure._tag).toBe('SchemaError')
+          }
+        }
+      }))
+    }),
+    checks,
+  )
+})
+
 it('makeInventoryService returns its typed failure for a null constructor envelope', async () => {
   await fc.assert(
     fc.asyncProperty(fc.constant(null), async (initial) => {
