@@ -1,5 +1,5 @@
 import { AchievementIdSchema } from '@nerima-games/mc-kernel'
-import { Schema } from 'effect'
+import { Result, Schema } from 'effect'
 import type { DomainEventAchievementId } from '@nerima-games/mc-kernel'
 
 export type StatisticKey = string
@@ -7,6 +7,12 @@ export type AchievementId = DomainEventAchievementId
 export type Statistics = Readonly<{
   counters: Readonly<Record<StatisticKey, number>>
   unlocked: ReadonlyArray<string>
+}>
+
+export type StatisticsRecordFailure = Readonly<{
+  readonly _tag: 'StatisticsRecordFailure'
+  readonly path: string
+  readonly reason: string
 }>
 
 export const EMPTY_STATISTICS: Statistics = { counters: {}, unlocked: [] }
@@ -67,13 +73,9 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
  * vocabulary is the more expensive thing to hold.
  */
 
-/** A value with no magnitude contributes nothing. `domain/vitals.ts` argues the case. */
-const delta = (value: number): number =>
-  typeof value === 'number' && Number.isFinite(value) ? value : 0
-
 /** How many times something has been counted. Never `undefined`, never negative. */
 export const counterOf = (statistics: Statistics, key: StatisticKey): number =>
-  Math.max(0, delta(statistics['counters'][key] ?? 0))
+  Number.isFinite(statistics['counters'][key]) ? Math.max(0, statistics['counters'][key] ?? 0) : 0
 
 /**
  * Count something. `amount` defaults to one, which is the overwhelming case.
@@ -84,20 +86,35 @@ export const counterOf = (statistics: Statistics, key: StatisticKey): number =>
  * anything except that a rule double-subtracted somewhere. Refusing to store it
  * keeps the defect at the caller rather than in the save file.
  *
- * A non-finite amount is IGNORED, and an already non-finite stored value is
- * treated as zero by `counterOf`, so a single `NaN` cannot silently disable a
- * counter for the rest of a world's life.
+ * Invalid amounts and additions that overflow are typed failures. They do not
+ * become a successful no-op or an invalid persisted counter.
  */
-export const record = (statistics: Statistics, key: StatisticKey, amount = 1): Statistics => {
-  const by = delta(amount)
-  if (by === 0) {
-    return statistics
+export const record = (
+  statistics: Statistics,
+  key: StatisticKey,
+  amount: unknown = 1,
+): Result.Result<Statistics, StatisticsRecordFailure> => {
+  if (!isValidStatistics(statistics)) {
+    return Result.fail({ _tag: 'StatisticsRecordFailure', path: 'statistics', reason: 'invalid statistics record' })
+  }
+  if (typeof key !== 'string') {
+    return Result.fail({ _tag: 'StatisticsRecordFailure', path: 'key', reason: 'expected a string key' })
+  }
+  if (typeof amount !== 'number' || !Number.isFinite(amount)) {
+    return Result.fail({ _tag: 'StatisticsRecordFailure', path: 'amount', reason: 'expected a finite number' })
   }
 
-  return {
-    ...statistics,
-    counters: { ...statistics['counters'], [key]: Math.max(0, counterOf(statistics, key) + by) },
+  const current = statistics['counters'][key] ?? 0
+  const next = current + amount
+  if (!Number.isFinite(next)) {
+    return Result.fail({ _tag: 'StatisticsRecordFailure', path: `counters.${key}`, reason: 'counter addition overflowed' })
   }
+  if (amount === 0) return Result.succeed(statistics)
+
+  const counters: Record<string, number> = { ...statistics['counters'] }
+  if (next <= 0) delete counters[key]
+  else counters[key] = next
+  return Result.succeed({ ...statistics, counters })
 }
 
 export const isUnlocked = (statistics: Statistics, id: AchievementId): boolean =>
@@ -142,7 +159,7 @@ export const normaliseStatistics = (statistics: unknown): Statistics => {
   const counters: Record<StatisticKey, number> = {}
   if (isRecord(source)) {
     for (const [key, value] of Object.entries(source)) {
-      const count = typeof value === 'number' ? Math.max(0, delta(value)) : 0
+      const count = typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : 0
       if (count > 0) {
         counters[key] = count
       }

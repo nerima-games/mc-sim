@@ -63,11 +63,11 @@
  */
 import { Brand, Result } from 'effect'
 import {
+  DeltaTimeSecs,
   FixedDurationSecs,
   InterpolationFraction,
   PositiveTickCount,
   SimulationTick,
-  type DeltaTimeSecs,
 } from '@nerima-games/mc-kernel'
 
 /** Simulation ticks per second. Vanilla parity; the reference uses the same rate. */
@@ -93,6 +93,11 @@ export type TimeState = {
   /** Ticks in one day. The DENOMINATOR — changing it moves the time of day. */
   readonly dayLengthTicks: number
 }
+
+type FiniteTimeTicks = number & Brand.Brand<'FiniteTimeTicks'>
+const FiniteTimeTicks = Brand.make<FiniteTimeTicks>((value) =>
+  Number.isFinite(value) && value >= 0 ? true : 'Time tick counter must remain finite and non-negative',
+)
 
 /**
  * Fresh-world state. Values taken verbatim from
@@ -267,10 +272,19 @@ export const isNight = (state: TimeState): boolean => {
 }
 
 /** Advance by one frame. Pure; the delta is supplied, never read from a clock. */
-export const advance = (state: TimeState, dt: DeltaTimeSecs): TimeState => ({
-  ...state,
-  ticks: state.ticks + dt * TICKS_PER_SECOND,
-})
+export const advance = (
+  state: TimeState,
+  dt: DeltaTimeSecs,
+): Result.Result<TimeState, Brand.BrandError> => {
+  const delta = DeltaTimeSecs.result(dt)
+  if (Result.isFailure(delta)) return Result.fail(delta.failure)
+
+  const currentTicks = FiniteTimeTicks.result(state.ticks)
+  if (Result.isFailure(currentTicks)) return Result.fail(currentTicks.failure)
+
+  const nextTicks = FiniteTimeTicks.result(currentTicks.success + delta.success * TICKS_PER_SECOND)
+  return Result.map(nextTicks, (ticks) => ({ ...state, ticks }))
+}
 
 /**
  * Install a new day length.

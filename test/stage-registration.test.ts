@@ -218,7 +218,7 @@ describe('the stage works through the services, and keeps no copy of what they o
       // holding its own accumulator could make `after.ticks` move and this
       // equality would still hold — but only if it wrote the result back, which
       // is the property that matters.
-      expect(after).toStrictEqual(Time.advance(before, DeltaTimeSecs(0.5)))
+      expect(after).toStrictEqual(Result.getOrThrow(Time.advance(before, DeltaTimeSecs(0.5))))
       expect(after.ticks).toBeGreaterThan(before.ticks)
     }).pipe(Effect.provide(SimulationLayer), Effect.provide(FrozenClockLayer)),
   )
@@ -239,7 +239,9 @@ describe('the stage works through the services, and keeps no copy of what they o
       const after = yield* time.snapshot
 
       expect(after).toStrictEqual(
-        Time.advance(Time.advance(before, DeltaTimeSecs(0.25)), DeltaTimeSecs(0.25)),
+        Result.getOrThrow(
+          Time.advance(Result.getOrThrow(Time.advance(before, DeltaTimeSecs(0.25))), DeltaTimeSecs(0.25)),
+        ),
       )
     }).pipe(Effect.provide(SimulationLayer), Effect.provide(FrozenClockLayer)),
   )

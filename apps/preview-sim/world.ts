@@ -353,7 +353,7 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
       book.lastDeltaSecs = dt
       book.simulatedSecs += dt
     }).pipe(
-      Effect.andThen(time.advance(dt)),
+      Effect.andThen(Effect.orDie(time.advance(dt))),
       // The food timer takes THE SAME delta the world clock does, and this app
       // is the only place the two are visibly one number. The signal is counted
       // and DELIBERATELY NOT ACTED ON: `'starve'` means mx-gameplay would now
@@ -629,7 +629,9 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
   }
 
   /** Vitals and progression actions. `undefined` means "not one of mine". */
-  const applyVitalsAction = (action: ScriptedAction): Effect.Effect<void, Brand.BrandError> | undefined => {
+  const applyVitalsAction = (
+    action: ScriptedAction,
+  ): Effect.Effect<void, Brand.BrandError | Statistics.StatisticsRecordFailure> | undefined => {
     switch (action.kind) {
       case 'damage': {
         // Counted HERE, at the call, because a blow that did nothing is by
@@ -804,7 +806,11 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
     action: ScriptedAction,
   ): Effect.Effect<
     void,
-    InventoryActionFailure | PlayerServiceInputError | Brand.BrandError | Schema.SchemaError
+    | InventoryActionFailure
+    | PlayerServiceInputError
+    | Brand.BrandError
+    | Statistics.StatisticsRecordFailure
+    | Schema.SchemaError
   > =>
     applyMovementAction(action) ??
     applyTimeAction(action) ??

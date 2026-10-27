@@ -16,7 +16,7 @@
  * and the only method that can is `restore`.
  */
 import { describe, expect, it } from '@effect/vitest'
-import { Effect } from 'effect'
+import { Effect, Result } from 'effect'
 import { DeltaTimeSecs, FixedDurationSecs, InterpolationFraction } from '@nerima-games/mc-kernel'
 import { INITIAL_TIME_STATE } from '../src/domain/time-of-day'
 import { makeTimeService } from '../src/application/time-service'
@@ -188,6 +188,25 @@ describe('REGRESSION: world load is restore, not configureDay — the day counte
       expect(yield* time.snapshot).toStrictEqual(before)
       yield* time.restore(candidate)
       expect(yield* time.snapshot).toStrictEqual(candidate)
+    }),
+  )
+
+  it.effect('finite delta overflow is a typed failure and leaves the clock unchanged', () =>
+    Effect.gen(function* () {
+      const time = yield* makeTimeService()
+      const before = yield* time.snapshot
+      const hugeDelta = DeltaTimeSecs(Number.MAX_VALUE)
+
+      const candidate = yield* Effect.result(time.advanceCandidate(hugeDelta))
+      expect(Result.isFailure(candidate)).toBe(true)
+      if (Result.isFailure(candidate)) expect(candidate.failure._tag).toBe('BrandError')
+
+      const advance = yield* Effect.result(time.advance(hugeDelta))
+      expect(Result.isFailure(advance)).toBe(true)
+      if (Result.isFailure(advance)) expect(advance.failure._tag).toBe('BrandError')
+      expect(yield* time.snapshot).toStrictEqual(before)
+      expect(Number.isFinite(yield* time.timeOfDay)).toBe(true)
+      expect(Number.isFinite(yield* time.dayLengthSecs)).toBe(true)
     }),
   )
 })

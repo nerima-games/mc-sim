@@ -263,7 +263,10 @@ export const simStages = (
         // A zero `dt` is legal (kernel's brand admits it, and a frame can be
         // scheduled twice inside one clock tick), and `Time.advance` handles it
         // by advancing nothing. Nothing here divides by `dt`.
-        yield* time.advance(dt)
+        // `StageRegistration.run` has no typed error channel. Keep the time
+        // service's validation failure visible as a defect at this integration
+        // boundary; direct callers can still handle the typed BrandError.
+        yield* Effect.orDie(time.advance(dt))
         yield* crops.advance(dt)
 
         // Frame-local overrides win for exactly one frame and skip physics.

@@ -170,18 +170,18 @@ describe('advance', () => {
   it.effect('is a pure function of state and delta — no clock is read anywhere', () =>
     Effect.sync(() => {
       const start = stateOf(1200, 0)
-      const oneMinute = advance(start, DeltaTimeSecs(60))
+      const oneMinute = Result.getOrThrow(advance(start, DeltaTimeSecs(60)))
 
       expect(timeOfDay(oneMinute)).toBeCloseTo(60 / 1200, 12)
       // Determinism: same inputs, same output, always.
-      expect(advance(start, DeltaTimeSecs(60))).toStrictEqual(oneMinute)
+      expect(Result.getOrThrow(advance(start, DeltaTimeSecs(60)))).toStrictEqual(oneMinute)
     }),
   )
 
   it.effect('fast-forwards a full week in microseconds, which is what makes scenario tests cheap', () =>
     Effect.sync(() => {
       const start = stateOf(1200, 0)
-      const week = advance(start, DeltaTimeSecs(1200 * 7))
+      const week = Result.getOrThrow(advance(start, DeltaTimeSecs(1200 * 7)))
 
       expect(timeOfDay(week)).toBeCloseTo(0, 9)
       expect(week.ticks).toBe(start.ticks + 1200 * 7 * TICKS_PER_SECOND)
@@ -193,10 +193,23 @@ describe('advance', () => {
       const start = stateOf(1200, 0)
 
       expect(moonPhase(start)).toBe(0)
-      expect(moonPhase(advance(start, DeltaTimeSecs(1200)))).toBe(1)
-      expect(moonPhase(advance(start, DeltaTimeSecs(1200 * 3)))).toBe(3)
+      expect(moonPhase(Result.getOrThrow(advance(start, DeltaTimeSecs(1200))))).toBe(1)
+      const threeDays = Result.getOrThrow(advance(start, DeltaTimeSecs(1200 * 3)))
+      expect(moonPhase(threeDays)).toBe(3)
       // Eight phases, then it wraps.
-      expect(moonPhase(advance(start, DeltaTimeSecs(1200 * 8)))).toBe(0)
+      const eightDays = Result.getOrThrow(advance(start, DeltaTimeSecs(1200 * 8)))
+      expect(moonPhase(eightDays)).toBe(0)
+    }),
+  )
+
+  it.effect('returns a typed failure when a finite delta overflows the tick counter', () =>
+    Effect.sync(() => {
+      const delta = DeltaTimeSecs(Number.MAX_VALUE)
+      const outcome = advance(INITIAL_TIME_STATE, delta)
+
+      expect(Number.isFinite(delta)).toBe(true)
+      expect(Result.isFailure(outcome)).toBe(true)
+      if (Result.isFailure(outcome)) expect(outcome.failure._tag).toBe('BrandError')
     }),
   )
 })
@@ -425,7 +438,7 @@ describe('checked time inputs', () => {
       // The full chain: five days in, a cleared settings field, autosave,
       // reload. The day number is what `restore` exists to preserve, and a NaN
       // day length used to move it — the world came back on a different night.
-      const dayFive = advance(INITIAL_TIME_STATE, DeltaTimeSecs(400 * 5))
+      const dayFive = Result.getOrThrow(advance(INITIAL_TIME_STATE, DeltaTimeSecs(400 * 5)))
       expect(moonPhase(dayFive)).toBe(5)
 
       const afterSettingsChange = setDayLength(dayFive, FixedDurationSecs(400))

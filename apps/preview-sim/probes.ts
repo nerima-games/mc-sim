@@ -147,7 +147,7 @@ const timeOrderProbe = (): ReadonlyArray<string> => {
   // Age a world four in-game days, then "load" it two ways.
   let aged = fresh
   for (let day = 0; day < 4; day += 1) {
-    aged = Time.advance(aged, DeltaTimeSecs(Time.dayLengthSecs(aged)))
+    aged = Result.getOrThrow(Time.advance(aged, DeltaTimeSecs(Time.dayLengthSecs(aged))))
   }
   const viaRestore = aged
   const viaConfigure = Time.setDayLengthThenTimeOfDay(

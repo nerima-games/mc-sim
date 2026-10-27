@@ -14,15 +14,15 @@
  * — an existence check fused with the insert, and a damage transition that
  * computes `justDied` inside the same step so the death signal fires once.
  */
-import { Brand, Context, Effect, Layer, Ref } from 'effect'
+import { Brand, Context, Effect, Layer, Ref, Result } from 'effect'
 import { FixedDurationSecs, InterpolationFraction, type DeltaTimeSecs } from '@nerima-games/mc-kernel'
 import * as Time from '../domain/time-of-day.js'
 
 export type TimeServiceApi = {
   /** Advance the world clock by one frame. The delta is supplied, never read. */
-  readonly advance: (dt: DeltaTimeSecs) => Effect.Effect<void>
+  readonly advance: (dt: DeltaTimeSecs) => Effect.Effect<void, Brand.BrandError>
   /** Compute the next clock state without installing it, for coordinator commits. */
-  readonly advanceCandidate: (dt: DeltaTimeSecs) => Effect.Effect<Time.TimeState>
+  readonly advanceCandidate: (dt: DeltaTimeSecs) => Effect.Effect<Time.TimeState, Brand.BrandError>
   /** Position within the current day, in [0, 1). */
   readonly timeOfDay: Effect.Effect<InterpolationFraction, Brand.BrandError>
   /** Day length in seconds. */
@@ -115,8 +115,13 @@ export const makeTimeService = (
   initial: Time.TimeState = Time.INITIAL_TIME_STATE,
 ): Effect.Effect<TimeServiceApi> =>
   Effect.map(Ref.make(Time.normaliseTimeState(initial)), (state) => ({
-    advance: (dt) => Ref.update(state, (current) => Time.advance(current, dt)),
-    advanceCandidate: (dt) => Ref.get(state).pipe(Effect.map((current) => Time.advance(current, dt))),
+    advance: (dt) =>
+      Ref.modify(state, (current) => {
+        const next = Time.advance(current, dt)
+        return [next, Result.isSuccess(next) ? next.success : current]
+      }).pipe(Effect.flatMap(Effect.fromResult), Effect.map(() => undefined)),
+    advanceCandidate: (dt) =>
+      Ref.get(state).pipe(Effect.flatMap((current) => Effect.fromResult(Time.advance(current, dt)))),
     timeOfDay: Ref.get(state).pipe(
       Effect.flatMap((current) => Effect.fromResult(InterpolationFraction.result(Time.timeOfDay(current)))),
     ),

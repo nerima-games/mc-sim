@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Effect, Schema } from 'effect'
+import { Effect, Result, Schema } from 'effect'
 import { AchievementIdSchema } from '@nerima-games/mc-kernel'
 import {
   makeStatisticsService,
@@ -19,6 +19,9 @@ import {
 
 const achievementId = Schema.decodeUnknownSync(AchievementIdSchema)
 
+const recorded = (statistics: Statistics, key: string, amount?: unknown): Statistics =>
+  Result.getOrThrow(record(statistics, key, amount))
+
 describe('counting', () => {
   it.effect('a counter starts at zero and is never undefined', () =>
     Effect.sync(() => {
@@ -28,7 +31,7 @@ describe('counting', () => {
 
   it.effect('record defaults to one and accumulates', () =>
     Effect.sync(() => {
-      const mined = record(record(record(EMPTY_STATISTICS, 'blocks.mined'), 'blocks.mined'), 'blocks.mined', 8)
+      const mined = recorded(recorded(recorded(EMPTY_STATISTICS, 'blocks.mined'), 'blocks.mined'), 'blocks.mined', 8)
 
       expect(counterOf(mined, 'blocks.mined')).toBe(10)
     }),
@@ -40,7 +43,7 @@ describe('counting', () => {
       // boats without a change here — and mc-sim cannot tell that
       // `blocks.mined` and `blocks.mined.stone` are related, which is the
       // accepted cost stated in the module header.
-      const stats = record(record(EMPTY_STATISTICS, 'blocks.mined.stone'), 'mobs.killed.creeper')
+      const stats = recorded(recorded(EMPTY_STATISTICS, 'blocks.mined.stone'), 'mobs.killed.creeper')
 
       expect(counterOf(stats, 'blocks.mined.stone')).toBe(1)
       expect(counterOf(stats, 'mobs.killed.creeper')).toBe(1)
@@ -50,30 +53,33 @@ describe('counting', () => {
 
   it.effect('a counter floors at zero rather than going negative', () =>
     Effect.sync(() => {
-      const overSubtracted = record(record(EMPTY_STATISTICS, 'deaths', 2), 'deaths', -5)
+      const overSubtracted = recorded(recorded(EMPTY_STATISTICS, 'deaths', 2), 'deaths', -5)
 
       expect(counterOf(overSubtracted, 'deaths')).toBe(0)
     }),
   )
 
-  it.effect('REGRESSION: a NaN amount must not disable a counter for the rest of the world', () =>
+  it.effect('non-finite and null amounts fail without changing the counter', () =>
     Effect.sync(() => {
-      // `10 + NaN` is `NaN`, and every later `NaN + 1` is `NaN` too — one bad
-      // call and the tally never moves again, silently, for the life of the
-      // save. The same shape as the immortality defect in `domain/vitals.ts`.
-      const stats = record(EMPTY_STATISTICS, 'blocks.mined', 10)
-      const poisoned = record(stats, 'blocks.mined', Number.NaN)
+      const stats = recorded(EMPTY_STATISTICS, 'blocks.mined', 10)
+      const nan = record(stats, 'blocks.mined', Number.NaN)
+      const infinite = record(stats, 'blocks.mined', Number.POSITIVE_INFINITY)
+      const nullAmount = record(stats, 'blocks.mined', null)
 
-      expect(counterOf(poisoned, 'blocks.mined')).toBe(10)
-      expect(counterOf(record(poisoned, 'blocks.mined'), 'blocks.mined')).toBe(11)
+      expect(nan).toMatchObject({ _tag: 'Failure', failure: { _tag: 'StatisticsRecordFailure' } })
+      expect(infinite).toMatchObject({ _tag: 'Failure', failure: { _tag: 'StatisticsRecordFailure' } })
+      expect(nullAmount).toMatchObject({ _tag: 'Failure', failure: { _tag: 'StatisticsRecordFailure' } })
+      expect(counterOf(stats, 'blocks.mined')).toBe(10)
     }),
   )
 
-  it.effect('an infinite amount is refused too — a tally has no direction to follow', () =>
+  it.effect('finite additions that overflow fail and preserve the prior record', () =>
     Effect.sync(() => {
-      const stats = record(EMPTY_STATISTICS, 'blocks.mined', Number.POSITIVE_INFINITY)
+      const stats: Statistics = { counters: { 'blocks.mined': Number.MAX_VALUE }, unlocked: [] }
+      const overflow = record(stats, 'blocks.mined', Number.MAX_VALUE)
 
-      expect(counterOf(stats, 'blocks.mined')).toBe(0)
+      expect(overflow).toMatchObject({ _tag: 'Failure', failure: { _tag: 'StatisticsRecordFailure' } })
+      expect(stats.counters['blocks.mined']).toBe(Number.MAX_VALUE)
     }),
   )
 })
@@ -111,7 +117,7 @@ describe('achievements are recorded, never decided', () => {
       // registry (achievement/achievement.ts:24-44). mc-sim holds neither: a
       // record with a hundred blocks mined has unlocked nothing until somebody
       // says so.
-      const mined = record(EMPTY_STATISTICS, 'blocks.mined', 100)
+      const mined = recorded(EMPTY_STATISTICS, 'blocks.mined', 100)
 
       expect(mined.unlocked).toEqual([])
     }),
@@ -218,6 +224,23 @@ describe('StatisticsService', () => {
       expect(yield* statistics.counterOf('blocks.mined')).toBe(5)
       expect(yield* statistics.isUnlocked(achievementId('time-to-mine'))).toBe(true)
       expect(yield* statistics.isUnlocked(achievementId('acquire-hardware'))).toBe(false)
+    }),
+  )
+
+  it.effect('record rejects overflow atomically with a typed failure', () =>
+    Effect.gen(function* () {
+      const statistics = yield* makeStatisticsService({
+        counters: { 'blocks.mined': Number.MAX_VALUE },
+        unlocked: [],
+      })
+      const outcome = yield* Effect.result(statistics.record('blocks.mined', Number.MAX_VALUE))
+
+      expect(outcome._tag).toBe('Failure')
+      expect(outcome._tag === 'Failure' && outcome.failure._tag).toBe('StatisticsRecordFailure')
+      expect(yield* statistics.snapshot).toEqual({
+        counters: { 'blocks.mined': Number.MAX_VALUE },
+        unlocked: [],
+      })
     }),
   )
 
