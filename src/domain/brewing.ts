@@ -291,11 +291,11 @@ export const brewOnce = (
   if (Result.isFailure(validatedRecipe)) return Result.fail(validatedRecipe.failure)
   const validState = validatedState.success
   const validIngredient = validatedIngredient.success
-  const validRecipe = validatedRecipe.success
-  const output = outputFor(validRecipe)
+  const matchedRecipe = validatedRecipe.success
+  const output = outputFor(matchedRecipe)
   if (Result.isFailure(output)) return Result.fail(output.failure)
   const updateBottle = (bottle: SlotValue) =>
-    bottle?.item === validRecipe.input ? output.success : bottle
+    bottle?.item === matchedRecipe.input ? output.success : bottle
   const updatedBottles = [
     updateBottle(validState.bottles[0]),
     updateBottle(validState.bottles[1]),
