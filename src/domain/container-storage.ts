@@ -62,6 +62,7 @@ export type CreateContainerResult =
   | { readonly _tag: 'Created'; readonly container: Container }
   | { readonly _tag: 'AlreadyExists'; readonly container: Container }
   | { readonly _tag: 'InvalidContainerId' }
+  | { readonly _tag: 'InvalidContainerKind' }
 
 export type ContainerTransferRequest = {
   readonly direction: 'PlayerToContainer' | 'ContainerToPlayer'
@@ -90,6 +91,9 @@ export type ContainerTransferResult =
   | { readonly _tag: 'InvalidSourceStack' }
   | { readonly _tag: 'InvalidDestinationStack' }
   | { readonly _tag: 'InvalidSourceDurability' }
+  | { readonly _tag: 'InvalidRequest' }
+  | { readonly _tag: 'InvalidPlayerStorage' }
+  | { readonly _tag: 'InvalidContainerStorage' }
   | { readonly _tag: 'ItemStackFailure'; readonly error: Inv.ItemStackFailure }
 
 export type ContainerTransferOutcome = {
@@ -113,6 +117,8 @@ export type ContainerExtractResult =
   | { readonly _tag: 'InsufficientSource'; readonly available: number }
   | { readonly _tag: 'InvalidSourceStack' }
   | { readonly _tag: 'InvalidSourceDurability' }
+  | { readonly _tag: 'InvalidRequest' }
+  | { readonly _tag: 'InvalidContainerStorage' }
   | { readonly _tag: 'ItemStackFailure'; readonly error: Inv.ItemStackFailure }
 
 export type ContainerExtractOutcome = {
@@ -142,6 +148,8 @@ export type ContainerMoveResult =
   | { readonly _tag: 'InvalidSourceStack' }
   | { readonly _tag: 'InvalidDestinationStack' }
   | { readonly _tag: 'InvalidSourceDurability' }
+  | { readonly _tag: 'InvalidRequest' }
+  | { readonly _tag: 'InvalidContainerStorage' }
   | { readonly _tag: 'ItemStackFailure'; readonly error: Inv.ItemStackFailure }
 
 export type ContainerMoveOutcome = {
@@ -166,7 +174,56 @@ const hasExactKeys = (value: Record<string, unknown>, expected: ReadonlyArray<st
   return actual.length === expected.length && expected.every((key) => Object.hasOwn(value, key))
 }
 
-const validId = (id: string): boolean => id.length > 0 && id.trim() === id
+const validId = (id: unknown): id is string =>
+  typeof id === 'string' && id.length > 0 && id.trim() === id
+
+const isContainerKind = (value: unknown): value is ContainerKind =>
+  value === 'chest' || value === 'shulker_box' || value === 'dispenser' ||
+  value === 'dropper' || value === 'hopper'
+
+const CONTAINER_CAPACITY_BY_KIND = {
+  chest: CHEST_CONTAINER_CAPACITY,
+  shulker_box: CHEST_CONTAINER_CAPACITY,
+  dispenser: DISPENSER_CONTAINER_CAPACITY,
+  dropper: DISPENSER_CONTAINER_CAPACITY,
+  hopper: HOPPER_CONTAINER_CAPACITY,
+} satisfies Record<ContainerKind, number>
+
+export const containerCapacity = (kind: ContainerKind): number => CONTAINER_CAPACITY_BY_KIND[kind]
+
+const isContainerStorageEnvelope = (value: unknown): value is ContainerStorage => {
+  if (!isRecord(value) || !hasExactKeys(value, ['containers']) || !Array.isArray(value['containers']))
+    return false
+
+  const seenIds = new Set<string>()
+  for (let index = 0; index < value['containers'].length; index += 1) {
+    const container: unknown = value['containers'][index]
+    if (!isRecord(container)) return false
+
+    const hasKind = Object.hasOwn(container, 'kind')
+    if (!(hasKind
+      ? hasExactKeys(container, ['id', 'kind', 'slots'])
+      : hasExactKeys(container, ['id', 'slots']))) return false
+
+    const { id, kind, slots } = container
+    if (!validId(id) || !Array.isArray(slots) || seenIds.has(id)) return false
+    if (hasKind) {
+      if (!isContainerKind(kind) || slots.length !== containerCapacity(kind)) return false
+    } else if (slots.length !== CHEST_CONTAINER_CAPACITY) {
+      // Legacy chest-shaped storage has no kind field but keeps the fixed chest capacity.
+      return false
+    }
+    seenIds.add(id)
+  }
+  return true
+}
+
+const isPlayerStorageEnvelope = (value: unknown): value is Player.PlayerStorage =>
+  isRecord(value) && isRecord(value['inventory']) && Array.isArray(value['inventory']['slots']) &&
+  value['inventory']['slots'].length === Inv.INVENTORY_SLOT_COUNT &&
+  isRecord(value['equipment']) && isRecord(value['equipment']['slots']) &&
+  Array.isArray(value['inventoryDurability']) &&
+  value['inventoryDurability'].length === Inv.INVENTORY_SLOT_COUNT
 
 const copyDurability = (value: Eq.Durability | null): Eq.Durability | null =>
   value === null ? null : { ...value }
@@ -188,16 +245,6 @@ const storedWithCount = (
     ...updated,
     durability: copyDurability(stack.durability),
   }))
-
-const CONTAINER_CAPACITY_BY_KIND = {
-  chest: CHEST_CONTAINER_CAPACITY,
-  shulker_box: CHEST_CONTAINER_CAPACITY,
-  dispenser: DISPENSER_CONTAINER_CAPACITY,
-  dropper: DISPENSER_CONTAINER_CAPACITY,
-  hopper: HOPPER_CONTAINER_CAPACITY,
-} satisfies Record<ContainerKind, number>
-
-export const containerCapacity = (kind: ContainerKind): number => CONTAINER_CAPACITY_BY_KIND[kind]
 
 const copyContainer = (container: Container): Container => ({
   id: container.id,
@@ -242,6 +289,7 @@ export const createContainer = (
   kind: ContainerKind = 'chest',
 ): { readonly storage: ContainerStorage; readonly result: CreateContainerResult } => {
   if (!validId(id)) return { storage, result: { _tag: 'InvalidContainerId' } }
+  if (!isContainerKind(kind)) return { storage, result: { _tag: 'InvalidContainerKind' } }
   const existing = findContainer(storage, id)
   if (existing !== undefined) return { storage, result: { _tag: 'AlreadyExists', container: existing } }
   const container = emptyContainer(id, kind)
@@ -479,6 +527,12 @@ export const transferContainerItem = (
   containerStorage: ContainerStorage,
   request: ContainerTransferRequest,
 ): ContainerTransferOutcome => {
+  if (!isRecord(request))
+    return failure(playerStorage, containerStorage, { _tag: 'InvalidRequest' })
+  if (!isPlayerStorageEnvelope(playerStorage))
+    return failure(playerStorage, containerStorage, { _tag: 'InvalidPlayerStorage' })
+  if (!isContainerStorageEnvelope(containerStorage))
+    return failure(playerStorage, containerStorage, { _tag: 'InvalidContainerStorage' })
   const lookup = lookupTransferContainer(containerStorage, request)
   if (lookup._tag === 'Invalid') return failure(playerStorage, containerStorage, lookup.result)
   const { container, containerIndex } = lookup
@@ -556,6 +610,8 @@ export const extractContainerItem = (
   storage: ContainerStorage,
   request: ContainerExtractRequest,
 ): ContainerExtractOutcome => {
+  if (!isRecord(request)) return { storage, result: { _tag: 'InvalidRequest' } }
+  if (!isContainerStorageEnvelope(storage)) return { storage, result: { _tag: 'InvalidContainerStorage' } }
   const container = storage.containers.find((candidate) => candidate.id === request.containerId)
   if (container === undefined) return { storage, result: { _tag: 'ContainerNotFound' } }
   const containerIndex = storage.containers.indexOf(container)
@@ -661,6 +717,8 @@ export const moveContainerItem = (
   storage: ContainerStorage,
   request: ContainerMoveRequest,
 ): ContainerMoveOutcome => {
+  if (!isRecord(request)) return { storage, result: { _tag: 'InvalidRequest' } }
+  if (!isContainerStorageEnvelope(storage)) return { storage, result: { _tag: 'InvalidContainerStorage' } }
   const containers = lookupMoveContainers(storage, request)
   if (containers._tag === 'Invalid') return { storage, result: containers.result }
   const { sourceIndex, destinationIndex, sourceContainer, destinationContainer } = containers

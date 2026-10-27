@@ -28,6 +28,8 @@ export type ArrowBlockImpact = {
 
 export type IsArrowBlocker = (x: number, y: number, z: number) => boolean
 
+const MAX_ARROW_RAYCAST_DISTANCE = 64
+
 /** Resolve the first blocking voxel on an arrow segment without exposing DDA details. */
 export const raycastArrowBlock = (
   from: Position,
@@ -38,6 +40,10 @@ export const raycastArrowBlock = (
   const travelY = to.y - from.y
   const travelZ = to.z - from.z
   const maxDistance = Math.hypot(travelX, travelY, travelZ)
+  // DDA traversal scales with segment length, so reject distant endpoints first.
+  if (maxDistance > MAX_ARROW_RAYCAST_DISTANCE) {
+    return Result.fail(new RangeError(`Arrow raycast distance exceeds ${MAX_ARROW_RAYCAST_DISTANCE} blocks`))
+  }
   const travel = Result.all([
     PositionAxis.result(travelX),
     PositionAxis.result(travelY),

@@ -30,17 +30,19 @@
  * concerns rather than being hidden in the stack primitive. This module owns
  * stack limits, normalization, and pure inventory transitions.
  */
-import { Result } from 'effect'
+import { Brand, Result, Schema, SchemaIssue } from 'effect'
 import {
   StackCount,
   isItemType,
   itemValidationFailure,
   itemStack as kernelItemStack,
+  itemStackFromUnknown as kernelItemStackFromUnknown,
   itemStacksCanMerge,
   maxStackCountForItem,
   type ItemType,
   type ItemStack,
 } from '@nerima-games/mc-kernel'
+import { isItemComponents } from '@nerima-games/mc-kernel/domain/item-components'
 import type { ItemStackFailure as StackConstructionFailure } from './item-stack.js'
 
 export { maxStackCountForItem }
@@ -143,6 +145,14 @@ export type Slot = ItemStack | undefined
 export type Inventory = {
   readonly slots: ReadonlyArray<Slot>
 }
+
+const InventoryEnvelopeSchema = Schema.Struct({ slots: Schema.Array(Schema.Unknown) })
+
+const invalidInventoryEnvelope = (value: unknown): Brand.BrandError =>
+  new Brand.BrandError(new SchemaIssue.InvalidType(InventoryEnvelopeSchema.ast, value))
+
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
 
 export const emptyInventory = (): Inventory => ({
   slots: Array.from({ length: INVENTORY_SLOT_COUNT }, () => undefined),
@@ -430,55 +440,131 @@ export type NormaliseOutcome = {
  * `countOf`, invisible to every recipe, undroppable, and permanent. The repoint
  * created this hole and closes it in the same commit.
  */
-export const normaliseInventory = (inventory: Inventory): Result.Result<NormaliseOutcome, ItemStackFailure> => {
+type NormalisedInputSlot = {
+  readonly slot: Slot
+  readonly spill: { readonly stack: ItemStack; readonly count: number } | undefined
+  readonly discarded: number
+}
+
+const normaliseInputSlot = (
+  inputSlot: unknown,
+  index: number,
+): Result.Result<NormalisedInputSlot, ItemStackFailure> => {
+  if (inputSlot === undefined) return Result.succeed({ slot: undefined, spill: undefined, discarded: 0 })
+  if (!isRecord(inputSlot)) return Result.fail(invalidInventoryEnvelope(inputSlot))
+
+  const inputCount = inputSlot['count']
+  const held = typeof inputCount === 'number' && Number.isFinite(inputCount) && inputCount > 0
+    ? Math.floor(inputCount)
+    : 0
+  if (held === 0) return Result.succeed({ slot: undefined, spill: undefined, discarded: 0 })
+
+  const item = inputSlot['item']
+  if (!isItemType(item)) return Result.succeed({ slot: undefined, spill: undefined, discarded: held })
+
+  let decodedStack: Result.Result<ItemStack, ItemStackFailure>
+  let preservedComponents: ItemStack['components'] | undefined
+  if (Object.hasOwn(inputSlot, 'components')) {
+    const components = inputSlot['components']
+    if (components === undefined) {
+      return Result.fail(itemValidationFailure(
+        'components', 'Present stack components must be valid', 'invalid-type', components,
+      ))
+    }
+    if (isItemComponents(components)) {
+      decodedStack = itemStack(item, 1, { components })
+      preservedComponents = components
+    } else {
+      decodedStack = kernelItemStackFromUnknown(item, 1, { components })
+    }
+  } else {
+    decodedStack = itemStack(item, 1)
+  }
+  if (Result.isFailure(decodedStack)) return Result.fail(decodedStack.failure)
+  const sourceStack = preservedComponents === undefined
+    ? decodedStack.success
+    : { ...decodedStack.success, components: preservedComponents }
+  const validatedComponents = componentsFor(sourceStack)
+  if (Result.isFailure(validatedComponents)) return Result.fail(validatedComponents.failure)
+  if (index >= INVENTORY_SLOT_COUNT) {
+    const spillStack = derivedStack(sourceStack, 1)
+    if (Result.isFailure(spillStack)) return Result.fail(spillStack.failure)
+    return Result.succeed({
+      slot: undefined,
+      spill: { stack: spillStack.success, count: held },
+      discarded: 0,
+    })
+  }
+
+  const stackLimitResult = stackLimit(sourceStack)
+  if (Result.isFailure(stackLimitResult)) return Result.fail(stackLimitResult.failure)
+  const maxStackCount = stackLimitResult.success
+  const normalized = derivedStack(sourceStack, Math.min(held, maxStackCount))
+  if (Result.isFailure(normalized)) return Result.fail(normalized.failure)
+  if (held <= maxStackCount) {
+    return Result.succeed({ slot: normalized.success, spill: undefined, discarded: 0 })
+  }
+
+  const spillStack = derivedStack(sourceStack, 1)
+  if (Result.isFailure(spillStack)) return Result.fail(spillStack.failure)
+  return Result.succeed({
+    slot: normalized.success,
+    spill: { stack: spillStack.success, count: held - maxStackCount },
+    discarded: 0,
+  })
+}
+
+export const normaliseInventory = (inventory: unknown): Result.Result<NormaliseOutcome, ItemStackFailure> => {
+  if (!isRecord(inventory) || !Array.isArray(inventory['slots'])) {
+    return Result.fail(invalidInventoryEnvelope(inventory))
+  }
+  const sourceSlots: ReadonlyArray<unknown> = inventory['slots']
   const slots: Array<Slot> = Array.from({ length: INVENTORY_SLOT_COUNT }, () => undefined)
   // A plain count, NOT a `StackCount`: a spilled quantity may legitimately
   // exceed one stack, which is precisely the input `addItem` takes unbranded.
   const spilled: Array<{ readonly stack: ItemStack; readonly count: number }> = []
   let discarded = 0
 
-  for (const [index, slot] of inventory.slots.entries()) {
-    if (slot === undefined) {
-      continue
-    }
-    const held = heldCount(slot)
-    if (held === 0) {
-      continue
-    }
-    if (!isItemType(slot.item)) {
-      discarded += held
-      continue
-    }
-    const components = componentsFor(slot)
-    if (Result.isFailure(components)) return Result.fail(components.failure)
-    if (index >= INVENTORY_SLOT_COUNT) {
-      const stack = derivedStack(slot, 1)
-      if (Result.isFailure(stack)) return Result.fail(stack.failure)
-      spilled.push({ stack: stack.success, count: held })
-      continue
-    }
-    const stackLimitResult = stackLimit(slot)
-    if (Result.isFailure(stackLimitResult)) return Result.fail(stackLimitResult.failure)
-    const maxStackCount = stackLimitResult.success
-    const normalized = derivedStack(slot, Math.min(held, maxStackCount))
+  for (const [index, inputSlot] of sourceSlots.entries()) {
+    const normalized = normaliseInputSlot(inputSlot, index)
     if (Result.isFailure(normalized)) return Result.fail(normalized.failure)
-    slots[index] = normalized.success
-    if (held > maxStackCount) {
-      const stack = derivedStack(slot, 1)
-      if (Result.isFailure(stack)) return Result.fail(stack.failure)
-      spilled.push({ stack: stack.success, count: held - maxStackCount })
+    const { slot, spill, discarded: slotDiscarded } = normalized.success
+    if (index < INVENTORY_SLOT_COUNT) slots[index] = slot
+    if (spill !== undefined) spilled.push(spill)
+    const nextDiscarded = discarded + slotDiscarded
+    if (!Number.isFinite(nextDiscarded)) {
+      return Result.fail(itemValidationFailure(
+        'discarded',
+        'Discarded inventory item count exceeds the finite range',
+        'out-of-range',
+        nextDiscarded,
+        'RangeError',
+      ))
     }
+    discarded = nextDiscarded
   }
 
   let outcome: Result.Result<NormaliseOutcome, ItemStackFailure> =
     Result.succeed({ inventory: { slots }, leftover: 0, discarded })
   for (const stack of spilled) {
     outcome = Result.flatMap(outcome, (current) =>
-      Result.map(addStack(current.inventory, stack.stack, stack.count), (added) => ({
-        inventory: added.inventory,
-        leftover: current.leftover + added.leftover,
-        discarded: current.discarded,
-      })),
+      Result.flatMap(addStack(current.inventory, stack.stack, stack.count), (added) => {
+        const leftover = current.leftover + added.leftover
+        if (!Number.isFinite(leftover)) {
+          return Result.fail(itemValidationFailure(
+            'leftover',
+            'Unplaced inventory item count exceeds the finite range',
+            'out-of-range',
+            leftover,
+            'RangeError',
+          ))
+        }
+        return Result.succeed({
+          inventory: added.inventory,
+          leftover,
+          discarded: current.discarded,
+        })
+      }),
     )
   }
   return outcome

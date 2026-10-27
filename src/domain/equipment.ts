@@ -253,6 +253,7 @@ export const unequip = (
   equipment: Equipment,
   slot: EquipmentSlot,
 ): EquipmentOutcome<EquipmentItem | null> => {
+  if (!isEquipmentSlot(slot)) return { equipment, result: null }
   const item = equipment.slots[slot]
   if (item === null) return { equipment, result: null }
   return {

@@ -52,16 +52,23 @@ describe('pitch clamping', () => {
 
   it.effect('clamps both directions and leaves in-range pitches alone', () =>
     Effect.sync(() => {
-      expect(clampPitch(Math.PI)).toBe(PITCH_MAX_RADIANS)
-      expect(clampPitch(-Math.PI)).toBe(PITCH_MIN_RADIANS)
-      expect(clampPitch(Math.PI / 2)).toBe(PITCH_MAX_RADIANS)
-      expect(clampPitch(0.3)).toBe(0.3)
+      expect(success(clampPitch(Math.PI))).toBe(PITCH_MAX_RADIANS)
+      expect(success(clampPitch(-Math.PI))).toBe(PITCH_MIN_RADIANS)
+      expect(success(clampPitch(Math.PI / 2))).toBe(PITCH_MAX_RADIANS)
+      expect(success(clampPitch(0.3))).toBe(0.3)
+    }),
+  )
+
+  it.effect('returns typed failures for non-finite angle inputs', () =>
+    Effect.sync(() => {
+      expect(Result.isFailure(clampPitch(Number.NaN))).toBe(true)
+      expect(Result.isFailure(applyLook(INITIAL_PLAYER_POSE, Number.NaN, 0))).toBe(true)
     }),
   )
 
   it.effect('repeatedly looking up saturates rather than wrapping the view upside down', () =>
     Effect.sync(() => {
-      const looked = [1, 2, 3, 4, 5].reduce((pose) => applyLook(pose, 0, 1), INITIAL_PLAYER_POSE)
+      const looked = [1, 2, 3, 4, 5].reduce((pose) => success(applyLook(pose, 0, 1)), INITIAL_PLAYER_POSE)
 
       expect(looked.pitchRadians).toBe(PITCH_MAX_RADIANS)
     }),
@@ -69,7 +76,7 @@ describe('pitch clamping', () => {
 
   it.effect('yaw is NOT wrapped, so turn deltas stay measurable across the seam', () =>
     Effect.sync(() => {
-      const spun = [1, 2, 3].reduce((pose) => applyLook(pose, Math.PI, 0), INITIAL_PLAYER_POSE)
+      const spun = [1, 2, 3].reduce((pose) => success(applyLook(pose, Math.PI, 0)), INITIAL_PLAYER_POSE)
 
       expect(spun.yawRadians).toBeCloseTo(3 * Math.PI, 12)
       expect(spun.yawRadians).toBeGreaterThan(2 * Math.PI)
@@ -107,7 +114,7 @@ describe('CameraPoseSnapshot production', () => {
   it.effect('is a value: producing a second snapshot cannot mutate the first', () =>
     Effect.sync(() => {
       const first = cameraPoseOf(INITIAL_PLAYER_POSE, AT)
-      const moved = applyLook(withFeetPosition(INITIAL_PLAYER_POSE, position(9, 9, 9)), 1, 1)
+      const moved = success(applyLook(withFeetPosition(INITIAL_PLAYER_POSE, position(9, 9, 9)), 1, 1))
       const second = cameraPoseOf(moved, MonotonicTimeSecs(501))
 
       expect(first.position).toStrictEqual(position(0, EYE_LEVEL_OFFSET, 0))
@@ -138,7 +145,7 @@ describe('forwardVector — the sanctioned replacement for camera.getWorldDirect
 
   it.effect('yaw pi/2 looks down -X, matching the YXZ Euler order the renderer will mirror', () =>
     Effect.sync(() => {
-      const forward = forwardVector(cameraPoseOf(applyLook(INITIAL_PLAYER_POSE, Math.PI / 2, 0), AT))
+      const forward = forwardVector(cameraPoseOf(success(applyLook(INITIAL_PLAYER_POSE, Math.PI / 2, 0)), AT))
 
       expect(forward.x).toBeCloseTo(-1, 12)
       expect(forward.z).toBeCloseTo(0, 12)
@@ -147,7 +154,7 @@ describe('forwardVector — the sanctioned replacement for camera.getWorldDirect
 
   it.effect('positive pitch looks up', () =>
     Effect.sync(() => {
-      const forward = forwardVector(cameraPoseOf(applyLook(INITIAL_PLAYER_POSE, 0, 0.5), AT))
+      const forward = forwardVector(cameraPoseOf(success(applyLook(INITIAL_PLAYER_POSE, 0, 0.5)), AT))
 
       expect(forward.y).toBeCloseTo(Math.sin(0.5), 12)
       expect(forward.y).toBeGreaterThan(0)
@@ -158,7 +165,7 @@ describe('forwardVector — the sanctioned replacement for camera.getWorldDirect
     Effect.sync(() => {
       const pitches = [PITCH_MIN_RADIANS, -1, -0.01, 0, 0.01, 1, PITCH_MAX_RADIANS]
       for (const pitch of pitches) {
-        const forward = forwardVector(cameraPoseOf(applyLook(INITIAL_PLAYER_POSE, 2.3, pitch), AT))
+        const forward = forwardVector(cameraPoseOf(success(applyLook(INITIAL_PLAYER_POSE, 2.3, pitch)), AT))
         const length = Math.hypot(forward.x, forward.y, forward.z)
         expect(length).toBeCloseTo(1, 12)
       }
