@@ -1,5 +1,5 @@
-import { Result, Schema, SchemaAST } from 'effect'
-import fc from 'fast-check'
+import { Arbitrary, Brand, Duration, Effect, Option, Result, Schedule, Schema, SchemaAST, SchemaIssue } from 'effect'
+import { SaveDecodeError } from '@nerima-games/mc-save'
 import { expect, it } from 'vitest'
 import * as PublicApi from '../src/index.js'
 import { assertResultContract } from './public-property-helpers.js'
@@ -32,160 +32,136 @@ const schemaFactoryExports = [
   'simulationSaveV3MigrationErrorSchema',
 ] as const
 
-const schemasWithoutRequiredFields = [
-  'AutoSaveDaemonSchema',
-  'AutoSaveScheduleSchema',
-  'BrandErrorSchema',
-  'BrewingItemSlotSchema',
-  'BrewingRecipeInputSchema',
-  'BrewingRecipeOptionSchema',
-  'CoreTickRunTickSuccessSchema',
-  'CropServiceAdvanceByBoneMealSuccessSchema',
-  'CropServiceAdvanceSuccessSchema',
-  'CropServiceMatureYieldsSuccessSchema',
-  'CropServiceNoFailureSchema',
-  'CropServicePlantSuccessSchema',
-  'CropServiceResetSuccessSchema',
-  'CropServiceRestoreSuccessSchema',
-  'CropTypeSchema',
-  'DomainEventBusErrorSchema',
-  'EntityHealthPointsSchema',
-  'EntityRosterRepairCountSchema',
-  'EntitySerialExhaustedSchema',
-  'EntitySerialSchema',
-  'EquipmentServiceNoFailureSchema',
-  'EquipmentServiceResetSuccessSchema',
-  'EquipmentServiceRestoreSuccessSchema',
-  'EquipmentServiceSwapSuccessSchema',
-  'EventSubscriberCapacitySchema',
-  'FishingFailureSchema',
-  'FishingInvalidLootRollSchema',
-  'FishingInvalidStateSchema',
-  'FishingRodPhaseSchema',
-  'FishingServiceBiteSuccessSchema',
-  'FishingServiceCastSuccessSchema',
-  'IntentIdSchema',
-  'IntentQueueCapacitySchema',
-  'IntentQueueEnqueueFailureSchema',
-  'IntentSequenceSchema',
-  'InventoryAddLeftoverSchema',
-  'InventoryCarriedSlotSchema',
-  'InventoryCountSchema',
-  'InventorySnapshotSchema',
-  'ItemStackSchema',
-  'LegacyItemStackSchema',
-  'MatureYieldsSchema',
-  'PitchRadiansSchema',
-  'ProjectileServiceFailureSchema',
-  'ReplicatedOwnerIdSchema',
-  'SaveCoordinatorRequestSaveSuccessSchema',
-  'SaveSimulationSuccessSchema',
-  'SaveSnapshotConsistencyErrorSchema',
-  'SchemaErrorSchema',
-  'SimPhysicsStagesSchema',
-  'SimulationSaveErrorSchema',
-  'SimulationSaveV3MigrationSuccessSchema',
-  'TntServiceFailureSchema',
-  'VehicleServiceDespawnSuccessSchema',
-  'VehicleServiceDismountSuccessSchema',
-  'VehicleServiceMountSuccessSchema',
-  'VehicleServiceNoFailureSchema',
-  'VehicleServiceRestoreSuccessSchema',
-  'VehicleServiceUpdateStateSuccessSchema',
-  'VehicleServiceUpdateTransformSuccessSchema',
-  'VehicleServiceUpdateVelocitySuccessSchema',
-  'VehicleServiceVoidSuccessSchema',
-  'WeatherSchema',
-  'WorldCommitCoordinatorSnapshotErrorSchema',
-  'WorldContainerIdSchema',
-  'YawRadiansSchema',
-] as const
-
-const nullableRequiredFieldPaths = [
-  'AchievementServiceErrorSchema|0|1|0.value',
-  'AchievementUnlockStageErrorSchema|1|0.value',
-  'AddStoredStackResultSchema|0.leftover',
-  'AddStoredStackResultSchema|0.leftover|0.durability',
-  'BrewingServiceErrorSchema|2|0.value',
-  'ConsumeAndDamageAtResultSchema|4.actualItem',
-  'ContainerExtractResultSchema|0.stack.durability',
-  'ContainerStorageServiceErrorSchema|1|0.value',
-  'ContainerStorageSnapshotSchema.containers[].slots[]|0.durability',
-  'ContainerStoredStackSchema.durability',
-  'CreateContainerResultSchema|0.container.slots[]|0.durability',
-  'CreateContainerResultSchema|1.container.slots[]|0.durability',
-  'DamageEquipmentResultSchema|2.item.durability',
-  'DamageEquipmentResultSchema|4.item.durability',
-  'DamageEquipmentResultSchema|5.item.durability',
-  'EquipmentItemSchema.durability',
-  'EquipmentSchema.slots.chest',
-  'EquipmentSchema.slots.chest|0.durability',
-  'EquipmentSchema.slots.feet',
-  'EquipmentSchema.slots.feet|0.durability',
-  'EquipmentSchema.slots.head',
-  'EquipmentSchema.slots.head|0.durability',
-  'EquipmentSchema.slots.legs',
-  'EquipmentSchema.slots.legs|0.durability',
-  'EquipmentSchema.slots.offhand',
-  'EquipmentSchema.slots.offhand|0.durability',
-  'EquipmentServiceDamageSuccessSchema|2.item.durability',
-  'EquipmentServiceDamageSuccessSchema|4.item.durability',
-  'EquipmentServiceDamageSuccessSchema|5.item.durability',
-  'EquipmentServiceEquipSuccessSchema|0.durability',
-  'EquipmentServiceSnapshotSuccessSchema.slots.chest',
-  'EquipmentServiceSnapshotSuccessSchema.slots.chest|0.durability',
-  'EquipmentServiceSnapshotSuccessSchema.slots.feet',
-  'EquipmentServiceSnapshotSuccessSchema.slots.feet|0.durability',
-  'EquipmentServiceSnapshotSuccessSchema.slots.head',
-  'EquipmentServiceSnapshotSuccessSchema.slots.head|0.durability',
-  'EquipmentServiceSnapshotSuccessSchema.slots.legs',
-  'EquipmentServiceSnapshotSuccessSchema.slots.legs|0.durability',
-  'EquipmentServiceSnapshotSuccessSchema.slots.offhand',
-  'EquipmentServiceSnapshotSuccessSchema.slots.offhand|0.durability',
-  'EquipmentServiceUnequipSuccessSchema|0.durability',
-  'EquipmentSlotsSchema.chest',
-  'EquipmentSlotsSchema.chest|0.durability',
-  'EquipmentSlotsSchema.feet',
-  'EquipmentSlotsSchema.feet|0.durability',
-  'EquipmentSlotsSchema.head',
-  'EquipmentSlotsSchema.head|0.durability',
-  'EquipmentSlotsSchema.legs',
-  'EquipmentSlotsSchema.legs|0.durability',
-  'EquipmentSlotsSchema.offhand',
-  'EquipmentSlotsSchema.offhand|0.durability',
-  'FishingServiceErrorSchema|3|0.value',
-  'FurnaceServiceErrorSchema|2|0.value',
-  'PlayerStorageSnapshotSchema.equipment.slots.chest',
-  'PlayerStorageSnapshotSchema.equipment.slots.chest|0.durability',
-  'PlayerStorageSnapshotSchema.equipment.slots.feet',
-  'PlayerStorageSnapshotSchema.equipment.slots.feet|0.durability',
-  'PlayerStorageSnapshotSchema.equipment.slots.head',
-  'PlayerStorageSnapshotSchema.equipment.slots.head|0.durability',
-  'PlayerStorageSnapshotSchema.equipment.slots.legs',
-  'PlayerStorageSnapshotSchema.equipment.slots.legs|0.durability',
-  'PlayerStorageSnapshotSchema.equipment.slots.offhand',
-  'PlayerStorageSnapshotSchema.equipment.slots.offhand|0.durability',
-  'ProjectileServiceErrorSchema|2|0.value',
-  'ProjectileServiceSnapshotErrorSchema|1|0.value',
-  'ReplicatedOwnerChangeSchema.state',
-  'TntServiceErrorSchema|2|0.value',
-  'TntServiceSnapshotErrorSchema|1|0.value',
-  'WorldCommitCoordinatorErrorSchema|0.value',
-] as const
-
 type DecodableSchema = Schema.Codec<unknown, unknown, never, never>
 
 type MutationSegment =
   | { readonly kind: 'property'; readonly key: PropertyKey }
-  | { readonly kind: 'arrayItem' }
+  | { readonly kind: 'arrayItem'; readonly index: number }
 
 type RequiredFieldCase = {
   readonly path: string
-  readonly key: PropertyKey
+  readonly schemaName: string
   readonly rootSchema: DecodableSchema
+  readonly sample: unknown
   readonly inputPath: ReadonlyArray<MutationSegment>
-  readonly objectSchema: DecodableSchema
+  readonly fieldSchema: DecodableSchema
 }
+
+type PublicSchema = {
+  readonly name: string
+  readonly schema: DecodableSchema
+}
+
+const MAX_CANDIDATES = 64
+const MAX_ARBITRARY_SAMPLES = 48
+
+const schemasWithoutValues = [
+  'CropServiceNoFailureSchema',
+  'EquipmentServiceNoFailureSchema',
+  'VehicleServiceNoFailureSchema',
+  'VitalsServiceNoErrorSchema',
+] as const
+
+// Effect Arbitrary currently cannot derive samples for these validated ASTs; their AST generator remains explicit.
+const schemasUsingAstFallbackForArbitrary = [
+  'DamageOutcomeSchema',
+  'ExplosionPlanSchema',
+  'FixedStepAdvanceSchema',
+  'TimeStateSchema',
+  'VitalsSchema',
+  'VitalsViewSchema',
+] as const
+
+const construct = (constructor: unknown, fields: unknown): unknown =>
+  Reflect.construct(constructor as Function, [fields])
+
+const schemaError = new Schema.SchemaError(new SchemaIssue.InvalidType(Schema.Number.ast, null))
+const brandError = new Brand.BrandError(new SchemaIssue.InvalidType(Schema.Number.ast, null))
+const sampleItemStack = Result.getOrThrow(PublicApi.itemStack('stone', 1))
+
+// Opaque declarations need explicit representatives, each checked by its exported root Schema below.
+const opaqueSchemaInputProviders: Readonly<Record<string, () => unknown>> = {
+  AchievementServiceErrorSchema: () => construct(PublicApi.AchievementCommitMismatch, {
+    expectedWorld: 'world',
+    actualWorld: 'world',
+    expectedRevision: 0,
+    actualRevision: 1,
+    ownerId: 'owner',
+    reason: 'revision',
+  }),
+  AutoSaveDaemonSchema: () => Effect.runFork(Effect.void),
+  AutoSaveScheduleSchema: () => Schedule.spaced(Duration.millis(1)),
+  BrandErrorSchema: () => brandError,
+  BrewingRecipeInputSchema: () => PublicApi.VANILLA_BREWING_RECIPES[0],
+  BrewingRecipeOptionSchema: () => undefined,
+  ContainerStoredStackSchema: () => ({ ...sampleItemStack, durability: null }),
+  DomainEventBusErrorSchema: () => schemaError,
+  FishingFailureSchema: () => construct(PublicApi.FishingInvalidState, {
+    actor: 'entity',
+    operation: 'cast',
+    reason: 'rod-not-active',
+  }),
+  FishingInvalidLootRollSchema: () => construct(PublicApi.FishingInvalidLootRoll, {
+    reason: 'outside-unit-interval',
+  }),
+  FishingInvalidStateSchema: () => construct(PublicApi.FishingInvalidState, {
+    actor: 'entity',
+    operation: 'cast',
+    reason: 'rod-not-active',
+  }),
+  IntentQueueEnqueueFailureSchema: () => construct(PublicApi.IntentQueueFull, { capacity: 1 }),
+  InventorySnapshotSchema: () => PublicApi.emptyInventory(),
+  ItemStackSchema: () => sampleItemStack,
+  LegacyItemStackSchema: () => sampleItemStack,
+  LoadSimulationSuccessSchema: () => Option.none(),
+  PlayerStorageSnapshotSchema: () => PublicApi.emptyPlayerStorage(),
+  ProjectileServiceFailureSchema: () => new PublicApi.ProjectileServiceFailure({ reason: 'invalid-launch' }),
+  SaveSnapshotConsistencyErrorSchema: () => new PublicApi.SaveSnapshotConsistencyError({ attempts: 1 }),
+  SchemaErrorSchema: () => schemaError,
+  SimulationSaveErrorSchema: () => new SaveDecodeError({ format: 'sample', version: 3, reason: 'invalid save' }),
+  SimPhysicsStagesSchema: () => [{ id: PublicApi.SIM_STAGE_IDS.physics, run: () => Effect.void }],
+  TntServiceFailureSchema: () => new PublicApi.TntServiceFailure({ reason: 'invalid-input' }),
+  WorldCommitCoordinatorErrorSchema: () => construct(PublicApi.WorldRevisionConflict, {
+    expected: 0,
+    actual: 1,
+  }),
+  WitherStepFailureSchema: () => brandError,
+}
+
+const opaqueDeclarationCandidates: ReadonlyArray<unknown> = [
+  brandError,
+  schemaError,
+  undefined,
+  null,
+  false,
+  true,
+  0,
+  1,
+  -1,
+  0.5,
+  Number.MAX_SAFE_INTEGER,
+  '',
+  'a',
+  'stone',
+  'minecraft:stone',
+  'minecraft:air',
+  'minecraft:stick',
+  'minecraft:book',
+  [],
+  [undefined],
+  {},
+  sampleItemStack,
+  sampleItemStack.components,
+  { ...sampleItemStack, durability: null },
+  { ...sampleItemStack, durability: { current: 1, max: 1 } },
+  { item: 'stone', count: 1, components: null },
+  { item: 'minecraft:stone', count: 1, components: {} },
+  { id: 'sample', input: 'stone', ingredient: 'stone', output: 'stone' },
+  { id: 'sample', input: 'stone', ingredient: 'stone', result: 'stone' },
+  { slots: Array.from({ length: 36 }, () => undefined), selected: 0 },
+  { slots: Array.from({ length: 36 }, () => undefined), selectedSlot: 0 },
+  ...Object.values(opaqueSchemaInputProviders).map((provider) => provider()),
+]
 
 const decodes = (schema: DecodableSchema, value: unknown): boolean => {
   try {
@@ -196,43 +172,132 @@ const decodes = (schema: DecodableSchema, value: unknown): boolean => {
   }
 }
 
-const makeMutationInput = (
-  path: ReadonlyArray<MutationSegment>,
-  mutation: 'missing' | 'null',
-): unknown => {
-  let root: Record<PropertyKey, unknown> | Array<unknown> = path[0]?.kind === 'arrayItem' ? [] : {}
-  let current: Record<PropertyKey, unknown> | Array<unknown> = root
+const astTag = (ast: unknown): string => String((ast as { readonly _tag?: unknown })._tag)
 
-  for (let index = 0; index < path.length; index += 1) {
-    const segment = path[index]
-    if (segment === undefined) throw new Error('Missing schema path segment')
-    if (segment.kind === 'arrayItem') {
-      if (!Array.isArray(current)) throw new Error('Schema array item has no array parent')
-      const item: Record<PropertyKey, unknown> = {}
-      current.push(item)
-      current = item
-      continue
+const candidateValues = (
+  ast: SchemaAST.AST,
+  ancestors: ReadonlySet<SchemaAST.AST> = new Set(),
+): ReadonlyArray<unknown> => {
+  const typeAst = SchemaAST.toType(ast)
+  if (ancestors.has(typeAst)) return []
+  const nextAncestors = new Set(ancestors).add(typeAst)
+  const schema = Schema.make(ast) as DecodableSchema
+  const keepDecodable = (values: ReadonlyArray<unknown>): ReadonlyArray<unknown> => {
+    const unique: Array<unknown> = []
+    for (const value of values) {
+      if (!decodes(schema, value)) continue
+      if (!unique.some((previous) => Object.is(previous, value))) unique.push(value)
+      if (unique.length === MAX_CANDIDATES) break
     }
-
-    if (Array.isArray(current)) throw new Error('Schema property has no object parent')
-    const isTarget = index === path.length - 1
-    if (isTarget) {
-      if (mutation === 'null') current[segment.key] = null
-      continue
-    }
-
-    const nextSegment = path[index + 1]
-    const nested: Record<PropertyKey, unknown> | Array<unknown> = nextSegment?.kind === 'arrayItem' ? [] : {}
-    current[segment.key] = nested
-    current = nested
+    return unique
   }
 
-  return root
+  switch (typeAst._tag) {
+    case 'Objects': {
+      const properties = typeAst.propertySignatures.map((property) => {
+        const optional = SchemaAST.isOptional(property.type) || property.type.context?.constructorDefault !== undefined
+        const values = candidateValues(property.type, nextAncestors)
+        return { property, optional, values }
+      })
+      if (properties.some(({ optional, values }) => !optional && values.length === 0)) return []
+
+      const rows: Array<Record<PropertyKey, unknown>> = []
+      for (let trial = 0; trial < MAX_CANDIDATES * 4; trial += 1) {
+        const row: Record<PropertyKey, unknown> = {}
+        let hasRequiredValues = true
+        properties.forEach(({ property, optional, values }, propertyIndex) => {
+          if (values.length === 0) return
+          const propertySeed = [...String(property.name)].reduce(
+            (seed, character) => Math.imul(seed ^ character.charCodeAt(0), 16777619),
+            2166136261,
+          )
+          const choiceSeed = (Math.imul(trial + 1, 1103515245) + propertySeed + propertyIndex * 12345) >>> 0
+          const choiceIndex = trial < MAX_CANDIDATES ? trial % values.length : choiceSeed % values.length
+          const omitOptional = optional && trial >= MAX_CANDIDATES && choiceSeed % 7 === 0
+          if (omitOptional) return
+          const value = values[choiceIndex]
+          if (value === undefined && !values.includes(undefined)) {
+            hasRequiredValues = false
+            return
+          }
+          row[property.name] = value
+        })
+        if (hasRequiredValues) rows.push(row)
+      }
+      return keepDecodable(rows)
+    }
+    case 'Union':
+      return keepDecodable(typeAst.types.flatMap((member) => candidateValues(member, nextAncestors)))
+    case 'Arrays': {
+      const values: Array<unknown> = []
+      const fixedCandidates = typeAst.elements.map((element) => candidateValues(element, nextAncestors))
+      const fixed = fixedCandidates.map((candidates) => candidates[0])
+      if (fixedCandidates.every((candidates) => candidates.length > 0)) values.push(fixed)
+      values.push([])
+      const rest = typeAst.rest.flatMap((element) => candidateValues(element, nextAncestors))
+      for (const value of rest.slice(0, 4)) values.push([...fixed, value])
+      return keepDecodable(values)
+    }
+    case 'Suspend':
+      return candidateValues(typeAst.thunk(), nextAncestors)
+    case 'Declaration':
+      return keepDecodable([
+        ...typeAst.typeParameters.flatMap((parameter) => candidateValues(parameter, nextAncestors)),
+        ...opaqueDeclarationCandidates,
+      ])
+    case 'Enum':
+      return keepDecodable(typeAst.enums.map(([, value]) => value)).slice(0, MAX_CANDIDATES)
+    case 'TemplateLiteral':
+      return keepDecodable(['a', 'minecraft:stone', '0']).slice(0, MAX_CANDIDATES)
+    case 'Boolean':
+      return keepDecodable([false, true]).slice(0, MAX_CANDIDATES)
+    case 'Literal':
+      return keepDecodable([typeAst.literal]).slice(0, MAX_CANDIDATES)
+    case 'Number':
+      return keepDecodable([
+        0,
+        1,
+        -1,
+        2,
+        0.5,
+        64,
+        20,
+        100,
+        6_000,
+        12_000,
+        24_000,
+        100_000,
+        Number.MAX_SAFE_INTEGER,
+        Number.MIN_SAFE_INTEGER,
+      ]).slice(0, MAX_CANDIDATES)
+    case 'String':
+      return keepDecodable(['', 'a', 'stone', 'minecraft:stone', 'minecraft:air', 'minecraft:stick', 'minecraft:book'])
+        .slice(0, MAX_CANDIDATES)
+    case 'BigInt':
+      return keepDecodable([0n, 1n, -1n]).slice(0, MAX_CANDIDATES)
+    case 'Symbol':
+      return keepDecodable([Symbol.for('public-schema-sample')]).slice(0, MAX_CANDIDATES)
+    case 'UniqueSymbol':
+      return keepDecodable([typeAst.symbol]).slice(0, MAX_CANDIDATES)
+    case 'Null':
+      return [null]
+    case 'Undefined':
+    case 'Void':
+      return keepDecodable([undefined, null, false, 0, '']).slice(0, MAX_CANDIDATES)
+    case 'Never':
+      return []
+    case 'Unknown':
+    case 'Any':
+      return [undefined, null, false, 0, '', {}, []]
+    case 'ObjectKeyword':
+      return keepDecodable([{}, [], new Date(0)]).slice(0, MAX_CANDIDATES)
+    default:
+      throw new Error('Unclassified Schema AST node: ' + astTag(typeAst))
+  }
 }
 
-const collectRequiredFieldCases = (): ReadonlyArray<RequiredFieldCase> => {
-  const schemaSuffixExports = Object.entries(PublicApi)
-    .filter(([name]) => name.endsWith('Schema'))
+const publicSchemas = (): ReadonlyArray<PublicSchema> => {
+  const schemaSuffixExports = Object.entries(PublicApi).filter(([name]) => name.endsWith('Schema'))
   const schemas = schemaSuffixExports
     .filter(([, value]) => Schema.isSchema(value))
     .map(([name, schema]) => ({ name, schema: schema as DecodableSchema }))
@@ -242,122 +307,380 @@ const collectRequiredFieldCases = (): ReadonlyArray<RequiredFieldCase> => {
     .sort()
 
   expect(factories).toStrictEqual([...schemaFactoryExports].sort())
+  for (const { name, schema } of schemas) {
+    if (SchemaAST.toType(schema.ast)._tag === 'Declaration') {
+      expect(opaqueSchemaInputProviders[name], name + ' opaque public Schema has an explicit sample provider').toBeDefined()
+    }
+  }
+  for (const name of schemasWithoutValues) {
+    const schema = schemas.find((candidate) => candidate.name === name)?.schema
+    expect(schema, name + ' classified as an uninhabited public Schema').toBeDefined()
+    expect(SchemaAST.toType(schema!.ast)._tag, name + ' is uninhabited').toBe('Never')
+  }
+  expect(schemas.length).toBeGreaterThan(0)
+  return schemas
+}
 
-  const cases: Array<RequiredFieldCase> = []
-  const schemasWithRequiredFields = new Set<string>()
+const containsDeclaration = (ast: SchemaAST.AST, ancestors: ReadonlySet<SchemaAST.AST> = new Set()): boolean => {
+  const typeAst = SchemaAST.toType(ast)
+  if (ancestors.has(typeAst)) return false
+  const nextAncestors = new Set(ancestors).add(typeAst)
+  switch (typeAst._tag) {
+    case 'Declaration':
+      return true
+    case 'Objects':
+      return typeAst.propertySignatures.some((property) => containsDeclaration(property.type, nextAncestors)) ||
+        typeAst.indexSignatures.some((signature) => containsDeclaration(signature.type, nextAncestors))
+    case 'Union':
+      return typeAst.types.some((member) => containsDeclaration(member, nextAncestors))
+    case 'Arrays':
+      return typeAst.elements.some((element) => containsDeclaration(element, nextAncestors)) ||
+        typeAst.rest.some((element) => containsDeclaration(element, nextAncestors))
+    case 'Suspend':
+      return containsDeclaration(typeAst.thunk(), nextAncestors)
+    case 'Boolean':
+    case 'Enum':
+    case 'Literal':
+    case 'Never':
+    case 'Null':
+    case 'Number':
+    case 'String':
+    case 'Undefined':
+    case 'Void':
+    case 'Unknown':
+    case 'Any':
+    case 'BigInt':
+    case 'Symbol':
+    case 'UniqueSymbol':
+    case 'ObjectKeyword':
+    case 'TemplateLiteral':
+      return false
+    default:
+      throw new Error('Unclassified Schema AST node while finding declarations: ' + astTag(typeAst))
+  }
+}
 
-  const visit = (
-    schemaName: string,
-    rootSchema: DecodableSchema,
-    ast: SchemaAST.AST,
-    path: string,
-    inputPath: ReadonlyArray<MutationSegment>,
-    ancestors: ReadonlySet<SchemaAST.AST>,
-  ): void => {
-    const typeAst = SchemaAST.toType(ast)
-    if (ancestors.has(typeAst)) return
-    const nextAncestors = new Set(ancestors).add(typeAst)
+const arbitrarySamples = (schema: DecodableSchema): ReadonlyArray<unknown> => {
+  const arbitrary = Arbitrary.schema(schema, { shrink: () => [] })
+  return Effect.runSync(Arbitrary.sampleEffect(arbitrary, {
+    count: MAX_ARBITRARY_SAMPLES,
+    size: 12,
+    seed: 0x51c0,
+  }))
+}
 
-    switch (typeAst._tag) {
-      case 'Objects':
-        for (const property of typeAst.propertySignatures) {
-          const fieldPath = `${path}.${String(property.name)}`
-          const propertyPath = [...inputPath, { kind: 'property' as const, key: property.name }]
-          if (!SchemaAST.isOptional(property.type) && property.type.context?.constructorDefault === undefined) {
-            const fieldSchema = Schema.make(property.type) as DecodableSchema
-            cases.push({
-              path: fieldPath,
-              key: property.name,
-              rootSchema,
-              inputPath: propertyPath,
-              objectSchema: Schema.Struct({ [property.name]: fieldSchema }) as DecodableSchema,
-            })
-            schemasWithRequiredFields.add(schemaName)
-          }
-          visit(schemaName, rootSchema, property.type, fieldPath, propertyPath, nextAncestors)
+const rootSamples = (name: string, schema: DecodableSchema): ReadonlyArray<unknown> => {
+  const typeAst = SchemaAST.toType(schema.ast)
+  if (typeAst._tag === 'Never') {
+    expect(schemasWithoutValues, name + ' has no generated value because its Schema is Never').toContain(name)
+    return []
+  }
+  expect(schemasWithoutValues, name + ' is not unexpectedly uninhabited').not.toContain(name)
+
+  const provider = opaqueSchemaInputProviders[name]
+  const candidates: Array<unknown> = provider === undefined ? [] : [provider()]
+  try {
+    candidates.push(...arbitrarySamples(schema))
+  } catch (error) {
+    const isOpaqueDeclarationFailure = error instanceof Error &&
+      /unsupported Declaration|finite generation path/.test(error.message)
+    const isClassifiedAstFallback = schemasUsingAstFallbackForArbitrary.includes(
+      name as typeof schemasUsingAstFallbackForArbitrary[number],
+    )
+    if (!isOpaqueDeclarationFailure && !isClassifiedAstFallback) throw error
+    if (isOpaqueDeclarationFailure && !containsDeclaration(schema.ast)) {
+      throw new Error(name + ' Arbitrary reported an opaque Declaration absent from its public Schema AST')
+    }
+    if (isClassifiedAstFallback) {
+      expect(schemasUsingAstFallbackForArbitrary, name + ' has an explicit AST generator fallback').toContain(name)
+    }
+  }
+  candidates.push(...candidateValues(schema.ast))
+  const valid: Array<unknown> = []
+  for (const candidate of candidates) {
+    if (!decodes(schema, candidate)) continue
+    if (!valid.some((previous) => Object.is(previous, candidate))) valid.push(candidate)
+    if (valid.length === MAX_CANDIDATES) break
+  }
+  if (provider !== undefined && !valid.some((value) => Object.is(value, candidates[0]))) {
+    throw new Error(name + ' opaque sample provider returned a value rejected by its public Schema')
+  }
+  if (valid.length === 0) {
+    throw new Error(name + ' has no valid generated sample; candidates=' + candidates.length + ':' + candidates.slice(0, 8).map(String).join('|'))
+  }
+  return valid
+}
+
+const collectRequiredFields = (
+  schemaName: string,
+  rootSchema: DecodableSchema,
+  rootSample: unknown,
+  ast: SchemaAST.AST,
+  value: unknown,
+  path: string,
+  inputPath: ReadonlyArray<MutationSegment>,
+  ancestors: ReadonlySet<SchemaAST.AST>,
+  cases: Array<RequiredFieldCase>,
+): void => {
+  const typeAst = SchemaAST.toType(ast)
+  if (ancestors.has(typeAst)) return
+  const nextAncestors = new Set(ancestors).add(typeAst)
+
+  switch (typeAst._tag) {
+    case 'Objects': {
+      if (typeof value !== 'object' || value === null || Array.isArray(value)) return
+      for (const property of typeAst.propertySignatures) {
+        if (!Object.prototype.hasOwnProperty.call(value, property.name)) continue
+        const fieldValue = Reflect.get(value, property.name)
+        const fieldPath = path + '.' + String(property.name)
+        const propertyPath = [...inputPath, { kind: 'property' as const, key: property.name }]
+        if (!SchemaAST.isOptional(property.type) && property.type.context?.constructorDefault === undefined) {
+          cases.push({
+            path: fieldPath,
+            schemaName,
+            rootSchema,
+            sample: rootSample,
+            inputPath: propertyPath,
+            fieldSchema: Schema.make(property.type) as DecodableSchema,
+          })
         }
-        return
-      case 'Union':
-        typeAst.types.forEach((member, index) =>
-          visit(schemaName, rootSchema, member, `${path}|${index}`, inputPath, nextAncestors))
-        return
-      case 'Arrays':
-        ;[...typeAst.elements, ...typeAst.rest].forEach((member) =>
-          visit(schemaName, rootSchema, member, `${path}[]`, [...inputPath, { kind: 'arrayItem' }], nextAncestors))
-        return
-      case 'Suspend':
-        visit(schemaName, rootSchema, typeAst.thunk(), path, inputPath, nextAncestors)
-        return
-      case 'Declaration':
-        typeAst.typeParameters.forEach((parameter, index) =>
-          visit(schemaName, rootSchema, parameter, `${path}<${index}>`, inputPath, nextAncestors))
-        return
-      case 'Boolean':
-      case 'Literal':
-      case 'Never':
-      case 'Null':
-      case 'Number':
-      case 'String':
-      case 'Undefined':
-      case 'Unknown':
-        return
-      default:
-        throw new Error(`Unclassified Schema AST node in ${schemaName}: ${typeAst._tag}`)
+        collectRequiredFields(
+          schemaName,
+          rootSchema,
+          rootSample,
+          property.type,
+          fieldValue,
+          fieldPath,
+          propertyPath,
+          nextAncestors,
+          cases,
+        )
+      }
+      return
+    }
+    case 'Union':
+      typeAst.types.forEach((member, index) => {
+        if (decodes(Schema.make(member) as DecodableSchema, value)) {
+          collectRequiredFields(
+            schemaName,
+            rootSchema,
+            rootSample,
+            member,
+            value,
+            path + '|' + index,
+            inputPath,
+            nextAncestors,
+            cases,
+          )
+        }
+      })
+      return
+    case 'Arrays':
+      if (!Array.isArray(value)) return
+      value.forEach((item, index) => {
+        const member = typeAst.elements[index] ?? typeAst.rest.find((restType) =>
+          decodes(Schema.make(restType) as DecodableSchema, item))
+        if (member !== undefined) {
+          collectRequiredFields(
+            schemaName,
+            rootSchema,
+            rootSample,
+            member,
+            item,
+            path + '[' + index + ']',
+            [...inputPath, { kind: 'arrayItem' as const, index }],
+            nextAncestors,
+            cases,
+          )
+        }
+      })
+      return
+    case 'Suspend':
+      collectRequiredFields(schemaName, rootSchema, rootSample, typeAst.thunk(), value, path, inputPath, nextAncestors, cases)
+      return
+    case 'Declaration':
+    case 'Boolean':
+    case 'Enum':
+    case 'Literal':
+    case 'Never':
+    case 'Null':
+    case 'Number':
+    case 'String':
+    case 'Undefined':
+    case 'Void':
+    case 'Unknown':
+    case 'Any':
+    case 'BigInt':
+    case 'Symbol':
+    case 'UniqueSymbol':
+    case 'ObjectKeyword':
+    case 'TemplateLiteral':
+      return
+    default:
+      throw new Error('Unclassified Schema AST node in ' + schemaName + ': ' + astTag(typeAst))
+  }
+}
+
+const cloneSample = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(cloneSample)
+  if (typeof value === 'object' && value !== null) {
+    const prototype = Object.getPrototypeOf(value)
+    if (
+      prototype === Date.prototype ||
+      prototype === Map.prototype ||
+      prototype === Set.prototype ||
+      prototype === WeakMap.prototype ||
+      prototype === WeakSet.prototype ||
+      prototype === Promise.prototype
+    ) return value
+    const clone = Object.create(prototype) as Record<PropertyKey, unknown>
+    for (const key of Reflect.ownKeys(value)) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key)
+      if (descriptor === undefined) continue
+      if ('value' in descriptor) descriptor.value = cloneSample(descriptor.value)
+      descriptor.configurable = true
+      if ('writable' in descriptor) descriptor.writable = true
+      Object.defineProperty(clone, key, descriptor)
+    }
+    return clone
+  }
+  return value
+}
+
+const mutateSample = (
+  sample: unknown,
+  path: ReadonlyArray<MutationSegment>,
+  mutation: 'missing' | 'null',
+): unknown => {
+  const root = cloneSample(sample)
+  let current = root
+  for (let index = 0; index < path.length; index += 1) {
+    const segment = path[index]
+    if (segment === undefined) throw new Error('Missing mutation path segment')
+    const isTarget = index === path.length - 1
+    if (segment.kind === 'property') {
+      if (typeof current !== 'object' || current === null || Array.isArray(current)) {
+        throw new Error('Mutation property path does not resolve inside the valid sample')
+      }
+      if (isTarget) {
+        if (mutation === 'missing') Reflect.deleteProperty(current, segment.key)
+        else Reflect.set(current, segment.key, null)
+      } else {
+        current = Reflect.get(current, segment.key)
+      }
+    } else {
+      if (!Array.isArray(current) || segment.index >= current.length) {
+        throw new Error('Mutation array path does not resolve inside the valid sample')
+      }
+      if (isTarget) {
+        if (mutation === 'missing') current.splice(segment.index, 1)
+        else current[segment.index] = null
+      } else {
+        current = current[segment.index]
+      }
+    }
+  }
+  return root
+}
+
+let generatedCasesCache: ReadonlyArray<RequiredFieldCase> | undefined
+
+const generatedCases = (): ReadonlyArray<RequiredFieldCase> => {
+  if (generatedCasesCache !== undefined) return generatedCasesCache
+  const allCases: Array<RequiredFieldCase> = []
+  const usedProviders = new Set<string>()
+  for (const { name, schema } of publicSchemas()) {
+    const samples = rootSamples(name, schema)
+    if (opaqueSchemaInputProviders[name] !== undefined) usedProviders.add(name)
+    for (const sample of samples) {
+      expect(decodes(schema, sample), name + ' valid sample').toBe(true)
+      collectRequiredFields(name, schema, sample, schema.ast, sample, name, [], new Set(), allCases)
+    }
+  }
+  expect([...usedProviders].sort()).toStrictEqual(Object.keys(opaqueSchemaInputProviders).sort())
+  generatedCasesCache = allCases
+  return generatedCasesCache
+}
+
+const valueAtPath = (root: unknown, path: ReadonlyArray<MutationSegment>): unknown => {
+  let current = root
+  for (const segment of path) {
+    if (segment.kind === 'property') {
+      if (typeof current !== 'object' || current === null || Array.isArray(current)) return undefined
+      current = Reflect.get(current, segment.key)
+    } else {
+      if (!Array.isArray(current)) return undefined
+      current = current[segment.index]
+    }
+  }
+  return current
+}
+
+const mutationCandidatesBySchema = (mutation: 'missing' | 'null'): ReadonlyMap<string, RequiredFieldCase> => {
+  const cases = generatedCases()
+  const selected = new Map<string, RequiredFieldCase>()
+  const requiredNames = [...new Set(cases.map((field) => field.schemaName))].sort()
+  const noNullTargetNames = new Set<string>()
+
+  for (const schemaName of requiredNames) {
+    const schemaCases = cases.filter((field) => field.schemaName === schemaName)
+    const eligibleCases = mutation === 'missing'
+      ? schemaCases
+      : schemaCases.filter((field) =>
+        valueAtPath(field.sample, field.inputPath) !== null && !decodes(field.fieldSchema, null))
+
+    if (eligibleCases.length === 0) {
+      noNullTargetNames.add(schemaName)
+      continue
+    }
+
+    for (const field of eligibleCases) {
+      expect(decodes(field.rootSchema, field.sample), schemaName + ' original sample before ' + mutation).toBe(true)
+      if (!decodes(field.rootSchema, mutateSample(field.sample, field.inputPath, mutation))) {
+        selected.set(schemaName, field)
+        break
+      }
+    }
+    if (!selected.has(schemaName)) {
+      throw new Error(schemaName + ' has eligible required fields but no ' + mutation + ' mutation was rejected')
     }
   }
 
-  for (const { name, schema } of schemas) {
-    visit(name, schema, schema.ast, name, [], new Set())
+  if (mutation === 'missing') {
+    expect([...selected.keys()].sort(), 'every Schema with required object fields has an omission case')
+      .toStrictEqual(requiredNames)
+  } else {
+    expect([...selected.keys()].sort(), 'every Schema with a required non-null field has a null case')
+      .toStrictEqual(requiredNames.filter((name) => !noNullTargetNames.has(name)))
+    expect([...selected.keys(), ...noNullTargetNames].sort(), 'null-target and nullable-only classifications cover required Schemas')
+      .toStrictEqual(requiredNames)
   }
-
-  const schemasWithoutFields = schemas.map(({ name }) => name)
-    .filter((name) => !schemasWithRequiredFields.has(name))
-    .sort()
-  expect(schemasWithoutFields).toStrictEqual([...schemasWithoutRequiredFields].sort())
-
-  const nullablePaths = [...new Set(cases
-    .filter(({ objectSchema, key }) => decodes(objectSchema, { [key]: null }))
-    .map(({ path }) => path))].sort()
-  expect(nullablePaths).toStrictEqual([...nullableRequiredFieldPaths].sort())
-
-  const accountedSchemas = new Set([...schemasWithRequiredFields, ...schemasWithoutFields])
-  expect([...accountedSchemas].sort()).toStrictEqual(schemas.map(({ name }) => name).sort())
-
-  return cases
+  expect(selected.size).toBeGreaterThan(0)
+  return selected
 }
 
-it('public barrel Schemas reject a missing required property', () => {
-  const requiredFields = collectRequiredFieldCases()
-  expect(requiredFields.length).toBeGreaterThan(0)
+it('public barrel Schemas reject an omitted required property from a valid sample', () => {
+  const selected = mutationCandidatesBySchema('missing')
 
-  fc.assert(
-    fc.property(fc.constant(requiredFields), (fields) => {
-      for (const { path, objectSchema, rootSchema, inputPath } of fields) {
-        expect(decodes(objectSchema, {}), `${path} required member`).toBe(false)
-        expect(decodes(rootSchema, makeMutationInput(inputPath, 'missing')), `${path} public Schema`).toBe(false)
-      }
-    }),
-    { numRuns: 1 },
-  )
+  for (const field of selected.values()) {
+    expect(decodes(field.rootSchema, field.sample), field.schemaName + ' original sample').toBe(true)
+    expect(
+      decodes(field.rootSchema, mutateSample(field.sample, field.inputPath, 'missing')),
+      field.path + ' missing required field',
+    ).toBe(false)
+  }
 })
 
-it('public barrel Schemas reject null for required nonnullable properties', () => {
-  const requiredFields = collectRequiredFieldCases()
-  expect(requiredFields.length).toBeGreaterThan(0)
+it('public barrel Schemas reject null for a required non-null field from a valid sample', () => {
+  const selected = mutationCandidatesBySchema('null')
 
-  fc.assert(
-    fc.property(fc.constant(requiredFields), (fields) => {
-      const nullablePaths = new Set<string>(nullableRequiredFieldPaths)
-      for (const { path, key, objectSchema, rootSchema, inputPath } of fields) {
-        expect(
-          decodes(objectSchema, { [key]: null }),
-          `${path} field Schema`,
-        ).toBe(nullablePaths.has(path))
-        expect(decodes(rootSchema, makeMutationInput(inputPath, 'null')), `${path} public Schema`).toBe(false)
-      }
-    }),
-    { numRuns: 1 },
-  )
+  for (const field of selected.values()) {
+    expect(decodes(field.rootSchema, field.sample), field.schemaName + ' original sample').toBe(true)
+    expect(
+      decodes(field.rootSchema, mutateSample(field.sample, field.inputPath, 'null')),
+      field.path + ' non-null required field',
+    ).toBe(false)
+  }
 })
 
 it('accepts declared successes and failures only when their schemas match', () => {
