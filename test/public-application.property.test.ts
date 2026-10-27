@@ -604,8 +604,8 @@ it('hotbar, intent queue, and game-loop inputs stay bounded or return typed outc
 
       const initialTick = await Effect.runPromise(PublicApplication.makeGameLoop(value as never))
       const started = await Effect.runPromise(Effect.result(initialTick.start(() => Effect.void)))
-      const validation = SimulationTick.result(value as never)
-      if (value !== undefined && validation._tag === 'Failure') {
+      const validInitialTick = typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+      if (value !== undefined && !validInitialTick) {
         expect(started._tag).toBe('Failure')
         if (started._tag === 'Failure') expect(started.failure._tag).toBe('BrandError')
       } else {
