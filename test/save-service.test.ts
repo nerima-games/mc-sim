@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Effect, Option, Result } from 'effect'
+import { Effect, Option, Result, Schema } from 'effect'
 import { itemComponentPatch, itemStack, StackCount } from '@nerima-games/mc-kernel'
 import {
   InMemoryStorageLayer,
@@ -152,9 +152,47 @@ describe('simulation save service', () => {
     }).pipe(Effect.provide(storage)),
   )
 
+  it.effect('round-trips a v3 null component placeholder through the canonical ItemStack', () =>
+    Effect.gen(function* () {
+      const key = simulationSaveKey('world:v3-null-components')
+      const copyKey = simulationSaveKey('world:v3-null-components-copy')
+      const storagePort = yield* StoragePort
+      const v3Envelope = Result.getOrThrow(sealSaveEnvelope(
+        saveEnvelope(formatName, formatVersion3, {
+          dimension: 'overworld',
+          tick: 20,
+          player: {
+            position: { x: 0, y: 64, z: 0 },
+            inventory: [{ item: 'iron_ingot', count: 2, components: null }],
+            selectedHotbarSlot: 0,
+          },
+          statistics: { counters: {}, unlocked: [] },
+        }),
+      ))
+      yield* storagePort.put(key, v3Envelope)
+
+      const loaded = yield* loadSimulation(key)
+      expect(Option.isSome(loaded)).toBe(true)
+      const loadedValue = Option.getOrThrow(loaded)
+      expect(loadedValue.player.inventory[0]).toStrictEqual(
+        Result.getOrThrow(itemStack('iron_ingot', Result.getOrThrow(StackCount.result(2)))),
+      )
+
+      yield* saveSimulation(copyKey, loadedValue)
+      const copied = yield* storagePort.get(copyKey)
+      const copiedPayload = Schema.decodeUnknownSync(Schema.Struct({
+        player: Schema.Struct({ inventory: Schema.Array(Schema.Unknown) }),
+      }))(Option.getOrThrow(copied).payload)
+      expect(copiedPayload.player.inventory[0]).toStrictEqual({
+        item: 'iron_ingot',
+        count: 2,
+        components: null,
+      })
+    }).pipe(Effect.provide(storage)),
+  )
+
   it.effect.each([
     ['missing', {}],
-    ['null', { components: null }],
     ['invalid', { components: { maxStackSize: 'not-a-number' } }],
   ] as const)('rejects a v3 inventory stack with %s components', ([kind, stack]) =>
     Effect.gen(function* () {
