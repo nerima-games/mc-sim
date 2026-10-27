@@ -2,6 +2,38 @@
 
 `CoreTick` advances one logical `SimulationTick` without reading wall-clock time. `game-loop.ts` remains responsible for frame scheduling and fixed-step accumulation.
 
+## Stage contract
+
+`makeCoreTick` accepts four stage functions through `CoreTickOptions`. Their input and output types are `CoreTickStageInput` and `CoreTickStageCandidate` in `src/application/core.ts`.
+
+Each stage receives:
+
+- `tick`: the logical tick being attempted.
+- `ready`: the merged ready-intent batch, ordered by target tick and admission sequence.
+- `expectedRevision`: the coordinator revision read once before the stages run.
+- `previous`: the completed stage records in stage order, including each prior candidate.
+
+A stage returns candidate `changes`, `expectedDimensions`, and `events`, with an optional `value` for later stages. An optional `restore(delta)` callback receives the exact successful commit delta after replicated state commits. Stages should derive candidates from their input and committed snapshots; they must not mutate committed state or publish events before the commit.
+
+Inside an `Effect.gen` program, an integration wires its dependencies and calls the returned API once for each ready simulation tick:
+
+```ts
+const core = yield* makeCoreTick({
+  coordinator,
+  publish,
+  stages: {
+    intentsAndRules: intentAndRulesStage,
+    stations: stationsStage,
+    environment: environmentStage,
+    entities: entitiesStage,
+  },
+})
+
+yield* core.runTick(nextTick, ready)
+```
+
+This is an illustrative wiring fragment. `HeadlessHarness` obtains `ready` with `takeReady(nextTick)` and passes it to the session's `runTick` for each fixed simulation step.
+
 ## Tick order
 
 Before processing a tick, the runner validates that the current tick can be incremented. This prevents overflow from consuming intents or committing state.
@@ -17,15 +49,15 @@ For a valid current tick, the runner performs these stages in order:
 7. Publish the staged domain events in stage order.
 8. Advance the logical tick by one.
 
-Stages return candidate state and events. They do not mutate committed state or publish events before the commit. This keeps a failed tick safe to retry.
+Stages return candidate state and events. They do not mutate committed state or publish events before the commit, so failures before commit are safe to retry.
 
 ## Failure and retry
 
-If a stage or the commit fails, the runner does not publish events or advance the tick. It retains the intents taken for that tick and retries the stages against the latest committed snapshots on the next call. Stages must therefore derive their output from their inputs and committed snapshots instead of applying side effects before commit.
+If a stage or the commit fails before the commit succeeds, the runner does not publish events or advance the tick. It retains the intents taken for that tick. The caller retries by making another call for the same logical tick; the runner reruns the stages against the latest committed snapshots and current coordinator revision.
 
-The coordinator commits all changed owners atomically. A tick with no owner changes skips the coordinator call; it also cannot publish domain events because no state change was committed.
+The coordinator commits all changed owners atomically. A tick with no owner changes skips the coordinator call, restore callbacks, and event publication.
 
-The runner publishes events only after a successful commit and advances the tick after publication completes. Event publication and tick advancement run as one uninterruptible section so an interruption cannot leave a committed tick unadvanced. A backpressured event subscriber can delay the next tick until it accepts the event.
+After a successful commit, the runner calls candidate `restore` callbacks in stage order, publishes staged events in stage order, then advances the tick. These actions run in one uninterruptible section, and a backpressured event subscriber can delay completion. A failing `restore` callback occurs after replicated state has committed and does not roll it back; treat that as a post-commit failure rather than retrying as though the tick made no changes.
 
 ## Frame boundary
 
