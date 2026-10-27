@@ -1,8 +1,10 @@
 import { expect, it } from '@effect/vitest'
-import { DeltaTimeSecs, SimulationTick } from '@nerima-games/mc-kernel'
+import { DeltaTimeSecs, PositionAxis, SimulationTick, position } from '@nerima-games/mc-kernel'
 import { Effect, Result } from 'effect'
 import {
+  EntityId,
   advanceFixedStep,
+  planExplosion,
   initialFixedStepAccumulator,
   pauseFixedStep,
   resumeFixedStep,
@@ -12,6 +14,7 @@ import {
   fixedStepMainParityInput,
   fixedStepParityCases,
 } from './fixtures/effect4-parity/fixed-step.js'
+import { explosionMainParityCases } from './fixtures/effect4-parity/explosion.js'
 
 const normalizeFixedStepResult = (result: ReturnType<typeof advanceFixedStep>) =>
   Result.isFailure(result)
@@ -58,5 +61,47 @@ it.effect('matches fixed-step outputs recorded from the pre-migration main revis
     )
 
     expect({ sequence, pausedAdvance, resumeAdvance, overflow }).toEqual(fixedStepMainParityExpected)
+  }),
+)
+
+it.effect('matches explosion outputs recorded from the pre-migration main revision', () =>
+  Effect.sync(() => {
+    for (const row of explosionMainParityCases) {
+      const result = planExplosion({
+        center: position(
+          PositionAxis(row.input.center.x),
+          PositionAxis(row.input.center.y),
+          PositionAxis(row.input.center.z),
+        ),
+        radius: row.input.radius,
+        seed: row.input.seed,
+        blocks: ({ x, y, z }) => {
+          if (row.input.blockWorld === 'all-destructible') {
+            return { resistance: 0, destructible: true }
+          }
+          if (
+            row.input.blockWorld === 'single-target' &&
+            row.input.targetBlock !== undefined &&
+            row.input.targetBlock.x === x &&
+            row.input.targetBlock.y === y &&
+            row.input.targetBlock.z === z
+          ) {
+            return { resistance: 0, destructible: true }
+          }
+          return { resistance: 0, destructible: false }
+        },
+        entities: row.input.entities.map((entity) => ({
+          id: EntityId(entity.id),
+          feetPosition: position(
+            PositionAxis(entity.feetPosition.x),
+            PositionAxis(entity.feetPosition.y),
+            PositionAxis(entity.feetPosition.z),
+          ),
+        })),
+        ...(row.input.limits === undefined ? {} : { limits: row.input.limits }),
+      })
+
+      expect(result).toEqual(row.expected)
+    }
   }),
 )

@@ -79,14 +79,21 @@ const normaliseLimits = (limits: Partial<ExplosionLimits> | undefined): Explosio
   maxAffectedEntities: positiveInteger(limits?.maxAffectedEntities, DEFAULT_EXPLOSION_LIMITS.maxAffectedEntities),
 })
 
+const HASH_SEED_FACTOR = 19.19
+const HASH_X_FACTOR = 12.9898
+const HASH_Y_FACTOR = 78.233
+const HASH_Z_FACTOR = 37.719
+const HASH_SCALE = 43_758.5453
+
 const hashUnit = (seed: number, x: number, y: number, z: number): number => {
-  let value = (Math.trunc(finite(seed, 0)) ^ Math.imul(x, 0x1f123bb5) ^ Math.imul(y, 0x5f356495) ^ Math.imul(z, 0x6c8e9cf5)) | 0
-  value ^= value >>> 16
-  value = Math.imul(value, 0x7feb352d)
-  value ^= value >>> 15
-  value = Math.imul(value, 0x846ca68b)
-  value ^= value >>> 16
-  return (value >>> 0) / 0x1_0000_0000
+  const value =
+    Math.sin(
+      finite(seed, 0) * HASH_SEED_FACTOR +
+        x * HASH_X_FACTOR +
+        y * HASH_Y_FACTOR +
+        z * HASH_Z_FACTOR,
+    ) * HASH_SCALE
+  return value - Math.floor(value)
 }
 
 const keyOf = ({ x, y, z }: ExplosionBlockPosition): string => `${x},${y},${z}`
@@ -268,9 +275,9 @@ const planDestroyedBlocks = (
     : undefined
   const readBlock = sharedTrace?.readBlock ?? request.blocks
 
-  outer: for (let y = minimumY; y <= maximumY; y += 1) {
-    for (let z = minimumZ; z <= maximumZ; z += 1) {
-      for (let x = minimumX; x <= maximumX; x += 1) {
+  outer: for (let y = minimumY; y <= maximumY && !truncated; y += 1) {
+    for (let z = minimumZ; z <= maximumZ && !truncated; z += 1) {
+      for (let x = minimumX; x <= maximumX && !truncated; x += 1) {
         const target = { x, y, z }
         const distance = Math.hypot(x + 0.5 - center.x, y + 0.5 - center.y, z + 0.5 - center.z)
         if (distance > radius) continue
@@ -304,7 +311,7 @@ export const planExplosion = (request: ExplosionRequest): ExplosionPlan => {
     finite(request.center.z, 0),
   )
   const radius = Math.max(0, finite(request.radius, 0))
-  const seed = Math.trunc(finite(request.seed, 0))
+  const seed = finite(request.seed, 0)
   const limits = normaliseLimits(request.limits)
   const blockPlan = planDestroyedBlocks(request, center, radius, seed, limits)
   const entityEffects: ExplosionEntityEffect[] = []
@@ -313,26 +320,51 @@ export const planExplosion = (request: ExplosionRequest): ExplosionPlan => {
   if (entityCount < request.entities.length) truncated = true
   for (let index = 0; index < entityCount; index += 1) {
     const entity = request.entities[index]
-    if (entity === undefined) continue
-    const dx = entity.feetPosition.x - center.x
-    const dy = entity.feetPosition.y + 0.9 - center.y
-    const dz = entity.feetPosition.z - center.z
-    const distance = Math.hypot(dx, dy, dz)
-    if (distance > radius || radius === 0) continue
-    const exposure = entityExposure(center, entity, request.blocks, limits.maxRaySteps)
-    const impact = Math.max(0, (1 - distance / radius) * exposure)
-    if (impact === 0) continue
-    const damage = ((impact * impact + impact) / 2) * 7 * radius + 1
-    entityEffects.push({
-      id: entity.id,
-      damage,
-      exposure,
-      knockback: positionOf(
-        distance === 0 ? 0 : (dx / distance) * impact,
-        distance === 0 ? 0 : (dy / distance) * impact,
-        distance === 0 ? 0 : (dz / distance) * impact,
-      ),
-    })
+    if (entity !== undefined) {
+      const target = {
+        x: entity.feetPosition.x,
+        y: entity.feetPosition.y + 0.9,
+        z: entity.feetPosition.z,
+      }
+      const dx = target.x - center.x
+      const dy = target.y - center.y
+      const dz = target.z - center.z
+      const distance = Math.hypot(dx, dy, dz)
+      if (radius > 0 && distance <= radius) {
+        const exposure = entityExposure(center, entity, request.blocks, limits.maxRaySteps)
+        if (exposure > 0) {
+          const impact = Math.max(0, 1 - distance / radius) * exposure
+          const directionLength = Math.hypot(
+            target.x - center.x,
+            target.y - center.y,
+            target.z - center.z,
+          )
+          let direction: Position = positionOf(0, 0, 0)
+          if (directionLength > 0) {
+            direction = positionOf(
+              (target.x - center.x) / directionLength,
+              (target.y - center.y) / directionLength,
+              (target.z - center.z) / directionLength,
+            )
+          }
+          entityEffects.push({
+            damage:
+              (impact * impact + impact) *
+                0.5 *
+                7 *
+                radius +
+              1,
+            exposure,
+            id: entity.id,
+            knockback: positionOf(
+              direction.x * impact,
+              direction.y * impact,
+              direction.z * impact,
+            ),
+          })
+        }
+      }
+    }
   }
 
   return {
