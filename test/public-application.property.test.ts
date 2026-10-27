@@ -91,6 +91,136 @@ const assertEffectResult = async (
 
 const checks = { numRuns: 100 }
 
+const makeIntentQueue = async (capacity: number) => {
+  const queueCapacity = Schema.decodeUnknownSync(PublicApplication.IntentQueueCapacitySchema)(capacity)
+  const layer = PublicApplication.IntentQueueLayer({ capacity: queueCapacity })
+  return Effect.runPromise(
+    Effect.gen(function* () {
+      return yield* PublicApplication.IntentQueue
+    }).pipe(Effect.provide(layer)),
+  )
+}
+
+const queuedIntentKeys = (value: unknown): ReadonlyArray<readonly [number, string]> =>
+  Schema.decodeUnknownSync(Schema.Array(PublicApplication.QueuedIntentSchema))(value)
+    .map(({ sequence, intent }) => [sequence, intent.id] as const)
+
+it('IntentQueue assigns sequences, orders ready intents, and preserves future entries', async () => {
+  const queuedIntentSchema = Schema.Array(PublicApplication.QueuedIntentSchema)
+
+  await fc.assert(
+    fc.asyncProperty(
+      fc.record({ targetTicks: fc.array(fc.nat(8), { minLength: 1, maxLength: 5 }), readyTick: fc.nat(8) }),
+      async ({ targetTicks, readyTick }) => {
+        const queue = await makeIntentQueue(targetTicks.length)
+        const admitted: Array<{ readonly sequence: number; readonly targetTick: number; readonly id: string }> = []
+
+        for (const [index, targetTick] of targetTicks.entries()) {
+          const intent = Schema.decodeUnknownSync(PublicApplication.IntentSchema)({
+            id: `property-intent-${index}`,
+            targetTick,
+            source: 'local',
+            payload: { _tag: 'MeleeAttack', actor: `property-actor-${index}` },
+          })
+          const outcome = await assertEffectResult(
+            'IntentQueue.enqueue', queue.enqueue, [intent], PublicApplication.IntentSequenceSchema,
+            PublicApplication.IntentQueueEnqueueFailureSchema,
+          )
+          expect(Result.isSuccess(outcome)).toBe(true)
+          if (Result.isSuccess(outcome)) {
+            const sequence = Schema.decodeUnknownSync(PublicApplication.IntentSequenceSchema)(outcome.success)
+            expect(sequence).toBe(index)
+            admitted.push({ sequence, targetTick, id: intent.id })
+          }
+        }
+
+        const readyOutcome = await assertEffectResult(
+          'IntentQueue.takeReady ready tick', queue.takeReady, [readyTick],
+          queuedIntentSchema, PublicApplication.SchemaErrorSchema,
+        )
+        expect(Result.isSuccess(readyOutcome)).toBe(true)
+        const ready = admitted
+          .filter(({ targetTick }) => targetTick <= readyTick)
+          .sort((left, right) => left.targetTick - right.targetTick || left.sequence - right.sequence)
+        if (Result.isSuccess(readyOutcome)) {
+          expect(queuedIntentKeys(readyOutcome.success)).toStrictEqual(ready.map(({ sequence, id }) => [sequence, id]))
+        }
+
+        const repeatedReadyOutcome = await assertEffectResult(
+          'IntentQueue.takeReady repeated tick', queue.takeReady, [readyTick],
+          queuedIntentSchema, PublicApplication.SchemaErrorSchema,
+        )
+        expect(Result.isSuccess(repeatedReadyOutcome)).toBe(true)
+        if (Result.isSuccess(repeatedReadyOutcome)) expect(queuedIntentKeys(repeatedReadyOutcome.success)).toStrictEqual([])
+
+        const pending = admitted.filter(({ targetTick }) => targetTick > readyTick)
+        const futureTick = pending.reduce((maximum, entry) => Math.max(maximum, entry.targetTick), readyTick)
+        const futureOutcome = await assertEffectResult(
+          'IntentQueue.takeReady future tick', queue.takeReady, [futureTick],
+          queuedIntentSchema, PublicApplication.SchemaErrorSchema,
+        )
+        expect(Result.isSuccess(futureOutcome)).toBe(true)
+        const future = [...pending].sort((left, right) => left.targetTick - right.targetTick || left.sequence - right.sequence)
+        if (Result.isSuccess(futureOutcome)) {
+          expect(queuedIntentKeys(futureOutcome.success)).toStrictEqual(future.map(({ sequence, id }) => [sequence, id]))
+        }
+
+        const drainedOutcome = await assertEffectResult(
+          'IntentQueue.takeReady drained queue', queue.takeReady, [futureTick],
+          queuedIntentSchema, PublicApplication.SchemaErrorSchema,
+        )
+        expect(Result.isSuccess(drainedOutcome)).toBe(true)
+        if (Result.isSuccess(drainedOutcome)) expect(queuedIntentKeys(drainedOutcome.success)).toStrictEqual([])
+      },
+    ),
+    checks,
+  )
+})
+
+it('IntentQueue reports a typed full failure and preserves the queued entry', async () => {
+  await fc.assert(
+    fc.asyncProperty(fc.nat(8), async (targetTick) => {
+      const queue = await makeIntentQueue(1)
+      const first = Schema.decodeUnknownSync(PublicApplication.IntentSchema)({
+        id: 'full-queue-first', targetTick, source: 'local',
+        payload: { _tag: 'MeleeAttack', actor: 'full-queue-actor' },
+      })
+      const second = Schema.decodeUnknownSync(PublicApplication.IntentSchema)({
+        id: 'full-queue-second', targetTick, source: 'local',
+        payload: { _tag: 'MeleeAttack', actor: 'full-queue-actor' },
+      })
+
+      const accepted = await assertEffectResult(
+        'IntentQueue.enqueue accepted', queue.enqueue, [first], PublicApplication.IntentSequenceSchema,
+        PublicApplication.IntentQueueEnqueueFailureSchema,
+      )
+      expect(Result.isSuccess(accepted)).toBe(true)
+      if (Result.isSuccess(accepted)) {
+        expect(Schema.decodeUnknownSync(PublicApplication.IntentSequenceSchema)(accepted.success)).toBe(0)
+      }
+
+      const rejected = await assertEffectResult(
+        'IntentQueue.enqueue full', queue.enqueue, [second], PublicApplication.IntentSequenceSchema,
+        PublicApplication.IntentQueueEnqueueFailureSchema,
+      )
+      expect(Result.isFailure(rejected)).toBe(true)
+      if (Result.isFailure(rejected)) {
+        expect(rejected.failure).toBeInstanceOf(PublicApplication.IntentQueueFull)
+      }
+
+      const preserved = await assertEffectResult(
+        'IntentQueue.takeReady after full failure', queue.takeReady, [targetTick],
+        Schema.Array(PublicApplication.QueuedIntentSchema), PublicApplication.SchemaErrorSchema,
+      )
+      expect(Result.isSuccess(preserved)).toBe(true)
+      if (Result.isSuccess(preserved)) {
+        expect(queuedIntentKeys(preserved.success)).toStrictEqual([[0, first.id]])
+      }
+    }),
+    checks,
+  )
+})
+
 it('world commit coordinator accepts only typed, finite candidate outcomes for hostile revisions and states', async () => {
   const world = Schema.decodeUnknownSync(WorldIdSchema)('application-property-world')
   const ownerId = makeReplicatedOwnerId('application-property-owner')
@@ -2561,6 +2691,8 @@ it('hotbar, intent queue, and game-loop inputs stay bounded or return typed outc
         if (Result.isFailure(readyOutcome)) {
           expect(Schema.is(PublicApplication.SchemaErrorSchema)(readyOutcome.failure)).toBe(true)
         }
+      } else {
+        expect(Result.isSuccess(readyOutcome)).toBe(true)
       }
 
       const candidateIntent = {
@@ -2570,12 +2702,17 @@ it('hotbar, intent queue, and game-loop inputs stay bounded or return typed outc
         payload: value,
       }
       const intentValidation = Schema.decodeUnknownResult(PublicApplication.IntentSchema)(candidateIntent)
-      const enqueueOutcome = await runEffectResult(queue.enqueue, [candidateIntent])
+      const enqueueOutcome = await assertEffectResult(
+        'IntentQueue.enqueue', queue.enqueue, [candidateIntent], PublicApplication.IntentSequenceSchema,
+        PublicApplication.IntentQueueEnqueueFailureSchema,
+      )
       if (intentValidation._tag === 'Failure') {
         expect(Result.isFailure(enqueueOutcome)).toBe(true)
         if (Result.isFailure(enqueueOutcome)) {
           expect(Schema.is(PublicApplication.SchemaErrorSchema)(enqueueOutcome.failure)).toBe(true)
         }
+      } else if (Result.isFailure(enqueueOutcome)) {
+        expect(enqueueOutcome.failure).toBeInstanceOf(PublicApplication.IntentQueueFull)
       }
 
       await Effect.runPromise(loop.start(() => Effect.void))

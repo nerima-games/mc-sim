@@ -21,6 +21,7 @@ import type {
 } from '@nerima-games/mc-kernel'
 import { Brand, Context, Effect, Layer, Ref, Schema } from 'effect'
 import type { YieldableError } from 'effect/Cause'
+import { SchemaErrorSchema } from '../schema-errors.js'
 
 export type IntentSequence = number & Brand.Brand<'IntentSequence'>
 export type IntentQueueCapacity = number & Brand.Brand<'IntentQueueCapacity'>
@@ -221,6 +222,14 @@ const IntentQueueFullBase: new (args: { readonly capacity: IntentQueueCapacity }
   })
 
 export class IntentQueueFull extends IntentQueueFullBase {}
+
+export const IntentQueueEnqueueFailureSchema: Schema.Codec<
+  IntentQueueFull | Schema.SchemaError,
+  unknown
+> = Schema.Union([
+  Schema.instanceOf(IntentQueueFull),
+  SchemaErrorSchema,
+])
 
 export type IntentQueueApi = {
   readonly enqueue: (intent: Intent) => Effect.Effect<IntentSequence, IntentQueueFull | Schema.SchemaError>
