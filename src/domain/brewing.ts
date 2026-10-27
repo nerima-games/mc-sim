@@ -27,7 +27,7 @@ import {
   VANILLA_BREWING_RECIPES,
   type BrewingRecipeInput,
 } from './brewing-data.js'
-import { BrandErrorSchema, ItemStackFailureSchema, KernelItemStackFailureSchema, itemStack } from './inventory.js'
+import { BrandErrorSchema, ItemStackFailureSchema, ItemStackSchema, KernelItemStackFailureSchema, itemStack } from './inventory.js'
 import type { ItemStackFailure } from './inventory.js'
 import { itemStackWithCount } from './item-stack.js'
 
@@ -159,9 +159,20 @@ export const brewingState = (
   )
 }
 
-export const BrewingStateSchema: Schema.Schema<BrewingState> = Schema.declare(
-  (value: unknown): value is BrewingState => Result.isSuccess(brewingState(value)),
+const BrewingSlotSchema = Schema.UndefinedOr(ItemStackSchema)
+const BrewingFuelChargesSchema: Schema.Schema<BrewingFuelCharges> = Schema.Int.pipe(
+  Schema.fromBrand('BrewingFuelCharges', BrewingFuelCharges),
 )
+const BrewingProgressSchema: Schema.Schema<FixedDurationSecs> = Schema.Finite.check(
+  Schema.makeFilter((value) => value >= 0 && value < BREWING_TIME_SECS),
+).pipe(Schema.fromBrand('FixedDurationSecs', FixedDurationSecs))
+export const BrewingStateSchema: Schema.Schema<BrewingState> = Schema.Struct({
+  bottles: Schema.Tuple([BrewingSlotSchema, BrewingSlotSchema, BrewingSlotSchema]),
+  ingredient: BrewingSlotSchema,
+  fuel: BrewingSlotSchema,
+  fuelCharges: BrewingFuelChargesSchema,
+  brewProgressSecs: BrewingProgressSchema,
+})
 export const BrewingSnapshotValidationResultSchema: Schema.Schema<BrewingSnapshotValidationResult> = Schema.Union([
   Schema.TaggedStruct('Valid', { state: BrewingStateSchema }),
   Schema.TaggedStruct('Invalid', { error: BrewingValidationFailureSchema }),
@@ -439,9 +450,9 @@ export const advanceBrewing = (
   }))
 }
 
-const isRecipeCompletionCount = (value: unknown): value is RecipeCompletionCount =>
-  typeof value === 'number' && Result.isSuccess(RecipeCompletionCount.result(value))
-const RecipeCompletionCountSchema: Schema.Schema<RecipeCompletionCount> = Schema.declare(isRecipeCompletionCount)
+const RecipeCompletionCountSchema: Schema.Schema<RecipeCompletionCount> = Schema.Int.check(
+  Schema.makeFilter((value) => Number.isSafeInteger(value) && value >= 0),
+).pipe(Schema.fromBrand('RecipeCompletionCount', RecipeCompletionCount))
 
 export const BrewingOutcomeSchema: Schema.Schema<BrewingOutcome> = Schema.Struct({
   state: BrewingStateSchema,

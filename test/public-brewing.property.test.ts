@@ -1,5 +1,5 @@
 import fc from 'fast-check'
-import { Result } from 'effect'
+import { Result, Schema } from 'effect'
 import { expect, it } from 'vitest'
 import * as Sim from '../src/index.js'
 import { assertResultContract, hostileItemStack, hostileNumber, hostileValue, unknownValue } from './public-property-helpers.js'
@@ -36,6 +36,20 @@ const validInputs = (count: number) => {
   }))
   return { bottle, ingredient, fuel, state }
 }
+
+it('BrewingStateSchema rejects fields that brewingState would default', () => {
+  const { state } = validInputs(1)
+  const decode = Schema.decodeUnknownResult(Sim.BrewingStateSchema)
+
+  expect(Result.isFailure(decode({}))).toBe(true)
+  expect(Result.isFailure(decode({ ...state, bottles: null }))).toBe(true)
+
+  for (const field of Object.keys(state)) {
+    const withoutField = Object.fromEntries(Object.entries(state).filter(([key]) => key !== field))
+    expect(Result.isFailure(decode(withoutField))).toBe(true)
+    expect(Result.isFailure(decode({ ...state, [field]: null }))).toBe(true)
+  }
+})
 
 it('brewing helpers return typed failures for hostile envelopes without throwing', () => {
   fc.assert(
