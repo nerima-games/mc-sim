@@ -66,6 +66,35 @@ describe('pitch clamping', () => {
     }),
   )
 
+  it.effect('returns typed failures for malformed pose fields and delta types', () =>
+    Effect.sync(() => {
+      const malformedPoses: ReadonlyArray<readonly [unknown, string]> = [
+        [null, 'pose'],
+        [{ ...INITIAL_PLAYER_POSE, feetPosition: null }, 'pose.feetPosition'],
+        [{ ...INITIAL_PLAYER_POSE, feetPosition: { x: '0', y: 0, z: 0 } }, 'pose.feetPosition.x'],
+        [{ ...INITIAL_PLAYER_POSE, feetPosition: { x: 0, y: '0', z: 0 } }, 'pose.feetPosition.y'],
+        [{ ...INITIAL_PLAYER_POSE, feetPosition: { x: 0, y: 0, z: '0' } }, 'pose.feetPosition.z'],
+        [{ ...INITIAL_PLAYER_POSE, yawRadians: '0' }, 'pose.yawRadians'],
+        [{ ...INITIAL_PLAYER_POSE, pitchRadians: '0' }, 'pose.pitchRadians'],
+      ]
+      for (const [pose, field] of malformedPoses) {
+        const result = applyLook(pose as never, 0, 0)
+        expect(result).toMatchObject({
+          _tag: 'Failure',
+          failure: { _tag: 'CameraPoseInputError', field },
+        })
+      }
+      expect(applyLook(INITIAL_PLAYER_POSE, null as never, 0)).toMatchObject({
+        _tag: 'Failure',
+        failure: { _tag: 'CameraPoseInputError', field: 'deltaYaw' },
+      })
+      expect(applyLook(INITIAL_PLAYER_POSE, 0, null as never)).toMatchObject({
+        _tag: 'Failure',
+        failure: { _tag: 'CameraPoseInputError', field: 'deltaPitch' },
+      })
+    }),
+  )
+
   it.effect('repeatedly looking up saturates rather than wrapping the view upside down', () =>
     Effect.sync(() => {
       const looked = [1, 2, 3, 4, 5].reduce((pose) => success(applyLook(pose, 0, 1)), INITIAL_PLAYER_POSE)
@@ -85,6 +114,30 @@ describe('pitch clamping', () => {
 })
 
 describe('CameraPoseSnapshot production', () => {
+  it.effect('returns typed failures for malformed pose field and capture-time types', () =>
+    Effect.sync(() => {
+      const malformedPoses: ReadonlyArray<readonly [unknown, string]> = [
+        [null, 'pose'],
+        [{ ...INITIAL_PLAYER_POSE, feetPosition: null }, 'pose.feetPosition'],
+        [{ ...INITIAL_PLAYER_POSE, feetPosition: { x: '0', y: 0, z: 0 } }, 'pose.feetPosition.x'],
+        [{ ...INITIAL_PLAYER_POSE, feetPosition: { x: 0, y: '0', z: 0 } }, 'pose.feetPosition.y'],
+        [{ ...INITIAL_PLAYER_POSE, feetPosition: { x: 0, y: 0, z: '0' } }, 'pose.feetPosition.z'],
+        [{ ...INITIAL_PLAYER_POSE, yawRadians: '0' }, 'pose.yawRadians'],
+        [{ ...INITIAL_PLAYER_POSE, pitchRadians: '0' }, 'pose.pitchRadians'],
+      ]
+      for (const [pose, field] of malformedPoses) {
+        expect(cameraPoseOfResult(pose as never, AT)).toMatchObject({
+          _tag: 'Failure',
+          failure: { _tag: 'CameraPoseInputError', field },
+        })
+      }
+      expect(cameraPoseOfResult(INITIAL_PLAYER_POSE, null as never)).toMatchObject({
+        _tag: 'Failure',
+        failure: { _tag: 'CameraPoseInputError', field: 'capturedAtSecs' },
+      })
+    }),
+  )
+
   it.effect('returns a typed failure for invalid runtime pose values', () =>
     Effect.sync(() => {
       const invalid = cameraPoseOfResult({ ...INITIAL_PLAYER_POSE, yawRadians: Number.NaN }, AT)

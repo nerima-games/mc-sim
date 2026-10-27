@@ -1,7 +1,9 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect, Layer, Result, Schema } from 'effect'
+import { vi } from 'vitest'
 import { INITIAL_PLAYER_DIMENSION, makePlayerService, type PlayerServiceInputError } from '../src/application/player-service'
 import { PLAYER_REPLICATED_OWNER_ID, PlayerServiceSnapshotSchema } from '../src/application/replicated-state'
+import * as Camera from '../src/domain/camera-pose'
 import { INITIAL_PLAYER_POSE } from '../src/domain/camera-pose'
 import {
   DimensionRevisionSchema,
@@ -320,6 +322,37 @@ describe('REGRESSION: invalid runtime poses do not enter player state', () => {
       ])
       expect(failures.every((failure) => failure.reason === 'invalid-position')).toBe(true)
       expect(yield* player.pose).toStrictEqual(before)
+    }),
+  )
+
+  it.effect('reports camera failures and rejects invalid poses returned by the camera boundary', () =>
+    Effect.gen(function* () {
+      const player = yield* makePlayerService()
+      const cameraFailure = Result.fail({ _tag: 'CameraPoseInputError', field: 'pose' } as const)
+      const failedApply = vi.spyOn(Camera, 'applyLook').mockReturnValue(cameraFailure)
+      try {
+        const failure = yield* Effect.flip(player.look(0, 0))
+        expect(failure).toMatchObject({
+          _tag: 'PlayerServiceInputError',
+          reason: 'invalid-look',
+          field: 'pitchRadians',
+        })
+      } finally {
+        failedApply.mockRestore()
+      }
+
+      const invalidPose = { ...INITIAL_PLAYER_POSE, yawRadians: Number.NaN }
+      const invalidApply = vi.spyOn(Camera, 'applyLook').mockReturnValue(Result.succeed(invalidPose))
+      try {
+        const failure = yield* Effect.flip(player.look(0, 0))
+        expect(failure).toMatchObject({
+          _tag: 'PlayerServiceInputError',
+          reason: 'invalid-look',
+          field: 'yawRadians',
+        })
+      } finally {
+        invalidApply.mockRestore()
+      }
     }),
   )
 })
