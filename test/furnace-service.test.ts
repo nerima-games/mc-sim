@@ -59,7 +59,10 @@ describe('FurnaceService', () => {
   it.effect('commits input, fuel, tick, output and experience state through the world coordinator', () =>
     withFurnace(({ furnace, coordinator }) =>
       Effect.gen(function* () {
+        const beforeInput = yield* coordinator.snapshot(furnaceOwnerId, FurnaceServiceStateSchema)
         yield* furnace.setInput(must(itemStack('iron_ore', 1)))
+        const afterInput = yield* coordinator.snapshot(furnaceOwnerId, FurnaceServiceStateSchema)
+        expect(afterInput.revision).not.toBe(beforeInput.revision)
         yield* furnace.setFuel(must(itemStack('coal', 1)))
 
         const recipe = VANILLA_SMELTING_RECIPES.find((candidate) => candidate.input === 'iron_ore')
@@ -144,6 +147,25 @@ describe('FurnaceService', () => {
         const noExperience = yield* furnace.prepareCollectExperience
         expect(noExperience.experience).toBe(0)
         expect(noExperience.ownerCandidate).toBeUndefined()
+      }),
+    ),
+  )
+
+  it.effect('rejects malformed inventory before preparing furnace output', () =>
+    withFurnace(({ furnace, coordinator }) =>
+      Effect.gen(function* () {
+        yield* furnace.setInput(must(itemStack('iron_ore', 1)))
+        yield* furnace.setFuel(must(itemStack('coal', 1)))
+        yield* furnace.advance(10)
+        const before = yield* coordinator.snapshot(furnaceOwnerId, FurnaceServiceStateSchema)
+
+        const result = yield* Effect.result(furnace.prepareCollectOutput(null as never))
+
+        expect(result).toMatchObject({
+          _tag: 'Failure',
+          failure: { _tag: 'FurnaceStateValidationFailure', path: 'inventory' },
+        })
+        expect(yield* coordinator.snapshot(furnaceOwnerId, FurnaceServiceStateSchema)).toStrictEqual(before)
       }),
     ),
   )
