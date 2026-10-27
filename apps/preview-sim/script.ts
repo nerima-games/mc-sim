@@ -43,7 +43,7 @@ import {
   VolumeLevel,
   type ItemType,
 } from '@nerima-games/mc-kernel'
-import type { DamageCause, Vitals } from '../../src/domain/vitals'
+import { DamageCause } from '../../src/domain/vitals'
 
 /** One scripted action, applied at the top of a frame, before the frame is submitted. */
 export type ScriptedAction =
@@ -102,7 +102,7 @@ export type ScriptedAction =
   /** Write settings values. Held, never applied — that is the whole row. */
   | { readonly kind: 'setting'; readonly patch: Readonly<Record<string, unknown>> }
   /** Write vitals straight in, as a world load would. */
-  | { readonly kind: 'restoreVitals'; readonly vitals: Vitals }
+  | { readonly kind: 'restoreVitals'; readonly vitals: Readonly<Record<string, unknown>> }
   /** Stop the frame loop without restarting it. Frames submitted after are dropped. */
   | { readonly kind: 'stopLoop' }
   /** A caption for the timeline. Changes nothing. */
@@ -529,12 +529,12 @@ const VITALS: Scenario = {
     step(30, 'an ordinary blow: 6 of 20, no cause recorded because nobody died', {
       kind: 'damage',
       amount: 6,
-      cause: 'fall',
+      cause: DamageCause('fall'),
     }),
     step(60, 'A BLOW WITH NO MAGNITUDE. Health must not move, and must stay killable', {
       kind: 'damage',
       amount: Number.NaN,
-      cause: 'explosion',
+      cause: DamageCause('explosion'),
     }),
     step(120, 'hurt and well fed, which is the only state that signals regen', {
       kind: 'note',
@@ -590,12 +590,12 @@ const VITALS: Scenario = {
     step(960, 'the killing blow. Its cause is the one that survives', {
       kind: 'damage',
       amount: 40,
-      cause: 'lava',
+      cause: DamageCause('lava'),
     }),
     step(990, 'a corpse struck again: the death message must NOT be rewritten', {
       kind: 'damage',
       amount: 100,
-      cause: 'explosion',
+      cause: DamageCause('explosion'),
     }),
     step(1020, 'respawn — health returns, experience does not reset', { kind: 'respawn' }),
     step(1100, 'a save no transition here could have produced. Read every row after', {

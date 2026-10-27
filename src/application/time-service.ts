@@ -14,17 +14,19 @@
  * — an existence check fused with the insert, and a damage transition that
  * computes `justDied` inside the same step so the death signal fires once.
  */
-import { Context, Effect, Layer, Ref } from 'effect'
-import { FixedDurationSecs, type DeltaTimeSecs } from '@nerima-games/mc-kernel'
+import { Brand, Context, Effect, Layer, Ref } from 'effect'
+import { FixedDurationSecs, InterpolationFraction, type DeltaTimeSecs } from '@nerima-games/mc-kernel'
 import * as Time from '../domain/time-of-day.js'
 
 export type TimeServiceApi = {
   /** Advance the world clock by one frame. The delta is supplied, never read. */
   readonly advance: (dt: DeltaTimeSecs) => Effect.Effect<void>
+  /** Compute the next clock state without installing it, for coordinator commits. */
+  readonly advanceCandidate: (dt: DeltaTimeSecs) => Effect.Effect<Time.TimeState>
   /** Position within the current day, in [0, 1). */
-  readonly timeOfDay: Effect.Effect<number>
+  readonly timeOfDay: Effect.Effect<InterpolationFraction, Brand.BrandError>
   /** Day length in seconds. */
-  readonly dayLengthSecs: Effect.Effect<FixedDurationSecs>
+  readonly dayLengthSecs: Effect.Effect<FixedDurationSecs, Brand.BrandError>
   /** Which of the eight moon phases tonight is. */
   readonly moonPhase: Effect.Effect<number>
   readonly isNight: Effect.Effect<boolean>
@@ -38,9 +40,9 @@ export type TimeServiceApi = {
    * be left to float (e.g. a settings change mid-session), and only after
    * deciding that on purpose.
    */
-  readonly setDayLength: (seconds: number) => Effect.Effect<void>
+  readonly setDayLength: (seconds: FixedDurationSecs) => Effect.Effect<void>
   /** Move to a position within the current day, using the CURRENT day length. */
-  readonly setTimeOfDay: (fraction: number) => Effect.Effect<void>
+  readonly setTimeOfDay: (fraction: InterpolationFraction) => Effect.Effect<void>
   /**
    * Set day length and time of day together, in the order that works.
    *
@@ -60,7 +62,10 @@ export type TimeServiceApi = {
    * (ts-minecraft/.../session-bootstrap-world-presentation-time.ts:26-27);
    * making it one call means it cannot be got wrong by the next caller.
    */
-  readonly configureDay: (dayLengthSeconds: number, timeOfDayFraction: number) => Effect.Effect<void>
+  readonly configureDay: (
+    dayLengthSeconds: FixedDurationSecs,
+    timeOfDayFraction: InterpolationFraction,
+  ) => Effect.Effect<void>
   /** Whole state, for persistence. */
   readonly snapshot: Effect.Effect<Time.TimeState>
   /**
@@ -111,8 +116,13 @@ export const makeTimeService = (
 ): Effect.Effect<TimeServiceApi> =>
   Effect.map(Ref.make(Time.normaliseTimeState(initial)), (state) => ({
     advance: (dt) => Ref.update(state, (current) => Time.advance(current, dt)),
-    timeOfDay: Ref.get(state).pipe(Effect.map(Time.timeOfDay)),
-    dayLengthSecs: Ref.get(state).pipe(Effect.map((current) => FixedDurationSecs(Time.dayLengthSecs(current)))),
+    advanceCandidate: (dt) => Ref.get(state).pipe(Effect.map((current) => Time.advance(current, dt))),
+    timeOfDay: Ref.get(state).pipe(
+      Effect.flatMap((current) => Effect.fromResult(InterpolationFraction.result(Time.timeOfDay(current)))),
+    ),
+    dayLengthSecs: Ref.get(state).pipe(
+      Effect.flatMap((current) => Effect.fromResult(FixedDurationSecs.result(Time.dayLengthSecs(current)))),
+    ),
     moonPhase: Ref.get(state).pipe(Effect.map(Time.moonPhase)),
     isNight: Ref.get(state).pipe(Effect.map(Time.isNight)),
     setDayLength: (seconds) => Ref.update(state, (current) => Time.setDayLength(current, seconds)),
