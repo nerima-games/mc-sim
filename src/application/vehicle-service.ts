@@ -14,7 +14,7 @@ import {
 
 export type VehicleOperationError = Readonly<{
   _tag: 'VehicleOperationError'
-  reason: 'not-found' | 'duplicate-occupant' | 'occupied' | 'occupant-mismatch' | 'invalid-transform'
+  reason: 'not-found' | 'duplicate-occupant' | 'occupied' | 'occupant-mismatch' | 'invalid-transform' | 'serial-exhausted'
 }>
 
 export type VehicleVelocityInput = Readonly<{ x: number; y: number; z: number }>
@@ -79,6 +79,8 @@ export const makeVehicleService = (
       spawn: (type, dimension, position, yawRadians = 0) => modify((snapshot) => {
         if ((type !== 'boat' && type !== 'minecart') || !isDimension(dimension) || !validVector(position) || !Number.isFinite(yawRadians))
           return [Effect.fail(operationError('invalid-transform')), snapshot]
+        if (snapshot.nextSerial === Number.MAX_SAFE_INTEGER)
+          return [Effect.fail(operationError('serial-exhausted')), snapshot]
         const vehicle: Vehicle = {
           id: VehicleId(`v:${snapshot.nextSerial}`),
           type,

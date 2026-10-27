@@ -53,6 +53,16 @@ describe('VehicleService lifecycle', () => {
     }))
   })
 
+  it('rejects spawn when the vehicle serial is exhausted', async () => {
+    await Effect.runPromise(Effect.gen(function* () {
+      const service = yield* makeVehicleService({ vehicles: [], nextSerial: Number.MAX_SAFE_INTEGER })
+      const before = yield* service.snapshot
+      const error = yield* Effect.flip(service.spawn('boat', 'overworld', position(0, 0, 0)))
+      expect(error.reason).toBe('serial-exhausted')
+      expect(yield* service.snapshot).toBe(before)
+    }))
+  })
+
   it('atomically rejects occupied and duplicate mounts', async () => {
     await Effect.runPromise(Effect.gen(function* () {
       const service = yield* makeVehicleService()
