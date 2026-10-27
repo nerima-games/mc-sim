@@ -56,6 +56,16 @@ describe('container storage domain', () => {
     expect(id).toBe('nether:12,64,-7')
   })
 
+  it('rejects block addresses with coordinates outside the safe integer range', () => {
+    const address = {
+      dimension: 'overworld',
+      position: { x: Number.MAX_SAFE_INTEGER + 1, y: 0, z: 0 },
+    }
+
+    expect(Result.isFailure(Schema.decodeUnknownResult(BlockAddressSchema)(address))).toBe(true)
+    expect(worldContainerIdAt(address)).toStrictEqual({ _tag: 'InvalidContainerAddress' })
+  })
+
   it('returns typed failures when hostile records throw during address and storage checks', () => {
     const unreadable = () => new Proxy({}, {
       ownKeys: () => { throw new Error('unreadable external record') },

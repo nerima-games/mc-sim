@@ -335,10 +335,9 @@ export function worldContainerIdAt(address: unknown): WorldContainerId | Contain
   try {
     const decodedAddress = Schema.decodeUnknownResult(BlockAddressSchema)(address)
     if (Result.isFailure(decodedAddress)) return { _tag: 'InvalidContainerAddress' }
-    const id = containerIdAt(decodedAddress.success.dimension, decodedAddress.success.position)
-    if (typeof id !== 'string') return { _tag: 'InvalidContainerAddress' }
-    const branded = worldContainerId(id)
-    return Result.isSuccess(branded) ? branded.success : { _tag: 'InvalidContainerAddress' }
+    const { dimension, position } = decodedAddress.success
+    const id = `${dimension}:${position.x},${position.y},${position.z}`
+    return Schema.decodeUnknownSync(WorldContainerIdSchema)(id)
   } catch {
     return { _tag: 'InvalidContainerAddress' }
   }
