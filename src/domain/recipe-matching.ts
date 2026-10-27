@@ -1,225 +1,421 @@
-import type { ItemType } from '@nerima-games/mc-kernel'
+import { VANILLA_ITEM_TAG_MEMBERSHIPS, type ItemType } from '@nerima-games/mc-kernel'
 
-import { type ItemStack } from './inventory.js'
 import {
   cellAt,
   ingredientMatches,
+  isCraftingIngredient,
+  MAX_RECIPE_SIDE,
   type CraftGrid,
-  type Ingredient,
+  type CraftingIngredient,
+  type AnyOfIngredient,
+  type ExactIngredient,
+  type ItemTagMemberships,
   type Recipe,
-  type RecipeId,
-  type RecipePattern,
+  type RecipeMatchContext,
   type RecipeTable,
   type ShapedRecipe,
   type ShapelessRecipe,
 } from './recipe-core.js'
-
-type Bounds = {
-  readonly minX: number
-  readonly minY: number
-  readonly width: number
-  readonly height: number
-}
-
-const patternCellAt = (pattern: RecipePattern, x: number, y: number): Ingredient | undefined =>
-  pattern.cells[y * pattern.width + x]
-
-const occupiedBounds = (grid: CraftGrid): Bounds | undefined => {
-  let minX = grid.width
-  let minY = grid.height
-  let maxX = -1
-  let maxY = -1
-
-  for (let y = 0; y < grid.height; y += 1) {
-    for (let x = 0; x < grid.width; x += 1) {
-      if (cellAt(grid, x, y) === undefined) {
-        continue
-      }
-      minX = Math.min(minX, x)
-      minY = Math.min(minY, y)
-      maxX = Math.max(maxX, x)
-      maxY = Math.max(maxY, y)
-    }
-  }
-
-  return maxX < 0 ? undefined : { minX, minY, width: maxX - minX + 1, height: maxY - minY + 1 }
-}
-
-const shapedFitsAt = (
-  pattern: RecipePattern,
-  grid: CraftGrid,
-  bounds: Bounds,
-  mirrored: boolean,
-): boolean => {
-  for (let y = 0; y < pattern.height; y += 1) {
-    for (let x = 0; x < pattern.width; x += 1) {
-      const ingredient = patternCellAt(pattern, mirrored ? pattern.width - 1 - x : x, y)
-      const slot = cellAt(grid, bounds.minX + x, bounds.minY + y)
-      if (ingredient === undefined) {
-        if (slot !== undefined) {
-          return false
-        }
-        continue
-      }
-      if (slot === undefined || !ingredientMatches(ingredient, slot.item)) {
-        return false
-      }
-    }
-  }
-  return true
-}
-
-const matchesShaped = (recipe: ShapedRecipe, grid: CraftGrid): boolean => {
-  const bounds = occupiedBounds(grid)
-  if (bounds === undefined) {
-    return false
-  }
-  if (bounds.width !== recipe.pattern.width || bounds.height !== recipe.pattern.height) {
-    return false
-  }
-  return shapedFitsAt(recipe.pattern, grid, bounds, false) || shapedFitsAt(recipe.pattern, grid, bounds, true)
-}
-
-const occupiedItems = (grid: CraftGrid): ReadonlyArray<ItemType> => {
-  const items: Array<ItemType> = []
-  for (let y = 0; y < grid.height; y += 1) {
-    for (let x = 0; x < grid.width; x += 1) {
-      const slot = cellAt(grid, x, y)
-      if (slot !== undefined) {
-        items.push(slot.item)
-      }
-    }
-  }
-  return items
-}
-
-const matchesShapeless = (recipe: ShapelessRecipe, grid: CraftGrid): boolean => {
-  const items = occupiedItems(grid)
-  if (items.length === 0 || items.length !== recipe.ingredients.length) {
-    return false
-  }
-
-  const taken: Array<boolean> = items.map(() => false)
-  const assign = (ingredients: ReadonlyArray<ShapelessRecipe['ingredients'][number]>): boolean => {
-    if (ingredients.length === 0) {
-      return true
-    }
-    const remainingIngredients = ingredients.slice(1)
-    for (const ingredient of ingredients.slice(0, 1)) {
-      for (let candidate = 0; candidate < items.length; candidate += 1) {
-      const item = items[candidate]
-      if (taken[candidate] === true || item === undefined || !ingredientMatches(ingredient, item)) {
-        continue
-      }
-      taken[candidate] = true
-      if (assign(remainingIngredients)) {
-        return true
-      }
-      taken[candidate] = false
-      }
-    }
-    return false
-  }
-
-  return assign(recipe.ingredients)
-}
-
-const matchesGrid = (recipe: Recipe, grid: CraftGrid): boolean =>
-  recipe._tag === 'Shaped' ? matchesShaped(recipe, grid) : matchesShapeless(recipe, grid)
+import type { ItemStack } from './inventory.js'
 
 export type RecipeMatch =
   | { readonly _tag: 'Match'; readonly recipe: Recipe; readonly output: ItemStack }
   | { readonly _tag: 'NoMatch' }
 
-const specificity = (recipe: Recipe): number => (recipe._tag === 'Shaped' ? 1 : 0)
-
-export const matchRecipe = (table: RecipeTable, grid: CraftGrid): RecipeMatch => {
-  let best: Recipe | undefined
-
-  for (const recipe of table) {
-    if (!matchesGrid(recipe, grid)) {
-      continue
-    }
-    if (best === undefined) {
-      best = recipe
-      continue
-    }
-    const bySpecificity = specificity(recipe) - specificity(best)
-    if (bySpecificity > 0 || (bySpecificity === 0 && recipe.id < best.id)) {
-      best = recipe
-    }
-  }
-
-  return best === undefined ? { _tag: 'NoMatch' } : { _tag: 'Match', recipe: best, output: best.output }
+export type RecipeIngredientAssignment = {
+  readonly slotIndex: number
+  readonly item: ItemType
+  readonly ingredient: CraftingIngredient
 }
+
+export type RecipeMatchWithAssignments =
+  | {
+      readonly _tag: 'Match'
+      readonly recipe: Recipe
+      readonly output: ItemStack
+      readonly assignments: ReadonlyArray<RecipeIngredientAssignment>
+    }
+  | { readonly _tag: 'NoMatch' }
+
+type MatchedRecipeWithAssignments = Extract<RecipeMatchWithAssignments, { readonly _tag: 'Match' }>
+
+export type RecipeConflictReason = 'duplicate-id' | 'same-shape' | 'same-ingredients'
 
 export type RecipeConflict = {
-  readonly reason: 'duplicate-id' | 'same-shape' | 'same-ingredients'
-  readonly recipeIds: readonly [RecipeId, RecipeId]
+  readonly firstId: string
+  readonly secondId: string
+  readonly reason: RecipeConflictReason
 }
 
-const ingredientKey = (ingredient: Ingredient): string => `${ingredient._tag}:${ingredient.item}`
+type RecipeIndexes = {
+  readonly exactByItem: ReadonlyMap<ItemType, ReadonlyArray<Recipe>>
+  readonly tagged: ReadonlyArray<Recipe>
+}
 
-const patternKey = (pattern: RecipePattern): string =>
-  `${String(pattern.width)}x${String(pattern.height)}:${pattern.cells
-    .map((cell) => (cell === undefined ? '' : ingredientKey(cell)))
-    .join(',')}`
+type ExactIndexIngredient =
+  | ExactIngredient
+  | (Omit<AnyOfIngredient, 'options'> & { readonly options: ReadonlyArray<ExactIngredient> })
 
-const mirroredPattern = (pattern: RecipePattern): RecipePattern => ({
-  width: pattern.width,
-  height: pattern.height,
-  cells: Array.from({ length: pattern.width * pattern.height }, (_unused, index) =>
-    patternCellAt(
-      pattern,
-      pattern.width - 1 - (index % pattern.width),
-      Math.floor(index / pattern.width),
-    ),
-  ),
-})
+const isExactIndexIngredient = (ingredient: CraftingIngredient): ingredient is ExactIndexIngredient =>
+  ingredient._tag === 'Exact' ||
+  (ingredient._tag === 'AnyOf' && ingredient.options.every((option) => option._tag === 'Exact'))
 
-const shapelessKey = (recipe: ShapelessRecipe): string =>
-  recipe.ingredients.map(ingredientKey).sort().join(',')
+const exactItemsOf = (ingredient: ExactIndexIngredient): ReadonlyArray<ItemType> =>
+  ingredient._tag === 'Exact' ? [ingredient.item] : ingredient.options.map((option) => option.item)
 
-const overlaps = (left: Recipe, right: Recipe): RecipeConflict['reason'] | undefined => {
-  if (left._tag === 'Shaped' && right._tag === 'Shaped') {
-    const key = patternKey(left.pattern)
-    return key === patternKey(right.pattern) || key === patternKey(mirroredPattern(right.pattern))
-      ? 'same-shape'
-      : undefined
+export const buildRecipeIndexes = (table: RecipeTable): RecipeIndexes => {
+  const exactByItem = new Map<ItemType, ReadonlyArray<Recipe>>()
+  const tagged: Array<Recipe> = []
+
+  for (const recipe of table) {
+    const ingredients = recipe._tag === 'Shaped' ? recipe.pattern.cells : recipe.ingredients
+    const seenItems = new Set<ItemType>()
+    for (const ingredient of ingredients) {
+      if (ingredient === undefined) continue
+      if (!isExactIndexIngredient(ingredient)) {
+        tagged.push(recipe)
+        break
+      }
+      for (const item of exactItemsOf(ingredient)) {
+        if (seenItems.has(item)) continue
+        seenItems.add(item)
+        const recipes = exactByItem.get(item)
+        exactByItem.set(item, recipes === undefined ? [recipe] : [...recipes, recipe])
+      }
+    }
   }
-  if (left._tag === 'Shapeless' && right._tag === 'Shapeless') {
-    return shapelessKey(left) === shapelessKey(right) ? 'same-ingredients' : undefined
+
+  return { exactByItem, tagged }
+}
+
+type GridBounds = {
+  readonly minX: number
+  readonly minY: number
+  readonly maxX: number
+  readonly maxY: number
+}
+
+const validGrid = (grid: CraftGrid): boolean =>
+  Number.isSafeInteger(grid.width) &&
+  Number.isSafeInteger(grid.height) &&
+  grid.width >= 0 &&
+  grid.height >= 0 &&
+  grid.width <= MAX_RECIPE_SIDE &&
+  grid.height <= MAX_RECIPE_SIDE &&
+  grid.cells.length <= grid.width * grid.height
+
+const occupiedBounds = (grid: CraftGrid): GridBounds | undefined => {
+  let minX: number = grid.width
+  let minY: number = grid.height
+  let maxX = -1
+  let maxY = -1
+
+  for (let index = 0; index < grid.cells.length; index += 1) {
+    const cell = grid.cells[index]
+    if (cell === undefined) continue
+    const x = index % grid.width
+    const y = Math.floor(index / grid.width)
+    minX = Math.min(minX, x)
+    minY = Math.min(minY, y)
+    maxX = Math.max(maxX, x)
+    maxY = Math.max(maxY, y)
+  }
+
+  return maxX < 0 ? undefined : { minX, minY, maxX, maxY }
+}
+
+const shapedIngredientAssignmentsAt = (
+  recipe: ShapedRecipe,
+  grid: CraftGrid,
+  offsetX: number,
+  offsetY: number,
+  mirrored: boolean,
+  itemTags: ItemTagMemberships,
+): ReadonlyArray<RecipeIngredientAssignment> | undefined => {
+  const patternWidth = recipe.pattern.width
+  const patternHeight = recipe.pattern.height
+  const assignments: Array<RecipeIngredientAssignment> = []
+
+  for (let y = 0; y < grid.height; y += 1) {
+    for (let x = 0; x < grid.width; x += 1) {
+      const patternX = x - offsetX
+      const patternY = y - offsetY
+      const expected =
+        patternY < 0 ||
+        patternY >= patternHeight ||
+        patternX < 0 ||
+        patternX >= patternWidth
+          ? undefined
+          : recipe.pattern.cells[
+              patternY * patternWidth + (mirrored ? patternWidth - patternX - 1 : patternX)
+            ]
+      const actual = cellAt(grid, x, y)
+      if (expected === undefined) {
+        if (actual !== undefined) return undefined
+        continue
+      }
+      if (
+        actual === undefined ||
+        !Number.isSafeInteger(actual.count) ||
+        actual.count < expected.count ||
+        !ingredientMatches(expected, actual.item, itemTags)
+      ) {
+        return undefined
+      }
+      assignments.push({ ingredient: expected, item: actual.item, slotIndex: y * grid.width + x })
+    }
+  }
+
+  return assignments
+}
+
+const shapedIngredientAssignments = (
+  recipe: ShapedRecipe,
+  grid: CraftGrid,
+  context: RecipeMatchContext,
+): ReadonlyArray<RecipeIngredientAssignment> | undefined => {
+  if (!validGrid(grid)) return undefined
+  const bounds = occupiedBounds(grid)
+  if (bounds === undefined) return undefined
+
+  const itemTags = context.itemTags ?? VANILLA_ITEM_TAG_MEMBERSHIPS
+  const lastOffsetX = bounds.maxX - recipe.pattern.width + 1
+  const lastOffsetY = bounds.maxY - recipe.pattern.height + 1
+  for (let offsetY = bounds.minY; offsetY <= lastOffsetY; offsetY += 1) {
+    for (let offsetX = bounds.minX; offsetX <= lastOffsetX; offsetX += 1) {
+      const assignments = shapedIngredientAssignmentsAt(recipe, grid, offsetX, offsetY, false, itemTags)
+      if (assignments !== undefined) return assignments
+      if (recipe.assumeSymmetry) {
+        const mirrored = shapedIngredientAssignmentsAt(recipe, grid, offsetX, offsetY, true, itemTags)
+        if (mirrored !== undefined) return mirrored
+      }
+    }
   }
   return undefined
 }
 
-export const conflictsIn = (table: RecipeTable): ReadonlyArray<RecipeConflict> => {
-  const conflicts: Array<RecipeConflict> = []
+export const matchesShaped = (
+  recipe: ShapedRecipe,
+  grid: CraftGrid,
+  context: RecipeMatchContext = {},
+): boolean => shapedIngredientAssignments(recipe, grid, context) !== undefined
 
-  for (let left = 0; left < table.length; left += 1) {
-    for (let right = left + 1; right < table.length; right += 1) {
-      const first = table[left]
-      const second = table[right]
-      if (first === undefined || second === undefined) {
+const occupiedCount = (grid: CraftGrid): number => grid.cells.filter((cell) => cell !== undefined).length
+
+const shapelessIngredientAssignments = (
+  recipe: ShapelessRecipe,
+  grid: CraftGrid,
+  context: RecipeMatchContext,
+): ReadonlyArray<RecipeIngredientAssignment> | undefined => {
+  if (
+    !validGrid(grid) ||
+    !Array.isArray(recipe.ingredients) ||
+    recipe.ingredients.length === 0 ||
+    recipe.ingredients.length !== occupiedCount(grid)
+  ) {
+    return undefined
+  }
+
+  const itemTags = context.itemTags ?? VANILLA_ITEM_TAG_MEMBERSHIPS
+  const assignments: Array<RecipeIngredientAssignment> = []
+  const failedStates = new Set<number>()
+  const stateStride = Math.pow(2, grid.cells.length)
+
+  const visit = (ingredientIndex: number, usedMask: number): boolean => {
+    if (ingredientIndex >= recipe.ingredients.length) return true
+    const stateKey = ingredientIndex * stateStride + usedMask
+    if (failedStates.has(stateKey)) return false
+    const ingredient = recipe.ingredients[ingredientIndex]
+    if (ingredient === undefined || !isCraftingIngredient(ingredient)) return false
+
+    for (let slotIndex = 0; slotIndex < grid.cells.length; slotIndex += 1) {
+      const slotBit = Math.pow(2, slotIndex)
+      if (Math.floor(usedMask / slotBit) % 2 !== 0) continue
+      const candidate = grid.cells[slotIndex]
+      if (
+        candidate === undefined ||
+        !Number.isSafeInteger(candidate.count) ||
+        candidate.count < ingredient.count ||
+        !ingredientMatches(ingredient, candidate.item, itemTags)
+      ) {
         continue
       }
-      const ids: readonly [RecipeId, RecipeId] =
-        first.id <= second.id ? [first.id, second.id] : [second.id, first.id]
+      assignments.push({ ingredient, item: candidate.item, slotIndex })
+      if (visit(ingredientIndex + 1, usedMask + slotBit)) return true
+      assignments.pop()
+    }
 
-      if (first.id === second.id) {
-        conflicts.push({ reason: 'duplicate-id', recipeIds: ids })
-        continue
-      }
-      const reason = overlaps(first, second)
-      if (reason !== undefined) {
-        conflicts.push({ reason, recipeIds: ids })
-      }
+    failedStates.add(stateKey)
+    return false
+  }
+
+  if (!visit(0, 0)) return undefined
+  return [...assignments].sort((left, right) => left.slotIndex - right.slotIndex)
+}
+
+export const matchesShapeless = (
+  recipe: ShapelessRecipe,
+  grid: CraftGrid,
+  context: RecipeMatchContext = {},
+): boolean => shapelessIngredientAssignments(recipe, grid, context) !== undefined
+
+const stationMatches = (recipe: Recipe, context: RecipeMatchContext): boolean =>
+  recipe.tags.length === 0 ||
+  (context.station !== undefined && recipe.tags.includes(context.station))
+
+export const matchesRecipe = (
+  recipe: Recipe,
+  grid: CraftGrid,
+  context: RecipeMatchContext = {},
+): boolean => {
+  if (!stationMatches(recipe, context)) return false
+  return recipe._tag === 'Shaped'
+    ? matchesShaped(recipe, grid, context)
+    : matchesShapeless(recipe, grid, context)
+}
+
+const recipeOrder = (left: Recipe, right: Recipe): number => {
+  if (left.priority !== right.priority) return left.priority - right.priority
+  if (left._tag !== right._tag) return left._tag === 'Shaped' ? -1 : 1
+  return left.id.localeCompare(right.id)
+}
+
+const shapedAssignments = (
+  recipe: ShapedRecipe,
+  grid: CraftGrid,
+  context: RecipeMatchContext,
+): ReadonlyArray<RecipeIngredientAssignment> | undefined =>
+  stationMatches(recipe, context) ? shapedIngredientAssignments(recipe, grid, context) : undefined
+
+const recipeAssignments = (
+  recipe: Recipe,
+  grid: CraftGrid,
+  context: RecipeMatchContext,
+): ReadonlyArray<RecipeIngredientAssignment> | undefined =>
+  recipe._tag === 'Shaped'
+    ? shapedAssignments(recipe, grid, context)
+    : stationMatches(recipe, context)
+      ? shapelessIngredientAssignments(recipe, grid, context)
+      : undefined
+
+const matchedRecipe = (
+  recipe: Recipe,
+  grid: CraftGrid,
+  context: RecipeMatchContext,
+): MatchedRecipeWithAssignments | undefined => {
+  const assignments = recipeAssignments(recipe, grid, context)
+  return assignments === undefined ? undefined : { _tag: 'Match', assignments, output: recipe.output, recipe }
+}
+
+const bestRecipeWithAssignments = (
+  table: ReadonlyArray<Recipe>,
+  grid: CraftGrid,
+  context: RecipeMatchContext,
+): MatchedRecipeWithAssignments | undefined => {
+  let best: MatchedRecipeWithAssignments | undefined
+  for (const recipe of table) {
+    if (recipe === undefined) continue
+    const match = matchedRecipe(recipe, grid, context)
+    if (match !== undefined && (best === undefined || recipeOrder(match.recipe, best.recipe) < 0)) {
+      best = match
+    }
+  }
+  return best
+}
+
+const matchIndexedRecipeWithAssignments = (
+  index: RecipeIndexes,
+  grid: CraftGrid,
+  context: RecipeMatchContext,
+): MatchedRecipeWithAssignments | undefined => {
+  if (!validGrid(grid)) return undefined
+  let firstItem: ItemType | undefined
+  for (const cell of grid.cells) {
+    if (cell !== undefined) {
+      firstItem = cell.item
+      break
     }
   }
 
-  return conflicts.sort((a, b) =>
-    a.recipeIds[0] === b.recipeIds[0]
-      ? a.recipeIds[1].localeCompare(b.recipeIds[1], 'en')
-      : a.recipeIds[0].localeCompare(b.recipeIds[0], 'en'),
+  const indexed = firstItem === undefined ? undefined : index.exactByItem.get(firstItem)
+  let best = indexed === undefined ? undefined : bestRecipeWithAssignments(indexed, grid, context)
+  const taggedMatch = bestRecipeWithAssignments(index.tagged, grid, context)
+  if (taggedMatch !== undefined && (best === undefined || recipeOrder(taggedMatch.recipe, best.recipe) < 0)) {
+    best = taggedMatch
+  }
+  return best
+}
+
+export const matchIndexedRecipe = (
+  index: RecipeIndexes,
+  grid: CraftGrid,
+  context: RecipeMatchContext = {},
+): Recipe | undefined => matchIndexedRecipeWithAssignments(index, grid, context)?.recipe
+
+export const matchRecipeWithAssignments = (
+  table: RecipeTable,
+  grid: CraftGrid,
+  context: RecipeMatchContext = {},
+): RecipeMatchWithAssignments =>
+  bestRecipeWithAssignments(table, grid, context) ?? { _tag: 'NoMatch' }
+
+export const matchRecipe = (
+  table: RecipeTable,
+  grid: CraftGrid,
+  context: RecipeMatchContext = {},
+): RecipeMatch => {
+  const match = matchRecipeWithAssignments(table, grid, context)
+  return match._tag === 'NoMatch'
+    ? { _tag: 'NoMatch' }
+    : { _tag: 'Match', output: match.output, recipe: match.recipe }
+}
+
+const ingredientKey = (ingredient: CraftingIngredient): string => {
+  if (ingredient._tag === 'Exact') return `item:${ingredient.item}:${ingredient.count}`
+  if (ingredient._tag === 'AnyOf') return `any:${ingredient.count}:${ingredient.options.map(ingredientKey).sort().join(',')}`
+  return `tag:${ingredient.tag}:${ingredient.count}`
+}
+
+const patternKey = (recipe: ShapedRecipe): string =>
+  `${recipe.pattern.width}x${recipe.pattern.height}:${recipe.pattern.cells
+    .map((cell) => (cell === undefined ? '_' : ingredientKey(cell)))
+    .join('|')}`
+
+const ingredientsKey = (recipe: ShapelessRecipe): string =>
+  recipe.ingredients.map(ingredientKey).sort().join('|')
+
+const conflictBetween = (first: Recipe, second: Recipe): RecipeConflict | undefined => {
+  if (first.id === second.id) {
+    return { firstId: first.id, reason: 'duplicate-id', secondId: second.id }
+  }
+  if (first._tag === 'Shaped' && second._tag === 'Shaped' && patternKey(first) === patternKey(second)) {
+    return { firstId: first.id, reason: 'same-shape', secondId: second.id }
+  }
+  if (
+    first._tag === 'Shapeless' &&
+    second._tag === 'Shapeless' &&
+    ingredientsKey(first) === ingredientsKey(second)
+  ) {
+    return { firstId: first.id, reason: 'same-ingredients', secondId: second.id }
+  }
+  return undefined
+}
+
+export const conflictsIn = (
+  table: ReadonlyArray<Recipe | undefined>,
+): ReadonlyArray<RecipeConflict> => {
+  const conflicts: Array<RecipeConflict> = []
+  for (let firstIndex = 0; firstIndex < table.length; firstIndex += 1) {
+    const first = table[firstIndex]
+    if (first === undefined) continue
+    for (let secondIndex = firstIndex + 1; secondIndex < table.length; secondIndex += 1) {
+      const second = table[secondIndex]
+      if (second === undefined) continue
+      const conflict = conflictBetween(first, second)
+      if (conflict !== undefined) conflicts.push(conflict)
+    }
+  }
+  return conflicts.sort(
+    (left, right) => left.firstId.localeCompare(right.firstId) || left.secondId.localeCompare(right.secondId),
   )
 }
