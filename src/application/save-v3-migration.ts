@@ -2,12 +2,12 @@ import type { SaveSliceId } from '@nerima-games/mc-kernel/domain/module-contract
 import type { SaveSliceRegistration } from '@nerima-games/mc-kernel/domain/save-slices'
 import {
   restoreSaveBundle,
+  SaveBundleSnapshotError,
+  SaveMigrationPathAmbiguous,
+  SaveMigrationPathMissing,
+  SaveSliceBundleEntryMissing,
+  SaveSliceNotRegistered,
   type EncodedSaveBundle,
-  type SaveBundleSnapshotError,
-  type SaveMigrationPathAmbiguous,
-  type SaveMigrationPathMissing,
-  type SaveSliceBundleEntryMissing,
-  type SaveSliceNotRegistered,
 } from '@nerima-games/mc-save'
 import { Effect, Exit, Schema } from 'effect'
 import { LegacySimulationSaveV3Schema } from '../domain/save-data.js'
@@ -28,6 +28,23 @@ type V3RestoreError =
   | SaveMigrationPathMissing
   | SaveSliceBundleEntryMissing
   | SaveSliceNotRegistered
+
+export type SimulationSaveV3MigrationError<RestoreError> = V3RestoreError | RestoreError
+
+export const SimulationSaveV3MigrationSuccessSchema: Schema.Codec<void, undefined> = Schema.Undefined
+
+export const simulationSaveV3MigrationErrorSchema = <RestoreError, Encoded, DecodingServices, EncodingServices>(
+  restoreErrorSchema: Schema.Codec<RestoreError, Encoded, DecodingServices, EncodingServices>,
+): Schema.Codec<SimulationSaveV3MigrationError<RestoreError>, unknown, DecodingServices, EncodingServices> =>
+  Schema.Union([
+    Schema.instanceOf(Schema.SchemaError),
+    Schema.instanceOf(SaveBundleSnapshotError),
+    Schema.instanceOf(SaveMigrationPathAmbiguous),
+    Schema.instanceOf(SaveMigrationPathMissing),
+    Schema.instanceOf(SaveSliceBundleEntryMissing),
+    Schema.instanceOf(SaveSliceNotRegistered),
+    restoreErrorSchema,
+  ])
 
 type EncodedSlice = EncodedSaveBundle[SaveSliceId]
 
@@ -50,7 +67,7 @@ export const migrateSimulationSaveV3 = <RestoreError, Requirements>(
   payload: unknown,
   registrations: SimulationSaveV3Registrations<RestoreError, Requirements>,
   discardSession: () => Effect.Effect<void, never, Requirements>,
-): Effect.Effect<void, V3RestoreError | RestoreError, Requirements> => {
+): Effect.Effect<void, SimulationSaveV3MigrationError<RestoreError>, Requirements> => {
   const restore = Effect.gen(function* () {
     const save = yield* Schema.decodeUnknownEffect(LegacySimulationSaveV3Schema)(payload)
     const player = {

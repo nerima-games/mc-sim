@@ -11,6 +11,8 @@ import {
   ChunkAxis,
   DIMENSIONS,
   DimensionRevisionSchema,
+  SaveSliceIdSchema,
+  SaveVersionSchema,
   SimulationTick,
   WorldIdSchema,
   chunkCoord,
@@ -37,7 +39,10 @@ import {
   type SaveCoordinatorPublication,
 } from '../src/application/save-coordinator.js'
 import { loadSimulation, saveSimulation, simulationSaveKey } from '../src/application/save-service.js'
-import { migrateSimulationSaveV3 } from '../src/application/save-v3-migration.js'
+import {
+  migrateSimulationSaveV3,
+  type SimulationSaveV3Registrations,
+} from '../src/application/save-v3-migration.js'
 import { makePlayerService } from '../src/application/player-service.js'
 import { makeSettingsService } from '../src/application/settings-service.js'
 import { makeWeatherService } from '../src/application/weather-service.js'
@@ -560,18 +565,124 @@ it('save and load decode storage failures through their declared error union', a
   }
 })
 
-it('legacy save migration rejects hostile payloads through its typed decode channel', async () => {
+const propertyMigrationRegistrations = (
+  restored: Array<readonly [string, unknown]>,
+  failOn?: string,
+): SimulationSaveV3Registrations<string, never> => {
+  const registration = (id: 'player' | 'time' | 'inventory' | 'statistics') => ({
+    id: Schema.decodeUnknownSync(SaveSliceIdSchema)(id),
+    version: Schema.decodeUnknownSync(SaveVersionSchema)(1),
+    schema: Schema.Unknown,
+    snapshot: Effect.succeed(undefined),
+    restore: (state: unknown): Effect.Effect<void, string> => Effect.suspend(() => {
+      restored.push([id, state])
+      return failOn === id ? Effect.fail(`restore failed: ${id}`) : Effect.void
+    }),
+    migrations: [],
+  })
+  return {
+    player: registration('player'),
+    time: registration('time'),
+    inventory: registration('inventory'),
+    statistics: registration('statistics'),
+  }
+}
+
+const propertyLegacySimulationSave = (tick: number) => ({
+  dimension: 'overworld',
+  tick,
+  player: {
+    position: { x: 0, y: 64, z: 0 },
+    inventory: [],
+    selectedHotbarSlot: 0,
+  },
+  statistics: { counters: {}, unlocked: [] },
+})
+
+it('legacy migration decodes void success after restoring all four slices without discard', async () => {
+  const successSchema = PublicApplication.SimulationSaveV3MigrationSuccessSchema
+  const errorSchema = PublicApplication.simulationSaveV3MigrationErrorSchema(Schema.String)
+
   await fc.assert(
-    fc.asyncProperty(hostileValue, async (payload) => {
-      const migration = invokeEffect(
-        migrateSimulationSaveV3,
-        [payload, null, () => Effect.void],
-      ) as Effect.Effect<unknown, unknown, never>
-      const outcome = await Effect.runPromise(Effect.result(migration))
-      expect(Result.isFailure(outcome)).toBe(true)
+    fc.asyncProperty(fc.integer({ min: 0, max: 100_000 }), async (tick) => {
+      const restored: Array<readonly [string, unknown]> = []
+      let discarded = 0
+      const outcome = await assertEffectResult(
+        'migrateSimulationSaveV3 valid legacy payload',
+        () => invokeEffect(migrateSimulationSaveV3<string, never>, [
+          propertyLegacySimulationSave(tick),
+          propertyMigrationRegistrations(restored),
+          () => Effect.sync(() => { discarded += 1 }),
+        ]),
+        [], successSchema, errorSchema,
+      )
+      expect(Result.isSuccess(outcome)).toBe(true)
+      if (Result.isSuccess(outcome)) {
+        expect(Schema.decodeUnknownSync(successSchema)(outcome.success)).toBeUndefined()
+      }
+      expect(restored.map(([id]) => id)).toEqual(['player', 'time', 'inventory', 'statistics'])
+      expect(restored[0]?.[1]).toStrictEqual({
+        dimension: 'overworld',
+        pose: { feetPosition: { x: 0, y: 64, z: 0 }, yawRadians: 0, pitchRadians: 0 },
+      })
+      expect(restored[1]?.[1]).toStrictEqual({ ticks: tick, dayLengthTicks: 24000 })
+      expect(restored[2]?.[1]).toStrictEqual({ inventory: { slots: [] }, selectedHotbarSlot: 0 })
+      expect(restored[3]?.[1]).toStrictEqual({ counters: {}, unlocked: [] })
+      expect(discarded).toBe(0)
     }),
     checks,
   )
+})
+
+it('legacy migration decodes invalid V3 payloads and discards before any restore', async () => {
+  const successSchema = PublicApplication.SimulationSaveV3MigrationSuccessSchema
+  const errorSchema = PublicApplication.simulationSaveV3MigrationErrorSchema(Schema.String)
+
+  await fc.assert(
+    fc.asyncProperty(hostileValue, async (value) => {
+      const restored: Array<readonly [string, unknown]> = []
+      let discarded = 0
+      const malformedPayload = { _tag: 'HostileV3Payload', value }
+      const outcome = await assertEffectResult(
+        'migrateSimulationSaveV3 invalid V3 payload',
+        () => invokeEffect(migrateSimulationSaveV3<string, never>, [
+          malformedPayload,
+          null,
+          () => Effect.sync(() => { discarded += 1 }),
+        ]),
+        [], successSchema, errorSchema,
+      )
+      expect(Result.isFailure(outcome)).toBe(true)
+      if (Result.isFailure(outcome)) {
+        expect(Schema.decodeUnknownSync(errorSchema)(outcome.failure)).toBeInstanceOf(Schema.SchemaError)
+      }
+      expect(restored).toEqual([])
+      expect(discarded).toBe(1)
+    }),
+    checks,
+  )
+})
+
+it('legacy migration decodes RestoreError and discards a partially restored session', async () => {
+  const successSchema = PublicApplication.SimulationSaveV3MigrationSuccessSchema
+  const errorSchema = PublicApplication.simulationSaveV3MigrationErrorSchema(Schema.String)
+  const restored: Array<readonly [string, unknown]> = []
+  let discarded = 0
+  const outcome = await assertEffectResult(
+    'migrateSimulationSaveV3 restore failure',
+    () => invokeEffect(migrateSimulationSaveV3<string, never>, [
+      propertyLegacySimulationSave(42),
+      propertyMigrationRegistrations(restored, 'inventory'),
+      () => Effect.sync(() => { discarded += 1 }),
+    ]),
+    [], successSchema, errorSchema,
+  )
+  expect(Result.isFailure(outcome)).toBe(true)
+  if (Result.isFailure(outcome)) {
+    expect(Schema.decodeUnknownSync(errorSchema)(outcome.failure)).toBe('restore failed: inventory')
+  }
+  expect(restored.map(([id]) => id)).toEqual(['player', 'time', 'inventory'])
+  expect(discarded).toBe(1)
 })
 
 it('player, settings, and weather services preserve valid finite snapshots after hostile inputs', async () => {
