@@ -13,7 +13,6 @@
  */
 import { describe, expect, it } from '@effect/vitest'
 import { Deferred, Effect, Result, Option, Ref } from 'effect'
-import { vi } from 'vitest'
 import {
   DeltaTimeSecs,
   MonotonicTimeSecs,
@@ -57,7 +56,6 @@ describe('game loop lifecycle', () => {
       const entered = yield* Deferred.make<void>()
       const reached = yield* Deferred.make<void>()
       const release = yield* Deferred.make<void>()
-      const arrayFrom = vi.spyOn(Array, 'from')
 
       yield* loop.start(() =>
         Ref.updateAndGet(calls, (count) => count + 1).pipe(
@@ -75,11 +73,13 @@ describe('game loop lifecycle', () => {
 
       yield* Deferred.await(entered)
       expect(yield* Ref.get(calls)).toBe(1)
-      expect(arrayFrom).not.toHaveBeenCalled()
+      // The queued 0 s and 10 ms frames both produce zero fixed steps. The
+      // first handler call can only be reached after the 50 ms frame advances
+      // the simulation to tick 1.
+      expect(yield* loop.simulationTick).toBe(SimulationTick(1))
 
       yield* Deferred.succeed(release, undefined)
       yield* Deferred.await(reached)
-      arrayFrom.mockRestore()
       expect(yield* Ref.get(calls)).toBe(2)
       yield* loop.stop
     }),
@@ -362,13 +362,11 @@ describe('loop observability', () => {
       if (Result.isFailure(result)) expect(result.failure._tag).toBe('TimeOverflow')
       yield* loop.submitFrame(MonotonicTimeSecs(0))
       yield* loop.submitFrame(MonotonicTimeSecs(1))
-      yield* Effect.promise(
-        () =>
-          new Promise<void>((resolve) => {
-            setTimeout(() => resolve(), 10)
-          }),
-      )
-      const diagnostic = yield* loop.timeOverflow
+      let diagnostic = yield* loop.timeOverflow
+      for (let attempt = 0; attempt < 100 && Option.isNone(diagnostic); attempt += 1) {
+        yield* Effect.yieldNow
+        diagnostic = yield* loop.timeOverflow
+      }
       expect(Option.isSome(diagnostic)).toBe(true)
       yield* loop.stop
     }),

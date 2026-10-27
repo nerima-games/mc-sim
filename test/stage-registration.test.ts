@@ -16,18 +16,22 @@
  */
 import { describe, expect, it } from '@effect/vitest'
 import {
+  BlocksPerSecond,
+  BlockLength,
   FULL_BLOCK_SHAPE,
   PLAYER_HALF_HEIGHT,
   PLAYER_HALF_WIDTH,
   SLAB_SHAPE,
   TERMINAL_VELOCITY_Y,
+  type VelocityVector,
 } from '@nerima-games/mc-physics'
-import { Effect, Layer, Option, Ref } from 'effect'
+import { Effect, Layer, Option, Ref, Result } from 'effect'
 import { CropService, CropServiceLayer } from '../src/application/crop-service'
 import {
   InventoryService,
   InventoryServiceLayer,
 } from '../src/application/inventory-service'
+import type { ItemStackFailure } from '../src/domain/inventory'
 import { PlayerService, PlayerServiceLayer } from '../src/application/player-service'
 import { TimeService, TimeServiceLayer } from '../src/application/time-service'
 import {
@@ -35,7 +39,8 @@ import {
   EpochMillis,
   FixedClockLayer,
   MonotonicTimeSecs,
-  position,
+  PositionAxis,
+  position as kernelPosition,
   StageId,
   type GameModule,
   type StageRegistration,
@@ -74,6 +79,15 @@ const SimulationLayer = Layer.mergeAll(
   CropServiceLayer,
 )
 
+const velocity = (x: number, y: number, z: number): VelocityVector => ({
+  x: BlocksPerSecond(x),
+  y: BlocksPerSecond(y),
+  z: BlocksPerSecond(z),
+})
+
+const position = (x: number, y: number, z: number) =>
+  kernelPosition(PositionAxis(x), PositionAxis(y), PositionAxis(z))
+
 /**
  * `FrameServices` is `ClockPort` (the alias imported directly from mc-kernel),
  * so running a stage means discharging a clock even when the stage
@@ -97,7 +111,8 @@ const makePhysicsConfig = (
   resolve: {
     halfWidth: PLAYER_HALF_WIDTH,
     halfHeight: PLAYER_HALF_HEIGHT,
-    blockPropertiesAt: () => null,
+    environment: { blockAt: () => Result.succeed(null) },
+    blockPropertiesAt: () => Result.succeed(null),
     blockShapeAt: (bx, by, bz) => (isBlockSolid(bx, by, bz) ? FULL_BLOCK_SHAPE : null),
   },
   walkSpeed: 4,
@@ -244,7 +259,7 @@ describe('the stage works through the services, and keeps no copy of what they o
       expect(yield* Ref.get(state.resolvedFeetPosition)).toStrictEqual(Option.none())
       expect(yield* Ref.get(state.movementIntent)).toStrictEqual({ forward: 0, strafe: 0 })
       expect(yield* Ref.get(state.jumpIntent)).toBe(false)
-      expect(yield* Ref.get(state.velocity)).toStrictEqual(position(0, 0, 0))
+      expect(yield* Ref.get(state.velocity)).toStrictEqual(velocity(0, 0, 0))
       expect(yield* Ref.get(state.isGrounded)).toBe(false)
       expect(yield* Ref.get(state.accumulatedFallDistance)).toBe(0)
       expect(yield* Ref.get(state.landingImpact)).toStrictEqual(Option.none())
@@ -311,7 +326,7 @@ describe('the stage works through the services, and keeps no copy of what they o
       yield* Ref.set(first.resolvedFeetPosition, Option.some(position(1, 2, 3)))
       yield* Ref.set(first.movementIntent, { forward: 1, strafe: -1 })
       yield* Ref.set(first.jumpIntent, true)
-      yield* Ref.set(first.velocity, position(4, 5, 6))
+      yield* Ref.set(first.velocity, velocity(4, 5, 6))
       yield* Ref.set(first.isGrounded, true)
       yield* Ref.set(first.accumulatedFallDistance, 7)
       yield* Ref.set(
@@ -323,7 +338,7 @@ describe('the stage works through the services, and keeps no copy of what they o
       expect(yield* Ref.get(second.resolvedFeetPosition)).toStrictEqual(Option.none())
       expect(yield* Ref.get(second.movementIntent)).toStrictEqual({ forward: 0, strafe: 0 })
       expect(yield* Ref.get(second.jumpIntent)).toBe(false)
-      expect(yield* Ref.get(second.velocity)).toStrictEqual(position(0, 0, 0))
+      expect(yield* Ref.get(second.velocity)).toStrictEqual(velocity(0, 0, 0))
       expect(yield* Ref.get(second.isGrounded)).toBe(false)
       expect(yield* Ref.get(second.accumulatedFallDistance)).toBe(0)
       expect(yield* Ref.get(second.landingImpact)).toStrictEqual(Option.none())
@@ -366,13 +381,13 @@ describe('the physical simulation path is opt-in and player pose remains authori
       yield* Ref.set(state.resolvedFeetPosition, Option.some(target))
       yield* Ref.set(state.movementIntent, { forward: 1, strafe: 1 })
       yield* Ref.set(state.jumpIntent, true)
-      yield* Ref.set(state.velocity, position(1, 2, 3))
+      yield* Ref.set(state.velocity, velocity(1, 2, 3))
       yield* Ref.set(state.isGrounded, true)
       yield* stages[0]?.run(DeltaTimeSecs(0.25)) ?? Effect.void
 
       expect((yield* player.pose).feetPosition).toStrictEqual(target)
       expect(yield* Ref.get(state.resolvedFeetPosition)).toStrictEqual(Option.none())
-      expect(yield* Ref.get(state.velocity)).toStrictEqual(position(1, 2, 3))
+      expect(yield* Ref.get(state.velocity)).toStrictEqual(velocity(1, 2, 3))
       expect(yield* Ref.get(state.isGrounded)).toBe(true)
     }).pipe(Effect.provide(SimulationLayer), Effect.provide(FrozenClockLayer)),
   )
@@ -386,10 +401,10 @@ describe('the physical simulation path is opt-in and player pose remains authori
 
       yield* stages[0]?.run(DeltaTimeSecs(0.25)) ?? Effect.void
 
-      const velocity = yield* Ref.get(state.velocity)
+      const actualVelocity = yield* Ref.get(state.velocity)
       const pose = yield* player.pose
-      expect(velocity.x).toBeCloseTo(-2)
-      expect(velocity.z).toBeCloseTo(1)
+      expect(actualVelocity.x).toBeCloseTo(-2)
+      expect(actualVelocity.z).toBeCloseTo(1)
       expect(pose.feetPosition.x).toBeCloseTo(-0.5)
       expect(pose.feetPosition.z).toBeCloseTo(0.25)
     }).pipe(Effect.provide(SimulationLayer), Effect.provide(FrozenClockLayer)),
@@ -417,7 +432,7 @@ describe('the physical simulation path is opt-in and player pose remains authori
     Effect.gen(function* () {
       const { state, stages } = yield* makeControllableSimStagesWithPhysics(AirPhysicsConfig)
       yield* Ref.set(state.jumpIntent, true)
-      yield* Ref.set(state.velocity, position(0, -1, 0))
+      yield* Ref.set(state.velocity, velocity(0, -1, 0))
 
       yield* stages[0]?.run(DeltaTimeSecs(0.1)) ?? Effect.void
 
@@ -437,9 +452,9 @@ describe('the physical simulation path is opt-in and player pose remains authori
       yield* Ref.set(state.jumpIntent, true)
       yield* physics?.run(DeltaTimeSecs(0.1)) ?? Effect.void
 
-      const velocity = yield* Ref.get(state.velocity)
-      expect(velocity.y).toBeGreaterThan(0)
-      expect(velocity.y).toBeLessThan(FloorPhysicsConfig.jumpSpeed)
+      const actualVelocity = yield* Ref.get(state.velocity)
+      expect(actualVelocity.y).toBeGreaterThan(0)
+      expect(actualVelocity.y).toBeLessThan(FloorPhysicsConfig.jumpSpeed)
       expect(yield* Ref.get(state.isGrounded)).toBe(false)
     }).pipe(Effect.provide(SimulationLayer), Effect.provide(FrozenClockLayer)),
   )
@@ -451,9 +466,9 @@ describe('the physical simulation path is opt-in and player pose remains authori
 
       yield* stages[0]?.run(DeltaTimeSecs(0.1)) ?? Effect.void
 
-      const velocity = yield* Ref.get(state.velocity)
-      expect(velocity.y).toBeGreaterThan(0)
-      expect(velocity.y).toBeLessThan(FloorPhysicsConfig.jumpSpeed)
+      const actualVelocity = yield* Ref.get(state.velocity)
+      expect(actualVelocity.y).toBeGreaterThan(0)
+      expect(actualVelocity.y).toBeLessThan(FloorPhysicsConfig.jumpSpeed)
       expect(yield* Ref.get(state.isGrounded)).toBe(false)
     }).pipe(Effect.provide(SimulationLayer), Effect.provide(FrozenClockLayer)),
   )
@@ -463,7 +478,7 @@ describe('the physical simulation path is opt-in and player pose remains authori
       const player = yield* PlayerService
       const { state, stages } = yield* makeControllableSimStagesWithPhysics(FloorPhysicsConfig)
       yield* player.moveTo(position(0, 0.2, 0))
-      yield* Ref.set(state.velocity, position(0, -5, 0))
+      yield* Ref.set(state.velocity, velocity(0, -5, 0))
 
       yield* stages[0]?.run(DeltaTimeSecs(0.05)) ?? Effect.void
 
@@ -508,7 +523,7 @@ describe('the physical simulation path is opt-in and player pose remains authori
   it.effect('does not count upward movement as fall distance', () =>
     Effect.gen(function* () {
       const { state, stages } = yield* makeControllableSimStagesWithPhysics(AirPhysicsConfig)
-      yield* Ref.set(state.velocity, position(0, 3, 0))
+      yield* Ref.set(state.velocity, velocity(0, 3, 0))
 
       yield* stages[0]?.run(DeltaTimeSecs(0.1)) ?? Effect.void
 
@@ -537,7 +552,7 @@ describe('the physical simulation path is opt-in and player pose remains authori
             if (by === -1) return FULL_BLOCK_SHAPE
             return null
           },
-          stepHeight: 0.6,
+          stepHeight: BlockLength(0.6),
         },
       }
       const stepped = yield* makeControllableSimStagesWithPhysics(stepConfig)
@@ -573,7 +588,7 @@ describe('the physical simulation path is opt-in and player pose remains authori
     Effect.gen(function* () {
       const { state, stages } = yield* makeControllableSimStagesWithPhysics(AirPhysicsConfig)
       const physics = stages[0]
-      yield* Ref.set(state.velocity, position(0, 3, 0))
+      yield* Ref.set(state.velocity, velocity(0, 3, 0))
 
       yield* physics?.run(DeltaTimeSecs(0.1)) ?? Effect.void
       const first = yield* Ref.get(state.velocity)
@@ -622,7 +637,7 @@ describe('mc-sim is a real GameModule', () => {
       // (mx-gameplay) and the reader (mx-ui) end up with two instances.
       const module: GameModule<
         InventoryService | PlayerService | TimeService | CropService,
-        never,
+        ItemStackFailure,
         never,
         PlayerService | TimeService | CropService
       > = simModule

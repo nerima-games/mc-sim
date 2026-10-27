@@ -14,9 +14,9 @@
  *    read. This app backs it with a `Ref<number>` the operator advances.
  *
  * 2. Effect's own `Clock` — what `Schedule.spaced` sleeps on.
- *    `startAutoSaveDaemon` is typed `Effect<Fiber.RuntimeFiber<number, never>>`
+ *    `startAutoSaveDaemon` is typed `Effect<Fiber.Fiber<number, never>>`
  *    with NO `ClockPort` requirement, because it does not use one. This app
- *    backs it with `TestContext.TestContext`, so a five-second autosave
+ *    backs it with `TestClock.layer()`, so a five-second autosave
  *    interval costs zero real seconds and the schedule is as reproducible as
  *    everything else.
  *
@@ -39,20 +39,21 @@
  * The frame loop is a forked daemon and autosave is another. Both must survive
  * across keystrokes, which a per-keystroke `Effect.runPromise` would not allow:
  * each call would build and discard its own runtime, its own `TestClock` and its
- * own fibers. `ManagedRuntime.make(TestContext.TestContext)` is one long-lived
+ * own fibers. `ManagedRuntime.make(TestClock.layer())` is one long-lived
  * runtime that every step runs inside, so the daemons and the virtual clock
  * persist exactly as they do in a real session.
  */
 import {
+  Cause,
   Duration,
   Effect,
   Fiber,
   Layer,
   ManagedRuntime,
   Ref,
-  TestClock,
-  TestContext,
+  Result,
 } from 'effect'
+import { TestClock } from 'effect/testing'
 import { startAutoSaveDaemon, type AutoSaveStatus } from '../../src/application/autosave'
 import { makeGameLoop, type FrameHandler } from '../../src/application/game-loop'
 import { makeInventoryService } from '../../src/application/inventory-service'
@@ -60,7 +61,7 @@ import { makePlayerService } from '../../src/application/player-service'
 import { makeSettingsService } from '../../src/application/settings-service'
 import { makeStatisticsService } from '../../src/application/statistics-service'
 import { makeTimeService } from '../../src/application/time-service'
-import { itemStack } from '../../src/domain/inventory'
+import { itemStack, type ItemStackFailure } from '../../src/domain/inventory'
 import { makeVitalsService } from '../../src/application/vitals-service'
 import * as Camera from '../../src/domain/camera-pose'
 import {
@@ -75,6 +76,8 @@ import {
   ClockPort,
   EpochMillis,
   MonotonicTimeSecs,
+  normaliseSettings,
+  PositionAxis,
   position,
   type CameraPoseSnapshot,
   type ClockService,
@@ -263,7 +266,7 @@ const slotViews = (slots: ReadonlyArray<Slot>): ReadonlyArray<SlotView> => {
  * scenario then reuses these instances deliberately, to exercise the other half.
  */
 export const makeWorld = async (config: WorldConfig): Promise<World> => {
-  const runtime = ManagedRuntime.make(TestContext.TestContext as Layer.Layer<never>)
+  const runtime = ManagedRuntime.make(TestClock.layer())
 
   const book: Bookkeeping = {
     frame: 0,
@@ -324,13 +327,13 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
       book.lastDeltaSecs = dt
       book.simulatedSecs += dt
     }).pipe(
-      Effect.zipRight(time.advance(dt)),
+      Effect.andThen(time.advance(dt)),
       // The food timer takes THE SAME delta the world clock does, and this app
       // is the only place the two are visibly one number. The signal is counted
       // and DELIBERATELY NOT ACTED ON: `'starve'` means mx-gameplay would now
       // choose a damage amount and a cause, and this preview has neither, which
       // is what the boundary looks like from mc-sim's side.
-      Effect.zipRight(
+      Effect.andThen(
         Effect.flatMap(vitals.advanceFoodTimer(dt), (signal) =>
           Effect.sync(() => {
             book.foodSignals[signal] += 1
@@ -369,11 +372,14 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
 
   const scenario = scenarioFor(config.scenario)
 
-  /** A fault is recorded and swallowed: a stepper that dies is a stepper that shows nothing. */
-  const guarded = (label: string, effect: Effect.Effect<unknown>): Effect.Effect<void> =>
+  /** Defects and interruptions are recorded; typed failures stay in the Effect error channel. */
+  const guarded = <A, E, R>(
+    label: string,
+    effect: Effect.Effect<A, E, R>,
+  ): Effect.Effect<void, E, R> =>
     effect.pipe(
       Effect.asVoid,
-      Effect.catchAllCause(() =>
+      Effect.catchCauseIf((cause) => !Cause.hasFails(cause), () =>
         Effect.sync(() => {
           book.faults += 1
           pushLog(book, `${label} THREW — a pure domain function raised`, 'fault')
@@ -387,13 +393,27 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
     })
 
   /** Movement and inventory actions. `undefined` means "not one of mine". */
-  const applyMovementAction = (action: ScriptedAction): Effect.Effect<void> | undefined => {
+  const applyMovementAction = (
+    action: ScriptedAction,
+  ): Effect.Effect<void, ItemStackFailure> | undefined => {
     switch (action.kind) {
       case 'look':
         return guarded('look', player.look(action.deltaYaw, action.deltaPitch))
 
       case 'moveTo':
-        return guarded('moveTo', player.moveTo(position(action.x, action.y, action.z)))
+        return guarded(
+          'moveTo',
+          Effect.fromResult(
+            Result.map(
+              Result.all([
+                PositionAxis.result(action.x),
+                PositionAxis.result(action.y),
+                PositionAxis.result(action.z),
+              ]),
+              ([x, y, z]) => position(x, y, z),
+            ),
+          ).pipe(Effect.flatMap(player.moveTo)),
+        )
 
       case 'mine':
         return guarded(
@@ -432,17 +452,17 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
     switch (action.kind) {
       case 'setDayLength':
         return guarded('setDayLength', time.setDayLength(action.seconds)).pipe(
-          Effect.zipRight(note(`setDayLength(${String(action.seconds)}) ALONE — watch the clock face`, 'fault')),
+          Effect.andThen(note(`setDayLength(${String(action.seconds)}) ALONE — watch the clock face`, 'fault')),
         )
 
       case 'setTimeOfDay':
         return guarded('setTimeOfDay', time.setTimeOfDay(action.fraction)).pipe(
-          Effect.zipRight(note(`setTimeOfDay(${String(action.fraction)})`, 'event')),
+          Effect.andThen(note(`setTimeOfDay(${String(action.fraction)})`, 'event')),
         )
 
       case 'configureDay':
         return guarded('configureDay', time.configureDay(action.seconds, action.fraction)).pipe(
-          Effect.zipRight(
+          Effect.andThen(
             note(`configureDay(${String(action.seconds)} s, ${String(action.fraction)})`, 'event'),
           ),
         )
@@ -458,8 +478,8 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
             book.timeStatesRepaired += 1
           }
         }).pipe(
-          Effect.zipRight(guarded('time.restore', time.restore(incoming))),
-          Effect.zipRight(
+          Effect.andThen(guarded('time.restore', time.restore(incoming))),
+          Effect.andThen(
             note(
               `time.restore({ticks:${String(action.ticks)}, dayLengthTicks:${String(action.dayLengthTicks)}})${
                 repairable ? ' — INVALID, repaired by normaliseTimeState' : ''}`,
@@ -475,39 +495,46 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
   }
 
   /** Save-restore and world-lifecycle actions. `undefined` means "not one of mine". */
-  const applyRestoreAction = (action: ScriptedAction): Effect.Effect<void> | undefined => {
+  const applyRestoreAction = (
+    action: ScriptedAction,
+  ): Effect.Effect<void, ItemStackFailure> | undefined => {
     switch (action.kind) {
       case 'restoreInventory': {
-        const incoming: Inventory = {
-          slots: Array.from({ length: action.slots }, (_unused, index) =>
-            index === 0 && action.stack !== undefined
-              ? itemStack(action.stack.item, action.stack.count)
-              : undefined,
+        const restoreInventoryResult = Result.map(
+          Result.all(
+            Array.from({ length: action.slots }, (_unused, index) =>
+              index === 0 && action.stack !== undefined
+                ? itemStack(action.stack.item, action.stack.count)
+                : Result.succeed(undefined),
+            ),
           ),
-        }
-        return Effect.sync(() => {
-          if (action.slots !== INVENTORY_SLOT_COUNT) {
-            book.inventoriesResized += 1
-          }
-        }).pipe(
-          Effect.zipRight(
-            guarded(
-              'inventory.restore',
-              // The leftover is the number that used to vanish when a save
-              // resized the player. Recording it is the point of the scenario.
-              inventory.restore(incoming).pipe(
-                Effect.tap((leftover) =>
-                  Effect.sync(() => {
-                    book.restoreLeftover += leftover
-                  }),
+          (slots): Inventory => ({ slots }),
+        )
+        return Effect.flatMap(Effect.fromResult(restoreInventoryResult), (restoredInventory) =>
+          Effect.sync(() => {
+            if (action.slots !== INVENTORY_SLOT_COUNT) {
+              book.inventoriesResized += 1
+            }
+          }).pipe(
+            Effect.andThen(
+              guarded(
+                'inventory.restore',
+                // The leftover is the number that used to vanish when a save
+                // resized the player. Recording it is the point of the scenario.
+                inventory.restore(restoredInventory).pipe(
+                  Effect.tap((leftover) =>
+                    Effect.sync(() => {
+                      book.restoreLeftover += leftover
+                    }),
+                  ),
                 ),
               ),
             ),
-          ),
-          Effect.zipRight(
-            note(
-              `inventory.restore(${String(action.slots)} slots${action.stack === undefined ? '' : `, [0] = ${String(action.stack.count)} ${action.stack.item}`}) — normalised to ${String(INVENTORY_SLOT_COUNT)} slots`,
-              'event',
+            Effect.andThen(
+              note(
+                `inventory.restore(${String(action.slots)} slots${action.stack === undefined ? '' : `, [0] = ${String(action.stack.count)} ${action.stack.item}`}) — normalised to ${String(INVENTORY_SLOT_COUNT)} slots`,
+                'event',
+              ),
             ),
           ),
         )
@@ -515,13 +542,13 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
 
       case 'hiccup':
         return Ref.update(clockSecs, (value) => value + action.seconds).pipe(
-          Effect.zipRight(
+          Effect.andThen(
             Effect.sync(() => {
               book.clockPortSecs += action.seconds
             }),
           ),
-          Effect.zipRight(note(`clock gap of ${action.seconds.toFixed(3)} s with no frame`, 'event')),
-          Effect.zipRight(
+          Effect.andThen(note(`clock gap of ${action.seconds.toFixed(3)} s with no frame`, 'event')),
+          Effect.andThen(
             action.seconds > 0
               ? TestClock.adjust(Duration.nanos(BigInt(Math.round(action.seconds * 1_000_000_000))))
               : Effect.void,
@@ -530,29 +557,29 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
 
       case 'skewClockPort':
         return Ref.update(clockSecs, (value) => value + action.seconds).pipe(
-          Effect.zipRight(
+          Effect.andThen(
             Effect.sync(() => {
               book.clockPortSecs += action.seconds
             }),
           ),
-          Effect.zipRight(
+          Effect.andThen(
             note(`ClockPort +${String(action.seconds)} s; the Effect clock did NOT move`, 'fault'),
           ),
         )
 
       case 'secondWorld':
         return loop.stop.pipe(
-          Effect.zipRight(player.reset),
-          Effect.zipRight(inventory.reset),
-          Effect.zipRight(time.restore(Time.INITIAL_TIME_STATE)),
-          Effect.zipRight(loop.start(frameHandler)),
-          Effect.zipRight(
+          Effect.andThen(player.reset),
+          Effect.andThen(inventory.reset),
+          Effect.andThen(time.restore(Time.INITIAL_TIME_STATE)),
+          Effect.andThen(loop.start(frameHandler)),
+          Effect.andThen(
             Effect.sync(() => {
               book.lastDeltaSecs = undefined
               book.lastRawDeltaSecs = undefined
             }),
           ),
-          Effect.zipRight(note('teardown + reload on the SAME service instances', 'event')),
+          Effect.andThen(note('teardown + reload on the SAME service instances', 'event')),
         )
 
       default:
@@ -574,7 +601,7 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
             book.blowsWithoutMagnitude += 1
           }
         }).pipe(
-          Effect.zipRight(
+          Effect.andThen(
             guarded(
               'vitals.damage',
               vitals
@@ -586,7 +613,7 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
                         book.deaths += 1
                       }
                     }).pipe(
-                      Effect.zipRight(
+                      Effect.andThen(
                         note(
                           `damage ${String(action.amount)} (${action.cause}) -> ${outcome.vitals.healthPoints.toFixed(1)} hp${
                             outcome.died ? ' — DIED' : ''
@@ -599,18 +626,18 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
                 ),
             ),
           ),
-          Effect.zipRight(statistics.record(`damage.taken.${action.cause}`)),
+          Effect.andThen(statistics.record(`damage.taken.${action.cause}`)),
         )
       }
 
       case 'heal':
         return guarded('vitals.heal', vitals.heal(action.amount)).pipe(
-          Effect.zipRight(note(`heal ${String(action.amount)}`, 'event')),
+          Effect.andThen(note(`heal ${String(action.amount)}`, 'event')),
         )
 
       case 'exhaust':
         return guarded('vitals.addExhaustion', vitals.addExhaustion(action.amount)).pipe(
-          Effect.zipRight(
+          Effect.andThen(
             note(`exhaustion +${String(action.amount)} (the COST is mx-gameplay's)`, 'event'),
           ),
         )
@@ -620,7 +647,7 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
           'vitals.eat',
           vitals.eat(action.foodPoints, action.saturationModifier),
         ).pipe(
-          Effect.zipRight(
+          Effect.andThen(
             note(
               `eat ${String(action.foodPoints)} food, modifier ${String(action.saturationModifier)}`,
               'event',
@@ -630,13 +657,13 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
 
       case 'award':
         return guarded('vitals.addExperience', vitals.addExperience(action.experience)).pipe(
-          Effect.zipRight(note(`experience ${action.experience >= 0 ? '+' : ''}${String(action.experience)}`, 'event')),
+          Effect.andThen(note(`experience ${action.experience >= 0 ? '+' : ''}${String(action.experience)}`, 'event')),
         )
 
       case 'respawn':
         return guarded('vitals.respawn', vitals.respawn).pipe(
-          Effect.zipRight(statistics.record('deaths')),
-          Effect.zipRight(note('respawn — experience survives, because the penalty is a RULE', 'event')),
+          Effect.andThen(statistics.record('deaths')),
+          Effect.andThen(note('respawn — experience survives, because the penalty is a RULE', 'event')),
         )
 
       case 'restoreVitals': {
@@ -646,8 +673,8 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
             book.vitalsRepaired += 1
           }
         }).pipe(
-          Effect.zipRight(guarded('vitals.restore', vitals.restore(action.vitals))),
-          Effect.zipRight(
+          Effect.andThen(guarded('vitals.restore', vitals.restore(action.vitals))),
+          Effect.andThen(
             note(
               `vitals.restore(...)${  repairable ? ' — INVALID, repaired by normaliseVitals' : ''}`,
               repairable ? 'fault' : 'event',
@@ -666,30 +693,29 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
     switch (action.kind) {
       case 'unlock':
         return guarded('statistics.unlock', statistics.unlock(action.id)).pipe(
-          Effect.zipRight(note(`unlock ${action.id} (mc-sim holds no registry)`, 'event')),
+          Effect.andThen(note(`unlock ${action.id} (mc-sim holds no registry)`, 'event')),
         )
 
       case 'setting': {
         const patch = action.patch
         return guarded(
           'settings.update',
-          settings.update(patch).pipe(
-            Effect.tap((next) =>
-              Effect.sync(() => {
-                // A write the clamp moved is the only interesting kind, and it
-                // has to be noticed at the call — the stored value afterwards
-                // looks exactly like one that was always legal.
-                const moved = Object.entries(patch).some(
-                  ([key, value]) => next[key as keyof typeof next] !== value,
-                )
-                if (moved) {
-                  book.settingsClamped += 1
-                }
-              }),
-            ),
-          ),
+          Effect.flatMap(settings.snapshot, (current) => {
+            const next = normaliseSettings({ ...current, ...patch })
+            const normalisedValues = new Map(Object.entries(next))
+            const moved = Object.entries(patch).some(([key, value]) => normalisedValues.get(key) !== value)
+            return settings.update(next).pipe(
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  if (moved) {
+                    book.settingsClamped += 1
+                  }
+                }),
+              ),
+            )
+          }),
         ).pipe(
-          Effect.zipRight(
+          Effect.andThen(
             note(`settings.update(${JSON.stringify(patch)}) — held, never applied`, 'event'),
           ),
         )
@@ -697,7 +723,7 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
 
       case 'stopLoop':
         return loop.stop.pipe(
-          Effect.zipRight(note('loop.stop — submitFrame is a silent no-op from here', 'event')),
+          Effect.andThen(note('loop.stop — submitFrame is a silent no-op from here', 'event')),
         )
 
       case 'note':
@@ -708,7 +734,7 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
     }
   }
 
-  const applyAction = (action: ScriptedAction): Effect.Effect<void> =>
+  const applyAction = (action: ScriptedAction): Effect.Effect<void, ItemStackFailure> =>
     applyMovementAction(action) ??
     applyTimeAction(action) ??
     applyRestoreAction(action) ??
@@ -743,8 +769,8 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
     // frame is scripted. Without this the frames would queue up and then be
     // processed in a burst, and the panels would show a state that no single
     // frame ever produced.
-    yield* Effect.yieldNow()
-    yield* Effect.yieldNow()
+    yield* Effect.yieldNow
+    yield* Effect.yieldNow
 
     // Effect's own Clock, which is what the autosave schedule sleeps on.
     yield* TestClock.adjust(frameStep)
@@ -756,7 +782,7 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
     const frames = Math.max(0, Math.trunc(count))
     return frames === 0
       ? Promise.resolve()
-      : runtime.runPromise(Effect.repeatN(oneFrame, frames - 1).pipe(Effect.asVoid))
+      : runtime.runPromise(Effect.repeat(oneFrame, { times: frames - 1 }).pipe(Effect.asVoid))
   }
 
   const view = (): Promise<WorldView> =>
@@ -823,7 +849,7 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
 
   const dispose = async (): Promise<void> => {
     await runtime.runPromise(loop.stop)
-    await runtime.runPromise(Fiber.interruptFork(autoSaveFiber))
+    await runtime.runPromise(Effect.forkDetach(Fiber.interrupt(autoSaveFiber)))
     await runtime.dispose()
   }
 

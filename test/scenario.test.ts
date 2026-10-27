@@ -15,11 +15,18 @@
  *      because nothing here asks a THREE camera anything.
  */
 import { describe, expect, it } from '@effect/vitest'
-import { Effect, Layer, Ref } from 'effect'
+import { Effect, Layer, Ref, Result } from 'effect'
 import { forwardVector, snapshotAgeSecs } from '../src/domain/camera-pose'
-import { DeltaTimeSecs, EpochMillis, MonotonicTimeSecs, position } from '@nerima-games/mc-kernel'
-import { craftGrid } from '../src/domain/recipe'
-import { itemStack } from '../src/domain/inventory'
+import {
+  AngleRadians,
+  DeltaTimeSecs,
+  EpochMillis,
+  MonotonicTimeSecs,
+  PositionAxis,
+  position as kernelPosition,
+} from '@nerima-games/mc-kernel'
+import { craftGrid as craftGridResult, type CraftGrid } from '../src/domain/recipe'
+import { itemStack as itemStackResult, type ItemStack } from '../src/domain/inventory'
 import { ClockPort, FixedClockLayer } from '@nerima-games/mc-kernel'
 import {
   InventoryService,
@@ -28,6 +35,32 @@ import {
 } from '../src/application/inventory-service'
 import { PlayerService, PlayerServiceLayer } from '../src/application/player-service'
 import { TimeService, TimeServiceLayer } from '../src/application/time-service'
+
+const itemStack = (...args: Parameters<typeof itemStackResult>): ItemStack => {
+  const result = itemStackResult(...args)
+  if (Result.isFailure(result)) throw result.failure
+  return result.success
+}
+const craftGrid = (...args: Parameters<typeof craftGridResult>): CraftGrid => {
+  const result = craftGridResult(...args)
+  if (Result.isFailure(result)) throw result.failure
+  return result.success
+}
+const position = (x: number, y: number, z: number): ReturnType<typeof kernelPosition> => {
+  const axes = Result.all([
+    PositionAxis.result(x),
+    PositionAxis.result(y),
+    PositionAxis.result(z),
+  ])
+  if (Result.isFailure(axes)) throw axes.failure
+  const [positionX, positionY, positionZ] = axes.success
+  return kernelPosition(positionX, positionY, positionZ)
+}
+const angleRadians = (value: number): AngleRadians => {
+  const result = AngleRadians.result(value)
+  if (Result.isFailure(result)) throw result.failure
+  return result.success
+}
 
 /**
  * A clock the test drives by hand.
@@ -88,7 +121,7 @@ describe('deterministic scenario: spawn -> look -> mine -> assert', () => {
 
         // Yaw pi/2 with zero pitch looks down -X. Computed from the snapshot,
         // with no THREE camera in the process to ask.
-        const flat = forwardVector({ ...pose, pitchRadians: 0 })
+        const flat = forwardVector({ ...pose, pitchRadians: angleRadians(0) })
         expect(flat.x).toBeCloseTo(-1, 12)
         expect(flat.z).toBeCloseTo(0, 12)
 

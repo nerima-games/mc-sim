@@ -1,8 +1,11 @@
 import { Effect } from 'effect'
 import { describe, expect, it } from 'vitest'
 import { makeVehicleService, VehicleService, VehicleServiceLayer } from '../src/application/vehicle-service'
-import { position } from '@nerima-games/mc-kernel'
+import { PositionAxis, position as coordinatePosition } from '@nerima-games/mc-kernel'
 import { OccupantId, validateVehicleSnapshot, VehicleId } from '../src/domain/vehicle'
+
+const position = (x: number, y: number, z: number) =>
+  coordinatePosition(PositionAxis(x), PositionAxis(y), PositionAxis(z))
 
 const baseVehicleItem = {
   id: 'v:0',

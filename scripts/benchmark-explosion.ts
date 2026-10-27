@@ -11,9 +11,9 @@
  * A/B guard at the same time; an artificial slow implementation would make
  * this gate meaningless.
  */
-import { DeltaTimeSecs, position, type DeltaTimeSecs as DeltaTimeSecsValue } from '@nerima-games/mc-kernel'
+import { DeltaTimeSecs, PositionAxis, position, type DeltaTimeSecs as DeltaTimeSecsValue } from '@nerima-games/mc-kernel'
 import { loadavg } from 'node:os'
-import { Either } from 'effect'
+import { Result } from 'effect'
 import { planExplosion, type ExplosionBlockReader, type ExplosionRequest } from '../src/domain/explosion'
 import { advanceFixedStep, initialFixedStepAccumulator } from '../src/domain/fixed-step'
 import {
@@ -52,7 +52,7 @@ if (oneMinuteLoad >= 10) {
 console.log(`uptime 1-minute load average: ${oneMinuteLoad.toFixed(2)} (< 10)`)
 
 const requestFor = (radius: number): ExplosionRequest => ({
-  center: position(0, 0, 0),
+  center: position(PositionAxis(0), PositionAxis(0), PositionAxis(0)),
   radius,
   seed: 7,
   blocks,
@@ -118,9 +118,9 @@ const fixedStepWorkload = (): void => {
   let checksum = 0
   for (const delta of fixedStepDeltas) {
     const result = advanceFixedStep(state, delta)
-    if (Either.isLeft(result)) throw new Error('fixed-step benchmark overflowed')
-    state = result.right.state
-    checksum += Number(result.right.ticks) + (result.right.overloaded ? 1 : 0)
+    if (Result.isFailure(result)) throw new Error('fixed-step benchmark overflowed')
+    state = result.success.state
+    checksum += Number(result.success.ticks) + (result.success.overloaded ? 1 : 0)
   }
   sink ^= checksum + Number(state.tick)
 }

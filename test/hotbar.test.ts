@@ -1,4 +1,4 @@
-import { Effect, Layer } from 'effect'
+import { Effect, Layer, Result } from 'effect'
 import { describe, expect, it } from '@effect/vitest'
 import {
   HotbarService,
@@ -16,7 +16,13 @@ import {
   hotbarSlotIndex,
   isHotbarIndex,
 } from '../src/domain/hotbar'
-import { emptyInventory, itemStack } from '../src/domain/inventory'
+import { emptyInventory, itemStack as itemStackResult, type ItemStack } from '../src/domain/inventory'
+
+const itemStack = (...args: Parameters<typeof itemStackResult>): ItemStack => {
+  const result = itemStackResult(...args)
+  if (Result.isFailure(result)) throw result.failure
+  return result.success
+}
 
 const hotbarInventory = () => {
   const slots = [...emptyInventory().slots]

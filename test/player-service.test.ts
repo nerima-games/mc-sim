@@ -2,7 +2,10 @@ import { describe, expect, it } from '@effect/vitest'
 import { Effect } from 'effect'
 import { INITIAL_PLAYER_DIMENSION, makePlayerService } from '../src/application/player-service'
 import { INITIAL_PLAYER_POSE } from '../src/domain/camera-pose'
-import { position, type Dimension } from '@nerima-games/mc-kernel'
+import { PositionAxis, position as kernelPosition, type Dimension } from '@nerima-games/mc-kernel'
+
+const position = (x: number, y: number, z: number) =>
+  kernelPosition(PositionAxis(x), PositionAxis(y), PositionAxis(z))
 
 /**
  * THE state this file was created for.

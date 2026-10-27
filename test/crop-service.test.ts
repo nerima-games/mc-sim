@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@effect/vitest'
 import type { BlockPosition } from '@nerima-games/mc-kernel'
-import { Effect, Layer } from 'effect'
+import { Effect, Layer, Result } from 'effect'
 import { CropService, CropServiceLayer } from '../src/application/crop-service'
 import { PlayerServiceLayer } from '../src/application/player-service'
 import { TimeServiceLayer } from '../src/application/time-service'
@@ -17,7 +17,15 @@ import {
   MonotonicTimeSecs,
 } from '@nerima-games/mc-kernel'
 import { makeSimStages } from '../src/stages/registration'
-import { itemStack } from '../src/domain/inventory'
+import { itemStack as itemStackResult, type ItemStack } from '../src/domain/inventory'
+
+const requireSuccess = <A, E>(result: Result.Result<A, E>): A => {
+  if (Result.isFailure(result)) throw result.failure
+  return result.success
+}
+
+const itemStack = (...args: Parameters<typeof itemStackResult>): ItemStack =>
+  requireSuccess(itemStackResult(...args))
 
 const location = (
   x: number,
@@ -79,7 +87,7 @@ describe('crop service', () => {
       yield* stages[0]?.run(DeltaTimeSecs(1)) ?? Effect.void
       for (const entry of planted) {
         expect(yield* crops.matureYieldsAt(entry.location)).toStrictEqual(
-          CROP_REGISTRY[entry.crop].guaranteedMatureYield,
+          requireSuccess(CROP_REGISTRY[entry.crop].guaranteedMatureYield),
         )
       }
     }).pipe(Effect.provide(ServicesLayer), Effect.provide(FrozenClockLayer)),

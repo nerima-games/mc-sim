@@ -53,10 +53,12 @@
  * and the frame already visits every consumer once. A consumer reads `snapshot`
  * on the frame it cares about.
  */
-import { Context, Effect, Layer, Ref } from 'effect'
+import { Brand, Context, Effect, Layer, Ref } from 'effect'
+import { applySettings } from '../domain/settings.js'
 import {
-  applySettings,
   DEFAULT_SETTINGS,
+  InputAction,
+  KeyCode,
   normaliseSettings,
   rebindKey,
   unbindKey,
@@ -78,9 +80,9 @@ export type SettingsServiceApi = {
    * rather than the two colliding on one physical key. See the module header
    * — this replaces the old plain-overwrite `bindKey`.
    */
-  readonly rebindKey: (action: string, code: string) => Effect.Effect<void>
+  readonly rebindKey: (action: string, code: string) => Effect.Effect<void, Brand.BrandError>
   /** Drop one rebind, returning the action to the input owner's default. */
-  readonly unbindKey: (action: string) => Effect.Effect<void>
+  readonly unbindKey: (action: string) => Effect.Effect<void, Brand.BrandError>
   /**
    * Load stored preferences. Repaired by `normaliseSettings` on the way in, with
    * no error channel — a player whose stored FOV is out of range should get a
@@ -120,8 +122,17 @@ export const makeSettingsService = (
         const next = applySettings(current, patch)
         return [next, next]
       }),
-    rebindKey: (action, code) => Ref.update(state, (current) => rebindKey(current, action, code)),
-    unbindKey: (action) => Ref.update(state, (current) => unbindKey(current, action)),
+    rebindKey: (action, code) =>
+      Effect.gen(function* () {
+        const inputAction = yield* Effect.fromResult(InputAction.result(action))
+        const keyCode = yield* Effect.fromResult(KeyCode.result(code))
+        yield* Ref.update(state, (current) => rebindKey(current, inputAction, keyCode))
+      }),
+    unbindKey: (action) =>
+      Effect.gen(function* () {
+        const inputAction = yield* Effect.fromResult(InputAction.result(action))
+        yield* Ref.update(state, (current) => unbindKey(current, inputAction))
+      }),
     restore: (next) => Ref.set(state, normaliseSettings(next)),
     reset: Ref.set(state, DEFAULT_SETTINGS),
   }))

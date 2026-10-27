@@ -38,7 +38,11 @@
  * scenarios drive.
  */
 
-import type { ItemType, Settings } from '@nerima-games/mc-kernel'
+import {
+  RenderDistanceChunks,
+  VolumeLevel,
+  type ItemType,
+} from '@nerima-games/mc-kernel'
 import type { DamageCause, Vitals } from '../../src/domain/vitals'
 
 /** One scripted action, applied at the top of a frame, before the frame is submitted. */
@@ -96,7 +100,7 @@ export type ScriptedAction =
   | { readonly kind: 'respawn' }
   | { readonly kind: 'unlock'; readonly id: string }
   /** Write settings values. Held, never applied — that is the whole row. */
-  | { readonly kind: 'setting'; readonly patch: Partial<Settings> }
+  | { readonly kind: 'setting'; readonly patch: Readonly<Record<string, unknown>> }
   /** Write vitals straight in, as a world load would. */
   | { readonly kind: 'restoreVitals'; readonly vitals: Vitals }
   /** Stop the frame loop without restarting it. Frames submitted after are dropped. */
@@ -520,7 +524,7 @@ const VITALS: Scenario = {
     }),
     step(0, 'settings are VALUES: this render distance is held and applied by nobody', {
       kind: 'setting',
-      patch: { renderDistance: 12, masterVolume: 0.4 },
+      patch: { renderDistance: RenderDistanceChunks(12), masterVolume: VolumeLevel(0.4) },
     }),
     step(30, 'an ordinary blow: 6 of 20, no cause recorded because nobody died', {
       kind: 'damage',
