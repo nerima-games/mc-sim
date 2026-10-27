@@ -144,6 +144,37 @@ describe('VehicleService lifecycle', () => {
     }))
   })
 
+  it('atomically rejects invalid update-state coordinates and blank occupants', async () => {
+    await Effect.runPromise(Effect.gen(function* () {
+      const service = yield* makeVehicleService()
+      const vehicle = yield* service.spawn('boat', 'overworld', position(0, 0, 0))
+      const before = yield* service.snapshot
+
+      const invalidPosition = position(1, 2, 3)
+      expect(Reflect.set(invalidPosition, 'x', Number.POSITIVE_INFINITY)).toBe(true)
+      const positionError = yield* Effect.flip(service.updateState(vehicle.id, {
+        dimension: 'overworld',
+        position: invalidPosition,
+        velocity: velocity(0, 0, 0),
+        yawRadians: AngleRadians(0),
+      }))
+      expect(positionError.reason).toBe('invalid-transform')
+      expect(yield* service.snapshot).toBe(before)
+
+      const invalidOccupantState = {
+        dimension: 'overworld' as const,
+        position: position(1, 2, 3),
+        velocity: velocity(0, 0, 0),
+        yawRadians: AngleRadians(0),
+        occupant: OccupantId('rider'),
+      }
+      expect(Reflect.set(invalidOccupantState, 'occupant', '   ')).toBe(true)
+      const occupantError = yield* Effect.flip(service.updateState(vehicle.id, invalidOccupantState))
+      expect(occupantError.reason).toBe('invalid-transform')
+      expect(yield* service.snapshot).toBe(before)
+    }))
+  })
+
   it('strictly rejects invalid initial snapshots and counters that can collide', async () => {
     const candidate = {
       vehicles: [{ id: 'v:4', type: 'boat', dimension: 'overworld', position: { x: 0, y: 0, z: 0 }, velocity: { x: 0, y: 0, z: 0 }, yawRadians: 0 }],

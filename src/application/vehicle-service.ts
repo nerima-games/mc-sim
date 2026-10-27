@@ -105,9 +105,8 @@ const vehicleVelocity = (value: VehicleVelocityInput): VehicleVelocity => ({
   z: VehicleVelocityComponent(value.z),
 })
 const update = (
-  snapshot: VehicleSnapshot, id: VehicleId, valid: boolean, transform: (vehicle: Vehicle) => Vehicle,
+  snapshot: VehicleSnapshot, id: VehicleId, transform: (vehicle: Vehicle) => Vehicle,
 ): readonly [Effect.Effect<void, VehicleOperationError>, VehicleSnapshot] => {
-  if (!valid) return [Effect.fail(operationError('invalid-transform')), snapshot]
   const index = snapshot.vehicles.findIndex((vehicle) => vehicle.id === id)
   if (index < 0) return [Effect.fail(operationError('not-found')), snapshot]
   const vehicles = snapshot.vehicles.map((vehicle, vehicleIndex) =>
@@ -202,13 +201,13 @@ export const makeVehicleService = (
       updateVelocity: (id, velocity) => modify((snapshot) => {
         const nextVelocity = vehicleVelocityInput(velocity)
         if (nextVelocity === undefined) return [Effect.fail(operationError('invalid-transform')), snapshot]
-        return update(snapshot, id, true, (vehicle) => ({ ...vehicle, velocity: nextVelocity }))
+        return update(snapshot, id, (vehicle) => ({ ...vehicle, velocity: nextVelocity }))
       }),
       updateTransform: (id, dimension, positionInput, yawRadians) => modify((snapshot) => {
         const nextPosition = vehiclePosition(positionInput)
         if (!isDimension(dimension) || nextPosition === undefined || !Number.isFinite(yawRadians))
           return [Effect.fail(operationError('invalid-transform')), snapshot]
-        return update(snapshot, id, true, (vehicle) => ({
+        return update(snapshot, id, (vehicle) => ({
           ...vehicle,
           dimension,
           position: nextPosition,
@@ -224,7 +223,7 @@ export const makeVehicleService = (
           vehicleIndex !== index && vehicle.occupant === next.occupant)) {
           return [Effect.fail(operationError('duplicate-occupant')), snapshot]
         }
-        return update(snapshot, id, true, (vehicle) => ({ ...vehicle, ...next }))
+        return update(snapshot, id, (vehicle) => ({ ...vehicle, ...next }))
       }),
       snapshot: Ref.get(state),
       restore: (candidate) => {
