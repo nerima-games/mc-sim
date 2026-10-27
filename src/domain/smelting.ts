@@ -144,11 +144,7 @@ const isInventory = (value: unknown): value is Inventory =>
   isInventoryEnvelope(value) && value.slots.every(isSlot)
 const isTransferSlot = (value: unknown): value is FurnaceTransferSlot =>
   value === 'input' || value === 'fuel'
-const isFurnaceState = (value: unknown): value is FurnaceState => {
-  if (!isRecord(value)) return false
-  const fields = ['station', 'input', 'fuel', 'output', 'fuelTimeRemainingSecs', 'fuelTimeTotalSecs', 'cookProgressSecs']
-  return fields.every((field) => Object.hasOwn(value, field)) && Result.isSuccess(furnaceState(value))
-}
+
 const validateSlot = (value: unknown, path: string): Result.Result<Slot, FurnaceStateFailure> => {
   if (value === undefined) return Result.succeed(undefined)
   if (!isRecord(value) || Object.keys(value).some((key) => !['item', 'count', 'components'].includes(key))) {
@@ -210,6 +206,12 @@ export const furnaceState = (
       })
     }),
   )
+}
+
+const isFurnaceState = (value: unknown): value is FurnaceState => {
+  if (!isRecord(value)) return false
+  const fields = ['station', 'input', 'fuel', 'output', 'fuelTimeRemainingSecs', 'fuelTimeTotalSecs', 'cookProgressSecs']
+  return fields.every((field) => Object.hasOwn(value, field)) && Result.isSuccess(furnaceState(value))
 }
 
 export const emptyFurnaceState = (
