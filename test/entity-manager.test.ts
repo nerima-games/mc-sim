@@ -14,6 +14,7 @@ import {
   EntityId,
   EntityKind,
   EntitySerial,
+  mintEntityId,
   UNCHANGED,
   type Entity,
   type EntityRoster,
@@ -46,6 +47,38 @@ const savedRoster = (value: unknown): EntityRoster<Fuse> => value as EntityRoste
 const idle = { transition: UNCHANGED, emit: undefined }
 
 describe('EntityManager — the roster', () => {
+  it.effect('fails at serial exhaustion without changing the roster', () =>
+    Effect.gen(function* () {
+      const roster = savedRoster({ entities: [], nextSerial: Number.MAX_SAFE_INTEGER })
+      const world = yield* makeEntityManager<Fuse>(roster)
+      const before = yield* world.snapshot
+      const failure = yield* Effect.flip(world.spawn(creeper(1)))
+
+      expect(failure).toStrictEqual({ _tag: 'EntitySerialExhausted' })
+      expect(yield* world.snapshot).toStrictEqual(before)
+    }),
+  )
+
+  it.effect('a restore that cannot reidentify a duplicate leaves the roster unchanged', () =>
+    Effect.gen(function* () {
+      const world = yield* makeEntityManager<Fuse>()
+      const original = yield* world.spawn(creeper(1))
+      const before = yield* world.snapshot
+      const lastId = mintEntityId(EntitySerial(Number.MAX_SAFE_INTEGER))
+      const failure = yield* Effect.flip(world.restore(savedRoster({
+        entities: [
+          { ...creeper(2), id: lastId },
+          { ...creeper(3), id: lastId },
+        ],
+        nextSerial: Number.MAX_SAFE_INTEGER,
+      })))
+
+      expect(original.id).toBe('e:0')
+      expect(failure).toStrictEqual({ _tag: 'EntitySerialExhausted' })
+      expect(yield* world.snapshot).toStrictEqual(before)
+    }),
+  )
+
   it.effect('spawn and despawn round-trip through the service', () =>
     Effect.gen(function* () {
       const roster = yield* makeEntityManager<Fuse>()

@@ -77,6 +77,10 @@ export type SpawnOutcome<S> = {
   readonly entity: Entity<S>
 }
 
+export type EntitySerialExhausted = {
+  readonly _tag: 'EntitySerialExhausted'
+}
+
 export type DespawnOutcome<S> = {
   readonly roster: EntityRoster<S>
   readonly despawned: boolean

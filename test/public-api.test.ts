@@ -211,6 +211,7 @@ type IntegratedPublicTypeSurface = readonly [
   PublicApiTypes.EntityHealthPoints,
   PublicApiTypes.EntityRosterRepairCount,
   PublicApiTypes.EntitySerial,
+  PublicApiTypes.EntitySerialExhausted,
   PublicApiTypes.ExhaustionAmount,
   PublicApiTypes.ExperienceAmount,
   PublicApiTypes.ExperienceCost,

@@ -16,14 +16,18 @@ import {
   isEntityId,
   isEntityKind,
   mintEntityId,
-  normaliseRoster,
+  normaliseRoster as normaliseRosterResult,
   serialOfEntityId,
-  spawnEntity,
+  spawnEntity as spawnEntityResult,
   sweepRoster,
   UNCHANGED,
+  type BehaviourRepair,
   type Entity,
   type EntityRoster,
   type EntityStep,
+  type NormaliseRosterOutcome,
+  type SpawnOutcome,
+  type SpawnRequest,
 } from '../src/domain/entity'
 import { PositionAxis, position as coordinatePosition } from '@nerima-games/mc-kernel'
 
@@ -67,6 +71,18 @@ const creeper = (x: number, fuse: Fuse = DORMANT) => ({
  * `EntityRoster<Fuse>` at the one boundary that has to survive them.
  */
 const savedRoster = (value: unknown): EntityRoster<Fuse> => value as EntityRoster<Fuse>
+
+const spawnEntity = <S>(roster: EntityRoster<S>, request: SpawnRequest<S>): SpawnOutcome<S> => {
+  const outcome = spawnEntityResult(roster, request)
+  if (Result.isFailure(outcome)) throw new Error('test fixture unexpectedly exhausted entity serials')
+  return outcome.success
+}
+
+const normaliseRoster = <S>(roster: EntityRoster<S>, repair?: BehaviourRepair<S>): NormaliseRosterOutcome<S> => {
+  const outcome = normaliseRosterResult(roster, repair)
+  if (Result.isFailure(outcome)) throw new Error('test fixture unexpectedly exhausted entity serials')
+  return outcome.success
+}
 
 const idsOf = <S>(roster: EntityRoster<S>): ReadonlyArray<string> => roster.entities.map((entity) => entity.id)
 
@@ -147,19 +163,17 @@ describe('EntityCount', () => {
 })
 
 describe('spawnEntity / despawnEntity', () => {
-  it.effect('wraps serial allocation after a collision at the maximum serial', () =>
+  it.effect('returns a typed failure instead of reusing a serial at exhaustion', () =>
     Effect.sync(() => {
       const lastSerial = EntitySerial(Number.MAX_SAFE_INTEGER)
-      const blockedId = mintEntityId(lastSerial)
       const roster: EntityRoster<Fuse> = {
-        entities: [{ ...creeper(0), id: blockedId }],
+        entities: [],
         nextSerial: lastSerial,
       }
 
-      const spawned = spawnEntity(roster, creeper(1))
+      const outcome = spawnEntityResult(roster, creeper(1))
 
-      expect(spawned.entity.id).toBe('e:0')
-      expect(spawned.roster.nextSerial).toBe(1)
+      expect(outcome).toStrictEqual(Result.fail({ _tag: 'EntitySerialExhausted' }))
     }),
   )
   it.effect('mints ids in order and advances the counter', () =>
@@ -210,6 +224,18 @@ describe('spawnEntity / despawnEntity', () => {
       const next = spawnEntity(gone.roster, creeper(1))
 
       expect(next.entity.id).toBe('e:1')
+    }),
+  )
+
+  it.effect('normalisation reports serial exhaustion rather than wrapping a duplicate id to a stale serial', () =>
+    Effect.sync(() => {
+      const lastId = mintEntityId(EntitySerial(Number.MAX_SAFE_INTEGER))
+      const outcome = normaliseRosterResult(savedRoster({
+        entities: [{ ...creeper(0), id: lastId }, { ...creeper(1), id: lastId }],
+        nextSerial: Number.MAX_SAFE_INTEGER,
+      }))
+
+      expect(outcome).toStrictEqual(Result.fail({ _tag: 'EntitySerialExhausted' }))
     }),
   )
 

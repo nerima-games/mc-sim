@@ -11,6 +11,7 @@ export {
   type EntityRoster,
   type SpawnRequest,
   type SpawnOutcome,
+  type EntitySerialExhausted,
   type DespawnOutcome,
   type EntityTransition,
   type EntityStep,

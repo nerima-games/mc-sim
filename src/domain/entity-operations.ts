@@ -1,3 +1,4 @@
+import { Result } from 'effect'
 import {
   EntityCount,
   EntityRosterRepairCount,
@@ -19,6 +20,7 @@ import type {
   EntityState,
   EntityStep,
   EntityTransition,
+  EntitySerialExhausted,
   NormaliseRosterOutcome,
   SpawnOutcome,
   SpawnRequest,
@@ -27,30 +29,35 @@ import type {
 
 const MAX_SERIAL = Number.MAX_SAFE_INTEGER
 
-const nextSerialAfter = (serial: EntitySerial): EntitySerial =>
-  serial === MAX_SERIAL ? EntitySerial(0) : EntitySerial(serial + 1)
-
-const firstFreeSerial = (start: EntitySerial, taken: ReadonlySet<string>): EntitySerial => {
+const firstFreeSerial = (
+  start: EntitySerial,
+  taken: ReadonlySet<string>,
+): Result.Result<EntitySerial, EntitySerialExhausted> => {
   let candidate = start
-  while (taken.has(mintEntityId(candidate))) candidate = nextSerialAfter(candidate)
-  return candidate
+  while (candidate < MAX_SERIAL && taken.has(mintEntityId(candidate))) candidate = EntitySerial(candidate + 1)
+  return candidate < MAX_SERIAL
+    ? Result.succeed(candidate)
+    : Result.fail({ _tag: 'EntitySerialExhausted' })
 }
 
 export const emptyRoster = <S>(): EntityRoster<S> => ({ entities: NO_ENTITIES, nextSerial: EntitySerial(0) })
 
-export const spawnEntity = <S>(roster: EntityRoster<S>, request: SpawnRequest<S>): SpawnOutcome<S> => {
+export const spawnEntity = <S>(
+  roster: EntityRoster<S>,
+  request: SpawnRequest<S>,
+): Result.Result<SpawnOutcome<S>, EntitySerialExhausted> => {
   const taken = new Set(roster.entities.map((entity) => entity.id))
-  const serial = firstFreeSerial(roster.nextSerial, taken)
-  const nextSerial = nextSerialAfter(serial)
-  const entity: Entity<S> = {
-    id: mintEntityId(serial),
-    kind: request.kind,
-    ...repairState(request),
-  }
-  return {
-    roster: { entities: [...roster.entities, entity], nextSerial },
-    entity,
-  }
+  return Result.map(firstFreeSerial(roster.nextSerial, taken), (serial) => {
+    const entity: Entity<S> = {
+      id: mintEntityId(serial),
+      kind: request.kind,
+      ...repairState(request),
+    }
+    return {
+      roster: { entities: [...roster.entities, entity], nextSerial: EntitySerial(serial + 1) },
+      entity,
+    }
+  })
 }
 
 export const despawnEntity = <S>(roster: EntityRoster<S>, id: EntityId): DespawnOutcome<S> => {
@@ -104,7 +111,7 @@ export const sweepRoster = <S, A>(
 export const normaliseRoster = <S>(
   roster: EntityRoster<S>,
   repairBehaviour?: BehaviourRepair<S>,
-): NormaliseRosterOutcome<S> => {
+): Result.Result<NormaliseRosterOutcome<S>, EntitySerialExhausted> => {
   const incoming: ReadonlyArray<Entity<S>> =
     typeof roster === 'object' && roster !== null && Array.isArray(roster.entities) ? roster.entities : NO_ENTITIES
 
@@ -125,7 +132,9 @@ export const normaliseRoster = <S>(
   const taken = new Set<string>()
   const entities: Array<Entity<S>> = []
 
+  let allocationFailure: EntitySerialExhausted | undefined
   incoming.forEach((entity) => {
+    if (allocationFailure !== undefined) return
     if (typeof entity !== 'object' || entity === null || !isEntityKind(entity.kind)) {
       discarded += 1
       return
@@ -136,8 +145,12 @@ export const normaliseRoster = <S>(
       id = entity.id
     } else {
       const replacementSerial = firstFreeSerial(nextSerial, taken)
-      id = mintEntityId(replacementSerial)
-      nextSerial = nextSerialAfter(replacementSerial)
+      if (Result.isFailure(replacementSerial)) {
+        allocationFailure = replacementSerial.failure
+        return
+      }
+      id = mintEntityId(replacementSerial.success)
+      nextSerial = EntitySerial(replacementSerial.success + 1)
       reidentified += 1
     }
     taken.add(id)
@@ -152,9 +165,9 @@ export const normaliseRoster = <S>(
     })
   })
 
-  return {
+  return allocationFailure === undefined ? Result.succeed({
     roster: { entities: entities.length === 0 ? NO_ENTITIES : entities, nextSerial },
     discarded: EntityRosterRepairCount(discarded),
     reidentified: EntityRosterRepairCount(reidentified),
-  }
+  }) : Result.fail(allocationFailure)
 }
