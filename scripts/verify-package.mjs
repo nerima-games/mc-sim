@@ -16,7 +16,8 @@ const run = (command, args, { cwd = root } = {}) => {
     timeout: COMMAND_TIMEOUT_MS,
   })
   if (result.error !== undefined || result.status !== 0) {
-    const reason = result.error?.message ?? (result.stderr?.trim() || `exit status ${String(result.status)}`)
+    const output = [result.stderr?.trim(), result.stdout?.trim()].filter(Boolean).join('\n')
+    const reason = result.error?.message ?? (output || `exit status ${String(result.status)}`)
     throw new Error(`${command} ${args.join(' ')} failed: ${reason}`)
   }
   return result.stdout
@@ -504,6 +505,40 @@ try {
   run('npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund', archive], {
     cwd: consumerDirectory,
   })
+
+  writeFileSync(
+    join(consumerDirectory, 'consumer.ts'),
+    `import { Effect } from 'effect'
+import { DeltaTimeSecs } from '@nerima-games/mc-kernel'
+import { advanceFixedStep, initialFixedStepAccumulator } from '@nerima-games/mc-sim'
+import type { HeadlessHarnessApi, HeadlessHarnessSession, HeadlessSaveSlice } from '@nerima-games/mc-sim/testing'
+
+const frame = advanceFixedStep(initialFixedStepAccumulator(), DeltaTimeSecs(0.01))
+const readHash = (harness: HeadlessHarnessApi): HeadlessHarnessApi['stateHash'] => harness.stateHash
+const closeSession = (session: HeadlessHarnessSession): Effect.Effect<void> => session.close
+const saveSliceCodec = (slice: HeadlessSaveSlice): HeadlessSaveSlice['schema'] => slice.schema
+
+void [frame, readHash, closeSession, saveSliceCodec]
+`,
+  )
+  writeFileSync(
+    join(consumerDirectory, 'tsconfig.json'),
+    JSON.stringify({
+      compilerOptions: {
+        target: 'ES2024',
+        module: 'NodeNext',
+        moduleResolution: 'NodeNext',
+        lib: ['ES2024', 'ESNext.Disposable', 'DOM'],
+        types: [],
+        strict: true,
+        skipLibCheck: false,
+        noEmit: true,
+      },
+      include: ['consumer.ts'],
+    }, null, 2) + '\n',
+  )
+  run('tsc', ['--project', 'tsconfig.json'], { cwd: consumerDirectory })
+  process.stdout.write('typechecked installed package consumer with strict TypeScript\n')
 
   const probe = `
     const sim = await import(${JSON.stringify(packageJson.name)})
