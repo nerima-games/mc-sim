@@ -87,7 +87,7 @@ export const advance = (
     }
 
     if (state.paused) {
-      const fraction = yield* InterpolationFraction.result(accumulator / fixedIntervalSecs)
+      const fraction = yield* InterpolationFraction.result(accumulator / DEFAULT_TICK_DURATION)
       return {
         state,
         ticks: NonNegativeTickCount(0),
@@ -109,7 +109,7 @@ export const advance = (
     )
     const nextTick = yield* addTick(tick, ticks)
     const remainder = yield* FixedDurationSecs.result(bounded - ticks * fixedIntervalSecs)
-    const fraction = yield* InterpolationFraction.result(remainder / fixedIntervalSecs)
+    const fraction = yield* InterpolationFraction.result(remainder / DEFAULT_TICK_DURATION)
     const nextState: FixedStepAccumulator = { ...state, accumulator: remainder, tick: nextTick }
 
     return {

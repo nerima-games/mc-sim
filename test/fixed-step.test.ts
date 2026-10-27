@@ -72,6 +72,39 @@ describe('fixed-step accumulator', () => {
     }),
   )
 
+  it.effect('keeps the base output fraction for a custom fixed duration', () =>
+    Effect.sync(() => {
+      const state = initialFixedStepAccumulator(SimulationTick(0), duration(0.1))
+      const result = advance(state, dt(0.025))
+
+      expect(Result.isSuccess(result)).toBe(true)
+      if (Result.isSuccess(result)) {
+        expect(result.success.ticks).toBe(0)
+        expect(result.success.state.accumulator).toBeCloseTo(0.025)
+        expect(result.success.interpolationFraction).toBeCloseTo(0.5)
+      }
+    }),
+  )
+
+  it.effect('keeps the base output fraction while paused with a custom fixed duration', () =>
+    Effect.sync(() => {
+      const state = initialFixedStepAccumulator(SimulationTick(0), duration(0.1))
+      const active = advance(state, dt(0.025))
+
+      expect(Result.isSuccess(active)).toBe(true)
+      if (Result.isSuccess(active)) {
+        const paused = advance(pause(active.success.state), dt(0.025))
+
+        expect(Result.isSuccess(paused)).toBe(true)
+        if (Result.isSuccess(paused)) {
+          expect(paused.success.ticks).toBe(0)
+          expect(paused.success.state.accumulator).toBeCloseTo(0.025)
+          expect(paused.success.interpolationFraction).toBeCloseTo(0.5)
+        }
+      }
+    }),
+  )
+
   it.effect('caps catch-up at five ticks and reports overload', () =>
     Effect.sync(() => {
       const result = advance(initialFixedStepAccumulator(), dt(1))
