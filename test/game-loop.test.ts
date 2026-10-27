@@ -372,23 +372,33 @@ describe('loop observability', () => {
     }),
   )
 
-  it.effect('does not record malformed runtime fixed-step state as TimeOverflow', () =>
+  it.effect('rejects a malformed initial tick before publishing a running generation', () =>
     Effect.gen(function* () {
       const loop = yield* makeGameLoop(JSON.parse('null'))
       const handlerCalls = yield* Ref.make(0)
 
-      yield* loop.start(() => Ref.update(handlerCalls, (calls) => calls + 1))
+      const startResult = yield* Effect.result(
+        loop.start(() => Ref.update(handlerCalls, (calls) => calls + 1)),
+      )
       yield* loop.submitFrame(MonotonicTimeSecs(0))
       yield* loop.submitFrame(MonotonicTimeSecs(1))
-
-      const result = yield* Effect.result(loop.advanceFrame(DeltaTimeSecs(0.05)))
-      expect(Result.isFailure(result)).toBe(true)
-      if (Result.isFailure(result)) expect(result.failure._tag).toBe('BrandError')
-      expect(Option.isNone(yield* loop.timeOverflow)).toBe(true)
+      yield* loop.submitFrame(MonotonicTimeSecs(1.05))
 
       for (let attempt = 0; attempt < 10; attempt += 1) yield* Effect.yieldNow
-      expect(yield* Ref.get(handlerCalls)).toBe(0)
+      const runningAfterFrames = yield* loop.isRunning
+      const processedAfterFrames = yield* loop.framesProcessed
+      const droppedAfterFrames = yield* loop.framesDropped
+
       yield* loop.stop
+
+      expect(Result.isFailure(startResult)).toBe(true)
+      if (Result.isFailure(startResult)) expect(startResult.failure._tag).toBe('BrandError')
+      expect(runningAfterFrames).toBe(false)
+      expect(processedAfterFrames).toBe(0)
+      expect(droppedAfterFrames).toBe(0)
+      expect(yield* Ref.get(handlerCalls)).toBe(0)
+      expect(yield* loop.isRunning).toBe(false)
+      expect(Option.isNone(yield* loop.timeOverflow)).toBe(true)
     }),
   )
 

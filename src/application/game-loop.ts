@@ -75,7 +75,7 @@
  * applies to the delta clamp one level down, which discards simulated time by
  * design and now says how much: `secondsLostToClamp`.
  */
-import { Cause, Context, Effect, Fiber, Layer, Option, Queue, Ref, Result } from 'effect'
+import { Brand, Cause, Context, Effect, Fiber, Layer, Option, Queue, Ref, Result } from 'effect'
 import {
   DeltaTimeSecs,
   InterpolationFraction,
@@ -115,7 +115,7 @@ export type GameLoopApi = {
    * Install a handler and start the loop. Safe to call while already running:
    * the previous loop is torn down first and the frame clock restarts.
    */
-  readonly start: (handler: FrameHandler) => Effect.Effect<void>
+  readonly start: (handler: FrameHandler) => Effect.Effect<void, Brand.BrandError>
   readonly pause: Effect.Effect<void>
   readonly resume: Effect.Effect<void>
   /** Offer a frame instant. A no-op when the loop is stopped. */
@@ -290,8 +290,11 @@ export const makeGameLoop = (initialTick: SimulationTick = SimulationTick(0)): E
       })
     })
 
-    const start = (handler: FrameHandler): Effect.Effect<void> =>
-      Effect.gen(function* () {
+    const start = (handler: FrameHandler): Effect.Effect<void, Brand.BrandError> => {
+      const validInitialTick = SimulationTick.result(initialTick)
+      if (Result.isFailure(validInitialTick)) return Effect.fail(validInitialTick.failure)
+
+      return Effect.gen(function* () {
         // Re-entrant. Not "fail if already running" — see the module header.
         yield* stop
 
@@ -310,7 +313,7 @@ export const makeGameLoop = (initialTick: SimulationTick = SimulationTick(0)): E
         const lostSecs = yield* Ref.make(0)
         const lastInstant = yield* Ref.make<MonotonicTimeSecs | undefined>(undefined)
         const fixedStep = yield* Ref.make(
-          initialFixedStepAccumulator(initialTick, tickDuration),
+          initialFixedStepAccumulator(validInitialTick.success, tickDuration),
         )
 
         const processOneFrame = Queue.take(queue).pipe(
@@ -371,6 +374,7 @@ export const makeGameLoop = (initialTick: SimulationTick = SimulationTick(0)): E
         const fiber = yield* Effect.forkDetach(processOneFrame)
         yield* Ref.set(fiberRef, Option.some(fiber))
       })
+    }
 
     const withGeneration = <A>(
       whenStopped: Effect.Effect<A>,
