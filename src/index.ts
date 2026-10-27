@@ -13,6 +13,7 @@ export * from './domain/block-targeting.js'
 export * from './domain/block-interaction.js'
 export * from './domain/brewing.js'
 export * from './domain/brewing-data.js'
+export * from './domain/cooking.js'
 export * from './domain/enchantment.js'
 export * from './domain/enchantment-data.js'
 export * from './domain/enchantment-table.js'
@@ -24,6 +25,8 @@ export * from './domain/crop.js'
 export * from './domain/entity.js'
 export * from './domain/equipment.js'
 export * from './domain/explosion.js'
+export * from './domain/fishing.js'
+export * from './domain/grindstone.js'
 export * from './domain/primed-tnt.js'
 export * from './domain/projectile.js'
 export * from './domain/player-storage.js'
@@ -44,8 +47,11 @@ export * from './domain/recipe.js'
 export * from './domain/recipe-data.js'
 export * from './domain/smelting.js'
 export * from './domain/smelting-data.js'
+export * from './domain/smithing.js'
 export * from './domain/statistics.js'
+export * from './domain/stonecutting.js'
 export * from './domain/time-of-day.js'
+export * from './domain/transmute.js'
 export * from './domain/vitals.js'
 export * from './domain/vehicle.js'
 export * from './domain/weather.js'
@@ -61,8 +67,12 @@ export * from './application/intent-queue.js'
 export * from './application/domain-event-bus.js'
 export * from './application/replicated-state.js'
 export * from './application/world-commit-coordinator.js'
+export * from './application/container-service.js'
+export * from './application/brewing-service.js'
 export * from './application/entity-manager.js'
 export * from './application/equipment-service.js'
+export * from './application/fishing-service.js'
+export * from './application/furnace-service.js'
 export * from './application/game-loop.js'
 export * from './application/inventory-service.js'
 export * from './application/hotbar-service.js'
@@ -70,6 +80,8 @@ export * from './application/player-service.js'
 export * from './application/settings-service.js'
 export * from './application/statistics-service.js'
 export * from './application/time-service.js'
+export * from './application/projectile-service.js'
+export * from './application/tnt-service.js'
 export * from './application/vitals-service.js'
 export * from './application/vehicle-service.js'
 export * from './application/weather-service.js'
@@ -99,6 +111,7 @@ export {
   ANVIL_TOO_EXPENSIVE_LEVEL,
   AnvilCustomName,
   AnvilEnchantmentId,
+  AnvilMaterialCost,
   AnvilSnapshotString,
   applyAnvil,
   decodeAnvilSnapshot,
@@ -120,6 +133,7 @@ export type {
   AnvilInputStack,
   AnvilItemPayload,
   AnvilPlan,
+  AnvilPrimitiveFailure,
   AnvilRepairMaterialRule,
   AnvilRejectionReason,
   AnvilRuleSet,
