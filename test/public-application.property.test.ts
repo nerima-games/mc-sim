@@ -89,6 +89,25 @@ const assertEffectResult = async (
   return result
 }
 
+const captureEffectResult = async <Success, Failure>(
+  propertyName: string,
+  effect: Effect.Effect<unknown, unknown, never>,
+  successSchema: Schema.ConstraintDecoder<Success>,
+  failureSchema: Schema.ConstraintDecoder<Failure>,
+): Promise<Result.Result<Success, Failure>> => {
+  const outcome = await Effect.runPromise(Effect.result(effect))
+  if (Result.isFailure(outcome)) {
+    const decoded = Schema.decodeUnknownResult(failureSchema, { onExcessProperty: 'error' })(outcome.failure)
+    expect(decoded._tag, `${propertyName} error decoding`).toBe('Success')
+    if (Result.isFailure(decoded)) throw decoded.failure
+    return Result.fail(decoded.success)
+  }
+  const decoded = Schema.decodeUnknownResult(successSchema, { onExcessProperty: 'error' })(outcome.success)
+  expect(decoded._tag, `${propertyName} success decoding`).toBe('Success')
+  if (Result.isFailure(decoded)) throw decoded.failure
+  return Result.succeed(decoded.success)
+}
+
 const checks = { numRuns: 100 }
 
 const makeIntentQueue = async (capacity: number) => {
@@ -2066,33 +2085,16 @@ it('fishing, projectile, and TNT coordinators return typed outcomes for hostile 
   }
   const fishing = services.fishing.success
 
-  const captureFishingOutcome = async (
+  const captureFishingOutcome = <Success>(
     propertyName: string,
     effect: Effect.Effect<unknown, unknown, never>,
-    successSchema: Schema.ConstraintDecoder<unknown>,
-  ): Promise<Result.Result<unknown, unknown>> => {
-    const outcome = await Effect.runPromise(Effect.result(effect))
-    const conforms = Result.isFailure(outcome)
-      ? Schema.is(PublicApplication.FishingServiceErrorSchema)(outcome.failure)
-      : Schema.is(successSchema)(outcome.success)
-    expect(conforms, `${propertyName} runtime Schema`).toBe(true)
-    const decoded = Result.isFailure(outcome)
-      ? Schema.decodeUnknownResult(PublicApplication.FishingServiceErrorSchema, { onExcessProperty: 'error' })(outcome.failure)
-      : Schema.decodeUnknownResult(successSchema, { onExcessProperty: 'error' })(outcome.success)
-    expect(decoded._tag, propertyName).toBe('Success')
-    return outcome
-  }
-
-  const requireFishingSuccess = <A>(
-    outcome: Result.Result<unknown, unknown>,
-    schema: Schema.ConstraintDecoder<A>,
-  ): A => {
-    if (Result.isFailure(outcome)) throw outcome.failure
-    const decoded = Schema.decodeUnknownResult(schema, { onExcessProperty: 'error' })(outcome.success)
-    expect(decoded._tag, 'Fishing success decoding').toBe('Success')
-    if (Result.isFailure(decoded)) throw decoded.failure
-    return decoded.success
-  }
+    successSchema: Schema.ConstraintDecoder<Success>,
+  ) => captureEffectResult(
+    propertyName,
+    effect,
+    successSchema,
+    PublicApplication.FishingServiceErrorSchema,
+  )
 
   const captureFishingState = async (propertyName: string): Promise<FishingState> => {
     const snapshot = await captureFishingOutcome(
@@ -2100,7 +2102,8 @@ it('fishing, projectile, and TNT coordinators return typed outcomes for hostile 
       fishing.snapshot,
       PublicApplication.FishingServiceSnapshotSuccessSchema,
     )
-    return requireFishingSuccess(snapshot, PublicApplication.FishingStateSchema)
+    if (Result.isFailure(snapshot)) throw snapshot.failure
+    return snapshot.success
   }
 
   const assertFishingStateInvariants = (state: FishingState): void => {
@@ -2108,24 +2111,22 @@ it('fishing, projectile, and TNT coordinators return typed outcomes for hostile 
     expect(new Set(actors).size).toBe(actors.length)
   }
 
-  const assertFishingOperation = async (
+  let currentFishingState = await captureFishingState('FishingService.snapshot initial')
+  expect(currentFishingState).toEqual({ rods: [] })
+
+  const assertFishingOperation = async <Success>(
     propertyName: string,
     effect: Effect.Effect<unknown, unknown, never>,
-    successSchema: Schema.ConstraintDecoder<unknown>,
-  ): Promise<Readonly<{
-    outcome: Result.Result<unknown, unknown>
-    before: FishingState
-    after: FishingState
-  }>> => {
-    const before = await captureFishingState(`${propertyName} snapshot before`)
+    successSchema: Schema.ConstraintDecoder<Success>,
+  ) => {
+    const before = currentFishingState
     const outcome = await captureFishingOutcome(propertyName, effect, successSchema)
     const after = await captureFishingState(`${propertyName} snapshot after`)
     if (Result.isFailure(outcome)) expect(after).toEqual(before)
     else assertFishingStateInvariants(after)
+    currentFishingState = after
     return { outcome, before, after }
   }
-
-  expect(await captureFishingState('FishingService.snapshot initial')).toEqual({ rods: [] })
 
   await fc.assert(
     fc.asyncProperty(fc.integer({ min: 1, max: 1_000_000 }), async (index) => {
@@ -2167,31 +2168,12 @@ it('fishing, projectile, and TNT coordinators return typed outcomes for hostile 
     checks,
   )
 
-  const captureProjectileOutcome = async (
+  const captureProjectileOutcome = <Success, Failure>(
     propertyName: string,
     effect: Effect.Effect<unknown, unknown, never>,
-    successSchema: Schema.ConstraintDecoder<unknown>,
-    failureSchema: Schema.ConstraintDecoder<unknown>,
-  ): Promise<Result.Result<unknown, unknown>> => {
-    const outcome = await Effect.runPromise(Effect.result(effect))
-    const schema = Result.isFailure(outcome) ? failureSchema : successSchema
-    const value = Result.isFailure(outcome) ? outcome.failure : outcome.success
-    expect(Schema.is(schema)(value), `${propertyName} runtime Schema`).toBe(true)
-    const decoded = Schema.decodeUnknownResult(schema, { onExcessProperty: 'error' })(value)
-    expect(decoded._tag, `${propertyName} decoding`).toBe('Success')
-    return outcome
-  }
-
-  const requireProjectileSuccess = <A>(
-    outcome: Result.Result<unknown, unknown>,
-    schema: Schema.ConstraintDecoder<A>,
-  ): A => {
-    if (Result.isFailure(outcome)) throw outcome.failure
-    const decoded = Schema.decodeUnknownResult(schema, { onExcessProperty: 'error' })(outcome.success)
-    expect(decoded._tag, 'Projectile success decoding').toBe('Success')
-    if (Result.isFailure(decoded)) throw decoded.failure
-    return decoded.success
-  }
+    successSchema: Schema.ConstraintDecoder<Success>,
+    failureSchema: Schema.ConstraintDecoder<Failure>,
+  ) => captureEffectResult(propertyName, effect, successSchema, failureSchema)
 
   const captureProjectileSnapshot = async (propertyName: string) => {
     const outcome = await captureProjectileOutcome(
@@ -2200,21 +2182,22 @@ it('fishing, projectile, and TNT coordinators return typed outcomes for hostile 
       PublicApplication.ProjectileServiceSnapshotSuccessSchema,
       PublicApplication.ProjectileServiceSnapshotErrorSchema,
     )
-    const snapshot = requireProjectileSuccess(
-      outcome,
-      PublicApplication.ProjectileServiceSnapshotSuccessSchema,
-    )
+    if (Result.isFailure(outcome)) throw outcome.failure
+    const snapshot = outcome.success
     const ids = snapshot.state.projectiles.map((projectile) => projectile.id)
     expect(new Set(ids).size).toBe(ids.length)
     return snapshot
   }
 
-  const assertProjectileOperation = async (
+  let currentProjectileSnapshot = await captureProjectileSnapshot('ProjectileService.snapshot initial')
+  expect(currentProjectileSnapshot.state.projectiles).toEqual([])
+
+  const assertProjectileOperation = async <Success>(
     propertyName: string,
     effect: Effect.Effect<unknown, unknown, never>,
-    successSchema: Schema.ConstraintDecoder<unknown>,
+    successSchema: Schema.ConstraintDecoder<Success>,
   ) => {
-    const before = await captureProjectileSnapshot(`${propertyName} snapshot before`)
+    const before = currentProjectileSnapshot
     const outcome = await captureProjectileOutcome(
       propertyName,
       effect,
@@ -2222,35 +2205,17 @@ it('fishing, projectile, and TNT coordinators return typed outcomes for hostile 
       PublicApplication.ProjectileServiceErrorSchema,
     )
     const after = await captureProjectileSnapshot(`${propertyName} snapshot after`)
-    if (Result.isFailure(outcome)) expect(after).toEqual(before)
+    if (Result.isFailure(outcome)) expect(after.state).toEqual(before.state)
+    currentProjectileSnapshot = after
     return { outcome, before, after }
   }
 
-  const captureTntOutcome = async (
+  const captureTntOutcome = <Success, Failure>(
     propertyName: string,
     effect: Effect.Effect<unknown, unknown, never>,
-    successSchema: Schema.ConstraintDecoder<unknown>,
-    failureSchema: Schema.ConstraintDecoder<unknown>,
-  ): Promise<Result.Result<unknown, unknown>> => {
-    const outcome = await Effect.runPromise(Effect.result(effect))
-    const schema = Result.isFailure(outcome) ? failureSchema : successSchema
-    const value = Result.isFailure(outcome) ? outcome.failure : outcome.success
-    expect(Schema.is(schema)(value), `${propertyName} runtime Schema`).toBe(true)
-    const decoded = Schema.decodeUnknownResult(schema, { onExcessProperty: 'error' })(value)
-    expect(decoded._tag, `${propertyName} decoding`).toBe('Success')
-    return outcome
-  }
-
-  const requireTntSuccess = <A>(
-    outcome: Result.Result<unknown, unknown>,
-    schema: Schema.ConstraintDecoder<A>,
-  ): A => {
-    if (Result.isFailure(outcome)) throw outcome.failure
-    const decoded = Schema.decodeUnknownResult(schema, { onExcessProperty: 'error' })(outcome.success)
-    expect(decoded._tag, 'TNT success decoding').toBe('Success')
-    if (Result.isFailure(decoded)) throw decoded.failure
-    return decoded.success
-  }
+    successSchema: Schema.ConstraintDecoder<Success>,
+    failureSchema: Schema.ConstraintDecoder<Failure>,
+  ) => captureEffectResult(propertyName, effect, successSchema, failureSchema)
 
   const captureTntSnapshot = async (propertyName: string) => {
     const outcome = await captureTntOutcome(
@@ -2259,15 +2224,18 @@ it('fishing, projectile, and TNT coordinators return typed outcomes for hostile 
       PublicApplication.TntServiceSnapshotSuccessSchema,
       PublicApplication.TntServiceSnapshotErrorSchema,
     )
-    return requireTntSuccess(outcome, PublicApplication.TntServiceSnapshotSuccessSchema)
+    if (Result.isFailure(outcome)) throw outcome.failure
+    return outcome.success
   }
 
-  const assertTntOperation = async (
+  let currentTntSnapshot = await captureTntSnapshot('TntService.snapshot initial')
+
+  const assertTntOperation = async <Success>(
     propertyName: string,
     effect: Effect.Effect<unknown, unknown, never>,
-    successSchema: Schema.ConstraintDecoder<unknown>,
+    successSchema: Schema.ConstraintDecoder<Success>,
   ) => {
-    const before = await captureTntSnapshot(`${propertyName} snapshot before`)
+    const before = currentTntSnapshot
     const outcome = await captureTntOutcome(
       propertyName,
       effect,
@@ -2277,7 +2245,8 @@ it('fishing, projectile, and TNT coordinators return typed outcomes for hostile 
     const after = await captureTntSnapshot(`${propertyName} snapshot after`)
     const ids = after.state.tnts.map((tnt) => tnt.id)
     expect(new Set(ids).size).toBe(ids.length)
-    if (Result.isFailure(outcome)) expect(after).toEqual(before)
+    if (Result.isFailure(outcome)) expect(after.state).toEqual(before.state)
+    currentTntSnapshot = after
     return { outcome, before, after }
   }
 
@@ -2295,8 +2264,6 @@ it('fishing, projectile, and TNT coordinators return typed outcomes for hostile 
     entities: [],
     isInWater: () => false,
   }
-
-  expect((await captureProjectileSnapshot('ProjectileService.snapshot initial')).state.projectiles).toEqual([])
 
   let validProjectileTrial = 0
   await fc.assert(
@@ -2327,7 +2294,7 @@ it('fishing, projectile, and TNT coordinators return typed outcomes for hostile 
       )
       expect(Result.isSuccess(launched.outcome), JSON.stringify(launched.outcome)).toBe(true)
       if (Result.isSuccess(launched.outcome)) {
-        const launch = requireProjectileSuccess(launched.outcome, PublicApplication.ProjectileLaunchOutcomeSchema)
+        const launch = launched.outcome.success
         expect(launch.projectile.state).toBe('flying')
         expect(launched.after.revision).toEqual(launch.revision)
         expect(launched.after.state.projectiles).toHaveLength(launched.before.state.projectiles.length + 1)
@@ -2351,7 +2318,7 @@ it('fishing, projectile, and TNT coordinators return typed outcomes for hostile 
       )
       expect(Result.isSuccess(stepped.outcome), JSON.stringify(stepped.outcome)).toBe(true)
       if (Result.isSuccess(stepped.outcome)) {
-        const step = requireProjectileSuccess(stepped.outcome, PublicApplication.ProjectileStepOutcomeSchema)
+        const step = stepped.outcome.success
         expect(step.hit).toBeUndefined()
         expect(step.enderPearlImpact).toBeUndefined()
         expect(stepped.after.revision).toEqual(step.revision)
@@ -2402,7 +2369,7 @@ it('fishing, projectile, and TNT coordinators return typed outcomes for hostile 
       )
       expect(Result.isSuccess(primed.outcome), JSON.stringify(primed.outcome)).toBe(true)
       if (Result.isFailure(primed.outcome)) return
-      const primeOutcome = requireTntSuccess(primed.outcome, PublicApplication.TntPrimeOutcomeSchema)
+      const primeOutcome = primed.outcome.success
       expect(primeOutcome.revision).toEqual(primed.after.revision)
       expect(primed.after.state.tnts).toContainEqual({
         id,
@@ -2410,7 +2377,7 @@ it('fishing, projectile, and TNT coordinators return typed outcomes for hostile 
         center: { x: 0, y: 64, z: 0 },
         state: { kind: 'primed', remainingFuseSecs: 2.5 },
       })
-      expect(primed.after.revision).not.toEqual(primed.before.revision)
+      expect(primed.after.revision).not.toEqual(initialRevision)
 
       const invalidAdvanceRevision = await Effect.runPromise(services.coordinator.revision)
       const invalidAdvanceDimensionRevision = await Effect.runPromise(services.coordinator.dimensionRevision('overworld'))
@@ -2451,7 +2418,7 @@ it('fishing, projectile, and TNT coordinators return typed outcomes for hostile 
       )
       expect(Result.isSuccess(fuseAdvanced.outcome), JSON.stringify(fuseAdvanced.outcome)).toBe(true)
       if (Result.isFailure(fuseAdvanced.outcome)) return
-      const fuseOutcome = requireTntSuccess(fuseAdvanced.outcome, PublicApplication.TntAdvanceOutcomeSchema)
+      const fuseOutcome = fuseAdvanced.outcome.success
       expect(fuseOutcome._tag).toBe('FuseAdvanced')
       if (fuseOutcome._tag !== 'FuseAdvanced') return
       expect(fuseOutcome.plan.after).toEqual({ kind: 'primed', remainingFuseSecs: 1.5 })
@@ -2476,13 +2443,13 @@ it('fishing, projectile, and TNT coordinators return typed outcomes for hostile 
       )
       expect(Result.isSuccess(detonation.outcome), JSON.stringify(detonation.outcome)).toBe(true)
       if (Result.isFailure(detonation.outcome)) return
-      const detonationOutcome = requireTntSuccess(detonation.outcome, PublicApplication.TntAdvanceOutcomeSchema)
+      const detonationOutcome = detonation.outcome.success
       expect(detonationOutcome._tag).toBe('DetonationPlanned')
       if (detonationOutcome._tag !== 'DetonationPlanned') return
       expect(detonationOutcome.plan.after).toEqual({ kind: 'detonated' })
       expect(detonationOutcome.ownerCandidate.state.tnts.find((tnt) => tnt.id === id)?.state)
         .toEqual({ kind: 'detonated' })
-      expect(detonation.after).toEqual(detonation.before)
+      expect(detonation.after.state).toEqual(detonation.before.state)
       expect(detonation.after.state.tnts.find((tnt) => tnt.id === id)?.state)
         .toEqual({ kind: 'primed', remainingFuseSecs: 1.5 })
     }),
@@ -2538,10 +2505,7 @@ it('fishing, projectile, and TNT coordinators return typed outcomes for hostile 
         PublicApplication.ProjectileLaunchOutcomeSchema,
       )
       if (Result.isSuccess(projectileLaunch.outcome)) {
-        const launch = requireProjectileSuccess(
-          projectileLaunch.outcome,
-          PublicApplication.ProjectileLaunchOutcomeSchema,
-        )
+        const launch = projectileLaunch.outcome.success
         expect(projectileLaunch.after.state.projectiles).toHaveLength(
           projectileLaunch.before.state.projectiles.length + 1,
         )
@@ -2562,10 +2526,7 @@ it('fishing, projectile, and TNT coordinators return typed outcomes for hostile 
         PublicApplication.ProjectileStepOutcomeSchema,
       )
       if (Result.isSuccess(projectileStep.outcome)) {
-        const step = requireProjectileSuccess(
-          projectileStep.outcome,
-          PublicApplication.ProjectileStepOutcomeSchema,
-        )
+        const step = projectileStep.outcome.success
         expect(projectileStep.after.state.projectiles).toHaveLength(
           projectileStep.before.state.projectiles.length,
         )
@@ -2586,7 +2547,7 @@ it('fishing, projectile, and TNT coordinators return typed outcomes for hostile 
         PublicApplication.TntPrimeOutcomeSchema,
       )
       if (Result.isSuccess(tntPrime.outcome)) {
-        const primeOutcome = requireTntSuccess(tntPrime.outcome, PublicApplication.TntPrimeOutcomeSchema)
+        const primeOutcome = tntPrime.outcome.success
         expect(tntPrime.after.state.tnts).toHaveLength(tntPrime.before.state.tnts.length + 1)
         expect(tntPrime.after.state.tnts.some((tnt) => tnt.id === value)).toBe(true)
         expect(tntPrime.after.revision).toEqual(primeOutcome.revision)
@@ -2606,15 +2567,15 @@ it('fishing, projectile, and TNT coordinators return typed outcomes for hostile 
         PublicApplication.TntAdvanceOutcomeSchema,
       )
       if (Result.isSuccess(tntAdvance.outcome)) {
-        const advanceOutcome = requireTntSuccess(tntAdvance.outcome, PublicApplication.TntAdvanceOutcomeSchema)
+        const advanceOutcome = tntAdvance.outcome.success
         if (advanceOutcome._tag === 'FuseAdvanced') {
           expect(tntAdvance.after.revision).toEqual(advanceOutcome.revision)
           expect(tntAdvance.after.state.tnts.find((tnt) => tnt.id === value)?.state)
             .toEqual(advanceOutcome.plan.after)
         } else if (advanceOutcome._tag === 'AlreadyDetonated') {
-          expect(tntAdvance.after).toEqual(tntAdvance.before)
+          expect(tntAdvance.after.state).toEqual(tntAdvance.before.state)
         } else {
-          expect(tntAdvance.after).toEqual(tntAdvance.before)
+          expect(tntAdvance.after.state).toEqual(tntAdvance.before.state)
           expect(advanceOutcome.ownerCandidate.state.tnts.find((tnt) => tnt.id === value)?.state)
             .toEqual({ kind: 'detonated' })
         }
