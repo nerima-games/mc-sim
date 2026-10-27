@@ -39,7 +39,12 @@ export {
   resumeFixedStep,
   DEFAULT_TICK_DURATION,
 } from './domain/fixed-step.js'
-export type { FixedStepAccumulator, FixedStepAdvance } from './domain/fixed-step.js'
+export {
+  FixedStepAccumulatorSchema,
+  FixedStepAdvanceSchema,
+  FixedStepFailureSchema,
+} from './domain/fixed-step.js'
+export type { FixedStepAccumulator, FixedStepAdvance, FixedStepFailure } from './domain/fixed-step.js'
 export * from './domain/inventory.js'
 export * from './domain/hotbar.js'
 export * from './domain/placement-consumption.js'

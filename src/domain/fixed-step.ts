@@ -1,4 +1,4 @@
-import { Brand, Result } from 'effect'
+import { Brand, Result, Schema } from 'effect'
 import {
   addTick,
   DeltaTimeSecs,
@@ -6,6 +6,7 @@ import {
   InterpolationFraction,
   NonNegativeTickCount,
   SimulationTick,
+  SimulationTickSchema,
   tickDuration,
   type DeltaTimeSecs as DeltaTimeSecsValue,
   type FixedDurationSecs as FixedDurationSecsValue,
@@ -46,6 +47,48 @@ export type InvalidFixedStepConfiguration = {
 }
 
 export type FixedStepFailure = Brand.BrandError | TimeOverflow | InvalidFixedStepConfiguration
+
+const FixedDurationSecsSchema = Schema.Finite.check(
+  Schema.makeFilter((value) => FixedDurationSecs.is(value)),
+).pipe(Schema.brand('FixedDurationSecs'))
+
+const NonNegativeTickCountSchema = Schema.Int.check(
+  Schema.makeFilter((value) => Number.isSafeInteger(value) && NonNegativeTickCount.is(value)),
+).pipe(Schema.brand('NonNegativeTickCount'))
+
+const InterpolationFractionSchema = Schema.Finite.check(
+  Schema.makeFilter((value) => InterpolationFraction.is(value)),
+).pipe(Schema.brand('InterpolationFraction'))
+
+export const FixedStepAccumulatorSchema: Schema.Codec<FixedStepAccumulator, unknown> = Schema.Struct({
+  accumulator: FixedDurationSecsSchema,
+  tick: SimulationTickSchema,
+  tickDuration: FixedDurationSecsSchema,
+  maxCatchUpTicks: NonNegativeTickCountSchema,
+  paused: Schema.Boolean,
+})
+
+export const FixedStepAdvanceSchema: Schema.Codec<FixedStepAdvance, unknown> = Schema.Struct({
+  state: FixedStepAccumulatorSchema,
+  ticks: NonNegativeTickCountSchema,
+  interpolationFraction: InterpolationFractionSchema,
+  overloaded: Schema.Boolean,
+})
+
+const InvalidFixedStepConfigurationSchema: Schema.Codec<InvalidFixedStepConfiguration, unknown> =
+  Schema.TaggedStruct('InvalidFixedStepConfiguration', {
+    field: Schema.Literals(['catchUpWindow', 'paused']),
+  })
+
+const TimeOverflowSchema: Schema.Codec<TimeOverflow, unknown> = Schema.TaggedStruct('TimeOverflow', {})
+
+const BrandErrorSchema: Schema.Codec<Brand.BrandError, unknown> = Schema.instanceOf(Brand.BrandError)
+
+export const FixedStepFailureSchema: Schema.Codec<FixedStepFailure, unknown> = Schema.Union([
+  BrandErrorSchema,
+  TimeOverflowSchema,
+  InvalidFixedStepConfigurationSchema,
+])
 
 const invalidConfiguration = (
   field: InvalidFixedStepConfiguration['field'],
