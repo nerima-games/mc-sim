@@ -1,10 +1,11 @@
 import {
+  AIR_BLOCK_ID,
   DIMENSIONS,
   DimensionRevisionSchema,
   EntityIdSchema,
   PositionAxis,
-  type Position,
   WorldRevisionSchema,
+  WorldWriteBatchSchema,
   type Dimension,
   type DimensionRevision,
   type EntityId,
@@ -13,24 +14,26 @@ import {
 } from '@nerima-games/mc-kernel'
 import { Context, Effect, Layer, Result, Schema } from 'effect'
 import type { YieldableError } from 'effect/Cause'
+import { SchemaErrorSchema } from '../schema-errors.js'
+import {
+  ExplosionPlanSchema,
+} from '../domain/explosion.js'
 import type {
   ExplosionBlockReader,
   ExplosionEntity,
   ExplosionLimits,
   ExplosionPlan,
 } from '../domain/explosion.js'
-import { MAX_EXPLOSION_RADIUS } from '../domain/explosion.js'
 import {
   DEFAULT_TNT_FUSE_SECS,
   planPrimedTnt,
   primeTnt,
-  type PrimedTntPlan,
   type PrimedTntState,
+  type PrimedTntPlan,
 } from '../domain/primed-tnt.js'
 import {
   makeReplicatedOwnerId,
   ReplicatedOwnerIdSchema,
-  replicatedSnapshotSchema,
   type ReplicatedOwnerId,
   type ReplicatedSnapshot,
 } from './replicated-state.js'
@@ -39,11 +42,18 @@ import {
   WorldRevisionConflict,
   WorldCommitCoordinator,
   WorldCommitCoordinatorErrorSchema,
+  type ReplicatedOwnerCandidate,
   type ReplicatedOwnerRegistration,
   type WorldCommitCoordinatorApi,
   type WorldCommitCoordinatorError,
 } from './world-commit-coordinator.js'
-import { SchemaErrorSchema } from '../schema-errors.js'
+
+const SafeWorldRevisionSchema: Schema.Codec<WorldRevision, number> = WorldRevisionSchema.check(
+  Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER),
+)
+const SafeDimensionRevisionSchema: Schema.Codec<DimensionRevision, number> = DimensionRevisionSchema.check(
+  Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER),
+)
 
 const CenterSchema: Schema.Struct<{
   x: typeof Schema.Finite
@@ -92,35 +102,24 @@ export const TntServiceSnapshotSchema: Schema.Codec<
   tnts: Schema.Array(PrimedTntRecordSchema),
 })
 
-export const TntServiceSnapshotSuccessSchema: Schema.Codec<
-  ReplicatedSnapshot<typeof TntServiceSnapshotSchema>,
-  unknown
-> = replicatedSnapshotSchema(TntServiceSnapshotSchema)
-
-export type TntServiceSnapshotError = Schema.SchemaError | WorldCommitCoordinatorError
-export const TntServiceSnapshotErrorSchema: Schema.Codec<TntServiceSnapshotError, unknown> = Schema.Union([
-  SchemaErrorSchema,
-  WorldCommitCoordinatorErrorSchema,
-])
-
 export const TNT_REPLICATED_OWNER_ID: ReplicatedOwnerId = makeReplicatedOwnerId('tnt')
 
 export const INITIAL_TNT_SERVICE_SNAPSHOT: TntServiceSnapshot = { tnts: [] }
 
-type TntServiceFailureReason = 'tnt-already-primed' | 'unknown-tnt' | 'invalid-input'
-
-type TntServiceFailureFields = Readonly<{ reason: TntServiceFailureReason }>
-
-const TntServiceFailureBase: new (
-  args: TntServiceFailureFields,
-) => YieldableError & { readonly _tag: 'TntServiceFailure' } & TntServiceFailureFields =
-  Schema.TaggedError<TntServiceFailure>()('TntServiceFailure', {
-    reason: Schema.Literals(['tnt-already-primed', 'unknown-tnt', 'invalid-input']),
-  })
-
+type TntServiceFailureFields = Readonly<{ reason: 'tnt-already-primed' | 'unknown-tnt' | 'invalid-input' }>
+const TntServiceFailureReasonSchema: Schema.Codec<TntServiceFailureFields['reason'], string> =
+  Schema.Literals(['tnt-already-primed', 'unknown-tnt', 'invalid-input'])
+const TntServiceFailureFieldsSchema: Readonly<{ reason: typeof TntServiceFailureReasonSchema }> = {
+  reason: TntServiceFailureReasonSchema,
+}
+type TntServiceFailureShape = YieldableError &
+  Readonly<{ _tag: 'TntServiceFailure' }> & TntServiceFailureFields
+const TntServiceFailureBase: Schema.Class<
+  TntServiceFailureShape,
+  Schema.TaggedStruct<'TntServiceFailure', typeof TntServiceFailureFieldsSchema>,
+  YieldableError
+> = Schema.TaggedError<TntServiceFailureShape>()('TntServiceFailure', TntServiceFailureFieldsSchema)
 export class TntServiceFailure extends TntServiceFailureBase {}
-
-export const TntServiceFailureSchema: Schema.Codec<TntServiceFailure, unknown> = Schema.instanceOf(TntServiceFailure)
 
 export type TntPrimeRequest = Readonly<{
   id: EntityId
@@ -134,7 +133,7 @@ export type TntPrimeRequest = Readonly<{
 export type TntPrimeOutcome = Readonly<{ revision: WorldRevision }>
 
 export const TntPrimeOutcomeSchema: Schema.Codec<TntPrimeOutcome, unknown> = Schema.Struct({
-  revision: WorldRevisionSchema,
+  revision: SafeWorldRevisionSchema,
 })
 
 export type TntAdvanceRequest = Readonly<{
@@ -149,99 +148,82 @@ export type TntAdvanceRequest = Readonly<{
   limits?: Partial<ExplosionLimits>
 }>
 
-export type TntAdvanceOutcome =
-  | Readonly<{ _tag: 'FuseAdvanced'; plan: PrimedTntPlan; revision: WorldRevision }>
-  | Readonly<{ _tag: 'AlreadyDetonated' }>
-  | Readonly<{
-      _tag: 'DetonationPlanned'
-      plan: PrimedTntPlan
-      explosion: ExplosionPlan
-      expectedRevision: WorldRevision
-      expectedDimensionRevision: DimensionRevision
-      ownerCandidate: TntOwnerCandidate
-    }>
-
-export type TntOwnerCandidate = Readonly<{
-  ownerId: ReplicatedOwnerId
-  state: TntServiceSnapshot
-}>
-
-const TntPositionAxisSchema = Schema.Finite.pipe(Schema.brand('PositionAxis'))
-const TntPositionSchema: Schema.Codec<Position, unknown> = Schema.Struct({
-  x: TntPositionAxisSchema,
-  y: TntPositionAxisSchema,
-  z: TntPositionAxisSchema,
-})
-const TntNonNegativeFiniteSchema = Schema.Finite.check(Schema.makeFilter((value) => value >= 0))
-const TntSafeIntegerSchema = Schema.Int.check(Schema.makeFilter((value) => Number.isSafeInteger(value)))
-const TntNonNegativeSafeIntegerSchema = Schema.Int.check(
-  Schema.makeFilter((value) => Number.isSafeInteger(value) && value >= 0),
+const TntExplosionPlanSchema: Schema.Codec<ExplosionPlan, unknown> = Schema.declare(
+  Schema.is(ExplosionPlanSchema),
 )
-const TntExplosionPlanSchema: Schema.Codec<ExplosionPlan, unknown> = Schema.Struct({
-  center: TntPositionSchema,
-  radius: Schema.Finite.check(Schema.makeFilter((value) => value >= 0 && value <= MAX_EXPLOSION_RADIUS)),
-  seed: Schema.Finite.check(Schema.makeFilter((value) => Math.abs(value) <= Number.MAX_SAFE_INTEGER)),
-  destroyedBlocks: Schema.Array(Schema.Struct({
-    x: TntSafeIntegerSchema,
-    y: TntSafeIntegerSchema,
-    z: TntSafeIntegerSchema,
-  })),
-  entityEffects: Schema.Array(Schema.Struct({
-    id: EntityIdSchema,
-    damage: TntNonNegativeFiniteSchema,
-    knockback: TntPositionSchema,
-    exposure: Schema.Finite.check(Schema.makeFilter((value) => value >= 0 && value <= 1)),
-  })),
-  visitedBlocks: TntNonNegativeSafeIntegerSchema,
-  limits: Schema.Struct({
-    maxVisitedBlocks: TntNonNegativeSafeIntegerSchema,
-    maxRaySteps: TntNonNegativeSafeIntegerSchema,
-    maxAffectedEntities: TntNonNegativeSafeIntegerSchema,
-  }),
-  truncated: Schema.Boolean,
-})
 
 const PrimedTntPlanSchema: Schema.Codec<PrimedTntPlan, unknown> = Schema.Struct({
   before: PrimedTntStateSchema,
   after: PrimedTntStateSchema,
   advancedSecs: Schema.Finite,
   deferredSecs: Schema.Finite,
-  explosion: Schema.Union([TntExplosionPlanSchema, Schema.Undefined]),
+  explosion: Schema.Union([Schema.Undefined, TntExplosionPlanSchema]),
 })
-
-const TntOwnerCandidateSchema: Schema.Codec<TntOwnerCandidate, unknown> = Schema.Struct({
-  ownerId: ReplicatedOwnerIdSchema,
-  state: TntServiceSnapshotSchema,
-})
-
-export const TntAdvanceOutcomeSchema: Schema.Codec<TntAdvanceOutcome, unknown> = Schema.Union([
-  Schema.Struct({
-    _tag: Schema.Literal('FuseAdvanced'),
-    plan: PrimedTntPlanSchema,
-    revision: WorldRevisionSchema,
-  }),
-  Schema.Struct({
-    _tag: Schema.Literal('AlreadyDetonated'),
-  }),
-  Schema.Struct({
-    _tag: Schema.Literal('DetonationPlanned'),
-    plan: PrimedTntPlanSchema,
-    explosion: TntExplosionPlanSchema,
-    expectedRevision: WorldRevisionSchema,
-    expectedDimensionRevision: DimensionRevisionSchema,
-    ownerCandidate: TntOwnerCandidateSchema,
-  }),
-])
 
 export type TntServiceError =
   | Schema.SchemaError
-  | TntServiceFailure
+  | TntServiceFailureShape
   | WorldCommitCoordinatorError
 
 export const TntServiceErrorSchema: Schema.Codec<TntServiceError, unknown> = Schema.Union([
   SchemaErrorSchema,
-  TntServiceFailureSchema,
+  TntServiceFailureBase,
   WorldCommitCoordinatorErrorSchema,
+])
+
+export type TntDetonationCommitOutcome = Readonly<{ _tag: 'Committed'; revision: WorldRevision }>
+
+export const TntDetonationCommitOutcomeSchema: Schema.Codec<TntDetonationCommitOutcome, unknown> = Schema.Struct({
+  _tag: Schema.Literal('Committed'),
+  revision: SafeWorldRevisionSchema,
+})
+
+type TntDetonationPlanned = Readonly<{
+  _tag: 'DetonationPlanned'
+  plan: PrimedTntPlan
+  explosion: ExplosionPlan
+  dimension: Dimension
+  id: EntityId
+  expectedRevision: WorldRevision
+  expectedDimensionRevision: DimensionRevision
+  ownerCandidate: Readonly<{ ownerId: ReplicatedOwnerId; state: TntServiceSnapshot }>
+}>
+
+const TntOwnerCandidateSchema: Schema.Codec<TntDetonationPlanned['ownerCandidate'], unknown> = Schema.Struct({
+  ownerId: ReplicatedOwnerIdSchema,
+  state: TntServiceSnapshotSchema,
+})
+
+const TntDetonationPlannedSchema: Schema.Codec<TntDetonationPlanned, unknown> = Schema.Struct({
+  _tag: Schema.Literal('DetonationPlanned'),
+  plan: PrimedTntPlanSchema,
+  explosion: TntExplosionPlanSchema,
+  dimension: TntDimensionSchema,
+  id: EntityIdSchema,
+  expectedRevision: SafeWorldRevisionSchema,
+  expectedDimensionRevision: SafeDimensionRevisionSchema,
+  ownerCandidate: TntOwnerCandidateSchema,
+})
+
+export type TntAdvanceOutcome =
+  | Readonly<{ _tag: 'FuseAdvanced'; plan: PrimedTntPlan; revision: WorldRevision }>
+  | Readonly<{ _tag: 'AlreadyDetonated' }>
+  | TntDetonationPlanned
+
+const TntFuseAdvancedOutcomeSchema: Schema.Codec<Extract<TntAdvanceOutcome, { readonly _tag: 'FuseAdvanced' }>, unknown> = Schema.Struct({
+  _tag: Schema.Literal('FuseAdvanced'),
+  plan: PrimedTntPlanSchema,
+  revision: SafeWorldRevisionSchema,
+})
+
+const TntAlreadyDetonatedOutcomeSchema: Schema.Codec<Extract<TntAdvanceOutcome, { readonly _tag: 'AlreadyDetonated' }>, unknown> = Schema.Struct({
+  _tag: Schema.Literal('AlreadyDetonated'),
+})
+
+export const TntAdvanceOutcomeSchema: Schema.Codec<TntAdvanceOutcome, unknown> = Schema.Union([
+  TntFuseAdvancedOutcomeSchema,
+  TntAlreadyDetonatedOutcomeSchema,
+  TntDetonationPlannedSchema,
 ])
 
 export type TntServiceApi = Readonly<{
@@ -251,6 +233,10 @@ export type TntServiceApi = Readonly<{
   >
   prime: (request: TntPrimeRequest) => Effect.Effect<TntPrimeOutcome, TntServiceError>
   advance: (request: TntAdvanceRequest) => Effect.Effect<TntAdvanceOutcome, TntServiceError>
+  commitDetonation: (
+    planned: Extract<TntAdvanceOutcome, { readonly _tag: 'DetonationPlanned' }>,
+    affectedEntityChanges?: ReadonlyArray<ReplicatedOwnerCandidate>,
+  ) => Effect.Effect<TntDetonationCommitOutcome, TntServiceError>
 }>
 
 const TntServiceBase: Context.ServiceClass<
@@ -376,6 +362,8 @@ export const makeTntService = (
           _tag: 'DetonationPlanned',
           plan,
           explosion: plan.explosion,
+          dimension: tnt.dimension,
+          id: request.id,
           expectedRevision: request.expectedRevision,
           expectedDimensionRevision: request.expectedDimensionRevision,
           ownerCandidate: { ownerId, state: next },
@@ -398,10 +386,54 @@ export const makeTntService = (
       return { _tag: 'FuseAdvanced', plan, revision: committed.revision } as const
     })
 
+    const commitDetonation: TntServiceApi['commitDetonation'] = (planned, affectedEntityChanges = []) =>
+      Effect.flatMap(Schema.decodeUnknownEffect(TntDetonationPlannedSchema)(planned), (decoded) =>
+      Effect.gen(function* () {
+        if (
+          decoded.plan.after.kind !== 'detonated' ||
+          decoded.plan.explosion === undefined ||
+          decoded.ownerCandidate.ownerId !== ownerId ||
+          JSON.stringify(decoded.plan.explosion) !== JSON.stringify(decoded.explosion)
+        ) {
+          return yield* Effect.fail(new TntServiceFailure({ reason: 'invalid-input' }))
+        }
+        const candidate = yield* Schema.decodeUnknownEffect(TntServiceSnapshotSchema)(decoded.ownerCandidate.state)
+        const detonatedTnt = candidate.tnts.find(({ id }) => id === decoded.id)
+        if (
+          detonatedTnt === undefined ||
+          detonatedTnt.dimension !== decoded.dimension ||
+          detonatedTnt.state.kind !== 'detonated'
+        ) {
+          return yield* Effect.fail(new TntServiceFailure({ reason: 'invalid-input' }))
+        }
+
+        const blockWrite = yield* Schema.decodeUnknownEffect(WorldWriteBatchSchema)({
+          world: coordinator.worldId,
+          expectedWorldRevision: decoded.expectedRevision,
+          dimension: decoded.dimension,
+          expectedDimensionRevision: decoded.expectedDimensionRevision,
+          edits: decoded.explosion.destroyedBlocks.map(({ x, y, z }) => ({
+            position: { x, y, z },
+            block: AIR_BLOCK_ID,
+          })),
+        })
+        const committed = yield* coordinator.commit({
+          expectedRevision: decoded.expectedRevision,
+          expectedDimensions: [{
+            dimension: decoded.dimension,
+            expectedRevision: decoded.expectedDimensionRevision,
+          }],
+          changes: [decoded.ownerCandidate, ...affectedEntityChanges],
+          ...(blockWrite.edits.length === 0 ? {} : { blockWrite }),
+        })
+        return { _tag: 'Committed', revision: committed.revision } as const
+      }))
+
     return {
       snapshot: snapshot(),
       prime,
       advance,
+      commitDetonation,
     }
   })
 
