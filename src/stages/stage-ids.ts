@@ -60,7 +60,7 @@ import { StageId } from "@nerima-games/mc-kernel"
  *   itself.
  *
  * - `application/autosave.ts` — NOT a stage. It is a `Schedule.spaced` daemon
- *   forked with `Effect.forkDaemon`, and its whole design turns on being on a
+ *   forked with `Effect.forkDetach`, and its whole design turns on being on a
  *   DURATION rather than on a frame: `spaced` measures from the end of the
  *   previous save so a backgrounded tab cannot produce a catch-up stampede, and
  *   the first save is due at t = interval rather than on the fork. Making it a

@@ -739,10 +739,10 @@ describe('InventoryService chest integration', () => {
           : container),
       }
 
-      const result = yield* Effect.either(service.restoreContainerStorage(legacy))
-      expect(result._tag).toBe('Left')
-      if (result._tag === 'Left') {
-        expect(result.left).toStrictEqual({
+      const result = yield* Effect.result(service.restoreContainerStorage(legacy))
+      expect(result._tag).toBe('Failure')
+      if (result._tag === 'Failure') {
+        expect(result.failure).toStrictEqual({
           _tag: 'ContainerStorageValidationError',
           path: 'containerStorage.containers.0.slots.0',
           reason: 'expected a valid stored item stack',
@@ -1009,8 +1009,8 @@ describe('InventoryService chest integration', () => {
         }],
       }
 
-      const result = yield* Effect.either(service.restoreContainerStorage(malformed))
-      expect(result._tag).toBe('Left')
+      const result = yield* Effect.result(service.restoreContainerStorage(malformed))
+      expect(result._tag).toBe('Failure')
       expect(bytes(yield* service.containerStorageSnapshot)).toBe(before)
     }),
   )

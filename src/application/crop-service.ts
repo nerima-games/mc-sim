@@ -22,8 +22,8 @@ export type CropServiceApi = {
   readonly reset: Effect.Effect<void>
 }
 
-const CropServiceBase: Context.TagClass<CropService, '@nerima-games/mc-sim/CropService', CropServiceApi> =
-  Context.Tag('@nerima-games/mc-sim/CropService')<CropService, CropServiceApi>()
+const CropServiceBase: Context.ServiceClass<CropService, '@nerima-games/mc-sim/CropService', CropServiceApi> =
+  Context.Service<CropService, CropServiceApi>()('@nerima-games/mc-sim/CropService')
 
 export class CropService extends CropServiceBase {}
 

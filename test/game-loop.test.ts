@@ -12,7 +12,7 @@
  * loaded CI machine.
  */
 import { describe, expect, it } from '@effect/vitest'
-import { Deferred, Effect, Either, Option, Ref } from 'effect'
+import { Deferred, Effect, Result, Option, Ref } from 'effect'
 import { vi } from 'vitest'
 import {
   DeltaTimeSecs,
@@ -31,7 +31,7 @@ import {
   MAX_CATCH_UP_TICKS,
 } from '../src/domain/fixed-step'
 
-/** A handler that records deltas and signals once it has seen `target` frames. */
+/** A handler that records deltas and signals once it has made `target` calls. */
 const recordingHandler = (target: number) =>
   Effect.gen(function* () {
     const seen = yield* Ref.make<ReadonlyArray<DeltaTimeSecs>>([])
@@ -63,7 +63,7 @@ describe('game loop lifecycle', () => {
         Ref.updateAndGet(calls, (count) => count + 1).pipe(
           Effect.flatMap((count) =>
             count === 1
-              ? Deferred.succeed(entered, undefined).pipe(Effect.zipRight(Deferred.await(release)))
+              ? Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release)))
               : Deferred.succeed(reached, undefined),
           ),
           Effect.asVoid,
@@ -92,7 +92,7 @@ describe('game loop lifecycle', () => {
       const seenTicks = yield* Ref.make<ReadonlyArray<SimulationTick>>([])
       const handler = (dt: DeltaTimeSecs, tick: SimulationTick | undefined) =>
         Ref.update(seenTicks, (ticks) => (tick === undefined ? ticks : [...ticks, tick])).pipe(
-          Effect.zipRight(probe.handler(dt)),
+          Effect.andThen(probe.handler(dt)),
         )
 
       yield* loop.start(handler)
@@ -120,20 +120,20 @@ describe('game loop lifecycle', () => {
   it.effect('caps overload at five ticks and ten physics substeps', () =>
     Effect.sync(() => {
       const result = advanceFixedStep(initialFixedStepAccumulator(), DeltaTimeSecs(0.3))
-      expect(Either.isRight(result)).toBe(true)
-      if (Either.isRight(result)) {
+      expect(Result.isSuccess(result)).toBe(true)
+      if (Result.isSuccess(result)) {
         let physicsCalls = 0
         const physicsHandler = () => {
           physicsCalls += 1
         }
-        for (let tick = 0; tick < Number(result.right.ticks); tick += 1) {
+        for (let tick = 0; tick < Number(result.success.ticks); tick += 1) {
           for (let substep = 0; substep < PHYSICS_SUBSTEPS_PER_TICK; substep += 1) {
             physicsHandler()
           }
         }
-        expect(result.right.ticks).toBe(MAX_CATCH_UP_TICKS)
+        expect(result.success.ticks).toBe(MAX_CATCH_UP_TICKS)
         expect(physicsCalls).toBe(10)
-        expect(result.right.overloaded).toBe(true)
+        expect(result.success.overloaded).toBe(true)
       }
     }),
   )
@@ -141,7 +141,7 @@ describe('game loop lifecycle', () => {
   it.effect('processes submitted frames and clamps the deltas it derives', () =>
     Effect.gen(function* () {
       const loop = yield* makeGameLoop()
-      const probe = yield* recordingHandler(1)
+      const probe = yield* recordingHandler(2)
 
       yield* loop.start(probe.handler)
       expect(yield* loop.isRunning).toBe(true)
@@ -163,7 +163,7 @@ describe('game loop lifecycle', () => {
   it.effect('stop() halts processing, and submitting afterwards is a silent no-op', () =>
     Effect.gen(function* () {
       const loop = yield* makeGameLoop()
-      const probe = yield* recordingHandler(1)
+      const probe = yield* recordingHandler(2)
 
       yield* loop.start(probe.handler)
       yield* loop.submitFrame(MonotonicTimeSecs(1))
@@ -203,7 +203,7 @@ describe('game loop lifecycle', () => {
     Effect.gen(function* () {
       const loop = yield* makeGameLoop()
 
-      const firstWorld = yield* recordingHandler(1)
+      const firstWorld = yield* recordingHandler(2)
       yield* loop.start(firstWorld.handler)
       yield* loop.submitFrame(MonotonicTimeSecs(100))
       yield* loop.submitFrame(MonotonicTimeSecs(100.05))
@@ -212,7 +212,7 @@ describe('game loop lifecycle', () => {
 
       // Load a second world WITHOUT constructing a new loop, exactly as an
       // app-scoped singleton would be reused.
-      const secondWorld = yield* recordingHandler(1)
+      const secondWorld = yield* recordingHandler(2)
       yield* loop.start(secondWorld.handler)
       expect(yield* loop.isRunning).toBe(true)
 
@@ -238,13 +238,13 @@ describe('game loop lifecycle', () => {
       // next world could never start. See game-loop.ts:141-148 there.
       const loop = yield* makeGameLoop()
 
-      const stale = yield* recordingHandler(1)
+      const stale = yield* recordingHandler(2)
       yield* loop.start(stale.handler)
       yield* loop.submitFrame(MonotonicTimeSecs(1))
       yield* loop.submitFrame(MonotonicTimeSecs(1.05))
       yield* Deferred.await(stale.reached)
 
-      const fresh = yield* recordingHandler(1)
+      const fresh = yield* recordingHandler(2)
       yield* loop.start(fresh.handler)
       expect(yield* loop.isRunning).toBe(true)
       expect(yield* loop.framesProcessed).toBe(0)
@@ -261,8 +261,8 @@ describe('game loop lifecycle', () => {
 
   it.effect('a handler DEFECT is logged and the loop keeps running', () =>
     Effect.gen(function* () {
-      // catchAllCause, not catchAll: a thrown exception is a Cause.Die that
-      // catchAll would let through, killing the loop on the first bad frame.
+      // catchCause, not catch: a thrown exception is a Cause.Die that catch
+      // would let through, killing the loop on the first bad frame.
       const loop = yield* makeGameLoop()
       const calls = yield* Ref.make(0)
       const reached = yield* Deferred.make<void>()
@@ -346,20 +346,20 @@ describe('loop observability', () => {
   it.effect('retains TimeOverflow as a typed loop diagnostic', () =>
     Effect.gen(function* () {
       const stopped = yield* makeGameLoop()
-      const stoppedResult = yield* Effect.either(stopped.advanceFrame(DeltaTimeSecs(0.05)))
-      expect(Either.isLeft(stoppedResult)).toBe(true)
+      const stoppedResult = yield* Effect.result(stopped.advanceFrame(DeltaTimeSecs(0.05)))
+      expect(Result.isFailure(stoppedResult)).toBe(true)
 
       const normal = yield* makeGameLoop()
       yield* normal.start(() => Effect.void)
-      const normalResult = yield* Effect.either(normal.advanceFrame(DeltaTimeSecs(0.05)))
-      expect(Either.isRight(normalResult)).toBe(true)
+      const normalResult = yield* Effect.result(normal.advanceFrame(DeltaTimeSecs(0.05)))
+      expect(Result.isSuccess(normalResult)).toBe(true)
       yield* normal.stop
 
       const loop = yield* makeGameLoop(SimulationTick(Number.MAX_SAFE_INTEGER))
       yield* loop.start(() => Effect.void)
-      const result = yield* Effect.either(loop.advanceFrame(DeltaTimeSecs(0.05)))
-      expect(Either.isLeft(result)).toBe(true)
-      if (Either.isLeft(result)) expect(result.left._tag).toBe('TimeOverflow')
+      const result = yield* Effect.result(loop.advanceFrame(DeltaTimeSecs(0.05)))
+      expect(Result.isFailure(result)).toBe(true)
+      if (Result.isFailure(result)) expect(result.failure._tag).toBe('TimeOverflow')
       yield* loop.submitFrame(MonotonicTimeSecs(0))
       yield* loop.submitFrame(MonotonicTimeSecs(1))
       yield* Effect.promise(
@@ -386,7 +386,7 @@ describe('loop observability', () => {
       const blocked = yield* Deferred.make<void>()
 
       yield* loop.start(() =>
-        Deferred.succeed(entered, undefined).pipe(Effect.zipRight(Deferred.await(blocked))),
+        Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(blocked))),
       )
       yield* loop.submitFrame(MonotonicTimeSecs(0))
       yield* loop.submitFrame(MonotonicTimeSecs(1))
@@ -417,13 +417,14 @@ describe('loop observability', () => {
       // count — after teardown, writing a session report — was the one moment
       // it was unavailable.
       const loop = yield* makeGameLoop()
-      const probe = yield* recordingHandler(1)
+      const probe = yield* recordingHandler(2)
 
       yield* loop.start(probe.handler)
       yield* loop.submitFrame(MonotonicTimeSecs(10))
       yield* loop.submitFrame(MonotonicTimeSecs(10.02))
       yield* loop.submitFrame(MonotonicTimeSecs(40.02))
       yield* Deferred.await(probe.reached)
+      yield* Effect.yieldNow
 
       expect(yield* loop.framesProcessed).toBe(2)
       yield* loop.stop
@@ -438,12 +439,13 @@ describe('loop observability', () => {
   it.effect('a fresh start zeroes them, so one run never reports the previous run’s numbers', () =>
     Effect.gen(function* () {
       const loop = yield* makeGameLoop()
-      const first = yield* recordingHandler(1)
+      const first = yield* recordingHandler(2)
 
       yield* loop.start(first.handler)
       yield* loop.submitFrame(MonotonicTimeSecs(100))
       yield* loop.submitFrame(MonotonicTimeSecs(100.05))
       yield* Deferred.await(first.reached)
+      yield* Effect.yieldNow
       yield* loop.stop
       expect(yield* loop.framesProcessed).toBe(2)
 

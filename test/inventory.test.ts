@@ -27,7 +27,7 @@ import type { InventoryClick } from '../src/index'
  *
  * BOTH CASTS ARE THE POINT: this is what a save written by another build, or by
  * an older schema, hands `restore`. `itemStack` cannot express either one —
- * `StackCount` is `Brand.refined` and throws, and `ItemType` is a closed union
+ * `StackCount` is `Brand.make` and throws, and `ItemType` is a closed union
  * since the kernel repoint — which is exactly why nothing inside the domain may
  * assume a slot it did not build is well-formed. JSON is not checked by
  * anything, and mc-save hands its parse straight back.
@@ -311,7 +311,7 @@ describe('removeItemAt', () => {
  * REGRESSION: this module is PURE AND TOTAL, as its header claims — including
  * on an inventory it did not build.
  *
- * `removeItem` wrote `StackCount(left)`, and `StackCount` is `Brand.refined`:
+ * `removeItem` wrote `StackCount(left)`, and `StackCount` is `Brand.make`:
  * it THREW for any remainder outside [0, 64], which a slot restored from
  * another build's save reaches immediately. In the frame loop that throw
  * becomes a `Cause.Die` that `application/game-loop.ts` logs and swallows, so
@@ -1033,7 +1033,7 @@ describe('InventoryService concurrency', () => {
 
       const fibers = yield* Effect.forEach(
         [0, 1],
-        () => Effect.fork(service.click({ _tag: 'LeftClick', slotIndex: 0, carried: undefined })),
+        () => Effect.forkDetach(service.click({ _tag: 'LeftClick', slotIndex: 0, carried: undefined })),
         { concurrency: 'unbounded' },
       )
       const results = yield* Effect.forEach(fibers, Fiber.join)
@@ -1075,7 +1075,7 @@ describe('InventoryService concurrency', () => {
 
       const fibers = yield* Effect.forEach(
         Array.from({ length: 20 }, (_, index) => index),
-        () => Effect.fork(service.removeAt(0, 'stone', 1)),
+        () => Effect.forkDetach(service.removeAt(0, 'stone', 1)),
         { concurrency: 'unbounded' },
       )
       const results = yield* Effect.forEach(fibers, Fiber.join)
@@ -1094,7 +1094,7 @@ describe('InventoryService concurrency', () => {
 
       const fibers = yield* Effect.forEach(
         Array.from({ length: 50 }, (_, index) => index),
-        () => Effect.fork(service.add('stone', 1)),
+        () => Effect.forkDetach(service.add('stone', 1)),
         { concurrency: 'unbounded' },
       )
       yield* Effect.forEach(fibers, Fiber.join)
@@ -1110,7 +1110,7 @@ describe('InventoryService concurrency', () => {
 
       const fibers = yield* Effect.forEach(
         Array.from({ length: 20 }, (_, index) => index),
-        () => Effect.fork(service.remove('stone', 1)),
+        () => Effect.forkDetach(service.remove('stone', 1)),
         { concurrency: 'unbounded' },
       )
       const removals = yield* Effect.forEach(fibers, Fiber.join)

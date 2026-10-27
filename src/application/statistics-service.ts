@@ -59,11 +59,11 @@ export type StatisticsServiceApi = {
   readonly reset: Effect.Effect<void>
 }
 
-const StatisticsServiceBase: Context.TagClass<
+const StatisticsServiceBase: Context.ServiceClass<
   StatisticsService,
   '@nerima-games/mc-sim/StatisticsService',
   StatisticsServiceApi
-> = Context.Tag('@nerima-games/mc-sim/StatisticsService')<StatisticsService, StatisticsServiceApi>()
+> = Context.Service<StatisticsService, StatisticsServiceApi>()('@nerima-games/mc-sim/StatisticsService')
 
 export class StatisticsService extends StatisticsServiceBase {}
 

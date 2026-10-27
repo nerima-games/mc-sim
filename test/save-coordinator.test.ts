@@ -14,15 +14,15 @@
  *      exactly reproducible — it proves the retry logic converges to a
  *      consistent snapshot rather than merely usually doing so.
  *   2. A CONCURRENCY angle: many real concurrent `requestSave` fibers,
- *      following this repository's own idiom (`Effect.fork` +
+ *      following this repository's own idiom (`Effect.forkChild` +
  *      `Effect.forEach(fibers, Fiber.join)`, see `test/inventory.test.ts`),
  *      asserting the batching converges (never more publishes than requests)
  *      and the merged chunk count stays correct under contention.
  */
-import { chunkCoord, type Dimension } from '@nerima-games/mc-kernel'
+import { ChunkAxis, chunkCoord, type Dimension } from '@nerima-games/mc-kernel'
 import type { Chunk } from '@nerima-games/mc-worldgen'
 import { describe, expect, it } from '@effect/vitest'
-import { Deferred, Effect, Either, Fiber, Ref } from 'effect'
+import { Deferred, Effect, Result, Fiber, Ref } from 'effect'
 import {
   makeSaveCoordinator,
   SaveSnapshotConsistencyError,
@@ -32,7 +32,7 @@ import {
 } from '../src/application/save-coordinator'
 
 const fakeChunk = (cx: number, cz: number): Chunk => ({
-  coord: chunkCoord(cx, cz),
+  coord: chunkCoord(Result.getOrThrow(ChunkAxis.result(cx)), Result.getOrThrow(ChunkAxis.result(cz))),
   blocks: new Uint16Array(1),
   biomes: [],
 })
@@ -110,7 +110,7 @@ describe('SaveCoordinator', () => {
           // attempt, so the second attempt observes a stable version and
           // succeeds.
           return residentsCalls === 1
-            ? Effect.zipRight(retainViaCoordinator(extraChunk), Effect.succeed<ReadonlyArray<DimensionChunk>>([]))
+            ? Effect.andThen(retainViaCoordinator(extraChunk), Effect.succeed<ReadonlyArray<DimensionChunk>>([]))
             : Effect.succeed<ReadonlyArray<DimensionChunk>>([])
         })
         const publications = yield* Ref.make<ReadonlyArray<SaveCoordinatorPublication<{ readonly tick: number }>>>([])
@@ -148,7 +148,7 @@ describe('SaveCoordinator', () => {
       // loop can never converge — this is what the retry CEILING is for.
       const snapshotResidents = Effect.suspend((): Effect.Effect<ReadonlyArray<DimensionChunk>> => {
         attempts += 1
-        return Effect.zipRight(
+        return Effect.andThen(
           retainViaCoordinator(dimensionChunk(attempts, 0)),
           Effect.succeed<ReadonlyArray<DimensionChunk>>([]),
         )
@@ -164,13 +164,13 @@ describe('SaveCoordinator', () => {
       })
       yield* Deferred.succeed(coordinatorDeferred, coordinator)
 
-      const result = yield* Effect.either(coordinator.requestSave)
+      const result = yield* Effect.result(coordinator.requestSave)
 
       expect(attempts).toBe(8)
-      expect(Either.isLeft(result)).toBe(true)
-      if (Either.isLeft(result) && result.left instanceof SaveSnapshotConsistencyError) {
-        expect(result.left._tag).toBe('SaveSnapshotConsistencyError')
-        expect(result.left.attempts).toBe(8)
+      expect(Result.isFailure(result)).toBe(true)
+      if (Result.isFailure(result) && result.failure instanceof SaveSnapshotConsistencyError) {
+        expect(result.failure._tag).toBe('SaveSnapshotConsistencyError')
+        expect(result.failure.attempts).toBe(8)
       } else {
         expect.fail('expected a SaveSnapshotConsistencyError')
       }
@@ -191,9 +191,9 @@ describe('SaveCoordinator', () => {
       })
       yield* coordinator.retainChunk(dimensionChunk(1, 1))
 
-      const result = yield* Effect.either(coordinator.requestSave)
+      const result = yield* Effect.result(coordinator.requestSave)
 
-      expect(result).toStrictEqual(Either.left('storage quota exceeded'))
+      expect(result).toStrictEqual(Result.fail('storage quota exceeded'))
       expect(yield* Ref.get(failures)).toStrictEqual(['storage quota exceeded'])
       expect(yield* coordinator.knownChunkCount).toBe(1)
       expect(yield* coordinator.retainedChunkCount).toBe(1)
@@ -210,9 +210,9 @@ describe('SaveCoordinator', () => {
         publish: () => Effect.fail('no listener configured'),
       })
 
-      const result = yield* Effect.either(coordinator.requestSave)
+      const result = yield* Effect.result(coordinator.requestSave)
 
-      expect(result).toStrictEqual(Either.left('no listener configured'))
+      expect(result).toStrictEqual(Result.fail('no listener configured'))
     }),
   )
 
@@ -239,13 +239,13 @@ describe('SaveCoordinator', () => {
             }),
         })
 
-        const first = yield* Effect.fork(coordinator.requestSave)
+        const first = yield* Effect.forkChild(coordinator.requestSave)
         // Deterministically wait until the first publish is genuinely in
         // flight (`drain.running` is already `true`) before firing the
         // second — this is what makes the second call's `Ref.modify` land on
         // the `state.running` branch rather than racing for it.
         yield* Deferred.await(publishStarted)
-        const second = yield* Effect.fork(coordinator.requestSave)
+        const second = yield* Effect.forkChild(coordinator.requestSave)
         yield* Deferred.succeed(releasePublish, undefined)
 
         yield* Fiber.join(first)
@@ -310,7 +310,7 @@ describe('SaveCoordinator', () => {
 
         const fibers = yield* Effect.forEach(
           Array.from({ length: 20 }, (_, index) => index),
-          () => Effect.fork(coordinator.requestSave),
+          () => Effect.forkDetach(coordinator.requestSave),
           { concurrency: 'unbounded' },
         )
         const results = yield* Effect.forEach(fibers, Fiber.join)

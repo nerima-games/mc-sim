@@ -19,8 +19,8 @@ export type HotbarServiceApi = {
   readonly update: (input: HotbarInput) => Effect.Effect<void>
 }
 
-const HotbarServiceBase: Context.TagClass<HotbarService, '@nerima-games/mc-sim/HotbarService', HotbarServiceApi> =
-  Context.Tag('@nerima-games/mc-sim/HotbarService')<HotbarService, HotbarServiceApi>()
+const HotbarServiceBase: Context.ServiceClass<HotbarService, '@nerima-games/mc-sim/HotbarService', HotbarServiceApi> =
+  Context.Service<HotbarService, HotbarServiceApi>()('@nerima-games/mc-sim/HotbarService')
 
 export class HotbarService extends HotbarServiceBase {}
 

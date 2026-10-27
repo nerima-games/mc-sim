@@ -164,10 +164,10 @@ describe('crop service', () => {
       expect(yield* crops.snapshot).toStrictEqual(snapshot)
 
       const beforeInvalidRestore = yield* crops.snapshot
-      const result = yield* Effect.either(crops.restore({
+      const result = yield* Effect.result(crops.restore({
         crops: [{ ...beforeInvalidRestore.crops[0], growthSecs: -1 }],
       }))
-      expect(result._tag).toBe('Left')
+      expect(result._tag).toBe('Failure')
       expect(yield* crops.snapshot).toStrictEqual(beforeInvalidRestore)
     }).pipe(Effect.provide(CropServiceLayer)),
   )
@@ -182,11 +182,11 @@ describe('crop service', () => {
         growthSecs: 0,
       }
 
-      expect((yield* Effect.either(crops.restore({ crops: [], extra: true })))._tag).toBe('Left')
-      expect((yield* Effect.either(crops.restore({ crops: [crop, crop] })))._tag).toBe('Left')
-      expect((yield* Effect.either(crops.restore({
+      expect((yield* Effect.result(crops.restore({ crops: [], extra: true })))._tag).toBe('Failure')
+      expect((yield* Effect.result(crops.restore({ crops: [crop, crop] })))._tag).toBe('Failure')
+      expect((yield* Effect.result(crops.restore({
         crops: [{ ...crop, position: { x: 1.5, y: 64, z: 1 } }],
-      })))._tag).toBe('Left')
+      })))._tag).toBe('Failure')
     }).pipe(Effect.provide(CropServiceLayer)),
   )
 
@@ -216,19 +216,19 @@ describe('crop service', () => {
         position: { x: 1, y: 64, z: 1 },
         crop: 'potato_crop',
       }
-      expect((yield* Effect.either(crops.restore({ crops: [missingField] })))._tag).toBe('Left')
+      expect((yield* Effect.result(crops.restore({ crops: [missingField] })))._tag).toBe('Failure')
 
-      expect((yield* Effect.either(
+      expect((yield* Effect.result(
         crops.restore({ crops: [{ ...base, dimension: 'moon' }] }),
-      ))._tag).toBe('Left')
+      ))._tag).toBe('Failure')
 
-      expect((yield* Effect.either(
+      expect((yield* Effect.result(
         crops.restore({ crops: [{ ...base, crop: 'carrot_crop' }] }),
-      ))._tag).toBe('Left')
+      ))._tag).toBe('Failure')
 
-      expect((yield* Effect.either(
+      expect((yield* Effect.result(
         crops.restore({ crops: [{ ...base, position: { x: 1, y: 64 } }] }),
-      ))._tag).toBe('Left')
+      ))._tag).toBe('Failure')
     }).pipe(Effect.provide(CropServiceLayer)),
   )
 })

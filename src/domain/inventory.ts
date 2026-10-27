@@ -14,7 +14,7 @@
  *
  * IT IS ALSO TOTAL, INCLUDING ON AN `Inventory` IT DID NOT BUILD. That claim
  * used to be false and expensively so: `removeItem` wrote `StackCount(left)`,
- * `StackCount` is `Brand.refined`, and a slot restored from another build's
+ * `StackCount` is built with `Brand.make`, and a slot restored from another build's
  * save made it THROW. A throw from a pure domain function is a `Cause.Die` in
  * the frame loop, which `application/game-loop.ts` logs and swallows, so mining
  * and crafting simply stopped working while nothing failed.
@@ -79,7 +79,7 @@ const heldCount = (stack: ItemStack): number =>
 /**
  * Brand a count DERIVED from a slot that may itself be out of range.
  *
- * `StackCount` is `Brand.refined` and THROWS outside [0, 64]. That is right for
+ * `StackCount` is built with `Brand.make` and THROWS outside [0, 64]. That is right for
  * `itemStack`, where the number is a literal a human wrote (DN-06: a recipe
  * output of 65 should fail at the place that names it). It is wrong here: the
  * number is whatever was left after taking from a slot that may already have

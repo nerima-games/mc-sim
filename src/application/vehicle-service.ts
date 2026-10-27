@@ -51,8 +51,8 @@ export type VehicleServiceApi = Readonly<{
   restore: (snapshot: unknown) => Effect.Effect<void, VehicleValidationError>
 }>
 
-const VehicleServiceBase: Context.TagClass<VehicleService, '@nerima-games/mc-sim/VehicleService', VehicleServiceApi> =
-  Context.Tag('@nerima-games/mc-sim/VehicleService')<VehicleService, VehicleServiceApi>()
+const VehicleServiceBase: Context.ServiceClass<VehicleService, '@nerima-games/mc-sim/VehicleService', VehicleServiceApi> =
+  Context.Service<VehicleService, VehicleServiceApi>()('@nerima-games/mc-sim/VehicleService')
 
 export class VehicleService extends VehicleServiceBase {}
 

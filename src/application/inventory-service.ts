@@ -300,11 +300,11 @@ export type InventoryServiceApi = {
   readonly craft: (grid: Recipe.CraftGrid) => Effect.Effect<Craft.CraftResult>
 }
 
-const InventoryServiceBase: Context.TagClass<
+const InventoryServiceBase: Context.ServiceClass<
   InventoryService,
   '@nerima-games/mc-sim/InventoryService',
   InventoryServiceApi
-> = Context.Tag('@nerima-games/mc-sim/InventoryService')<InventoryService, InventoryServiceApi>()
+> = Context.Service<InventoryService, InventoryServiceApi>()('@nerima-games/mc-sim/InventoryService')
 
 export class InventoryService extends InventoryServiceBase {}
 

@@ -94,11 +94,11 @@ export type SettingsServiceApi = {
   readonly reset: Effect.Effect<void>
 }
 
-const SettingsServiceBase: Context.TagClass<
+const SettingsServiceBase: Context.ServiceClass<
   SettingsService,
   '@nerima-games/mc-sim/SettingsService',
   SettingsServiceApi
-> = Context.Tag('@nerima-games/mc-sim/SettingsService')<SettingsService, SettingsServiceApi>()
+> = Context.Service<SettingsService, SettingsServiceApi>()('@nerima-games/mc-sim/SettingsService')
 
 export class SettingsService extends SettingsServiceBase {}
 

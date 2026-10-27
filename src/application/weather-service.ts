@@ -14,8 +14,8 @@ export type WeatherServiceApi = {
   readonly reset: Effect.Effect<void>
 }
 
-const WeatherServiceBase: Context.TagClass<WeatherService, '@nerima-games/mc-sim/WeatherService', WeatherServiceApi> =
-  Context.Tag('@nerima-games/mc-sim/WeatherService')<WeatherService, WeatherServiceApi>()
+const WeatherServiceBase: Context.ServiceClass<WeatherService, '@nerima-games/mc-sim/WeatherService', WeatherServiceApi> =
+  Context.Service<WeatherService, WeatherServiceApi>()('@nerima-games/mc-sim/WeatherService')
 
 export class WeatherService extends WeatherServiceBase {}
 

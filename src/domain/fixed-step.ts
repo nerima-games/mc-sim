@@ -1,4 +1,4 @@
-import { Either } from 'effect'
+import { Result } from 'effect'
 import {
   addTick,
   FixedDurationSecs,
@@ -62,9 +62,9 @@ export const resume = (state: FixedStepAccumulator): FixedStepAccumulator => ({
 export const advance = (
   state: FixedStepAccumulator,
   delta: DeltaTimeSecs,
-): Either.Either<FixedStepAdvance, TimeOverflow> => {
+): Result.Result<FixedStepAdvance, TimeOverflow> => {
   if (state.paused) {
-    return Either.right({
+    return Result.succeed({
       state,
       ticks: NonNegativeTickCount(0),
       interpolationFraction: interpolationFraction(state.accumulator),
@@ -79,12 +79,12 @@ export const advance = (
   const ticks = Math.min(state.maxCatchUpTicks, Math.floor(bounded / state.tickDuration))
   const nextTick = addTick(state.tick, NonNegativeTickCount(ticks))
 
-  if (Either.isLeft(nextTick)) return Either.left(nextTick.left)
+  if (Result.isFailure(nextTick)) return Result.fail(nextTick.failure)
 
   const remainder = FixedDurationSecs(bounded - ticks * state.tickDuration)
-  const nextState: FixedStepAccumulator = { ...state, accumulator: remainder, tick: nextTick.right }
+  const nextState: FixedStepAccumulator = { ...state, accumulator: remainder, tick: nextTick.success }
 
-  return Either.right({
+  return Result.succeed({
     state: nextState,
     ticks: NonNegativeTickCount(ticks),
     interpolationFraction: interpolationFraction(remainder),

@@ -93,8 +93,8 @@ export type VitalsServiceApi = {
   readonly reset: Effect.Effect<void>
 }
 
-const VitalsServiceBase: Context.TagClass<VitalsService, '@nerima-games/mc-sim/VitalsService', VitalsServiceApi> =
-  Context.Tag('@nerima-games/mc-sim/VitalsService')<VitalsService, VitalsServiceApi>()
+const VitalsServiceBase: Context.ServiceClass<VitalsService, '@nerima-games/mc-sim/VitalsService', VitalsServiceApi> =
+  Context.Service<VitalsService, VitalsServiceApi>()('@nerima-games/mc-sim/VitalsService')
 
 export class VitalsService extends VitalsServiceBase {}
 

@@ -1,7 +1,14 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Effect, Option } from 'effect'
-import { itemComponentPatch, itemStack } from '@nerima-games/mc-kernel'
-import { InMemoryStorageLayer, saveEnvelope, sealSaveEnvelope, StoragePort } from '@nerima-games/mc-save'
+import { Effect, Option, Result } from 'effect'
+import { itemComponentPatch, itemStack, StackCount } from '@nerima-games/mc-kernel'
+import {
+  InMemoryStorageLayer,
+  SaveFormatName,
+  SaveFormatVersion,
+  saveEnvelope,
+  sealSaveEnvelope,
+  StoragePort,
+} from '@nerima-games/mc-save'
 import {
   listSimulationSaves,
   loadSimulation,
@@ -16,7 +23,7 @@ const save: SimulationSave = {
   player: {
     position: { x: 3.5, y: 64, z: -7.25 },
     inventory: [
-      itemStack('iron_ingot', 12),
+      Result.getOrThrow(itemStack('iron_ingot', Result.getOrThrow(StackCount.result(12)))),
       null,
     ],
     selectedHotbarSlot: 2,
@@ -28,6 +35,9 @@ const save: SimulationSave = {
 }
 
 const storage = InMemoryStorageLayer
+const formatName = Result.getOrThrow(SaveFormatName.result('@nerima-games/mc-sim/simulation'))
+const formatVersion2 = Result.getOrThrow(SaveFormatVersion.result(2))
+const formatVersion3 = Result.getOrThrow(SaveFormatVersion.result(3))
 
 describe('simulation save service', () => {
   it.effect('round-trips kernel items and worldgen dimensions through mc-save', () =>
@@ -46,9 +56,9 @@ describe('simulation save service', () => {
   it.effect('round-trips canonical components without changing their bytes', () =>
     Effect.gen(function* () {
       const key = simulationSaveKey('world:canonical')
-      const canonical = itemStack('book', 1, {
-        componentPatch: itemComponentPatch({ 'minecraft:lore': [{ text: 'canonical' }] }),
-      })
+      const canonical = Result.getOrThrow(itemStack('book', Result.getOrThrow(StackCount.result(1)), {
+        componentPatch: Result.getOrThrow(itemComponentPatch({ 'minecraft:lore': [{ text: 'canonical' }] })),
+      }))
       const value: SimulationSave = {
         ...save,
         player: { ...save.player, inventory: [canonical, null] },
@@ -87,11 +97,11 @@ describe('simulation save service', () => {
           inventory: [{ item: 'foreign_item', count: 1 }],
         },
       } as unknown as SimulationSave
-      const result = yield* Effect.either(saveSimulation(simulationSaveKey('world:invalid'), invalid))
+      const result = yield* Effect.result(saveSimulation(simulationSaveKey('world:invalid'), invalid))
 
-      expect(result._tag).toBe('Left')
-      if (result._tag === 'Left') {
-        expect(String(result.left.cause)).toContain('expected a canonical ItemStack from mc-kernel')
+      expect(result._tag).toBe('Failure')
+      if (result._tag === 'Failure') {
+        expect(String(result.failure.cause)).toContain('expected a canonical ItemStack from mc-kernel')
       }
     }).pipe(Effect.provide(storage)),
   )
@@ -102,9 +112,9 @@ describe('simulation save service', () => {
         ...save,
         player: { ...save.player, selectedHotbarSlot: 9 },
       } as unknown as SimulationSave
-      const result = yield* Effect.either(saveSimulation(simulationSaveKey('world:invalid-hotbar'), invalid))
+      const result = yield* Effect.result(saveSimulation(simulationSaveKey('world:invalid-hotbar'), invalid))
 
-      expect(result._tag).toBe('Left')
+      expect(result._tag).toBe('Failure')
     }).pipe(Effect.provide(storage)),
   )
 
@@ -119,8 +129,8 @@ describe('simulation save service', () => {
     Effect.gen(function* () {
       const key = simulationSaveKey('world:v2')
       const storagePort = yield* StoragePort
-      const v2Envelope = sealSaveEnvelope(
-        saveEnvelope('@nerima-games/mc-sim/simulation', 2, {
+      const v2Envelope = Result.getOrThrow(sealSaveEnvelope(
+        saveEnvelope(formatName, formatVersion2, {
           dimension: 'overworld',
           tick: 20,
           player: {
@@ -130,14 +140,14 @@ describe('simulation save service', () => {
           },
           statistics: { counters: {}, unlocked: [] },
         }),
-      )
+      ))
       yield* storagePort.put(key, v2Envelope)
 
-      const result = yield* Effect.either(loadSimulation(key))
+      const result = yield* Effect.result(loadSimulation(key))
 
-      expect(result._tag).toBe('Left')
-      if (result._tag === 'Left') {
-        expect(result.left._tag).toBe('SaveDecodeError')
+      expect(result._tag).toBe('Failure')
+      if (result._tag === 'Failure') {
+        expect(result.failure._tag).toBe('SaveDecodeError')
       }
     }).pipe(Effect.provide(storage)),
   )
@@ -150,8 +160,8 @@ describe('simulation save service', () => {
     Effect.gen(function* () {
       const key = simulationSaveKey(`world:v3-${kind}-components`)
       const storagePort = yield* StoragePort
-      const v3Envelope = sealSaveEnvelope(
-        saveEnvelope('@nerima-games/mc-sim/simulation', 3, {
+      const v3Envelope = Result.getOrThrow(sealSaveEnvelope(
+        saveEnvelope(formatName, formatVersion3, {
           dimension: 'overworld',
           tick: 20,
           player: {
@@ -161,13 +171,13 @@ describe('simulation save service', () => {
           },
           statistics: { counters: {}, unlocked: [] },
         }),
-      )
+      ))
       yield* storagePort.put(key, v3Envelope)
 
-      const result = yield* Effect.either(loadSimulation(key))
+      const result = yield* Effect.result(loadSimulation(key))
 
-      expect(result._tag).toBe('Left')
-      if (result._tag === 'Left') expect(result.left._tag).toBe('SaveDecodeError')
+      expect(result._tag).toBe('Failure')
+      if (result._tag === 'Failure') expect(result.failure._tag).toBe('SaveDecodeError')
     }).pipe(Effect.provide(storage)),
   )
 

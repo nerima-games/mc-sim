@@ -602,7 +602,7 @@ describe('InventoryService.craft', () => {
 
       const fibers = yield* Effect.forEach(
         Array.from({ length: 50 }, (_unused, index) => index),
-        () => Effect.fork(service.craft(STICK_GRID)),
+        () => Effect.forkDetach(service.craft(STICK_GRID)),
         { concurrency: 'unbounded' },
       )
       const results = yield* Effect.forEach(fibers, Fiber.join)

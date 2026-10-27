@@ -121,8 +121,8 @@ export type PlayerServiceApi = {
   readonly reset: Effect.Effect<void>
 }
 
-const PlayerServiceBase: Context.TagClass<PlayerService, '@nerima-games/mc-sim/PlayerService', PlayerServiceApi> =
-  Context.Tag('@nerima-games/mc-sim/PlayerService')<PlayerService, PlayerServiceApi>()
+const PlayerServiceBase: Context.ServiceClass<PlayerService, '@nerima-games/mc-sim/PlayerService', PlayerServiceApi> =
+  Context.Service<PlayerService, PlayerServiceApi>()('@nerima-games/mc-sim/PlayerService')
 
 export class PlayerService extends PlayerServiceBase {}
 

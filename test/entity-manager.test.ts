@@ -98,7 +98,7 @@ describe('EntityManager — the roster', () => {
 
       const fibers = yield* Effect.forEach(
         Array.from({ length: 50 }, (_, index) => index),
-        (index) => Effect.fork(roster.spawn(creeper(index))),
+        (index) => Effect.forkDetach(roster.spawn(creeper(index))),
         { concurrency: 'unbounded' },
       )
       yield* Effect.forEach(fibers, Fiber.join)
@@ -408,8 +408,8 @@ describe('EntityManager — the Tag', () => {
       // A compile-time assertion with a runtime witness: if `entityManagerTag`
       // ever stopped carrying `S`, this line would still run and the annotation
       // would stop typechecking, which is what `pnpm typecheck` is for.
-      const tag: Context.Tag<EntityManager, EntityManagerApi<Fuse>> = entityManagerTag<Fuse>()
-      expect(Context.isTag(tag)).toBe(true)
+      const tag: Context.Service<EntityManager, EntityManagerApi<Fuse>> = entityManagerTag<Fuse>()
+      expect(Context.isKey(tag)).toBe(true)
     }),
   )
 })

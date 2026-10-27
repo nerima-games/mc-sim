@@ -213,12 +213,12 @@ export const makeSaveCoordinator = <State, E>(
           ? ([state.waiters, { ...state, running: false }] as const)
           : ([state.waiters, { ...state, waiters: [] }] as const))
       if (batch.length === 0) return
-      const outcome = yield* Effect.either(publishOnce)
-      if (outcome._tag === 'Right') {
+      const outcome = yield* Effect.result(publishOnce)
+      if (outcome._tag === 'Success') {
         yield* Effect.forEach(batch, (waiter) => Deferred.succeed(waiter, undefined), { discard: true })
       } else {
-        if (options.onFailure !== undefined) yield* options.onFailure(outcome.left)
-        yield* Effect.forEach(batch, (waiter) => Deferred.fail(waiter, outcome.left), { discard: true })
+        if (options.onFailure !== undefined) yield* options.onFailure(outcome.failure)
+        yield* Effect.forEach(batch, (waiter) => Deferred.fail(waiter, outcome.failure), { discard: true })
       }
       yield* drainLoop
     })
@@ -233,7 +233,7 @@ export const makeSaveCoordinator = <State, E>(
           ? ([false, { ...state, waiters }] as const)
           : ([true, { ...state, waiters, running: true }] as const)
       })
-      if (shouldStart) yield* Effect.forkDaemon(drainLoop)
+      if (shouldStart) yield* Effect.forkDetach(drainLoop)
       return yield* Deferred.await(waiter)
     })
 

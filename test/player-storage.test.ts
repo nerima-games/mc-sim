@@ -415,8 +415,8 @@ describe('player storage', () => {
         inventoryDurability: [{ current: 65, max: 64 }, ...snapshot.inventoryDurability.slice(1)],
       }
 
-      const result = yield* Effect.either(service.restoreStorage(malformed))
-      expect(result._tag).toBe('Left')
+      const result = yield* Effect.result(service.restoreStorage(malformed))
+      expect(result._tag).toBe('Failure')
       expect(bytes(yield* service.storageSnapshot)).toBe(before)
     }),
   )
@@ -433,7 +433,7 @@ describe('player storage', () => {
       const after = yield* service.storageSnapshot
       expect(after.inventory.slots[3]).toStrictEqual(itemStack('iron_boots', 1))
       expect(after.inventoryDurability[3]).toStrictEqual({ current: 188, max: 195 })
-      expect((yield* Effect.either(service.restoreStorage(after)))._tag).toBe('Right')
+      expect((yield* Effect.result(service.restoreStorage(after)))._tag).toBe('Success')
     }),
   )
 
@@ -868,10 +868,10 @@ describe('player storage', () => {
       const snapshot = yield* service.storageSnapshot
 
       const missingKey = { inventory: snapshot.inventory, equipment: snapshot.equipment }
-      const missingKeyResult = yield* Effect.either(service.restoreStorage(missingKey))
-      expect(missingKeyResult._tag).toBe('Left')
-      if (missingKeyResult._tag === 'Left') {
-        expect(missingKeyResult.left).toStrictEqual({
+      const missingKeyResult = yield* Effect.result(service.restoreStorage(missingKey))
+      expect(missingKeyResult._tag).toBe('Failure')
+      if (missingKeyResult._tag === 'Failure') {
+        expect(missingKeyResult.failure).toStrictEqual({
           _tag: 'PlayerStorageValidationError',
           path: 'storage',
           reason: 'expected exactly inventory, equipment, and inventoryDurability',
@@ -879,10 +879,10 @@ describe('player storage', () => {
       }
 
       const badSlotsLength = { ...snapshot, inventory: { slots: snapshot.inventory.slots.slice(0, 10) } }
-      const badSlotsLengthResult = yield* Effect.either(service.restoreStorage(badSlotsLength))
-      expect(badSlotsLengthResult._tag).toBe('Left')
-      if (badSlotsLengthResult._tag === 'Left') {
-        expect(badSlotsLengthResult.left).toStrictEqual({
+      const badSlotsLengthResult = yield* Effect.result(service.restoreStorage(badSlotsLength))
+      expect(badSlotsLengthResult._tag).toBe('Failure')
+      if (badSlotsLengthResult._tag === 'Failure') {
+        expect(badSlotsLengthResult.failure).toStrictEqual({
           _tag: 'PlayerStorageValidationError',
           path: 'storage.inventory.slots',
           reason: 'expected exactly 36 slots',
@@ -890,10 +890,10 @@ describe('player storage', () => {
       }
 
       const badDurabilityLength = { ...snapshot, inventoryDurability: snapshot.inventoryDurability.slice(0, 10) }
-      const badDurabilityLengthResult = yield* Effect.either(service.restoreStorage(badDurabilityLength))
-      expect(badDurabilityLengthResult._tag).toBe('Left')
-      if (badDurabilityLengthResult._tag === 'Left') {
-        expect(badDurabilityLengthResult.left).toStrictEqual({
+      const badDurabilityLengthResult = yield* Effect.result(service.restoreStorage(badDurabilityLength))
+      expect(badDurabilityLengthResult._tag).toBe('Failure')
+      if (badDurabilityLengthResult._tag === 'Failure') {
+        expect(badDurabilityLengthResult.failure).toStrictEqual({
           _tag: 'PlayerStorageValidationError',
           path: 'storage.inventoryDurability',
           reason: 'expected exactly 36 entries',
@@ -904,10 +904,10 @@ describe('player storage', () => {
         ...snapshot,
         equipment: { slots: { head: null, chest: null, legs: null, feet: null } },
       }
-      const badEquipmentResult = yield* Effect.either(service.restoreStorage(badEquipment))
-      expect(badEquipmentResult._tag).toBe('Left')
-      if (badEquipmentResult._tag === 'Left') {
-        expect(badEquipmentResult.left).toStrictEqual({
+      const badEquipmentResult = yield* Effect.result(service.restoreStorage(badEquipment))
+      expect(badEquipmentResult._tag).toBe('Failure')
+      if (badEquipmentResult._tag === 'Failure') {
+        expect(badEquipmentResult.failure).toStrictEqual({
           _tag: 'PlayerStorageValidationError',
           path: 'storage.equipment.slots',
           reason: 'expected exactly head, chest, legs, feet, and offhand',
@@ -928,10 +928,10 @@ describe('player storage', () => {
           (index === 5 ? { current: 1, max: 1 } : value)),
       }
 
-      const result = yield* Effect.either(service.restoreStorage(corrupted))
-      expect(result._tag).toBe('Left')
-      if (result._tag === 'Left') {
-        expect(result.left).toStrictEqual({
+      const result = yield* Effect.result(service.restoreStorage(corrupted))
+      expect(result._tag).toBe('Failure')
+      if (result._tag === 'Failure') {
+        expect(result.failure).toStrictEqual({
           _tag: 'PlayerStorageValidationError',
           path: 'storage.inventoryDurability.5',
           reason: 'empty slot requires null',
@@ -954,7 +954,7 @@ describe('player storage', () => {
         inventoryDurability: valid.inventoryDurability.map((value, index) => (index === 5 ? null : value)),
       }
 
-      expect((yield* Effect.either(service.restoreStorage(explicitNull)))._tag).toBe('Right')
+      expect((yield* Effect.result(service.restoreStorage(explicitNull)))._tag).toBe('Success')
       expect((yield* service.storageSnapshot).inventory.slots[5]).toBeUndefined()
     }),
   )
@@ -972,10 +972,10 @@ describe('player storage', () => {
         },
       }
 
-      const result = yield* Effect.either(service.restoreStorage(corrupted))
-      expect(result._tag).toBe('Left')
-      if (result._tag === 'Left') {
-        expect(result.left).toStrictEqual({
+      const result = yield* Effect.result(service.restoreStorage(corrupted))
+      expect(result._tag).toBe('Failure')
+      if (result._tag === 'Failure') {
+        expect(result.failure).toStrictEqual({
           _tag: 'PlayerStorageValidationError',
           path: 'storage.inventory.slots.0',
           reason: 'expected a valid item stack',
@@ -998,10 +998,10 @@ describe('player storage', () => {
         },
       }
 
-      const result = yield* Effect.either(service.restoreStorage(legacy))
-      expect(result._tag).toBe('Left')
-      if (result._tag === 'Left') {
-        expect(result.left).toStrictEqual({
+      const result = yield* Effect.result(service.restoreStorage(legacy))
+      expect(result._tag).toBe('Failure')
+      if (result._tag === 'Failure') {
+        expect(result.failure).toStrictEqual({
           _tag: 'PlayerStorageValidationError',
           path: 'storage.inventory.slots.0',
           reason: 'expected a valid item stack',
@@ -1015,18 +1015,18 @@ describe('player storage', () => {
       const service = yield* makeInventoryService()
       yield* service.add('stone', 3)
       const valid = yield* service.storageSnapshot
-      const validResult = yield* Effect.either(service.restoreStorage(valid))
-      expect(validResult._tag).toBe('Right')
+      const validResult = yield* Effect.result(service.restoreStorage(valid))
+      expect(validResult._tag).toBe('Success')
 
       const corrupted = {
         ...valid,
         inventoryDurability: valid.inventoryDurability.map((value, index) =>
           (index === 0 ? { current: 1, max: 1 } : value)),
       }
-      const result = yield* Effect.either(service.restoreStorage(corrupted))
-      expect(result._tag).toBe('Left')
-      if (result._tag === 'Left') {
-        expect(result.left).toStrictEqual({
+      const result = yield* Effect.result(service.restoreStorage(corrupted))
+      expect(result._tag).toBe('Failure')
+      if (result._tag === 'Failure') {
+        expect(result.failure).toStrictEqual({
           _tag: 'PlayerStorageValidationError',
           path: 'storage.inventoryDurability.0',
           reason: 'non-durable item requires null',
