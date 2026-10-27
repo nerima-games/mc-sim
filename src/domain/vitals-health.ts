@@ -36,9 +36,10 @@ export const isDead = (vitals: Vitals): boolean => isDeadState(safeVitals(vitals
 export const applyDamage = (vitals: Vitals, damage: Damage): Vitals => {
   const base = safeVitals(vitals)
   const damageEnvelope = typeof damage === 'object' && damage !== null && !Array.isArray(damage)
-    ? damage as Damage
+    ? damage
     : undefined
-  const amount = delta((damageEnvelope?.amount ?? Number.NaN) as number)
+  const rawAmount = damageEnvelope?.amount
+  const amount = delta(typeof rawAmount === 'number' ? rawAmount : Number.NaN)
   if (isDeadState(base) || amount <= 0) return base
 
   const healthPoints = EntityHealthPoints(Math.max(0, base.healthPoints - amount))
