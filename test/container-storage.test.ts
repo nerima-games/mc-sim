@@ -16,6 +16,7 @@ import {
   snapshotContainerStorage,
   transferContainerItem,
   validateContainerStorageSnapshot,
+  worldContainerId,
   worldContainerIdAt,
 } from '../src/domain/container-storage'
 import { itemStack as itemStackResult, type ItemStack } from '../src/domain/inventory'
@@ -52,6 +53,11 @@ describe('container storage domain', () => {
     const id = worldContainerIdAt(address)
 
     expect(id).toBe('nether:12,64,-7')
+  })
+
+  it('validates a branded world container id directly', () => {
+    expect(Result.isSuccess(worldContainerId('nether:12,64,-7'))).toBe(true)
+    expect(Result.isFailure(worldContainerId(''))).toBe(true)
   })
 
   it('strictly rejects duplicate ids and malformed slots', () => {
@@ -200,6 +206,70 @@ describe('container storage domain', () => {
     expect(outcome.containerStorage).toBe(storage)
   })
 
+  it('returns typed failures for malformed container operation envelopes', () => {
+    const player = emptyPlayerStorage()
+    const storage = createContainer(emptyContainerStorage(), 'envelope').storage
+    const transferRequest = {
+      direction: 'ContainerToPlayer' as const,
+      containerId: 'envelope',
+      playerSlot: 0,
+      containerSlot: 0,
+      count: 1,
+    }
+    const extractRequest = { containerId: 'envelope', containerSlot: 0, count: 1 }
+    const moveRequest = {
+      sourceContainerId: 'envelope',
+      sourceSlot: 0,
+      destinationContainerId: 'envelope',
+      destinationSlot: 1,
+      count: 1,
+    }
+    const malformedStorageValues: ReadonlyArray<unknown> = [
+      null,
+      { containers: null },
+      { containers: [null] },
+      { containers: [{ id: ' bad ', kind: 'chest', slots: Array.from({ length: CHEST_CONTAINER_CAPACITY }, () => null) }] },
+      { containers: [{ id: 'bad-kind', kind: 'furnace', slots: Array.from({ length: CHEST_CONTAINER_CAPACITY }, () => null) }] },
+      { containers: [{ id: 'short-chest', kind: 'chest', slots: Array.from({ length: CHEST_CONTAINER_CAPACITY - 1 }, () => null) }] },
+      { containers: [{ id: 'short-legacy-chest', slots: Array.from({ length: CHEST_CONTAINER_CAPACITY - 1 }, () => null) }] },
+      { containers: [{ id: 'extra-field', kind: 'chest', slots: Array.from({ length: CHEST_CONTAINER_CAPACITY }, () => null), extra: true }] },
+      { containers: [
+        { id: 'duplicate', kind: 'chest', slots: Array.from({ length: CHEST_CONTAINER_CAPACITY }, () => null) },
+        { id: 'duplicate', kind: 'chest', slots: Array.from({ length: CHEST_CONTAINER_CAPACITY }, () => null) },
+      ] },
+    ]
+
+    expect(transferContainerItem(player, storage, null as never).result).toStrictEqual({ _tag: 'InvalidRequest' })
+    expect(extractContainerItem(storage, null as never).result).toStrictEqual({ _tag: 'InvalidRequest' })
+    expect(moveContainerItem(storage, null as never).result).toStrictEqual({ _tag: 'InvalidRequest' })
+    expect(transferContainerItem(null as never, storage, transferRequest).result).toStrictEqual({
+      _tag: 'InvalidPlayerStorage',
+    })
+
+    for (const malformedStorage of malformedStorageValues) {
+      expect(transferContainerItem(player, malformedStorage as never, transferRequest).result).toStrictEqual({
+        _tag: 'InvalidContainerStorage',
+      })
+      expect(extractContainerItem(malformedStorage as never, extractRequest).result).toStrictEqual({
+        _tag: 'InvalidContainerStorage',
+      })
+      expect(moveContainerItem(malformedStorage as never, moveRequest).result).toStrictEqual({
+        _tag: 'InvalidContainerStorage',
+      })
+    }
+
+    const legacyChest = {
+      containers: [{ id: 'legacy-chest', slots: Array.from({ length: CHEST_CONTAINER_CAPACITY }, () => null) }],
+    }
+    expect(extractContainerItem(legacyChest as never, {
+      containerId: 'legacy-chest', containerSlot: 0, count: 1,
+    }).result).toStrictEqual({ _tag: 'EmptySource' })
+
+    expect(createContainer(emptyContainerStorage(), 'invalid-kind', 'furnace' as never).result).toStrictEqual({
+      _tag: 'InvalidContainerKind',
+    })
+  })
+
   it('rejects an empty container id without touching storage', () => {
     const storage = emptyContainerStorage()
     const created = createContainer(storage, '')
@@ -272,6 +342,22 @@ describe('container storage domain', () => {
         path: 'containerStorage.containers.0.kind',
         reason: 'expected a supported container kind',
       },
+    })
+  })
+
+  it('rejects a chest snapshot with the wrong fixed capacity', () => {
+    const result = validateContainerStorageSnapshot({
+      version: CONTAINER_STORAGE_SNAPSHOT_VERSION,
+      containers: [{
+        id: 'legacy-chest',
+        kind: 'chest',
+        slots: Array.from({ length: CHEST_CONTAINER_CAPACITY - 1 }, () => null),
+      }],
+    })
+
+    expect(result).toMatchObject({
+      _tag: 'Invalid',
+      error: { path: 'containerStorage.containers.0.slots' },
     })
   })
 
