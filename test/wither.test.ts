@@ -93,6 +93,13 @@ describe('wither summon', () => {
     expect(Result.getOrThrow(result)).toBeUndefined()
   })
 
+  it('returns BrandError for a non-callable block reader before querying blocks', () => {
+    const result = matchWitherSummon(cell(0, 0, 0), null as never)
+
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) expect(result.failure._tag).toBe('BrandError')
+  })
+
   it('returns BrandError for a non-finite base before querying blocks', () => {
     let blockLookupCalled = false
     const result = matchWitherSummon({ x: Number.NaN as PositionAxis, y: PositionAxis(0), z: PositionAxis(0) }, () => {
@@ -104,6 +111,7 @@ describe('wither summon', () => {
     if (Result.isFailure(result)) expect(result.failure._tag).toBe('BrandError')
     expect(blockLookupCalled).toBe(false)
   })
+
 })
 describe('wither lifecycle', () => {
   it('charges invulnerably, then emits its spawn blast exactly once', () => {
@@ -217,6 +225,13 @@ describe('wither lifecycle', () => {
 
     expect(Result.isFailure(stepWither(state, Number.NaN))).toBe(true)
     expect(Result.isFailure(damageWither(state, Number.NaN, 'melee'))).toBe(true)
+  })
+
+  it('returns BrandError for an unknown damage kind', () => {
+    const result = damageWither(createWither(position(0, 0, 0)), WitherDamageAmount(1), 'projectile' as never)
+
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) expect(result.failure._tag).toBe('BrandError')
   })
 
   it('returns a BrandError when the next position is not finite', () => {
