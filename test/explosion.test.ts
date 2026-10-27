@@ -5,7 +5,7 @@ import {
   planExplosion,
   type ExplosionBlockPosition,
 } from '../src/domain/explosion'
-import { EntityId, EntityKind, type Entity } from '../src/domain/entity'
+import { EntityHealthPoints, EntityId, EntityKind, type Entity } from '../src/domain/entity'
 import { PositionAxis, position as coordinatePosition } from '@nerima-games/mc-kernel'
 
 const position = (x: number, y: number, z: number) =>
@@ -26,7 +26,7 @@ const entity = (id: string, x: number, y: number, z: number): Entity<null> => ({
   id: EntityId(id),
   kind: EntityKind('test'),
   feetPosition: position(x, y, z),
-  healthPoints: 20,
+  healthPoints: EntityHealthPoints(20),
   behaviour: null,
 })
 

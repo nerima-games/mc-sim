@@ -1,3 +1,4 @@
+import { EntityHealthPoints, type HealthAmount } from '@nerima-games/mc-kernel'
 import { type Damage, type Vitals } from './vitals-model.js'
 import { delta } from './vitals-number.js'
 
@@ -7,7 +8,7 @@ export const applyDamage = (vitals: Vitals, damage: Damage): Vitals => {
   const amount = delta(damage.amount)
   if (isDead(vitals) || amount <= 0) return vitals
 
-  const healthPoints = Math.max(0, vitals.healthPoints - amount)
+  const healthPoints = EntityHealthPoints(Math.max(0, vitals.healthPoints - amount))
   return {
     ...vitals,
     healthPoints,
@@ -15,12 +16,12 @@ export const applyDamage = (vitals: Vitals, damage: Damage): Vitals => {
   }
 }
 
-export const heal = (vitals: Vitals, amount: number): Vitals => {
+export const heal = (vitals: Vitals, amount: HealthAmount): Vitals => {
   const healed = delta(amount)
   if (isDead(vitals) || healed <= 0) return vitals
 
   return {
     ...vitals,
-    healthPoints: Math.min(vitals.maxHealthPoints, vitals.healthPoints + healed),
+    healthPoints: EntityHealthPoints(Math.min(vitals.maxHealthPoints, vitals.healthPoints + healed)),
   }
 }

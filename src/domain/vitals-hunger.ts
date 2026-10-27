@@ -1,10 +1,14 @@
-import { type DeltaTimeSecs } from '@nerima-games/mc-kernel'
+import { FoodNutrition, FoodSaturation, type DeltaTimeSecs } from '@nerima-games/mc-kernel'
 import {
   EXHAUSTION_PER_POINT,
   EXHAUSTION_PER_REGEN,
   FOOD_TICK_SECS,
   MAX_EXHAUSTION,
   REGEN_HUNGER_THRESHOLD,
+  ExhaustionAmount,
+  FoodTimerSecs,
+  HungerPoints,
+  SaturationModifier,
   type Vitals,
 } from './vitals-model.js'
 import { clamp, delta } from './vitals-number.js'
@@ -13,8 +17,8 @@ export type FoodTickSignal = 'none' | 'regen' | 'starve'
 
 const cascadeExhaustion = (vitals: Vitals, rawExhaustion: number): Vitals => {
   let exhaustion = clamp(rawExhaustion, 0, MAX_EXHAUSTION)
-  let saturation = vitals.saturation
-  let hungerPoints = vitals.hungerPoints
+  let saturation: number = vitals.saturation
+  let hungerPoints: number = vitals.hungerPoints
 
   while (exhaustion >= EXHAUSTION_PER_POINT) {
     exhaustion -= EXHAUSTION_PER_POINT
@@ -22,10 +26,15 @@ const cascadeExhaustion = (vitals: Vitals, rawExhaustion: number): Vitals => {
     else hungerPoints = Math.max(0, hungerPoints - 1)
   }
 
-  return { ...vitals, hungerPoints, saturation, exhaustion }
+  return {
+    ...vitals,
+    hungerPoints: HungerPoints(hungerPoints),
+    saturation: FoodSaturation(saturation),
+    exhaustion: ExhaustionAmount(exhaustion),
+  }
 }
 
-export const addExhaustion = (vitals: Vitals, amount: number): Vitals => {
+export const addExhaustion = (vitals: Vitals, amount: ExhaustionAmount): Vitals => {
   const added = delta(amount)
   return added <= 0
     ? vitals
@@ -34,18 +43,18 @@ export const addExhaustion = (vitals: Vitals, amount: number): Vitals => {
 
 export const eat = (
   vitals: Vitals,
-  foodPoints: number,
-  saturationModifier: number,
+  foodPoints: FoodNutrition,
+  saturationModifier: SaturationModifier,
 ): Vitals => {
   const food = delta(foodPoints)
   if (food <= 0) return vitals
 
-  const hungerPoints = clamp(vitals.hungerPoints + food, 0, vitals.maxHungerPoints)
-  const saturation = clamp(
+  const hungerPoints = HungerPoints(clamp(vitals.hungerPoints + food, 0, vitals.maxHungerPoints))
+  const saturation = FoodSaturation(clamp(
     vitals.saturation + food * delta(saturationModifier) * 2,
     0,
     hungerPoints,
-  )
+  ))
   return { ...vitals, hungerPoints, saturation }
 }
 
@@ -54,18 +63,20 @@ export const advanceFoodTimer = (
   dt: DeltaTimeSecs,
 ): readonly [FoodTickSignal, Vitals] => {
   const elapsed = Math.max(0, delta(dt))
-  const foodTimerSecs = vitals.foodTimerSecs + elapsed
-  if (foodTimerSecs < FOOD_TICK_SECS) {
+  const crossesTick = vitals.foodTimerSecs + elapsed >= FOOD_TICK_SECS
+  const elapsedModulo = Number.isFinite(elapsed) ? elapsed % FOOD_TICK_SECS : 0
+  const foodTimerSecs = FoodTimerSecs((vitals.foodTimerSecs + elapsedModulo) % FOOD_TICK_SECS)
+  if (!crossesTick) {
     return ['none', { ...vitals, foodTimerSecs }]
   }
 
-  const ticked = { ...vitals, foodTimerSecs: foodTimerSecs % FOOD_TICK_SECS }
+  const ticked = { ...vitals, foodTimerSecs }
   const canRegenerate =
     ticked.healthPoints > 0 &&
     ticked.healthPoints < ticked.maxHealthPoints &&
     ticked.hungerPoints >= REGEN_HUNGER_THRESHOLD
   if (canRegenerate) {
-    return ['regen', addExhaustion(ticked, EXHAUSTION_PER_REGEN)]
+    return ['regen', addExhaustion(ticked, ExhaustionAmount(EXHAUSTION_PER_REGEN))]
   }
 
   return ticked.hungerPoints <= 0 ? ['starve', ticked] : ['none', ticked]

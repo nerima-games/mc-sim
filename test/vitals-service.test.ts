@@ -1,10 +1,22 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect } from 'effect'
 import { makeVitalsService, VitalsServiceLayer, VitalsService } from '../src/application/vitals-service'
-import { DeltaTimeSecs } from '@nerima-games/mc-kernel'
-import { isDead, isValidVitals, SPAWN_VITALS, type Vitals } from '../src/domain/vitals'
+import { DeltaTimeSecs, FoodNutrition } from '@nerima-games/mc-kernel'
+import {
+  DamageAmount,
+  DamageCause,
+  ExperienceDelta,
+  ExhaustionAmount,
+  HealthAmount,
+  isDead,
+  isValidVitals,
+  SaturationModifier,
+  SPAWN_VITALS,
+} from '../src/domain/vitals'
 
 const dt = (seconds: number): DeltaTimeSecs => DeltaTimeSecs(seconds)
+const damage = (amount: number, cause: string) => ({ amount: DamageAmount(amount), cause: DamageCause(cause) })
+const invalidDamage = (amount: number, cause: string) => ({ amount: amount as DamageAmount, cause: DamageCause(cause) })
 
 /**
  * THE regression test for the death signal.
@@ -21,15 +33,15 @@ describe('REGRESSION: exactly one blow reports the kill', () => {
     Effect.gen(function* () {
       const vitals = yield* makeVitalsService()
 
-      const survived = yield* vitals.damage({ amount: 19, cause: 'fall' })
+      const survived = yield* vitals.damage(damage(19, 'fall'))
       expect(survived.died).toBe(false)
       expect(survived.vitals.healthPoints).toBe(1)
 
-      const fatal = yield* vitals.damage({ amount: 1, cause: 'lava' })
+      const fatal = yield* vitals.damage(damage(1, 'lava'))
       expect(fatal.died).toBe(true)
       expect(fatal.vitals.lastDamageCause).toBe('lava')
 
-      const posthumous = yield* vitals.damage({ amount: 100, cause: 'explosion' })
+      const posthumous = yield* vitals.damage(damage(100, 'explosion'))
       expect(posthumous.died).toBe(false)
       expect(posthumous.vitals.lastDamageCause).toBe('lava')
     }),
@@ -57,7 +69,7 @@ describe('REGRESSION: exactly one blow reports the kill', () => {
       // Each blow is one point against twenty health. Whatever order the fibers
       // interleave in, precisely one of them must be the transition.
       const outcomes = yield* Effect.all(
-        Array.from({ length: 20 }, () => vitals.damage({ amount: 1, cause: 'suffocation' })),
+        Array.from({ length: 20 }, () => vitals.damage(damage(1, 'suffocation'))),
         { concurrency: 'unbounded' },
       )
 
@@ -70,11 +82,11 @@ describe('REGRESSION: exactly one blow reports the kill', () => {
     Effect.gen(function* () {
       const vitals = yield* makeVitalsService()
 
-      const nothing = yield* vitals.damage({ amount: Number.NaN, cause: 'generic' })
+      const nothing = yield* vitals.damage(invalidDamage(Number.NaN, 'generic'))
       expect(nothing.died).toBe(false)
       expect(nothing.vitals.healthPoints).toBe(20)
 
-      const fatal = yield* vitals.damage({ amount: 20, cause: 'void' })
+      const fatal = yield* vitals.damage(damage(20, 'void'))
       expect(fatal.died).toBe(true)
     }),
   )
@@ -85,8 +97,8 @@ describe('heal and eat go through the same Ref the rest of the service does', ()
     Effect.gen(function* () {
       const vitals = yield* makeVitalsService()
 
-      yield* vitals.damage({ amount: 12, cause: 'fall' })
-      const healed = yield* vitals.heal(100)
+      yield* vitals.damage(damage(12, 'fall'))
+      const healed = yield* vitals.heal(HealthAmount(100))
 
       expect(healed.healthPoints).toBe(20)
       expect(yield* vitals.snapshot).toEqual(healed)
@@ -97,8 +109,8 @@ describe('heal and eat go through the same Ref the rest of the service does', ()
     Effect.gen(function* () {
       const vitals = yield* makeVitalsService()
 
-      yield* vitals.damage({ amount: 20, cause: 'fall' })
-      const healed = yield* vitals.heal(10)
+      yield* vitals.damage(damage(20, 'fall'))
+      const healed = yield* vitals.heal(HealthAmount(10))
 
       expect(isDead(healed)).toBe(true)
       expect(healed.healthPoints).toBe(0)
@@ -115,7 +127,7 @@ describe('heal and eat go through the same Ref the rest of the service does', ()
 
       // Same numbers as the domain-level 'saturation term is food * modifier *
       // 2' test: bread is 5 food, modifier 0.6, so the reserve gains 6.
-      yield* vitals.eat(5, 0.6)
+      yield* vitals.eat(FoodNutrition(5), SaturationModifier(0.6))
       const fed = yield* vitals.snapshot
 
       expect(fed.hungerPoints).toBe(15)
@@ -142,9 +154,9 @@ describe('the service reads no clock', () => {
     Effect.gen(function* () {
       const runOnce = Effect.gen(function* () {
         const vitals = yield* makeVitalsService()
-        yield* vitals.damage({ amount: 7, cause: 'fall' })
-        yield* vitals.addExhaustion(9.5)
-        yield* vitals.addExperience(123)
+        yield* vitals.damage(damage(7, 'fall'))
+        yield* vitals.addExhaustion(ExhaustionAmount(9.5))
+        yield* vitals.addExperience(ExperienceDelta(123))
         for (let frame = 0; frame < 500; frame++) {
           yield* vitals.advanceFoodTimer(dt(0.016))
         }
@@ -161,7 +173,7 @@ describe('the world-load path', () => {
     Effect.gen(function* () {
       const vitals = yield* makeVitalsService()
 
-      const fromDisk: Vitals = {
+      const fromDisk = {
         healthPoints: Number.NaN,
         maxHealthPoints: 0,
         hungerPoints: 99,
@@ -199,8 +211,8 @@ describe('the world-load path', () => {
     Effect.gen(function* () {
       const vitals = yield* makeVitalsService()
 
-      yield* vitals.damage({ amount: 20, cause: 'lava' })
-      yield* vitals.addExperience(500)
+      yield* vitals.damage(damage(20, 'lava'))
+      yield* vitals.addExperience(ExperienceDelta(500))
       yield* vitals.reset
 
       expect(yield* vitals.snapshot).toEqual(SPAWN_VITALS)
@@ -211,8 +223,8 @@ describe('the world-load path', () => {
     Effect.gen(function* () {
       const vitals = yield* makeVitalsService()
 
-      yield* vitals.addExperience(500)
-      yield* vitals.damage({ amount: 20, cause: 'lava' })
+      yield* vitals.addExperience(ExperienceDelta(500))
+      yield* vitals.damage(damage(20, 'lava'))
       yield* vitals.respawn
 
       const alive = yield* vitals.snapshot
@@ -228,9 +240,9 @@ describe('the view the HUD reads', () => {
     Effect.gen(function* () {
       const vitals = yield* makeVitalsService()
 
-      yield* vitals.damage({ amount: 5, cause: 'fall' })
-      yield* vitals.addExhaustion(24)
-      yield* vitals.addExperience(16)
+      yield* vitals.damage(damage(5, 'fall'))
+      yield* vitals.addExhaustion(ExhaustionAmount(24))
+      yield* vitals.addExperience(ExperienceDelta(16))
 
       expect(yield* vitals.view).toEqual({
         healthPoints: 15,
@@ -251,7 +263,7 @@ describe('the view the HUD reads', () => {
       const first = yield* makeVitalsService()
       const second = yield* makeVitalsService()
 
-      yield* first.damage({ amount: 20, cause: 'void' })
+      yield* first.damage(damage(20, 'void'))
 
       expect(isDead(yield* first.snapshot)).toBe(true)
       expect(isDead(yield* second.snapshot)).toBe(false)

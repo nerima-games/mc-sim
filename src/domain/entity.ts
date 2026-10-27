@@ -2,6 +2,10 @@
 export {
   EntityId,
   EntityKind,
+  EntityHealthPoints,
+  EntityRosterRepairCount,
+  EntitySerial,
+  EntityCount,
   type EntityState,
   type Entity,
   type EntityRoster,

@@ -1,51 +1,38 @@
 import { Brand } from 'effect'
-import { PositionAxis, position, type Position } from '@nerima-games/mc-kernel'
+import {
+  EntityHealthPoints,
+  EntityRosterRepairCount,
+  EntitySerial,
+  PositionAxis,
+  position,
+  type EntityId,
+  type EntityKind,
+  type Position,
+} from '@nerima-games/mc-kernel'
 
-export type EntityId = string & Brand.Brand<'EntityId'>
+export {
+  EntityHealthPoints,
+  EntityId,
+  EntityKind,
+  EntityRosterRepairCount,
+  EntitySerial,
+  isEntityId,
+  isEntityKind,
+  ENTITY_ID_PREFIX,
+  mintEntityId,
+  serialOfEntityId,
+} from '@nerima-games/mc-kernel'
 
-const entityId: Brand.Constructor<EntityId> = Brand.make<EntityId>(
-  (value) =>
-    typeof value === 'string' && value.trim().length > 0
-      ? true
-      : `EntityId must be a non-blank string, received ${JSON.stringify(value)}`,
+export type EntityCount = number & Brand.Brand<'EntityCount'>
+export const EntityCount: Brand.Constructor<EntityCount> = Brand.make((value) =>
+  Number.isSafeInteger(value) && value >= 0
+    ? true
+    : `EntityCount must be a non-negative safe integer, received ${String(value)}`,
 )
-export { entityId as EntityId }
-
-export type EntityKind = string & Brand.Brand<'EntityKind'>
-
-const entityKind: Brand.Constructor<EntityKind> = Brand.make<EntityKind>(
-  (value) =>
-    typeof value === 'string' && value.trim().length > 0
-      ? true
-      : `EntityKind must be a non-blank string, received ${JSON.stringify(value)}`,
-)
-export { entityKind as EntityKind }
-
-export const isEntityId = (value: unknown): value is EntityId =>
-  typeof value === 'string' && value.trim().length > 0
-
-export const isEntityKind = (value: unknown): value is EntityKind =>
-  typeof value === 'string' && value.trim().length > 0
-
-export const ENTITY_ID_PREFIX = 'e:'
-
-export const mintEntityId = (serial: number): EntityId => entityId(`${ENTITY_ID_PREFIX}${serial}`)
-
-export const serialOfEntityId = (id: string): number | undefined => {
-  if (!id.startsWith(ENTITY_ID_PREFIX)) {
-    return undefined
-  }
-  const digits = id.slice(ENTITY_ID_PREFIX.length)
-  if (digits.length === 0 || !/^\d+$/.test(digits)) {
-    return undefined
-  }
-  const serial = Number(digits)
-  return Number.isSafeInteger(serial) ? serial : undefined
-}
 
 export type EntityState<S> = {
   readonly feetPosition: Position
-  readonly healthPoints: number
+  readonly healthPoints: EntityHealthPoints
   readonly behaviour: S
 }
 
@@ -56,20 +43,21 @@ export type Entity<S> = EntityState<S> & {
 
 export type EntityRoster<S> = {
   readonly entities: ReadonlyArray<Entity<S>>
-  readonly nextSerial: number
+  readonly nextSerial: EntitySerial
 }
 
 export const NO_ENTITIES: ReadonlyArray<never> = []
 
-const magnitude = (value: number): number => (Number.isFinite(value) ? value : 0)
+const magnitude = (value: unknown): number =>
+  typeof value === 'number' && Number.isFinite(value) ? value : 0
 
 const repairPosition = (value: Position): Position =>
   typeof value === 'object' && value !== null
     ? position(PositionAxis(magnitude(value.x)), PositionAxis(magnitude(value.y)), PositionAxis(magnitude(value.z)))
     : position(PositionAxis(0), PositionAxis(0), PositionAxis(0))
 
-const repairHealth = (value: number): number =>
-  typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : 0
+const repairHealth = (value: number): EntityHealthPoints =>
+  EntityHealthPoints(typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : 0)
 
 export const repairState = <S>(state: EntityState<S>): EntityState<S> => ({
   feetPosition: repairPosition(state.feetPosition),
@@ -80,7 +68,7 @@ export const repairState = <S>(state: EntityState<S>): EntityState<S> => ({
 export type SpawnRequest<S> = {
   readonly kind: EntityKind
   readonly feetPosition: Position
-  readonly healthPoints: number
+  readonly healthPoints: EntityHealthPoints
   readonly behaviour: S
 }
 
@@ -112,8 +100,8 @@ export type SweepOutcome<S, A> = {
 export type BehaviourRepair<S> = (kind: EntityKind, behaviour: S) => S
 
 export type RosterRepair = {
-  readonly discarded: number
-  readonly reidentified: number
+  readonly discarded: EntityRosterRepairCount
+  readonly reidentified: EntityRosterRepairCount
 }
 
 export type NormaliseRosterOutcome<S> = RosterRepair & {
