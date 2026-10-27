@@ -111,13 +111,16 @@ export const normaliseSettings = (settings: unknown): Settings => {
 }
 
 export const applySettings = (current: Settings, patch: Partial<Settings>): Settings => {
+  const base = normaliseSettings(current)
+  if (!isRecord(patch)) return base
+
   const alignedPatch =
     patch.graphicsPreset !== undefined
       ? { ...patch, graphicsQuality: patch.graphicsPreset }
       : patch.graphicsQuality !== undefined
         ? { ...patch, graphicsPreset: patch.graphicsQuality }
         : patch
-  return normaliseSettings({ ...current, ...alignedPatch })
+  return normaliseSettings({ ...base, ...alignedPatch })
 }
 
 export const isGraphicsQuality = (value: unknown): value is GraphicsQuality =>
@@ -153,15 +156,21 @@ export const isValidSettings = (value: unknown): value is Settings => {
   )
 }
 
-export const keyBindingFor = (settings: Settings, action: string): string | undefined =>
-  Object.entries(settings.keyBindings).find(([candidate]) => candidate === action)?.[1]
+export const keyBindingFor = (settings: Settings, action: string): string | undefined => {
+  const keyBindings = valueAt(settings, 'keyBindings')
+  if (typeof action !== 'string' || !isRecord(keyBindings)) return undefined
+  const binding = Object.entries(keyBindings).find(([candidate, code]) => candidate === action && typeof code === 'string')
+  return typeof binding?.[1] === 'string' ? binding[1] : undefined
+}
 
 export const rebindKey = (settings: Settings, action: InputAction, code: KeyCode): Settings => {
-  const next = kernelRebindKey(settings, action, code)
-  return next === settings ? settings : normaliseSettings(next)
+  const base = isValidSettings(settings) ? settings : normaliseSettings(settings)
+  const next = kernelRebindKey(base, action, code)
+  return next === base ? base : normaliseSettings(next)
 }
 
 export const unbindKey = (settings: Settings, action: InputAction): Settings => {
-  const next = kernelUnbindKey(settings, action)
-  return next === settings ? settings : normaliseSettings(next)
+  const base = isValidSettings(settings) ? settings : normaliseSettings(settings)
+  const next = kernelUnbindKey(base, action)
+  return next === base ? base : normaliseSettings(next)
 }
