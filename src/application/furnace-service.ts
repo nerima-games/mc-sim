@@ -120,7 +120,6 @@ export const makeFurnaceServiceRegistration = (
 type FurnaceUpdate<A> = Readonly<{
   value: A
   state: FurnaceServiceState
-  commit: boolean
 }>
 
 const updateFurnaceState = <A>(
@@ -129,17 +128,15 @@ const updateFurnaceState = <A>(
 ): Effect.Effect<A, FurnaceServiceError, WorldCommitCoordinator> =>
   Effect.flatMap(WorldCommitCoordinator, (coordinator) =>
     Effect.flatMap(coordinator.snapshot(ownerId, FurnaceServiceStateSchema), (snapshot) =>
-      Effect.flatMap(fromResult(update(snapshot.state)), ({ value, state, commit }) =>
-        commit
-          ? Effect.map(
-              coordinator.commit({
-                expectedRevision: snapshot.revision,
-                expectedDimensions: [],
-                changes: [{ ownerId, state }],
-              }),
-              () => value,
-            )
-          : Effect.succeed(value),
+      Effect.flatMap(fromResult(update(snapshot.state)), ({ value, state }) =>
+        Effect.map(
+          coordinator.commit({
+            expectedRevision: snapshot.revision,
+            expectedDimensions: [],
+            changes: [{ ownerId, state }],
+          }),
+          () => value,
+        ),
       ),
     ),
   )
@@ -195,14 +192,12 @@ export const makeFurnaceService = (
       Result.map(furnaceState({ ...current.furnace, input }), (furnace) => ({
         value: undefined,
         state: { ...current, furnace },
-        commit: true,
       })),
     ),
     setFuel: (fuel) => updateFurnaceState(ownerId, (current) =>
       Result.map(furnaceState({ ...current.furnace, fuel }), (furnace) => ({
         value: undefined,
         state: { ...current, furnace },
-        commit: true,
       })),
     ),
     advance: (elapsedSecs) => updateFurnaceState(ownerId, (current) =>
@@ -210,7 +205,6 @@ export const makeFurnaceService = (
         Result.map(RecipeExperience.result(current.experience + outcome.experienceGained), (experience) => ({
           value: outcome,
           state: { furnace: outcome.state, experience },
-          commit: true,
         })),
       ),
     ),
@@ -223,7 +217,6 @@ export const makeFurnaceService = (
         Result.map(RecipeExperience.result(0), (experience) => ({
           value: undefined,
           state: { furnace: validated.state, experience },
-          commit: true,
         })),
       )
     },
@@ -233,7 +226,6 @@ export const makeFurnaceService = (
           Result.map(RecipeExperience.result(0), (experience) => ({
             value: undefined,
             state: { furnace, experience },
-            commit: true,
           })),
         ),
       ),
