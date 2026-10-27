@@ -333,13 +333,7 @@ export const matchWitherSummon = (
     return undefined
   })
 
-export const serializeWither = (state: WitherState): WitherSnapshot => ({
-  kind: 'wither',
-  version: 1,
-  state: normaliseWitherState(state),
-})
-
-const normaliseWitherState = (value: unknown): WitherState => {
+function normaliseWitherState(value: unknown): WitherState {
   const state = isRecord(value) ? value : {}
   const rawHealthPoints = state['healthPoints']
   const rawChargeRemainingSecs = state['chargeRemainingSecs']
@@ -367,6 +361,12 @@ const normaliseWitherState = (value: unknown): WitherState => {
     velocity: repairPosition(state['velocity'] as Position),
   }
 }
+
+export const serializeWither = (state: WitherState): WitherSnapshot => ({
+  kind: 'wither',
+  version: 1,
+  state: normaliseWitherState(state),
+})
 
 export const restoreWither = (snapshot: WitherSnapshot): WitherState =>
   normaliseWitherState(isRecord(snapshot) ? snapshot['state'] : undefined)
