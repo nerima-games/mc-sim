@@ -68,6 +68,8 @@ const validateVehicleItem = (
   ids.add(id)
   const serialMatch = /^v:(\d+)$/.exec(id)
   const serial = serialMatch === null ? undefined : Number(serialMatch[1])
+  if (serial !== undefined && !Number.isSafeInteger(serial))
+    return { _tag: 'Invalid', error: invalidError(`${path}.id`, 'must contain a safe serial') }
   if (item['type'] !== 'boat' && item['type'] !== 'minecart')
     return { _tag: 'Invalid', error: invalidError(`${path}.type`, 'must be boat or minecart') }
   if (!isDimension(item['dimension']))

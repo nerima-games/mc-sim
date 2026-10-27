@@ -1,5 +1,5 @@
 import { Context, Effect, Layer, Ref } from 'effect'
-import { AngleRadians, EntitySerial, isDimension, VehicleVelocityComponent, type Dimension, type Position } from '@nerima-games/mc-kernel'
+import { AngleRadians, EntitySerial, isDimension, VehicleVelocityComponent, type AngleRadians as AngleRadiansType, type Dimension, type Position } from '@nerima-games/mc-kernel'
 import {
   emptyVehicleSnapshot,
   type OccupantId,
@@ -17,11 +17,11 @@ export type VehicleOperationError = Readonly<{
   reason: 'not-found' | 'duplicate-occupant' | 'occupied' | 'occupant-mismatch' | 'invalid-transform' | 'serial-exhausted'
 }>
 
-export type VehicleVelocityInput = Readonly<{ x: number; y: number; z: number }>
+export type VehicleVelocityInput = VehicleVelocity
 
 export type VehicleStateUpdate = Readonly<Pick<Vehicle, 'dimension' | 'position'> & {
   velocity: VehicleVelocityInput
-  yawRadians: number
+  yawRadians: AngleRadiansType
   occupant?: OccupantId | undefined
 }>
 
@@ -49,12 +49,12 @@ const update = (
 
 export type VehicleServiceApi = Readonly<{
   vehicles: Effect.Effect<ReadonlyArray<Vehicle>>
-  spawn: (type: VehicleType, dimension: Dimension, position: Position, yawRadians?: number) => Effect.Effect<Vehicle, VehicleOperationError>
+  spawn: (type: VehicleType, dimension: Dimension, position: Position, yawRadians?: AngleRadiansType) => Effect.Effect<Vehicle, VehicleOperationError>
   despawn: (id: VehicleId) => Effect.Effect<boolean>
   mount: (id: VehicleId, occupant: OccupantId) => Effect.Effect<void, VehicleOperationError>
   dismount: (id: VehicleId, occupant: OccupantId) => Effect.Effect<void, VehicleOperationError>
   updateVelocity: (id: VehicleId, velocity: VehicleVelocityInput) => Effect.Effect<void, VehicleOperationError>
-  updateTransform: (id: VehicleId, dimension: Dimension, position: Position, yawRadians: number) => Effect.Effect<void, VehicleOperationError>
+  updateTransform: (id: VehicleId, dimension: Dimension, position: Position, yawRadians: AngleRadiansType) => Effect.Effect<void, VehicleOperationError>
   updateState: (id: VehicleId, state: VehicleStateUpdate) => Effect.Effect<void, VehicleOperationError>
   snapshot: Effect.Effect<VehicleSnapshot>
   restore: (snapshot: unknown) => Effect.Effect<void, VehicleValidationError>
@@ -76,7 +76,7 @@ export const makeVehicleService = (
       Ref.modify(state, f).pipe(Effect.flatten)
     return {
       vehicles: Ref.get(state).pipe(Effect.map((snapshot) => snapshot.vehicles)),
-      spawn: (type, dimension, position, yawRadians = 0) => modify((snapshot) => {
+      spawn: (type, dimension, position, yawRadians = AngleRadians(0)) => modify((snapshot) => {
         if ((type !== 'boat' && type !== 'minecart') || !isDimension(dimension) || !validVector(position) || !Number.isFinite(yawRadians))
           return [Effect.fail(operationError('invalid-transform')), snapshot]
         if (snapshot.nextSerial === Number.MAX_SAFE_INTEGER)
@@ -86,7 +86,11 @@ export const makeVehicleService = (
           type,
           dimension,
           position,
-          velocity: vehicleVelocity({ x: 0, y: 0, z: 0 }),
+          velocity: vehicleVelocity({
+            x: VehicleVelocityComponent(0),
+            y: VehicleVelocityComponent(0),
+            z: VehicleVelocityComponent(0),
+          }),
           yawRadians: AngleRadians(yawRadians),
         }
         return [Effect.succeed(vehicle), {
@@ -155,5 +159,5 @@ export const makeVehicleService = (
     }
   })
 
-export const VehicleServiceLayer = (initial?: VehicleSnapshot): Layer.Layer<VehicleService, VehicleValidationError> =>
+export const VehicleServiceLayer = (initial?: unknown): Layer.Layer<VehicleService, VehicleValidationError> =>
   Layer.effect(VehicleService, makeVehicleService(initial))

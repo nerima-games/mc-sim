@@ -10,10 +10,12 @@ import {
 } from '../src/application/entity-manager'
 import {
   changed,
+  EntityHealthPoints,
+  EntityId,
   EntityKind,
+  EntitySerial,
   UNCHANGED,
   type Entity,
-  type EntityId,
   type EntityRoster,
 } from '../src/domain/entity'
 import { PositionAxis, position as coordinatePosition } from '@nerima-games/mc-kernel'
@@ -34,7 +36,7 @@ const DORMANT: Fuse = { _tag: 'Dormant' }
 const creeper = (x: number, fuse: Fuse = DORMANT) => ({
   kind: EntityKind('creeper'),
   feetPosition: coordinatePosition(PositionAxis(x), PositionAxis(64), PositionAxis(0)),
-  healthPoints: 20,
+  healthPoints: EntityHealthPoints(20),
   behaviour: fuse,
 })
 
@@ -174,7 +176,7 @@ describe('EntityManager — iteration is the hot path', () => {
       yield* roster.spawn(creeper(2))
 
       const hit = yield* roster.sweep<number>((entity) => ({
-        transition: changed({ ...entity, healthPoints: entity.healthPoints - 7 }),
+        transition: changed({ ...entity, healthPoints: EntityHealthPoints(entity.healthPoints - 7) }),
         emit: entity.healthPoints - 7,
       }))
 
@@ -389,8 +391,8 @@ describe('EntityManager — the Tag', () => {
   it.effect('an initial roster reaches the service through the Layer', () =>
     Effect.gen(function* () {
       const saved: EntityRoster<Fuse> = {
-        entities: [{ id: 'e:4' as EntityId, ...creeper(1) }],
-        nextSerial: 5,
+        entities: [{ id: EntityId('e:4'), ...creeper(1) }],
+        nextSerial: EntitySerial(5),
       }
 
       const ids = yield* Effect.gen(function* () {

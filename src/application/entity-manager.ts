@@ -77,6 +77,7 @@
  * host to measure it against rather than now.
  */
 import { Context, Effect, Layer, Ref } from 'effect'
+import { EntityCount } from '../domain/entity.js'
 import type {
   BehaviourRepair,
   Entity,
@@ -117,9 +118,9 @@ export type EntityManagerApi<S> = {
    */
   readonly entities: Effect.Effect<ReadonlyArray<Entity<S>>>
   readonly find: (id: EntityId) => Effect.Effect<Entity<S> | undefined>
-  readonly count: Effect.Effect<number>
+  readonly count: Effect.Effect<EntityCount>
   /** The census a spawn cap needs. See `spawn`. */
-  readonly countOfKind: (kind: EntityKind) => Effect.Effect<number>
+  readonly countOfKind: (kind: EntityKind) => Effect.Effect<EntityCount>
   /**
    * Advance every entity by one step, atomically, and collect what the rules
    * produced.
@@ -233,7 +234,7 @@ export const makeEntityManager = <S>(
       }),
     entities: Ref.get(state).pipe(Effect.map((current) => current.entities)),
     find: (id) => Ref.get(state).pipe(Effect.map((current) => findEntity(current, id))),
-    count: Ref.get(state).pipe(Effect.map((current) => current.entities.length)),
+    count: Ref.get(state).pipe(Effect.map((current) => EntityCount(current.entities.length))),
     countOfKind: (kind) => Ref.get(state).pipe(Effect.map((current) => countOfKind(current, kind))),
     sweep: (step) =>
       Ref.modify(state, (current) => {

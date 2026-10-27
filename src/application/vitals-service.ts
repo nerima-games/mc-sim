@@ -33,7 +33,7 @@
  * to the caller that caused it, in the same frame.
  */
 import { Context, Effect, Layer, Ref } from 'effect'
-import type { DeltaTimeSecs } from "@nerima-games/mc-kernel"
+import type { DeltaTimeSecs, FoodNutrition } from '@nerima-games/mc-kernel'
 import * as Vitals from '../domain/vitals.js'
 
 /**
@@ -62,18 +62,18 @@ export type VitalsServiceApi = {
    */
   readonly damage: (damage: Vitals.Damage) => Effect.Effect<DamageOutcome>
   /** Heal, up to the maximum. A dead player is not healed — see the domain module. */
-  readonly heal: (amount: number) => Effect.Effect<Vitals.Vitals>
+  readonly heal: (amount: Vitals.HealthAmount) => Effect.Effect<Vitals.Vitals>
   /** Charge exhaustion for something a rule did. The cost table is mx-gameplay's. */
-  readonly addExhaustion: (amount: number) => Effect.Effect<void>
+  readonly addExhaustion: (amount: Vitals.ExhaustionAmount) => Effect.Effect<void>
   /** Eat. Which foods restore what is a table of items, and not held here. */
-  readonly eat: (foodPoints: number, saturationModifier: number) => Effect.Effect<void>
+  readonly eat: (foodPoints: FoodNutrition, saturationModifier: Vitals.SaturationModifier) => Effect.Effect<void>
   /**
    * Advance the food timer by a frame's worth of seconds and report what the
    * tick asks for. The delta is SUPPLIED — no clock is read anywhere here.
    */
   readonly advanceFoodTimer: (dt: DeltaTimeSecs) => Effect.Effect<Vitals.FoodTickSignal>
   /** Award or spend experience. Negative amounts spend; the total floors at zero. */
-  readonly addExperience: (amount: number) => Effect.Effect<Vitals.Vitals>
+  readonly addExperience: (amount: Vitals.ExperienceDelta) => Effect.Effect<Vitals.Vitals>
   /**
    * Come back to life. EXPERIENCE SURVIVES — how much a death costs is a rule,
    * and `domain/vitals.ts` argues the case.
@@ -88,7 +88,7 @@ export type VitalsServiceApi = {
    * into an unopenable one. A caller that needs to know whether a save was
    * repaired asks `Vitals.isValidVitals` BEFORE restoring.
    */
-  readonly restore: (vitals: Vitals.Vitals) => Effect.Effect<void>
+  readonly restore: (vitals: unknown) => Effect.Effect<void>
   /** Back to the fresh-world vitals. Required for re-entrant world loads (DN-09). */
   readonly reset: Effect.Effect<void>
 }
@@ -107,7 +107,7 @@ export class VitalsService extends VitalsServiceBase {}
  * records what happened when only one of the two entry points was guarded.
  */
 export const makeVitalsService = (
-  initial: Vitals.Vitals = Vitals.SPAWN_VITALS,
+  initial: unknown = Vitals.SPAWN_VITALS,
 ): Effect.Effect<VitalsServiceApi> =>
   Effect.map(Ref.make(Vitals.normaliseVitals(initial)), (state) => ({
     snapshot: Ref.get(state),
@@ -144,5 +144,5 @@ export const makeVitalsService = (
   }))
 
 export const VitalsServiceLayer = (
-  initial: Vitals.Vitals = Vitals.SPAWN_VITALS,
+  initial: unknown = Vitals.SPAWN_VITALS,
 ): Layer.Layer<VitalsService> => Layer.effect(VitalsService, makeVitalsService(initial))

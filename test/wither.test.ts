@@ -1,8 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { Result } from 'effect'
-import { PositionAxis, position as coordinatePosition } from '@nerima-games/mc-kernel'
+import { DeltaTimeSecs, PositionAxis, position as coordinatePosition } from '@nerima-games/mc-kernel'
 import {
   WITHER_ARMOUR_THRESHOLD,
+  WitherChargeRemainingSecs,
+  WitherDamageAmount,
+  WitherExplosionPower,
+  WitherHealthPoints,
+  WitherProjectileSpeed,
+  WitherSummonMaterial,
   createWither,
   damageWither,
   matchWitherSummon,
@@ -10,16 +16,53 @@ import {
   serializeWither,
   stepWither,
   witherSkullProjectile,
+  type WitherState,
 } from '../src/domain/wither'
 
 const position = (x: number, y: number, z: number) =>
   coordinatePosition(PositionAxis(x), PositionAxis(y), PositionAxis(z))
-const step = (...args: Parameters<typeof stepWither>) => Result.getOrThrow(stepWither(...args))
+const cell = (x: number, y: number, z: number) => ({
+  x: PositionAxis(x),
+  y: PositionAxis(y),
+  z: PositionAxis(z),
+})
+const step = (state: WitherState, seconds: number, target?: Parameters<typeof stepWither>[2]) =>
+  Result.getOrThrow(stepWither(state, DeltaTimeSecs(seconds), target))
+const damage = (state: WitherState, amount: number, kind: Parameters<typeof damageWither>[2]) =>
+  damageWither(state, WitherDamageAmount(amount), kind)
+
+describe('wither scalar brands', () => {
+  it('returns BrandError results for invalid constructor inputs', () => {
+    const health = WitherHealthPoints.result(-1)
+    expect(Result.isFailure(health)).toBe(true)
+    if (Result.isFailure(health)) expect(health.failure._tag).toBe('BrandError')
+
+    const charge = WitherChargeRemainingSecs.result(-1)
+    expect(Result.isFailure(charge)).toBe(true)
+    if (Result.isFailure(charge)) expect(charge.failure._tag).toBe('BrandError')
+
+    const damageResult = WitherDamageAmount.result(Number.NaN)
+    expect(Result.isFailure(damageResult)).toBe(true)
+    if (Result.isFailure(damageResult)) expect(damageResult.failure._tag).toBe('BrandError')
+
+    const speed = WitherProjectileSpeed.result(0)
+    expect(Result.isFailure(speed)).toBe(true)
+    if (Result.isFailure(speed)) expect(speed.failure._tag).toBe('BrandError')
+
+    const power = WitherExplosionPower.result(Number.POSITIVE_INFINITY)
+    expect(Result.isFailure(power)).toBe(true)
+    if (Result.isFailure(power)) expect(power.failure._tag).toBe('BrandError')
+
+    const material = WitherSummonMaterial.result(1 as never)
+    expect(Result.isFailure(material)).toBe(true)
+    if (Result.isFailure(material)) expect(material.failure._tag).toBe('BrandError')
+  })
+})
 
 describe('wither summon', () => {
   it.each(['soul_sand', 'soul_soil'] as const)('matches a complete T made from %s', (material) => {
-    const blocks = new Map<string, string>()
-    const put = (x: number, y: number, z: number, block: string) => blocks.set(`${x},${y},${z}`, block)
+    const blocks = new Map<string, WitherSummonMaterial>()
+    const put = (x: number, y: number, z: number, block: string) => blocks.set(`${x},${y},${z}`, WitherSummonMaterial(block))
     put(0, 0, 0, material)
     for (const x of [-1, 0, 1]) {
       put(x, 1, 0, material)
@@ -27,7 +70,7 @@ describe('wither summon', () => {
     }
 
     const result = matchWitherSummon(
-      { x: 0, y: 0, z: 0 },
+      cell(0, 0, 0),
       ({ x, y, z }) => blocks.get(`${x},${y},${z}`),
     )
 
@@ -43,8 +86,8 @@ describe('wither summon', () => {
 
   it('rejects an incomplete skull row', () => {
     const result = matchWitherSummon(
-      { x: 0, y: 0, z: 0 },
-      ({ y }) => y < 2 ? 'soul_sand' : 'air',
+      cell(0, 0, 0),
+      ({ y }) => y < 2 ? WitherSummonMaterial('soul_sand') : WitherSummonMaterial('air'),
     )
 
     expect(Result.getOrThrow(result)).toBeUndefined()
@@ -52,7 +95,7 @@ describe('wither summon', () => {
 
   it('returns BrandError for a non-finite base before querying blocks', () => {
     let blockLookupCalled = false
-    const result = matchWitherSummon({ x: Number.NaN, y: 0, z: 0 }, () => {
+    const result = matchWitherSummon({ x: Number.NaN as PositionAxis, y: PositionAxis(0), z: PositionAxis(0) }, () => {
       blockLookupCalled = true
       return undefined
     })
@@ -65,7 +108,7 @@ describe('wither summon', () => {
 describe('wither lifecycle', () => {
   it('charges invulnerably, then emits its spawn blast exactly once', () => {
     const spawned = createWither(position(0, 10, 0))
-    expect(damageWither(spawned, 100, 'melee')).toMatchObject({ state: spawned, ignored: true })
+    expect(damage(spawned, 100, 'melee')).toMatchObject({ state: spawned, ignored: true })
 
     const charging = step(spawned, 9)
     const activated = step(charging.state, 1)
@@ -77,7 +120,7 @@ describe('wither lifecycle', () => {
 
   it('tracks a target in three dimensions, caps speed, and regenerates', () => {
     const active = step(createWither(position(0, 0, 0)), 10).state
-    const hurt = damageWither(active, 10, 'melee').state
+    const hurt = damage(active, 10, 'melee').state
     const moved = step(hurt, 1, position(100, 100, 0)).state
     expect(moved.healthPoints).toBe(291)
     expect(Math.hypot(moved.velocity.x, moved.velocity.y, moved.velocity.z)).toBeCloseTo(5)
@@ -96,21 +139,21 @@ describe('wither lifecycle', () => {
 
   it('enters permanent armour at half health and ignores ranged damage', () => {
     const active = step(createWither(position(0, 0, 0)), 10).state
-    const armoured = damageWither(active, WITHER_ARMOUR_THRESHOLD, 'melee').state
+    const armoured = damage(active, WITHER_ARMOUR_THRESHOLD, 'melee').state
     expect(armoured.phase).toBe('armoured')
-    expect(damageWither(armoured, 20, 'ranged')).toMatchObject({ state: armoured, ignored: true, appliedDamage: 0 })
-    expect(damageWither(armoured, 20, 'melee').state.healthPoints).toBe(130)
+    expect(damage(armoured, 20, 'ranged')).toMatchObject({ state: armoured, ignored: true, appliedDamage: 0 })
+    expect(damage(armoured, 20, 'melee').state.healthPoints).toBe(130)
     expect(step(armoured, 200).state.phase).toBe('armoured')
   })
 
   it('dies once with a nether star drop and a despawn descriptor', () => {
     const active = step(createWither(position(2, 3, 4)), 10).state
-    const killed = damageWither(active, 500, 'void')
+    const killed = damage(active, 500, 'void')
     expect(killed.death).toEqual({
       despawn: { kind: 'wither', reason: 'killed' },
       drop: { item: 'nether_star', count: 1, position: { x: 2, y: 3, z: 4 } },
     })
-    expect(damageWither(killed.state, 1, 'melee').death).toBeUndefined()
+    expect(damage(killed.state, 1, 'melee').death).toBeUndefined()
     expect(step(killed.state, 1)).toStrictEqual({
       state: killed.state,
       spawnExplosion: undefined,
@@ -118,25 +161,20 @@ describe('wither lifecycle', () => {
   })
 
   it('round-trips a versioned snapshot and repairs invalid restored magnitudes', () => {
-    const state = damageWither(step(createWither(position(1, 2, 3)), 10).state, 160, 'melee').state
+    const state = damage(step(createWither(position(1, 2, 3)), 10).state, 160, 'melee').state
     expect(restoreWither(serializeWither(state))).toEqual(state)
-    const invalidFeetPosition = JSON.parse('{"x":0,"y":2,"z":3}')
-    invalidFeetPosition.x = Number.NaN
-    expect(restoreWither({
-      kind: 'wither', version: 1,
-      state: { ...state, healthPoints: Number.NaN, feetPosition: invalidFeetPosition },
-    })).toMatchObject({ phase: 'dead', healthPoints: 0, feetPosition: { x: 0, y: 2, z: 3 } })
+    const invalidSnapshot = JSON.parse(JSON.stringify(serializeWither(state)))
+    invalidSnapshot.state.healthPoints = Number.NaN
+    invalidSnapshot.state.feetPosition.x = Number.NaN
+    expect(restoreWither(invalidSnapshot)).toMatchObject({ phase: 'dead', healthPoints: 0, feetPosition: { x: 0, y: 2, z: 3 } })
 
     const airborne = step(createWither(position(1, 2, 3)), 10).state
-    expect(restoreWither({ ...serializeWither(airborne), state: { ...airborne, phase: 'airborne' } })).toEqual(airborne)
-    expect(restoreWither({
-      ...serializeWither(airborne),
-      state: { ...airborne, phase: 'charging', chargeRemainingSecs: 2 },
-    })).toMatchObject({ phase: 'charging', chargeRemainingSecs: 2 })
-    expect(restoreWither({
-      ...serializeWither(airborne),
-      state: { ...airborne, phase: 'charging', chargeRemainingSecs: 0 },
-    })).toMatchObject({ phase: 'airborne', chargeRemainingSecs: 0 })
+    const chargingCandidate = JSON.parse(JSON.stringify(serializeWither(airborne)))
+    chargingCandidate.state.phase = 'charging'
+    chargingCandidate.state.chargeRemainingSecs = 2
+    expect(restoreWither(chargingCandidate)).toMatchObject({ phase: 'charging', chargeRemainingSecs: 2 })
+    chargingCandidate.state.chargeRemainingSecs = 0
+    expect(restoreWither(chargingCandidate)).toMatchObject({ phase: 'airborne', chargeRemainingSecs: 0 })
   })
 
   it('steps toward an opposite extreme without overflowing the direction subtraction', () => {
@@ -144,7 +182,7 @@ describe('wither lifecycle', () => {
     const spawned = createWither(extreme)
     const charged = step(spawned, 10).state
 
-    const result = stepWither(charged, 1, position(-Number.MAX_VALUE, 0, 0))
+    const result = stepWither(charged, DeltaTimeSecs(1), position(-Number.MAX_VALUE, 0, 0))
 
     expect(Result.isSuccess(result)).toBe(true)
     if (Result.isSuccess(result)) {
@@ -157,7 +195,7 @@ describe('wither lifecycle', () => {
     const airborne = step(createWither(position(0, 0, 0)), 10).state
     const delta = 3.1e307
 
-    const result = stepWither(airborne, delta, position(1, 0, 0))
+    const result = stepWither(airborne, DeltaTimeSecs(delta), position(1, 0, 0))
 
     expect(Result.isSuccess(result)).toBe(true)
     if (Result.isSuccess(result)) {
@@ -171,11 +209,11 @@ describe('wither lifecycle', () => {
     const state = {
       ...createWither(feetPosition),
       phase: 'airborne' as const,
-      chargeRemainingSecs: 0,
+      chargeRemainingSecs: WitherChargeRemainingSecs(0),
       velocity: position(Number.MAX_VALUE, 0, 0),
     }
 
-    const result = stepWither(state, Number.MAX_VALUE, feetPosition)
+    const result = stepWither(state, DeltaTimeSecs(Number.MAX_VALUE), feetPosition)
 
     expect(Result.isFailure(result)).toBe(true)
     if (Result.isFailure(result)) expect(result.failure._tag).toBe('BrandError')

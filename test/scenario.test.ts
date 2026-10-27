@@ -21,6 +21,8 @@ import {
   AngleRadians,
   DeltaTimeSecs,
   EpochMillis,
+  FixedDurationSecs,
+  InterpolationFraction,
   MonotonicTimeSecs,
   PositionAxis,
   position as kernelPosition,
@@ -102,7 +104,7 @@ describe('deterministic scenario: spawn -> look -> mine -> assert', () => {
         const time = yield* TimeService
 
         // --- spawn -------------------------------------------------------
-        yield* time.configureDay(600, 0.25)
+        yield* time.configureDay(FixedDurationSecs(600), InterpolationFraction(0.25))
         yield* player.moveTo(position(8, 64, -8))
 
         expect(yield* time.timeOfDay).toBeCloseTo(0.25, 12)
@@ -188,7 +190,7 @@ describe('deterministic scenario: spawn -> look -> mine -> assert', () => {
         const inventory = yield* InventoryService
         const time = yield* TimeService
 
-        yield* time.configureDay(600, 0.1)
+        yield* time.configureDay(FixedDurationSecs(600), InterpolationFraction(0.1))
         yield* player.moveTo(position(1, 70, 2))
         yield* player.look(0.7, 0.2)
         yield* inventory.add('cobblestone', 130)

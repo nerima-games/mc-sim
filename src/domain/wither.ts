@@ -1,9 +1,51 @@
 import { Brand, Result } from 'effect'
-import { PositionAxis, position, type Position } from '@nerima-games/mc-kernel'
+import { PositionAxis, position, type DeltaTimeSecs, type Position } from '@nerima-games/mc-kernel'
 
 export const WITHER_MAX_HEALTH = 300
 export const WITHER_SPAWN_CHARGE_SECS = 10
-export const WITHER_ARMOUR_THRESHOLD: number = WITHER_MAX_HEALTH / 2
+export type WitherHealthPoints = number & Brand.Brand<'WitherHealthPoints'>
+export const WitherHealthPoints: Brand.Constructor<WitherHealthPoints> = Brand.make((value) =>
+  Number.isFinite(value) && value >= 0
+    ? true
+    : `WitherHealthPoints must be finite and non-negative, received ${String(value)}`,
+)
+
+export type WitherChargeRemainingSecs = number & Brand.Brand<'WitherChargeRemainingSecs'>
+export const WitherChargeRemainingSecs: Brand.Constructor<WitherChargeRemainingSecs> = Brand.make((value) =>
+  Number.isFinite(value) && value >= 0
+    ? true
+    : `WitherChargeRemainingSecs must be finite and non-negative, received ${String(value)}`,
+)
+
+export type WitherDamageAmount = number & Brand.Brand<'WitherDamageAmount'>
+export const WitherDamageAmount: Brand.Constructor<WitherDamageAmount> = Brand.make((value) =>
+  Number.isFinite(value) && value >= 0
+    ? true
+    : `WitherDamageAmount must be finite and non-negative, received ${String(value)}`,
+)
+
+export type WitherProjectileSpeed = number & Brand.Brand<'WitherProjectileSpeed'>
+export const WitherProjectileSpeed: Brand.Constructor<WitherProjectileSpeed> = Brand.make((value) =>
+  Number.isFinite(value) && value > 0
+    ? true
+    : `WitherProjectileSpeed must be finite and positive, received ${String(value)}`,
+)
+
+export type WitherExplosionPower = number & Brand.Brand<'WitherExplosionPower'>
+export const WitherExplosionPower: Brand.Constructor<WitherExplosionPower> = Brand.make((value) =>
+  Number.isFinite(value) && value >= 0
+    ? true
+    : `WitherExplosionPower must be finite and non-negative, received ${String(value)}`,
+)
+
+export type WitherSummonMaterial = string & Brand.Brand<'WitherSummonMaterial'>
+export const WitherSummonMaterial: Brand.Constructor<WitherSummonMaterial> = Brand.make((value) =>
+  typeof value === 'string'
+    ? true
+    : `WitherSummonMaterial must be a string, received ${String(value)}`,
+)
+
+export const WITHER_ARMOUR_THRESHOLD: WitherHealthPoints = WitherHealthPoints(WITHER_MAX_HEALTH / 2)
 export const WITHER_REGEN_PER_SEC = 1
 export const WITHER_FOLLOW_ACCELERATION = 6
 export const WITHER_MAX_SPEED = 5
@@ -14,8 +56,8 @@ export type WitherDamageKind = 'melee' | 'ranged' | 'magic' | 'explosion' | 'voi
 
 export type WitherState = {
   readonly phase: WitherPhase
-  readonly healthPoints: number
-  readonly chargeRemainingSecs: number
+  readonly healthPoints: WitherHealthPoints
+  readonly chargeRemainingSecs: WitherChargeRemainingSecs
   readonly feetPosition: Position
   readonly velocity: Position
 }
@@ -30,8 +72,8 @@ export type WitherSkullProjectileDescriptor = {
   readonly variant: WitherSkullVariant
   readonly origin: Position
   readonly direction: Position
-  readonly speed: number
-  readonly explosivePower: number
+  readonly speed: WitherProjectileSpeed
+  readonly explosivePower: WitherExplosionPower
   readonly destroysResistantBlocks: boolean
 }
 
@@ -48,13 +90,12 @@ export type WitherStepFailure = Brand.BrandError
 
 export type WitherDamageResult = {
   readonly state: WitherState
-  readonly appliedDamage: number
+  readonly appliedDamage: WitherDamageAmount
   readonly ignored: boolean
   readonly death: WitherDeathDescriptor | undefined
 }
 
-export type BlockCell = { readonly x: number; readonly y: number; readonly z: number }
-export type WitherSummonMaterial = 'air' | 'soul_sand' | 'soul_soil' | 'wither_skeleton_skull' | string
+export type BlockCell = { readonly x: PositionAxis; readonly y: PositionAxis; readonly z: PositionAxis }
 export type WitherSummonMatch = {
   readonly axis: 'x' | 'z'
   readonly spawnPosition: Position
@@ -75,8 +116,8 @@ const phaseForHealth = (healthPoints: number): Exclude<WitherPhase, 'charging'> 
 
 export const createWither = (feetPosition: Position): WitherState => ({
   phase: 'charging',
-  healthPoints: WITHER_MAX_HEALTH,
-  chargeRemainingSecs: WITHER_SPAWN_CHARGE_SECS,
+  healthPoints: WitherHealthPoints(WITHER_MAX_HEALTH),
+  chargeRemainingSecs: WitherChargeRemainingSecs(WITHER_SPAWN_CHARGE_SECS),
   feetPosition: repairPosition(feetPosition),
   velocity: positionOf(0, 0, 0),
 })
@@ -129,22 +170,22 @@ const accelerateAndClamp = (velocity: Position, acceleration: Position, delta: n
 
 export const stepWither = (
   state: WitherState,
-  deltaTimeSecs: number,
+  deltaTimeSecs: DeltaTimeSecs,
   targetPosition?: Position,
 ): Result.Result<WitherStep, WitherStepFailure> => Result.gen(function* () {
   if (state.phase === 'dead') return { state, spawnExplosion: undefined }
   const delta = nonNegative(deltaTimeSecs)
 
   if (state.phase === 'charging') {
-    const chargeRemainingSecs = Math.max(0, state.chargeRemainingSecs - delta)
+    const chargeRemainingSecs = WitherChargeRemainingSecs(Math.max(0, state.chargeRemainingSecs - delta))
     if (chargeRemainingSecs > 0) {
       return { state: { ...state, chargeRemainingSecs }, spawnExplosion: undefined }
     }
-    const next = { ...state, phase: 'airborne' as const, chargeRemainingSecs: 0 }
+    const next = { ...state, phase: 'airborne' as const, chargeRemainingSecs: WitherChargeRemainingSecs(0) }
     return { state: next, spawnExplosion: { power: 7, position: next.feetPosition } }
   }
 
-  const healthPoints = Math.min(WITHER_MAX_HEALTH, state.healthPoints + WITHER_REGEN_PER_SEC * delta)
+  const healthPoints = WitherHealthPoints(Math.min(WITHER_MAX_HEALTH, state.healthPoints + WITHER_REGEN_PER_SEC * delta))
   const phase = state.phase === 'armoured' ? 'armoured' : phaseForHealth(healthPoints)
   if (targetPosition === undefined || delta === 0) {
     return { state: { ...state, healthPoints, phase }, spawnExplosion: undefined }
@@ -168,14 +209,14 @@ export const stepWither = (
 
 export const damageWither = (
   state: WitherState,
-  amount: number,
+  amount: WitherDamageAmount,
   kind: WitherDamageKind,
 ): WitherDamageResult => {
   const damage = nonNegative(amount)
   const ignored = state.phase === 'dead' || state.phase === 'charging' || (state.phase === 'armoured' && kind === 'ranged')
-  if (ignored || damage === 0) return { state, appliedDamage: 0, ignored, death: undefined }
+  if (ignored || damage === 0) return { state, appliedDamage: WitherDamageAmount(0), ignored, death: undefined }
 
-  const healthPoints = Math.max(0, state.healthPoints - damage)
+  const healthPoints = WitherHealthPoints(Math.max(0, state.healthPoints - damage))
   const phase = phaseForHealth(healthPoints)
   const next = { ...state, healthPoints, phase }
   const death: WitherDeathDescriptor | undefined = phase === 'dead'
@@ -184,7 +225,7 @@ export const damageWither = (
         drop: { item: 'nether_star', count: 1, position: next.feetPosition },
       }
     : undefined
-  return { state: next, appliedDamage: state.healthPoints - healthPoints, ignored: false, death }
+  return { state: next, appliedDamage: WitherDamageAmount(state.healthPoints - healthPoints), ignored: false, death }
 }
 
 export const witherSkullProjectile = (
@@ -196,16 +237,24 @@ export const witherSkullProjectile = (
   variant,
   origin: repairPosition(origin),
   direction: scaledDirection(repairPosition(origin), repairPosition(target), 1),
-  speed: variant === 'blue' ? 12 : 10,
-  explosivePower: 1,
+  speed: WitherProjectileSpeed(variant === 'blue' ? 12 : 10),
+  explosivePower: WitherExplosionPower(1),
   destroysResistantBlocks: variant === 'blue',
 })
 
-const add = (cell: BlockCell, dx: number, dy: number, dz: number): BlockCell => ({
-  x: cell.x + dx,
-  y: cell.y + dy,
-  z: cell.z + dz,
-})
+const add = (
+  cell: BlockCell,
+  dx: number,
+  dy: number,
+  dz: number,
+): Result.Result<BlockCell, Brand.BrandError> =>
+  Result.gen(function* () {
+    return {
+      x: yield* PositionAxis.result(cell.x + dx),
+      y: yield* PositionAxis.result(cell.y + dy),
+      z: yield* PositionAxis.result(cell.z + dz),
+    }
+  })
 
 export const matchWitherSummon = (
   base: BlockCell,
@@ -219,8 +268,16 @@ export const matchWitherSummon = (
 
     for (const axis of ['x', 'z'] as const) {
       const side = axis === 'x' ? ([1, 0, 0] as const) : ([0, 0, 1] as const)
-      const body = [validBase, add(validBase, 0, 1, 0), add(validBase, side[0], 1, side[2]), add(validBase, -side[0], 1, -side[2])]
-      const skulls = [-1, 0, 1].map((offset) => add(validBase, side[0] * offset, 2, side[2] * offset))
+      const body = [
+        validBase,
+        yield* add(validBase, 0, 1, 0),
+        yield* add(validBase, side[0], 1, side[2]),
+        yield* add(validBase, -side[0], 1, -side[2]),
+      ]
+      const skulls: Array<BlockCell> = []
+      for (const offset of [-1, 0, 1]) {
+        skulls.push(yield* add(validBase, side[0] * offset, 2, side[2] * offset))
+      }
       if (
         body.every((cell) => blockAt(cell) === 'soul_sand' || blockAt(cell) === 'soul_soil') &&
         skulls.every((cell) => blockAt(cell) === 'wither_skeleton_skull')
@@ -241,8 +298,8 @@ export const matchWitherSummon = (
 export const serializeWither = (state: WitherState): WitherSnapshot => ({ kind: 'wither', version: 1, state })
 
 export const restoreWither = (snapshot: WitherSnapshot): WitherState => {
-  const healthPoints = Math.min(WITHER_MAX_HEALTH, nonNegative(snapshot.state.healthPoints))
-  const chargeRemainingSecs = Math.min(WITHER_SPAWN_CHARGE_SECS, nonNegative(snapshot.state.chargeRemainingSecs))
+  const healthPoints = WitherHealthPoints(Math.min(WITHER_MAX_HEALTH, nonNegative(snapshot.state.healthPoints)))
+  const chargeRemainingSecs = WitherChargeRemainingSecs(Math.min(WITHER_SPAWN_CHARGE_SECS, nonNegative(snapshot.state.chargeRemainingSecs)))
   const phase = healthPoints <= 0
     ? 'dead'
     : snapshot.state.phase === 'charging' && chargeRemainingSecs > 0
@@ -253,7 +310,7 @@ export const restoreWither = (snapshot: WitherSnapshot): WitherState => {
   return {
     phase,
     healthPoints,
-    chargeRemainingSecs: phase === 'charging' ? chargeRemainingSecs : 0,
+    chargeRemainingSecs: phase === 'charging' ? chargeRemainingSecs : WitherChargeRemainingSecs(0),
     feetPosition: repairPosition(snapshot.state.feetPosition),
     velocity: repairPosition(snapshot.state.velocity),
   }
