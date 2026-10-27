@@ -95,6 +95,60 @@ export type WitherDamageResult = {
   readonly death: WitherDeathDescriptor | undefined
 }
 
+const PositionAxisSchema: Schema.Codec<PositionAxis, number> = Schema.Finite.pipe(
+  Schema.fromBrand('PositionAxis', PositionAxis),
+)
+const PositionSchema: Schema.Schema<Position> = Schema.Struct({
+  x: PositionAxisSchema,
+  y: PositionAxisSchema,
+  z: PositionAxisSchema,
+})
+const WitherHealthPointsSchema: Schema.Codec<WitherHealthPoints, number> = Schema.Finite.pipe(
+  Schema.fromBrand('WitherHealthPoints', WitherHealthPoints),
+)
+const WitherChargeRemainingSecsSchema: Schema.Codec<WitherChargeRemainingSecs, number> = Schema.Finite.pipe(
+  Schema.fromBrand('WitherChargeRemainingSecs', WitherChargeRemainingSecs),
+)
+const WitherDamageAmountSchema: Schema.Codec<WitherDamageAmount, number> = Schema.Finite.pipe(
+  Schema.fromBrand('WitherDamageAmount', WitherDamageAmount),
+)
+
+export const WitherStateSchema: Schema.Schema<WitherState> = Schema.Struct({
+  phase: Schema.Literals(['charging', 'airborne', 'armoured', 'dead']),
+  healthPoints: WitherHealthPointsSchema,
+  chargeRemainingSecs: WitherChargeRemainingSecsSchema,
+  feetPosition: PositionSchema,
+  velocity: PositionSchema,
+})
+
+export const WitherStepSchema: Schema.Schema<WitherStep> = Schema.Struct({
+  state: WitherStateSchema,
+  spawnExplosion: Schema.Union([
+    Schema.Struct({ power: Schema.Literal(7), position: PositionSchema }),
+    Schema.Undefined,
+  ]),
+})
+
+export const WitherStepFailureSchema: Schema.Schema<WitherStepFailure> = Schema.declare(
+  (value: unknown): value is WitherStepFailure => value instanceof Brand.BrandError,
+)
+
+const WitherDeathDescriptorSchema = Schema.Struct({
+  despawn: Schema.Struct({ kind: Schema.Literal('wither'), reason: Schema.Literal('killed') }),
+  drop: Schema.Struct({
+    item: Schema.Literal('nether_star'),
+    count: Schema.Literal(1),
+    position: PositionSchema,
+  }),
+})
+
+export const WitherDamageResultSchema: Schema.Schema<WitherDamageResult> = Schema.Struct({
+  state: WitherStateSchema,
+  appliedDamage: WitherDamageAmountSchema,
+  ignored: Schema.Boolean,
+  death: Schema.Union([WitherDeathDescriptorSchema, Schema.Undefined]),
+})
+
 export type BlockCell = { readonly x: PositionAxis; readonly y: PositionAxis; readonly z: PositionAxis }
 export type WitherSummonMatch = {
   readonly axis: 'x' | 'z'
