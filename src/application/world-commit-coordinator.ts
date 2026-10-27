@@ -102,6 +102,14 @@ const ReplicatedOwnerUnknownBase: Schema.Class<
 > = Schema.TaggedError<ReplicatedOwnerUnknownShape>()('ReplicatedOwnerUnknown', ReplicatedOwnerFieldsSchema)
 export class ReplicatedOwnerUnknown extends ReplicatedOwnerUnknownBase {}
 
+export const WorldCommitCoordinatorSnapshotErrorSchema: Schema.Codec<
+  Schema.SchemaError | ReplicatedOwnerUnknown,
+  unknown
+> = Schema.Union([
+  SchemaErrorSchema,
+  Schema.instanceOf(ReplicatedOwnerUnknown),
+])
+
 type ReplicatedOwnerDuplicateShape = YieldableError & Readonly<{ _tag: 'ReplicatedOwnerDuplicate' }> & ReplicatedOwnerFields
 const ReplicatedOwnerDuplicateBase: Schema.Class<
   ReplicatedOwnerDuplicateShape,

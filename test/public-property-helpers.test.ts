@@ -707,8 +707,8 @@ const mutationCandidatesBySchema = (mutation: 'missing' | 'null'): ReadonlyMap<s
       continue
     }
 
+    // generatedCases validates every root sample before collecting its fields.
     for (const field of eligibleCases) {
-      expect(decodes(field.rootSchema, field.sample), `${schemaName} original sample before ${mutation}`).toBe(true)
       if (!decodes(field.rootSchema, mutateSample(field.sample, field.inputPath, mutation))) {
         selected.set(schemaName, field)
         break
