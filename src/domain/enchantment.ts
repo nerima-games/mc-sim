@@ -1,3 +1,4 @@
+import type { ItemType } from '@nerima-games/mc-kernel'
 import {
   AnvilEnchantmentId,
   applyAnvil,
@@ -8,8 +9,7 @@ import {
   type AnvilPlan,
   type AnvilRuleSet,
   type AnvilState,
-  type ItemType,
-} from '@nerima-games/mc-kernel'
+} from './anvil.js'
 import {
   SUPPORTED_VANILLA_BOOK_ENCHANTMENT_RULES,
   SUPPORTED_VANILLA_ENCHANTMENT_RULES,

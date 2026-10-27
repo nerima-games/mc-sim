@@ -89,7 +89,8 @@
  */
 import { Effect, Layer, Option, Ref } from 'effect'
 import {
-  CentreY,
+  BlockLength,
+  BlocksPerSecond,
   FootY,
   PLAYER_HALF_HEIGHT,
   PLAYER_HALF_WIDTH,
@@ -101,12 +102,20 @@ import {
   type Body,
   type FallTrackingState,
   type ResolveOptions,
+  type VelocityVector,
 } from '@nerima-games/mc-physics'
 import { InventoryService, InventoryServiceLayer } from '../application/inventory-service.js'
+import type { ItemStackFailure } from '../domain/inventory.js'
 import { CropService, CropServiceLayer, type CropServiceApi } from '../application/crop-service.js'
-import { PlayerService, PlayerServiceLayer, type PlayerServiceApi } from '../application/player-service.js'
+import { PlayerService, PlayerServiceLayer, type PlayerServiceApi, type PlayerServiceInputError } from '../application/player-service.js'
 import { TimeService, TimeServiceLayer, type TimeServiceApi } from '../application/time-service.js'
-import { position, type GameModule, type Position, type StageRegistration } from '@nerima-games/mc-kernel'
+import {
+  PositionAxis,
+  position,
+  type GameModule,
+  type Position,
+  type StageRegistration,
+} from '@nerima-games/mc-kernel'
 import { SIM_STAGE_IDS } from './stage-ids.js'
 
 export type MovementIntent = {
@@ -150,7 +159,7 @@ export type SimFrameState = {
   readonly resolvedFeetPosition: Ref.Ref<Option.Option<Position>>
   readonly movementIntent: Ref.Ref<MovementIntent>
   readonly jumpIntent: Ref.Ref<boolean>
-  readonly velocity: Ref.Ref<Position>
+  readonly velocity: Ref.Ref<VelocityVector>
   readonly isGrounded: Ref.Ref<boolean>
   readonly accumulatedFallDistance: Ref.Ref<number>
   readonly landingImpact: Ref.Ref<Option.Option<LandingImpact>>
@@ -183,15 +192,22 @@ export const makeSimInputPort = (state: SimFrameState): SimInputPort => ({
  * deadlocked. `application/game-loop.ts` is re-entrant from its first commit for
  * the same reason and this file must not undo it.
  */
-export const makeSimFrameState: Effect.Effect<SimFrameState> = Effect.all({
-  resolvedFeetPosition: Ref.make(Option.none<Position>()),
-  movementIntent: Ref.make<MovementIntent>({ forward: 0, strafe: 0 }),
-  jumpIntent: Ref.make(false),
-  velocity: Ref.make<Position>(position(0, 0, 0)),
-  isGrounded: Ref.make(false),
-  accumulatedFallDistance: Ref.make(0),
-  landingImpact: Ref.make(Option.none<LandingImpact>()),
-  physicsConfig: Ref.make(Option.none<SimPhysicsConfig>()),
+export const makeSimFrameState: Effect.Effect<SimFrameState> = Effect.gen(function* () {
+  const zeroVelocity = yield* Effect.orDie(Effect.fromResult(BlocksPerSecond.result(0)))
+  return yield* Effect.all({
+    resolvedFeetPosition: Ref.make(Option.none<Position>()),
+    movementIntent: Ref.make<MovementIntent>({ forward: 0, strafe: 0 }),
+    jumpIntent: Ref.make(false),
+    velocity: Ref.make<VelocityVector>({
+      x: zeroVelocity,
+      y: zeroVelocity,
+      z: zeroVelocity,
+    }),
+    isGrounded: Ref.make(false),
+    accumulatedFallDistance: Ref.make(0),
+    landingImpact: Ref.make(Option.none<LandingImpact>()),
+    physicsConfig: Ref.make(Option.none<SimPhysicsConfig>()),
+  })
 })
 
 /**
@@ -253,7 +269,7 @@ export const simStages = (
         const resolved = yield* Ref.getAndSet(state.resolvedFeetPosition, Option.none<Position>())
         if (Option.isSome(resolved)) {
           yield* resetLandingImpact(state)
-          yield* player.moveTo(resolved.value)
+          yield* Effect.orDie(player.moveTo(resolved.value))
           return
         }
 
@@ -282,40 +298,61 @@ export const simStages = (
           halfWidth: PLAYER_HALF_WIDTH,
           halfHeight: PLAYER_HALF_HEIGHT,
         }
-        const centreY = centreOfFoot(FootY(pose.feetPosition.y), PLAYER_HALF_HEIGHT)
-        const supportedNow =
-          jumpIntent &&
-          !wasGrounded &&
-          resolveBody(
-            {
-              kind: 'kinematic',
-              x: pose.feetPosition.x,
-              y: centreY,
-              z: pose.feetPosition.z,
-              vx,
-              vy: velocity.y,
-              vz,
-            },
-            dt,
-            resolveOptions,
-          ).isGrounded
+        const footY = yield* Effect.orDie(Effect.fromResult(FootY.result(pose.feetPosition.y)))
+        const centreY = yield* Effect.orDie(
+          Effect.fromResult(centreOfFoot(footY, PLAYER_HALF_HEIGHT)),
+        )
+        const velocityX = yield* Effect.orDie(Effect.fromResult(BlocksPerSecond.result(vx)))
+        const velocityZ = yield* Effect.orDie(Effect.fromResult(BlocksPerSecond.result(vz)))
+        let supportedNow = false
+        if (jumpIntent && !wasGrounded) {
+          const supportResolution = yield* Effect.orDie(
+            Effect.fromResult(
+              resolveBody(
+                {
+                  kind: 'kinematic',
+                  x: pose.feetPosition.x,
+                  y: centreY,
+                  z: pose.feetPosition.z,
+                  vx: velocityX,
+                  vy: velocity.y,
+                  vz: velocityZ,
+                },
+                dt,
+                resolveOptions,
+              ),
+            ),
+          )
+          supportedNow = supportResolution.isGrounded
+        }
+        const jumpVelocity =
+          jumpIntent && (wasGrounded || supportedNow)
+            ? yield* Effect.orDie(Effect.fromResult(BlocksPerSecond.result(config.jumpSpeed)))
+            : velocity.y
         const body: Body = {
           kind: 'dynamic',
           x: pose.feetPosition.x,
           y: centreY,
           z: pose.feetPosition.z,
-          vx,
-          vy: jumpIntent && (wasGrounded || supportedNow) ? config.jumpSpeed : velocity.y,
-          vz,
+          vx: velocityX,
+          vy: jumpVelocity,
+          vz: velocityZ,
         }
-        const integrated = integrateBody(body, dt)
-        const resolvedBody = resolveBody(integrated, dt, resolveOptions)
+        const integrated = yield* Effect.orDie(Effect.fromResult(integrateBody(body, dt)))
+        const resolvedBody = yield* Effect.orDie(
+          Effect.fromResult(resolveBody(integrated, dt, resolveOptions)),
+        )
         const priorAccumulatedFallDistance = yield* Ref.get(state.accumulatedFallDistance)
+        const accumulatedFallDistance = yield* Effect.orDie(
+          Effect.fromResult(BlockLength.result(priorAccumulatedFallDistance)),
+        )
         const fallTrackingBefore: FallTrackingState = {
-          accumulatedFallDistance: priorAccumulatedFallDistance,
+          accumulatedFallDistance,
           isGrounded: wasGrounded,
         }
-        const fallTracking = advanceFallTracking(fallTrackingBefore, body, integrated, resolvedBody)
+        const fallTracking = yield* Effect.orDie(
+          Effect.fromResult(advanceFallTracking(fallTrackingBefore, body, integrated, resolvedBody)),
+        )
 
         if (fallTracking.landingImpact !== null) {
           yield* Ref.set(state.landingImpact, Option.some(fallTracking.landingImpact))
@@ -324,16 +361,24 @@ export const simStages = (
 
         yield* Ref.set(
           state.velocity,
-          position(resolvedBody.body.vx, resolvedBody.body.vy, resolvedBody.body.vz),
+          {
+            x: resolvedBody.body.vx,
+            y: resolvedBody.body.vy,
+            z: resolvedBody.body.vz,
+          },
         )
         yield* Ref.set(state.isGrounded, resolvedBody.isGrounded)
-        yield* player.moveTo(
+        const feetY = yield* Effect.orDie(
+          Effect.fromResult(footOfCentre(resolvedBody.body.y, PLAYER_HALF_HEIGHT)),
+        )
+        const positionY = yield* Effect.orDie(Effect.fromResult(PositionAxis.result(feetY)))
+        yield* Effect.orDie(player.moveTo(
           position(
             resolvedBody.body.x,
-            footOfCentre(CentreY(resolvedBody.body.y), PLAYER_HALF_HEIGHT),
+            positionY,
             resolvedBody.body.z,
           ),
-        )
+        ))
       }),
   },
 ]
@@ -386,6 +431,8 @@ export const makeSimStagesWithPhysics = (
  * Both registration services are in `ROut` and neither is in `RIn`. Collapsing
  * `RRegister` into `RIn` would demand that a host supply the very services this
  * module ships — the same inversion mc-render documents for `InputService`.
+ * The Layer's `ItemStackFailure` channel remains visible on the module so a
+ * failed kernel stack construction is handled by its host during startup.
  *
  * ---------------------------------------------------------------------------
  * Why `layers` carries `InventoryService` too, and what that does NOT settle
@@ -412,7 +459,7 @@ export const makeSimStagesWithPhysics = (
  */
 export const simModule: GameModule<
   InventoryService | PlayerService | TimeService | CropService,
-  never,
+  ItemStackFailure | PlayerServiceInputError,
   never,
   PlayerService | TimeService | CropService
 > = {

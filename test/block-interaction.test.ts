@@ -1,31 +1,38 @@
 import { describe, expect, it } from '@effect/vitest'
-import { blockIdOf } from '@nerima-games/mc-kernel'
+import { type BlockType, blockIdOf } from '@nerima-games/mc-kernel'
+import { Option, Result } from 'effect'
 import { breakBlock, placeBlock, placeableBlockFromItem } from '../src/domain/block-interaction'
+
+const id = (type: BlockType) => Option.getOrThrow(blockIdOf(type))
 
 describe('breakBlock', () => {
   it('rejects unknown ids and air', () => {
-    expect(breakBlock(-1)).toStrictEqual({ kind: 'blocked', reason: 'unknown' })
-    expect(breakBlock(blockIdOf('air'))).toStrictEqual({ kind: 'blocked', reason: 'air' })
+    expect(Result.getOrThrow(breakBlock(65535))).toStrictEqual({ kind: 'blocked', reason: 'unknown' })
+    expect(Result.getOrThrow(breakBlock(id('air')))).toStrictEqual({ kind: 'blocked', reason: 'air' })
+  })
+
+  it('propagates invalid block-id failures', () => {
+    expect(Result.isFailure(breakBlock(-1))).toBe(true)
   })
 
   it('keeps unbreakable blocks out of the drop pipeline', () => {
-    expect(breakBlock(blockIdOf('bedrock'))).toStrictEqual({ kind: 'blocked', reason: 'unbreakable' })
-    expect(breakBlock(blockIdOf('end_portal_frame'))).toStrictEqual({
+    expect(Result.getOrThrow(breakBlock(id('bedrock')))).toStrictEqual({ kind: 'blocked', reason: 'unbreakable' })
+    expect(Result.getOrThrow(breakBlock(id('end_portal_frame')))).toStrictEqual({
       kind: 'blocked',
       reason: 'unbreakable',
     })
   })
 
   it('uses the kernel harvest context to resolve drops', () => {
-    expect(breakBlock(blockIdOf('stone'))).toStrictEqual({
+    expect(Result.getOrThrow(breakBlock(id('stone')))).toStrictEqual({
       kind: 'broken',
-      id: blockIdOf('stone'),
+      id: id('stone'),
       type: 'stone',
       experience: 0,
     })
-    expect(breakBlock(blockIdOf('stone'), { heldTier: 'wooden' })).toStrictEqual({
+    expect(Result.getOrThrow(breakBlock(id('stone'), { heldTier: 'wooden' }))).toStrictEqual({
       kind: 'broken',
-      id: blockIdOf('stone'),
+      id: id('stone'),
       type: 'stone',
       drop: { item: 'cobblestone', count: 1, affectedByFortune: false },
       experience: 0,
@@ -35,32 +42,43 @@ describe('breakBlock', () => {
 
 describe('placeBlock', () => {
   it('rejects unknown ids and air', () => {
-    expect(placeBlock(-1, blockIdOf('stone'))).toStrictEqual({ kind: 'rejected', reason: 'unknown-block' })
-    expect(placeBlock(blockIdOf('air'), blockIdOf('stone'))).toStrictEqual({ kind: 'rejected', reason: 'air' })
+    expect(Result.getOrThrow(placeBlock(65535, id('stone')))).toStrictEqual({
+      kind: 'rejected',
+      reason: 'unknown-block',
+    })
+    expect(Result.getOrThrow(placeBlock(id('air'), id('stone')))).toStrictEqual({
+      kind: 'rejected',
+      reason: 'air',
+    })
+  })
+
+  it('propagates invalid block-id failures', () => {
+    expect(Result.isFailure(placeBlock(-1, id('stone')))).toBe(true)
+    expect(Result.isFailure(placeBlock(id('stone'), -1))).toBe(true)
   })
 
   it('delegates support-sensitive placement to the kernel registry', () => {
-    expect(placeBlock(blockIdOf('stone'), blockIdOf('air'))).toStrictEqual({
+    expect(Result.getOrThrow(placeBlock(id('stone'), id('air')))).toStrictEqual({
       kind: 'placed',
-      id: blockIdOf('stone'),
+      id: id('stone'),
       type: 'stone',
     })
-    expect(placeBlock(blockIdOf('torch'), blockIdOf('air'))).toStrictEqual({
+    expect(Result.getOrThrow(placeBlock(id('torch'), id('air')))).toStrictEqual({
       kind: 'rejected',
       reason: 'unsupported',
     })
-    expect(placeBlock(blockIdOf('torch'), blockIdOf('stone'))).toStrictEqual({
+    expect(Result.getOrThrow(placeBlock(id('torch'), id('stone')))).toStrictEqual({
       kind: 'placed',
-      id: blockIdOf('torch'),
+      id: id('torch'),
       type: 'torch',
     })
-    expect(placeBlock(blockIdOf('lily_pad'), blockIdOf('stone'))).toStrictEqual({
+    expect(Result.getOrThrow(placeBlock(id('lily_pad'), id('stone')))).toStrictEqual({
       kind: 'rejected',
       reason: 'unsupported',
     })
-    expect(placeBlock(blockIdOf('lily_pad'), blockIdOf('water'))).toStrictEqual({
+    expect(Result.getOrThrow(placeBlock(id('lily_pad'), id('water')))).toStrictEqual({
       kind: 'placed',
-      id: blockIdOf('lily_pad'),
+      id: id('lily_pad'),
       type: 'lily_pad',
     })
   })
@@ -68,7 +86,10 @@ describe('placeBlock', () => {
 
 describe('placeableBlockFromItem', () => {
   it('derives the placeable block from the kernel item/block intersection', () => {
-    expect(placeableBlockFromItem('stone')).toStrictEqual({ id: blockIdOf('stone'), type: 'stone' })
-    expect(placeableBlockFromItem('stick')).toBeUndefined()
+    expect(Result.getOrThrow(placeableBlockFromItem('stone'))).toStrictEqual({
+      id: id('stone'),
+      type: 'stone',
+    })
+    expect(Result.getOrThrow(placeableBlockFromItem('stick'))).toBeUndefined()
   })
 })

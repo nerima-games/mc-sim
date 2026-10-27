@@ -1,7 +1,9 @@
+import { Result } from 'effect'
 import * as Eq from '../domain/equipment.js'
 import * as Inv from '../domain/inventory.js'
+import { itemStackWithCount } from '../domain/item-stack.js'
 import * as Storage from '../domain/player-storage.js'
-import { isItemStack, itemStackWithCount, itemStackEqualsIgnoringCount } from '@nerima-games/mc-kernel'
+import { isItemStack, itemStackEqualsIgnoringCount } from '@nerima-games/mc-kernel'
 
 export type InventoryCarriedStack = Inv.ItemStack & {
   readonly durability?: Eq.Durability | undefined
@@ -63,10 +65,14 @@ export const copyCarried = (carried: InventoryCarriedSlot): InventoryCarriedSlot
       ...(carried.durability === undefined ? {} : { durability: { ...carried.durability } }),
     }
 
-export const carriedWithCount = (carried: InventoryCarriedStack, count: number): InventoryCarriedStack => ({
-  ...Inv.itemStack(carried.item, count, { components: carried.components }),
-  ...(carried.durability === undefined ? {} : { durability: { ...carried.durability } }),
-})
+export const carriedWithCount = (
+  carried: InventoryCarriedStack,
+  count: number,
+): Result.Result<InventoryCarriedStack, Inv.ItemStackFailure> =>
+  Result.map(Inv.itemStack(carried.item, count, { components: carried.components }), (stack) => ({
+    ...stack,
+    ...(carried.durability === undefined ? {} : { durability: { ...carried.durability } }),
+  }))
 
 export const carriedAt = (player: Storage.PlayerStorage, index: number): InventoryCarriedSlot => {
   const slot = player.inventory.slots[index]
@@ -90,11 +96,15 @@ const durabilityForCarried = (carried: InventoryCarriedSlot): Eq.Durability | nu
 export const withCarriedSlots = (
   player: Storage.PlayerStorage,
   slots: ReadonlyArray<InventoryCarriedSlot>,
-): Storage.PlayerStorage => ({
-  ...player,
-  inventory: { slots: slots.map((slot) => slot === undefined ? undefined : Inv.itemStack(slot.item, slot.count, { components: slot.components })) },
-  inventoryDurability: slots.map(durabilityForCarried),
-})
+): Result.Result<Storage.PlayerStorage, Inv.ItemStackFailure> => {
+  const inventorySlots = Result.all(slots.map((slot) =>
+    slot === undefined ? Result.succeed(undefined) : Inv.itemStack(slot.item, slot.count, { components: slot.components })))
+  return Result.map(inventorySlots, (inventory) => ({
+    ...player,
+    inventory: { slots: inventory },
+    inventoryDurability: slots.map(durabilityForCarried),
+  }))
+}
 
 export const isValidSlotIndex = (index: number): boolean =>
   Number.isInteger(index) && index >= 0 && index < Inv.INVENTORY_SLOT_COUNT
@@ -109,97 +119,110 @@ const clickInventoryLeft = (
   inventory: Inv.Inventory,
   click: Extract<InventoryClick, { readonly _tag: 'LeftClick' }>,
   slot: Inv.Slot,
-): InventoryClickOutcome => {
+): Result.Result<InventoryClickOutcome, Inv.ItemStackFailure> => {
   if (click.carried === undefined) {
     if (slot === undefined) {
-      return { inventory, result: { _tag: 'NoChange', carried: undefined } }
+      return Result.succeed({ inventory, result: { _tag: 'NoChange', carried: undefined } })
     }
     const slots = [...inventory.slots]
     slots[click.slotIndex] = undefined
-    return { inventory: { slots }, result: { _tag: 'PickedUp', carried: slot } }
+    return Result.succeed({ inventory: { slots }, result: { _tag: 'PickedUp', carried: slot } })
   }
+  const carried = click.carried
   if (slot === undefined) {
     const slots = [...inventory.slots]
-    slots[click.slotIndex] = Inv.itemStack(click.carried.item, click.carried.count, { components: click.carried.components })
-    return { inventory: { slots }, result: { _tag: 'Placed', carried: undefined } }
+    return Result.map(Inv.itemStack(carried.item, carried.count, { components: carried.components }), (stack) => {
+      slots[click.slotIndex] = stack
+      return { inventory: { slots }, result: { _tag: 'Placed', carried: undefined } }
+    })
   }
-  if (slot.item !== click.carried.item) {
+  if (slot.item !== carried.item) {
     const slots = [...inventory.slots]
-    slots[click.slotIndex] = Inv.itemStack(click.carried.item, click.carried.count, { components: click.carried.components })
-    return { inventory: { slots }, result: { _tag: 'Swapped', carried: slot } }
+    return Result.map(Inv.itemStack(carried.item, carried.count, { components: carried.components }), (stack) => {
+      slots[click.slotIndex] = stack
+      return { inventory: { slots }, result: { _tag: 'Swapped', carried: slot } }
+    })
   }
 
   if (!itemStackEqualsIgnoringCount(slot, {
-    item: click.carried.item, count: click.carried.count, components: click.carried.components,
+    item: carried.item, count: carried.count, components: carried.components,
   })) {
     const slots = [...inventory.slots]
-    slots[click.slotIndex] = Inv.itemStack(click.carried.item, click.carried.count, { components: click.carried.components })
-    return { inventory: { slots }, result: { _tag: 'Swapped', carried: slot } }
+    return Result.map(Inv.itemStack(carried.item, carried.count, { components: carried.components }), (stack) => {
+      slots[click.slotIndex] = stack
+      return { inventory: { slots }, result: { _tag: 'Swapped', carried: slot } }
+    })
   }
-  const accepted = Math.min(slot.components.maxStackSize - slot.count, click.carried.count)
+  const accepted = Math.min(slot.components.maxStackSize - slot.count, carried.count)
   if (accepted <= 0) {
-    return { inventory, result: { _tag: 'NoChange', carried: click.carried } }
+    return Result.succeed({ inventory, result: { _tag: 'NoChange', carried } })
   }
   const slots = [...inventory.slots]
-  slots[click.slotIndex] = itemStackWithCount(slot, slot.count + accepted)
-  const remaining = click.carried.count - accepted
-  return {
-    inventory: { slots },
-    result: {
-      _tag: 'Merged',
-      carried: remaining === 0 ? undefined : carriedWithCount(click.carried, remaining),
-    },
-  }
+  const remaining = carried.count - accepted
+  return Result.flatMap(itemStackWithCount(slot, slot.count + accepted), (updatedSlot) =>
+    Result.map(remaining === 0
+      ? Result.succeed(undefined)
+      : carriedWithCount(carried, remaining), (nextCarried) => {
+      slots[click.slotIndex] = updatedSlot
+      return { inventory: { slots }, result: { _tag: 'Merged', carried: nextCarried } }
+    }))
 }
 
 const clickInventoryRight = (
   inventory: Inv.Inventory,
   click: Extract<InventoryClick, { readonly _tag: 'RightClick' }>,
   slot: Inv.Slot,
-): InventoryClickOutcome => {
+): Result.Result<InventoryClickOutcome, Inv.ItemStackFailure> => {
   if (click.carried === undefined) {
     if (slot === undefined) {
-      return { inventory, result: { _tag: 'NoChange', carried: undefined } }
+      return Result.succeed({ inventory, result: { _tag: 'NoChange', carried: undefined } })
     }
     const pickedUp = Math.ceil(slot.count / 2)
     const remaining = slot.count - pickedUp
     const slots = [...inventory.slots]
-    slots[click.slotIndex] = remaining === 0 ? undefined : itemStackWithCount(slot, remaining)
-    return {
-      inventory: { slots },
-      result: { _tag: 'PickedUp', carried: itemStackWithCount(slot, pickedUp) },
-    }
+    const updatedSlot = remaining === 0 ? Result.succeed(undefined) : itemStackWithCount(slot, remaining)
+    return Result.flatMap(updatedSlot, (nextSlot) =>
+      Result.map(itemStackWithCount(slot, pickedUp), (pickedUpStack) => {
+        slots[click.slotIndex] = nextSlot
+        return { inventory: { slots }, result: { _tag: 'PickedUp', carried: pickedUpStack } }
+      }))
   }
+  const carried = click.carried
 
   if (slot !== undefined &&
       (!itemStackEqualsIgnoringCount(slot, {
-        item: click.carried.item, count: click.carried.count, components: click.carried.components,
+        item: carried.item, count: carried.count, components: carried.components,
       }) || slot.count >= slot.components.maxStackSize)) {
-    return { inventory, result: { _tag: 'NoChange', carried: click.carried } }
+    return Result.succeed({ inventory, result: { _tag: 'NoChange', carried } })
   }
   const slots = [...inventory.slots]
-  slots[click.slotIndex] = Inv.itemStack(click.carried.item, (slot?.count ?? 0) + 1, { components: click.carried.components })
-  const remaining = click.carried.count - 1
-  return {
-    inventory: { slots },
-    result: {
-      _tag: slot === undefined ? 'Placed' : 'Merged',
-      carried: remaining === 0 ? undefined : carriedWithCount(click.carried, remaining),
-    },
-  }
+  const remaining = carried.count - 1
+  return Result.flatMap(Inv.itemStack(carried.item, (slot?.count ?? 0) + 1, { components: carried.components }), (updatedSlot) =>
+    Result.map(remaining === 0
+      ? Result.succeed(undefined)
+      : carriedWithCount(carried, remaining), (nextCarried) => {
+      slots[click.slotIndex] = updatedSlot
+      return {
+        inventory: { slots },
+        result: { _tag: slot === undefined ? 'Placed' : 'Merged', carried: nextCarried },
+      }
+    }))
 }
 
 /** Apply one Minecraft-style slot click without exposing an intermediate inventory. */
-export const clickInventory = (inventory: Inv.Inventory, click: InventoryClick): InventoryClickOutcome => {
+export const clickInventory = (
+  inventory: Inv.Inventory,
+  click: InventoryClick,
+): Result.Result<InventoryClickOutcome, Inv.ItemStackFailure> => {
   if (
     !Number.isInteger(click.slotIndex) ||
     click.slotIndex < 0 ||
     click.slotIndex >= Inv.INVENTORY_SLOT_COUNT
   ) {
-    return { inventory, result: { _tag: 'InvalidSlot', carried: click.carried } }
+    return Result.succeed({ inventory, result: { _tag: 'InvalidSlot', carried: click.carried } })
   }
   if (!validCarried(click.carried)) {
-    return { inventory, result: { _tag: 'InvalidCount', carried: click.carried } }
+    return Result.succeed({ inventory, result: { _tag: 'InvalidCount', carried: click.carried } })
   }
 
   const slot = inventory.slots[click.slotIndex]

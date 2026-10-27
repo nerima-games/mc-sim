@@ -7,7 +7,7 @@
  * work; §6 of that document is the section it added.
  *
  * The name is plan.md's and both of this repository's docs' (`EntityManager`,
- * not `EntityService`), which is why the Tag key is
+ * not `EntityService`), which is why the service key is
  * `'@nerima-games/mc-sim/EntityManager'`. docs/public-api.md §0's rule is about
  * the PREFIX — 「Tag の文字列は `@nerima-games/mc-sim/XxxService` に統一する（参照実装
  * は `@minecraft/application/Xxx`）」 — and four repositories will read the name out
@@ -21,21 +21,21 @@
  * read/write loses a mob or resurrects one.
  *
  * ---------------------------------------------------------------------------
- * WHY THE TAG IS BUILT BY A FUNCTION AND NOT BY A `Context.Tag` CLASS
+ * WHY THE SERVICE KEY IS BUILT BY A FUNCTION AND NOT BY A `Context.Service` CLASS
  * ---------------------------------------------------------------------------
  *
- * Every other service here is `class X extends Context.Tag('...')<X, XApi>() {}`
+ * Every other service here is `class X extends Context.Service<X, XApi>()('...') {}`
  * and this one is not, because its service type carries the behaviour parameter
  * `S` that `domain/entity.ts` exists to stay ignorant of. A class cannot be
- * generic in its own Tag, and the three ways to force one all lose the property
+ * generic in its own service key, and the three ways to force one all lose the property
  * the parameter is there for: `EntityManagerApi<unknown>` erases it,
- * `EntityManagerApi<never>` makes the roster unusable, and a per-behaviour Tag
+ * `EntityManagerApi<never>` makes the roster unusable, and a per-behaviour service key
  * key would give a world two rosters.
  *
- * `Context.GenericTag<EntityManager, EntityManagerApi<S>>(KEY)` separates the
+ * `Context.Service<EntityManager, EntityManagerApi<S>>(KEY)` separates the
  * two halves that a class fuses: the CONTEXT IDENTITY (`EntityManager`, which
  * has no parameter and is what appears in every `R`) and the SERVICE VALUE TYPE
- * (which has one). Effect resolves tags by their textual key, so every call
+ * (which has one). Effect resolves services by their textual key, so every call
  * names the same service — that is the same mechanism
  * `@nerima-games/mc-kernel` documents for `ClockPort` across repositories,
  * used deliberately here rather than tripped over.
@@ -43,7 +43,7 @@
  * IT IS WORTH BEING PRECISE ABOUT WHAT THAT DOES AND DOES NOT RISK. The
  * `ClockPort` shape is owned directly by `@nerima-games/mc-kernel`; unlike this
  * generic service, it is not re-declared locally. A shape disagreement there
- * would let a narrow Layer satisfy a wide Tag and make a missing field read
+ * would let a narrow Layer satisfy a wide service key and make a missing field read
  * `undefined`. Here
  * every instantiation has an identical shape — same methods, same arities — and
  * the only thing that varies is the static type of a field mc-sim never reads.
@@ -179,7 +179,7 @@ export type EntityManager = {
 }
 
 /**
- * The Tag's textual key. Effect resolves services by this string, so it is the
+ * The service key's textual identifier. Effect resolves services by this string, so it is the
  * actual contract with the four repositories that will ask for the roster —
  * changing it typechecks everywhere and fails at composition time; the public
  * source entry point and generated declarations make that contract reviewable.
@@ -187,17 +187,17 @@ export type EntityManager = {
 export const ENTITY_MANAGER_TAG_KEY = '@nerima-games/mc-sim/EntityManager'
 
 /**
- * The Tag, at the behaviour type the caller works in.
+ * The service key, at the behaviour type the caller works in.
  *
  * ```ts
  * const roster = yield* entityManagerTag<CreeperFuse>()
  * ```
  *
- * Every call produces a Tag with the same key and therefore names the same
+ * Every call produces a service key with the same identifier and therefore names the same
  * service; only the static view of the behaviour field differs.
  */
-export const entityManagerTag = <S>(): Context.Tag<EntityManager, EntityManagerApi<S>> =>
-  Context.GenericTag<EntityManager, EntityManagerApi<S>>(ENTITY_MANAGER_TAG_KEY)
+export const entityManagerTag = <S>(): Context.Service<EntityManager, EntityManagerApi<S>> =>
+  Context.Service<EntityManager, EntityManagerApi<S>>(ENTITY_MANAGER_TAG_KEY)
 
 /**
  * Build an EntityManager over a fresh Ref.

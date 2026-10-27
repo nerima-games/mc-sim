@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Effect } from 'effect'
+import { Cause, Effect, Exit } from 'effect'
 import {
   makeSettingsService,
   SettingsService,
@@ -7,17 +7,34 @@ import {
 } from '../src/application/settings-service'
 import {
   applySettings,
-  DEFAULT_SETTINGS,
   isGraphicsQuality,
   isValidSettings,
   keyBindingFor,
+} from '../src/domain/settings'
+import {
+  DEFAULT_SETTINGS,
+  FieldOfViewDegrees,
+  GRAPHICS_QUALITIES,
+  InputAction,
+  KeyCode,
+  MouseSensitivity,
   normaliseSettings,
-  rebindKey,
-  unbindKey,
+  rebindKey as kernelRebindKey,
+  RenderDistanceChunks,
+  unbindKey as kernelUnbindKey,
+  VolumeLevel,
   type Settings,
 } from '@nerima-games/mc-kernel'
 
 const withSettings = (patch: Partial<Settings>): Settings => ({ ...DEFAULT_SETTINGS, ...patch })
+const rawSettings = (patch: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> => ({
+  ...DEFAULT_SETTINGS,
+  ...patch,
+})
+const rebindKey = (settings: Settings, action: string, code: string): Settings =>
+  kernelRebindKey(settings, InputAction(action), KeyCode(code))
+const unbindKey = (settings: Settings, action: string): Settings =>
+  kernelUnbindKey(settings, InputAction(action))
 
 /**
  * THE regression test for the second-owner refusal.
@@ -56,13 +73,14 @@ describe('REGRESSION: settings must not become a second owner of the day length'
 
   it.effect('a patch naming a refused field cannot install one', () =>
     Effect.sync(() => {
-      // `applySettings` rebuilds through `normaliseSettings`, which writes the
+      // Rebuilding through `normaliseSettings` writes the
       // ten fields it knows and nothing else. A save from a build that had more
       // therefore cannot smuggle one back in.
-      const patched = applySettings(DEFAULT_SETTINGS, {
+      const patched = normaliseSettings({
+        ...DEFAULT_SETTINGS,
         dayLengthSeconds: 1200,
         difficulty: 'hard',
-      } as Partial<Settings>)
+      })
 
       expect(Object.keys(patched).sort()).toEqual(Object.keys(DEFAULT_SETTINGS).sort())
     }),
@@ -102,8 +120,35 @@ describe('the defaults are kernel’s reconciled values', () => {
 
   it.effect('the defaults are themselves valid, which is not automatic', () =>
     Effect.sync(() => {
-      expect(isValidSettings(DEFAULT_SETTINGS)).toBe(true)
       expect(normaliseSettings(DEFAULT_SETTINGS)).toEqual(DEFAULT_SETTINGS)
+      expect(isValidSettings(DEFAULT_SETTINGS)).toBe(true)
+    }),
+  )
+})
+
+describe('locally owned settings API', () => {
+  it.effect('applies a patch and normalises the resulting settings', () =>
+    Effect.sync(() => {
+      const updated = applySettings(DEFAULT_SETTINGS, { audioEnabled: false })
+
+      expect(updated.audioEnabled).toBe(false)
+      expect(updated.renderDistance).toBe(DEFAULT_SETTINGS.renderDistance)
+      expect(updated.fovDegrees).toBe(DEFAULT_SETTINGS.fovDegrees)
+    }),
+  )
+
+  it.effect('recognises only the declared graphics qualities', () =>
+    Effect.sync(() => {
+      expect(isGraphicsQuality('ultra')).toBe(true)
+      expect(isGraphicsQuality('ulra')).toBe(false)
+    }),
+  )
+
+  it.effect('validates every field before narrowing an unknown value to Settings', () =>
+    Effect.sync(() => {
+      expect(isValidSettings(DEFAULT_SETTINGS)).toBe(true)
+      expect(isValidSettings({ ...DEFAULT_SETTINGS, renderDistance: 2.5 })).toBe(false)
+      expect(isValidSettings({ ...DEFAULT_SETTINGS, graphicsQuality: 'ulra' })).toBe(false)
     }),
   )
 })
@@ -112,17 +157,17 @@ describe('values are clamped into the reference’s ranges', () => {
   it.effect('render distance is an integer in [2, 16]', () =>
     Effect.sync(() => {
       // settings.schema.ts:49.
-      expect(normaliseSettings(withSettings({ renderDistance: 0 })).renderDistance).toBe(2)
-      expect(normaliseSettings(withSettings({ renderDistance: 64 })).renderDistance).toBe(16)
-      expect(normaliseSettings(withSettings({ renderDistance: 7.9 })).renderDistance).toBe(7)
+      expect(normaliseSettings(rawSettings({ renderDistance: 0 })).renderDistance).toBe(2)
+      expect(normaliseSettings(rawSettings({ renderDistance: 64 })).renderDistance).toBe(16)
+      expect(normaliseSettings(rawSettings({ renderDistance: 7.9 })).renderDistance).toBe(7)
     }),
   )
 
   it.effect('field of view is in [30, 110]', () =>
     Effect.sync(() => {
       // settings.schema.ts:51-53: 30 'zoom', 110 'Quake Pro'.
-      expect(normaliseSettings(withSettings({ fovDegrees: 1 })).fovDegrees).toBe(30)
-      expect(normaliseSettings(withSettings({ fovDegrees: 179 })).fovDegrees).toBe(110)
+      expect(normaliseSettings(rawSettings({ fovDegrees: 1 })).fovDegrees).toBe(30)
+      expect(normaliseSettings(rawSettings({ fovDegrees: 179 })).fovDegrees).toBe(110)
     }),
   )
 
@@ -130,8 +175,8 @@ describe('values are clamped into the reference’s ranges', () => {
     Effect.sync(() => {
       // settings.schema.ts:50. Zero is refused because a sensitivity of zero is
       // a camera that cannot turn, which reads as a frozen game.
-      expect(normaliseSettings(withSettings({ mouseSensitivity: 0 })).mouseSensitivity).toBe(0.1)
-      expect(normaliseSettings(withSettings({ mouseSensitivity: 99 })).mouseSensitivity).toBe(3)
+      expect(normaliseSettings(rawSettings({ mouseSensitivity: 0 })).mouseSensitivity).toBe(0.1)
+      expect(normaliseSettings(rawSettings({ mouseSensitivity: 99 })).mouseSensitivity).toBe(3)
     }),
   )
 
@@ -139,7 +184,7 @@ describe('values are clamped into the reference’s ranges', () => {
     Effect.sync(() => {
       // settings.schema.ts:75-77.
       const loud = normaliseSettings(
-        withSettings({ masterVolume: 11, musicVolume: -1, sfxVolume: 0.5 }),
+        rawSettings({ masterVolume: 11, musicVolume: -1, sfxVolume: 0.5 }),
       )
 
       expect(loud.masterVolume).toBe(1)
@@ -152,11 +197,11 @@ describe('values are clamped into the reference’s ranges', () => {
     Effect.sync(() => {
       // A `string` here would let a save carry 'ulra' into mc-render's preset
       // table, which would answer `undefined` and take the renderer with it.
-      expect(normaliseSettings(withSettings({ graphicsQuality: 'ulra' as never })).graphicsQuality).toBe(
+      expect(normaliseSettings(rawSettings({ graphicsQuality: 'ulra' })).graphicsQuality).toBe(
         'medium',
       )
-      expect(isGraphicsQuality('ultra')).toBe(true)
-      expect(isGraphicsQuality('ulra')).toBe(false)
+      expect(GRAPHICS_QUALITIES).toContain('ultra')
+      expect(GRAPHICS_QUALITIES).not.toContain('ulra')
     }),
   )
 
@@ -166,9 +211,9 @@ describe('values are clamped into the reference’s ranges', () => {
       // direction, a value with no magnitude does not. A cleared field snapping
       // to the MINIMUM would give a player a fog wall or silence they cannot
       // explain, so the fresh-user value is the fallback here.
-      expect(normaliseSettings(withSettings({ fovDegrees: Number.POSITIVE_INFINITY })).fovDegrees).toBe(110)
-      expect(normaliseSettings(withSettings({ fovDegrees: Number.NaN })).fovDegrees).toBe(75)
-      expect(normaliseSettings(withSettings({ masterVolume: Number.NaN })).masterVolume).toBe(0.8)
+      expect(normaliseSettings(rawSettings({ fovDegrees: Number.POSITIVE_INFINITY })).fovDegrees).toBe(110)
+      expect(normaliseSettings(rawSettings({ fovDegrees: Number.NaN })).fovDegrees).toBe(75)
+      expect(normaliseSettings(rawSettings({ masterVolume: Number.NaN })).masterVolume).toBe(0.8)
     }),
   )
 
@@ -193,7 +238,7 @@ describe('values are clamped into the reference’s ranges', () => {
   it.effect('a malformed audioEnabled falls back to the default, matching every other malformed field', () =>
     Effect.sync(() => {
       const repaired = normaliseSettings(
-        withSettings({ audioEnabled: 'false' as unknown as boolean }),
+        rawSettings({ audioEnabled: 'false' }),
       )
 
       expect(repaired.audioEnabled).toBe(DEFAULT_SETTINGS.audioEnabled)
@@ -227,10 +272,10 @@ describe('key bindings are overrides, not a roster', () => {
     }),
   )
 
-  it.effect('a blank action or code is refused rather than stored, by identity', () =>
+  it.effect('blank action and code values fail their brands', () =>
     Effect.sync(() => {
-      expect(rebindKey(DEFAULT_SETTINGS, '', 'Space')).toBe(DEFAULT_SETTINGS)
-      expect(rebindKey(DEFAULT_SETTINGS, 'jump', '')).toBe(DEFAULT_SETTINGS)
+      expect(InputAction.result('')._tag).toBe('Failure')
+      expect(KeyCode.result('')._tag).toBe('Failure')
     }),
   )
 
@@ -278,7 +323,7 @@ describe('key bindings are overrides, not a roster', () => {
       // Merging would make removal impossible: the map is already the override
       // set, and an absent entry is what "keep the default" means.
       const bound = rebindKey(rebindKey(DEFAULT_SETTINGS, 'jump', 'Space'), 'sneak', 'ShiftLeft')
-      const replaced = applySettings(bound, { keyBindings: { jump: 'KeyJ' } })
+      const replaced = normaliseSettings({ ...bound, keyBindings: { jump: 'KeyJ' } })
 
       expect(replaced.keyBindings).toEqual({ jump: 'KeyJ' })
     }),
@@ -287,9 +332,7 @@ describe('key bindings are overrides, not a roster', () => {
   it.effect('a non-string code is DROPPED, not coerced into a key no keyboard makes', () =>
     Effect.sync(() => {
       const repaired = normaliseSettings(
-        withSettings({
-          keyBindings: { jump: null as unknown as string, sneak: 'ShiftLeft', '': 'KeyQ' },
-        }),
+        rawSettings({ keyBindings: { jump: null, sneak: 'ShiftLeft', '': 'KeyQ' } }),
       )
 
       expect(repaired.keyBindings).toEqual({ sneak: 'ShiftLeft' })
@@ -299,11 +342,10 @@ describe('key bindings are overrides, not a roster', () => {
   it.effect('a keyBindings that is not an object at all becomes an empty map', () =>
     Effect.sync(() => {
       const repaired = normaliseSettings(
-        withSettings({ keyBindings: null as unknown as Record<string, string> }),
+        rawSettings({ keyBindings: null }),
       )
 
       expect(repaired.keyBindings).toEqual({})
-      expect(isValidSettings(repaired)).toBe(true)
     }),
   )
 })
@@ -318,7 +360,7 @@ describe('SettingsService', () => {
       // `audioEnabled: settings.audioEnabled === true`-style logic exists to
       // preserve, and kernel's normaliseSettings still does: `typeof x ===
       // 'boolean' ? x : default` passes a real `false` straight through.
-      const next = yield* settings.update({ renderDistance: 12, audioEnabled: false })
+      const next = yield* settings.update({ renderDistance: RenderDistanceChunks(12), audioEnabled: false })
 
       expect(next.renderDistance).toBe(12)
       expect(next.audioEnabled).toBe(false)
@@ -327,65 +369,80 @@ describe('SettingsService', () => {
     }),
   )
 
-  it.effect('an out-of-range patch is normalised rather than stored', () =>
+  it.effect('a max-bound branded patch is stored and remains normalised', () =>
     Effect.gen(function* () {
       const settings = yield* makeSettingsService()
 
-      expect((yield* settings.update({ renderDistance: 999 })).renderDistance).toBe(16)
-      expect(isValidSettings(yield* settings.snapshot)).toBe(true)
+      expect((yield* settings.update({ renderDistance: RenderDistanceChunks(16) })).renderDistance).toBe(16)
+      const saved = yield* settings.snapshot
+      expect(normaliseSettings(saved)).toEqual(saved)
     }),
   )
 
-  it.effect('a layer built from stored preferences is repaired on the way in', () =>
+  it.effect('a layer built from stored preferences keeps the branded values', () =>
     Effect.gen(function* () {
       const restored = yield* Effect.flatMap(SettingsService, (service) => service.snapshot).pipe(
         Effect.provide(
-          SettingsServiceLayer(withSettings({ fovDegrees: Number.NaN, renderDistance: 400 })),
+          SettingsServiceLayer(
+            withSettings({ fovDegrees: FieldOfViewDegrees(75), renderDistance: RenderDistanceChunks(16) }),
+          ),
         ),
       )
 
-      expect(isValidSettings(restored)).toBe(true)
+      expect(normaliseSettings(restored)).toEqual(restored)
       expect(restored.fovDegrees).toBe(75)
       expect(restored.renderDistance).toBe(16)
     }),
   )
 
-  it.effect('restore repairs a stored save rather than refusing it', () =>
+  it.effect('a layer repairs malformed runtime preferences before exposing its snapshot', () =>
     Effect.gen(function* () {
-      // The second entry point. `makeSettingsService`'s header records what
-      // happened elsewhere in this repository when only one entry point was
-      // guarded: a layer built from stored values and `restore` disagreeing
-      // about what "legal" means.
-      const settings = yield* makeSettingsService()
+      const malformed = withSettings({
+        fovDegrees: FieldOfViewDegrees(75),
+        renderDistance: RenderDistanceChunks(16),
+      })
+      expect(Reflect.set(malformed, 'fovDegrees', Number.NaN)).toBe(true)
+      expect(Reflect.set(malformed, 'renderDistance', 400)).toBe(true)
 
-      const fromDisk: Settings = {
-        ...DEFAULT_SETTINGS,
-        renderDistance: 400,
-        fovDegrees: Number.NaN,
-        audioEnabled: 'false' as unknown as boolean,
-      }
+      const restored = yield* Effect.flatMap(SettingsService, (service) => service.snapshot).pipe(
+        Effect.provide(SettingsServiceLayer(malformed)),
+      )
+
+      expect(restored.fovDegrees).toBe(75)
+      expect(restored.renderDistance).toBe(16)
+      expect(normaliseSettings(restored)).toEqual(restored)
+    }),
+  )
+
+  it.effect('restores and repairs malformed stored settings', () =>
+    Effect.gen(function* () {
+      const settings = yield* makeSettingsService()
+      const fromDisk = rawSettings({
+        renderDistance: 0,
+        fovDegrees: 179,
+        mouseSensitivity: 99,
+        audioEnabled: 'true',
+        keyBindings: { jump: 123 },
+      })
 
       yield* settings.restore(fromDisk)
       const restored = yield* settings.snapshot
 
-      expect(isValidSettings(restored)).toBe(true)
-      expect(restored.renderDistance).toBe(16)
-      expect(restored.fovDegrees).toBe(75)
-      // A malformed `audioEnabled` (a string, not a boolean) falls back to
-      // kernel's default — see the "a malformed audioEnabled falls back to
-      // the default" test above for why this is now `true`, not `false`.
+      expect(restored.renderDistance).toBe(2)
+      expect(restored.fovDegrees).toBe(110)
+      expect(restored.mouseSensitivity).toBe(3)
       expect(restored.audioEnabled).toBe(DEFAULT_SETTINGS.audioEnabled)
-      expect(isValidSettings(fromDisk)).toBe(false)
+      expect(restored.keyBindings).toEqual({})
     }),
   )
 
-  it.effect('isValidSettings rejects a malformed keyBindings entry', () =>
+  it.effect('normaliseSettings drops malformed keyBindings entries', () =>
     Effect.sync(() => {
-      expect(isValidSettings(withSettings({ keyBindings: { '': 'KeyA' } }))).toBe(false)
-      expect(isValidSettings(withSettings({ keyBindings: { jump: '' } }))).toBe(false)
+      expect(normaliseSettings(rawSettings({ keyBindings: { '': 'KeyA' } })).keyBindings).toEqual({})
+      expect(normaliseSettings(rawSettings({ keyBindings: { jump: '' } })).keyBindings).toEqual({})
       expect(
-        isValidSettings(withSettings({ keyBindings: { jump: 123 as unknown as string } })),
-      ).toBe(false)
+        normaliseSettings(rawSettings({ keyBindings: { jump: 123 } })).keyBindings,
+      ).toEqual({})
     }),
   )
 
@@ -398,6 +455,18 @@ describe('SettingsService', () => {
 
       yield* settings.unbindKey('jump')
       expect(keyBindingFor(yield* settings.snapshot, 'jump')).toBeUndefined()
+    }),
+  )
+
+  it.effect('invalid branded rebind input fails and leaves settings unchanged', () =>
+    Effect.gen(function* () {
+      const settings = yield* makeSettingsService()
+      const invalidAction = yield* Effect.exit(settings.rebindKey('', 'Space'))
+      const invalidCode = yield* Effect.exit(settings.rebindKey('jump', ''))
+
+      expect(Exit.isFailure(invalidAction) && Cause.hasFails(invalidAction.cause)).toBe(true)
+      expect(Exit.isFailure(invalidCode) && Cause.hasFails(invalidCode.cause)).toBe(true)
+      expect(yield* settings.snapshot).toEqual(DEFAULT_SETTINGS)
     }),
   )
 
@@ -430,7 +499,10 @@ describe('SettingsService', () => {
     Effect.gen(function* () {
       const settings = yield* makeSettingsService()
 
-      yield* settings.update({ mouseSensitivity: 2.4, masterVolume: 0.2 })
+      yield* settings.update({
+        mouseSensitivity: MouseSensitivity(2.4),
+        masterVolume: VolumeLevel(0.2),
+      })
       yield* settings.rebindKey('jump', 'Space')
       yield* settings.reset
 
@@ -440,7 +512,7 @@ describe('SettingsService', () => {
       // What a world load must do INSTEAD: nothing. A second world reaches the
       // service with the preferences the first one left, which is what the
       // preview's second-world scenario has to keep true.
-      yield* settings.update({ mouseSensitivity: 2.4 })
+      yield* settings.update({ mouseSensitivity: MouseSensitivity(2.4) })
       const survivor = yield* settings.snapshot
       expect(survivor.mouseSensitivity).toBe(2.4)
     }),

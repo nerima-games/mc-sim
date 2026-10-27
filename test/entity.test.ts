@@ -22,7 +22,7 @@ import {
   type EntityRoster,
   type EntityStep,
 } from '../src/domain/entity'
-import { position } from '@nerima-games/mc-kernel'
+import { PositionAxis, position as coordinatePosition } from '@nerima-games/mc-kernel'
 
 /**
  * A stand-in for mx-gameplay's `CreeperFuse`.
@@ -43,6 +43,8 @@ type Fuse =
   | { readonly _tag: 'Detonated' }
 
 const DORMANT: Fuse = { _tag: 'Dormant' }
+const position = (x: number, y: number, z: number) =>
+  coordinatePosition(PositionAxis(x), PositionAxis(y), PositionAxis(z))
 
 const creeper = (x: number, fuse: Fuse = DORMANT) => ({
   kind: EntityKind('creeper'),
@@ -191,9 +193,12 @@ describe('spawnEntity / despawnEntity', () => {
       // against `NaN` is false. Guarding only the save path would leave this
       // entrance open — the shape of the `makeTimeService` near-miss recorded in
       // docs/testing.md §3.0.1.
+      const feetPosition = JSON.parse('{"x":0,"y":64,"z":0}')
+      feetPosition.x = Number.NaN
+      feetPosition.z = Number.POSITIVE_INFINITY
       const spawned = spawnEntity(emptyRoster<Fuse>(), {
         kind: EntityKind('creeper'),
-        feetPosition: position(Number.NaN, 64, Number.POSITIVE_INFINITY),
+        feetPosition,
         healthPoints: Number.NaN,
         behaviour: DORMANT,
       })

@@ -1,3 +1,4 @@
+import { Result } from 'effect'
 import type { ItemType } from '@nerima-games/mc-kernel'
 
 import {
@@ -7,7 +8,7 @@ import {
   STARTER_BREWING_RECIPES,
   type BrewingRecipe,
 } from './brewing-data.js'
-import { itemStack, type ItemStack, type Slot } from './inventory.js'
+import { itemStack, type ItemStack, type ItemStackFailure, type Slot } from './inventory.js'
 
 export const BREWING_BOTTLE_SLOTS = 3
 
@@ -101,33 +102,34 @@ export const activeBrewingRecipe = (
     .find((recipe): recipe is BrewingRecipe => recipe !== undefined)
 }
 
-const consumeIngredient = (ingredient: ItemStack): Slot =>
-  ingredient.count === 1 ? undefined : itemStack(ingredient.item, ingredient.count - 1)
+const consumeIngredient = (ingredient: ItemStack): Result.Result<Slot, ItemStackFailure> =>
+  ingredient.count === 1 ? Result.succeed(undefined) : itemStack(ingredient.item, ingredient.count - 1)
 
 const brewOnce = (
   state: BrewingState,
   ingredient: ItemStack,
   recipe: BrewingRecipe,
-): BrewingState => ({
-  ...state,
-  ingredient: consumeIngredient(ingredient),
-  fuelCharges: state.fuelCharges - 1,
-  bottles: (() => {
-    const bottles = state.bottles.map((bottle) =>
-    bottle?.item === recipe.input ? itemStack(recipe.output, bottle.count) : bottle,
-    )
-    const result: [Slot, Slot, Slot] = [undefined, undefined, undefined]
-    for (const [index, bottle] of bottles.entries()) result[index] = bottle
-    return result
-  })(),
-})
+): Result.Result<BrewingState, ItemStackFailure> => {
+  const [first, second, third] = state.bottles
+  const updatedFirst = first?.item === recipe.input ? itemStack(recipe.output, first.count) : Result.succeed(first)
+  const updatedSecond = second?.item === recipe.input ? itemStack(recipe.output, second.count) : Result.succeed(second)
+  const updatedThird = third?.item === recipe.input ? itemStack(recipe.output, third.count) : Result.succeed(third)
+
+  return Result.flatMap(consumeIngredient(ingredient), (remainingIngredient) =>
+    Result.map(Result.all([updatedFirst, updatedSecond, updatedThird]), ([bottle0, bottle1, bottle2]) => ({
+      ...state,
+      ingredient: remainingIngredient,
+      fuelCharges: state.fuelCharges - 1,
+      bottles: [bottle0, bottle1, bottle2],
+    })))
+}
 
 export const advanceBrewing = (
   state: BrewingState,
   deltaSecs: number,
   recipes: ReadonlyArray<BrewingRecipe> = STARTER_BREWING_RECIPES,
-): BrewingAdvanceResult => {
-  if (!Number.isFinite(deltaSecs) || deltaSecs < 0) return { state, brewed: 0 }
+): Result.Result<BrewingAdvanceResult, ItemStackFailure> => {
+  if (!Number.isFinite(deltaSecs) || deltaSecs < 0) return Result.succeed({ state, brewed: 0 })
 
   let currentState = state
   let remainingSecs = state.brewTimeSecs + deltaSecs
@@ -139,13 +141,15 @@ export const advanceBrewing = (
     const recipe = activeBrewingRecipe(currentState, recipes)
     if (recipe === undefined) break
 
-    currentState = brewOnce(currentState, ingredient, recipe)
+    const brewedState = brewOnce(currentState, ingredient, recipe)
+    if (Result.isFailure(brewedState)) return Result.fail(brewedState.failure)
+    currentState = brewedState.success
     remainingSecs -= BREWING_TIME_SECS
     brewed += 1
   }
 
-  return {
+  return Result.succeed({
     state: { ...currentState, brewTimeSecs: remainingSecs },
     brewed,
-  }
+  })
 }

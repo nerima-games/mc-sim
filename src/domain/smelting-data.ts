@@ -1,104 +1,33 @@
+import { Result } from 'effect'
 import { itemStack } from './inventory.js'
+import type { ItemStackFailure } from './inventory.js'
 import type { FuelRule, SmeltingRecipe } from './smelting.js'
 
-export const STARTER_SMELTING_RECIPES: ReadonlyArray<SmeltingRecipe> = [
-  {
-    id: 'mc-sim:iron-ingot',
-    input: 'raw_iron',
-    output: itemStack('iron_ingot', 1),
-    cookDurationSecs: 10,
-  },
-  {
-    id: 'mc-sim:stone',
-    input: 'cobblestone',
-    output: itemStack('stone', 1),
-    cookDurationSecs: 10,
-  },
-  {
-    id: 'mc-sim:glass',
-    input: 'sand',
-    output: itemStack('glass', 1),
-    cookDurationSecs: 10,
-  },
-  {
-    id: 'mc-sim:coal-from-coal-ore',
-    input: 'coal_ore',
-    output: itemStack('coal', 1),
-    cookDurationSecs: 10,
-  },
-  {
-    id: 'mc-sim:coal-from-deepslate-coal-ore',
-    input: 'deepslate_coal_ore',
-    output: itemStack('coal', 1),
-    cookDurationSecs: 10,
-  },
-  {
-    id: 'mc-sim:iron-ingot-from-iron-ore',
-    input: 'iron_ore',
-    output: itemStack('iron_ingot', 1),
-    cookDurationSecs: 10,
-  },
-  {
-    id: 'mc-sim:iron-ingot-from-deepslate-iron-ore',
-    input: 'deepslate_iron_ore',
-    output: itemStack('iron_ingot', 1),
-    cookDurationSecs: 10,
-  },
-  {
-    id: 'mc-sim:diamond-from-diamond-ore',
-    input: 'diamond_ore',
-    output: itemStack('diamond', 1),
-    cookDurationSecs: 10,
-  },
-  {
-    id: 'mc-sim:diamond-from-deepslate-diamond-ore',
-    input: 'deepslate_diamond_ore',
-    output: itemStack('diamond', 1),
-    cookDurationSecs: 10,
-  },
-  {
-    id: 'mc-sim:redstone-dust-from-redstone-ore',
-    input: 'redstone_ore',
-    output: itemStack('redstone_dust', 1),
-    cookDurationSecs: 10,
-  },
-  {
-    id: 'mc-sim:redstone-dust-from-deepslate-redstone-ore',
-    input: 'deepslate_redstone_ore',
-    output: itemStack('redstone_dust', 1),
-    cookDurationSecs: 10,
-  },
-  {
-    id: 'mc-sim:lapis-lazuli-from-lapis-ore',
-    input: 'lapis_ore',
-    output: itemStack('lapis_lazuli', 1),
-    cookDurationSecs: 10,
-  },
-  {
-    id: 'mc-sim:lapis-lazuli-from-deepslate-lapis-ore',
-    input: 'deepslate_lapis_ore',
-    output: itemStack('lapis_lazuli', 1),
-    cookDurationSecs: 10,
-  },
-  {
-    id: 'mc-sim:emerald-from-emerald-ore',
-    input: 'emerald_ore',
-    output: itemStack('emerald', 1),
-    cookDurationSecs: 10,
-  },
-  {
-    id: 'mc-sim:emerald-from-deepslate-emerald-ore',
-    input: 'deepslate_emerald_ore',
-    output: itemStack('emerald', 1),
-    cookDurationSecs: 10,
-  },
-  {
-    id: 'mc-sim:nether-brick',
-    input: 'netherrack',
-    output: itemStack('nether_brick', 1),
-    cookDurationSecs: 10,
-  },
-]
+const starterRecipe = (
+  id: string,
+  input: SmeltingRecipe['input'],
+  output: ReturnType<typeof itemStack>,
+): Result.Result<SmeltingRecipe, ItemStackFailure> =>
+  Result.map(output, (stack) => ({ id, input, output: stack, cookDurationSecs: 10 }))
+
+export const STARTER_SMELTING_RECIPES: Result.Result<ReadonlyArray<SmeltingRecipe>, ItemStackFailure> = Result.all([
+  starterRecipe('mc-sim:iron-ingot', 'raw_iron', itemStack('iron_ingot', 1)),
+  starterRecipe('mc-sim:stone', 'cobblestone', itemStack('stone', 1)),
+  starterRecipe('mc-sim:glass', 'sand', itemStack('glass', 1)),
+  starterRecipe('mc-sim:coal-from-coal-ore', 'coal_ore', itemStack('coal', 1)),
+  starterRecipe('mc-sim:coal-from-deepslate-coal-ore', 'deepslate_coal_ore', itemStack('coal', 1)),
+  starterRecipe('mc-sim:iron-ingot-from-iron-ore', 'iron_ore', itemStack('iron_ingot', 1)),
+  starterRecipe('mc-sim:iron-ingot-from-deepslate-iron-ore', 'deepslate_iron_ore', itemStack('iron_ingot', 1)),
+  starterRecipe('mc-sim:diamond-from-diamond-ore', 'diamond_ore', itemStack('diamond', 1)),
+  starterRecipe('mc-sim:diamond-from-deepslate-diamond-ore', 'deepslate_diamond_ore', itemStack('diamond', 1)),
+  starterRecipe('mc-sim:redstone-dust-from-redstone-ore', 'redstone_ore', itemStack('redstone_dust', 1)),
+  starterRecipe('mc-sim:redstone-dust-from-deepslate-redstone-ore', 'deepslate_redstone_ore', itemStack('redstone_dust', 1)),
+  starterRecipe('mc-sim:lapis-lazuli-from-lapis-ore', 'lapis_ore', itemStack('lapis_lazuli', 1)),
+  starterRecipe('mc-sim:lapis-lazuli-from-deepslate-lapis-ore', 'deepslate_lapis_ore', itemStack('lapis_lazuli', 1)),
+  starterRecipe('mc-sim:emerald-from-emerald-ore', 'emerald_ore', itemStack('emerald', 1)),
+  starterRecipe('mc-sim:emerald-from-deepslate-emerald-ore', 'deepslate_emerald_ore', itemStack('emerald', 1)),
+  starterRecipe('mc-sim:nether-brick', 'netherrack', itemStack('nether_brick', 1)),
+])
 
 export const STARTER_FUEL_RULES: ReadonlyArray<FuelRule> = [
   { item: 'coal', burnDurationSecs: 80 },

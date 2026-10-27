@@ -54,7 +54,7 @@
  * whether a sword is currently swinging.
  */
 import type { CameraPoseSnapshot, MonotonicTimeSecs, Position } from "@nerima-games/mc-kernel"
-import { position } from "@nerima-games/mc-kernel"
+import { AngleRadians, PositionAxis, position } from "@nerima-games/mc-kernel"
 
 /**
  * Pitch bound, radians.
@@ -87,7 +87,7 @@ export type PlayerPose = {
 }
 
 export const INITIAL_PLAYER_POSE: PlayerPose = {
-  feetPosition: position(0, 0, 0),
+  feetPosition: position(PositionAxis(0), PositionAxis(0), PositionAxis(0)),
   yawRadians: 0,
   pitchRadians: 0,
 }
@@ -131,9 +131,13 @@ export const withFeetPosition = (pose: PlayerPose, feetPosition: Position): Play
  * at".
  */
 export const cameraPoseOf = (pose: PlayerPose, capturedAtSecs: MonotonicTimeSecs): CameraPoseSnapshot => ({
-  position: position(pose.feetPosition.x, pose.feetPosition.y + EYE_LEVEL_OFFSET, pose.feetPosition.z),
-  yawRadians: pose.yawRadians,
-  pitchRadians: pose.pitchRadians,
+  position: position(
+    PositionAxis(pose.feetPosition.x),
+    PositionAxis(pose.feetPosition.y + EYE_LEVEL_OFFSET),
+    PositionAxis(pose.feetPosition.z),
+  ),
+  yawRadians: AngleRadians(pose.yawRadians),
+  pitchRadians: AngleRadians(pose.pitchRadians),
   capturedAtSecs,
 })
 
@@ -153,9 +157,9 @@ export type CameraOrientation = Pick<CameraPoseSnapshot, 'yawRadians' | 'pitchRa
 export const forwardVector = (snapshot: CameraOrientation): Position => {
   const cosPitch = Math.cos(snapshot.pitchRadians)
   return position(
-    -Math.sin(snapshot.yawRadians) * cosPitch,
-    Math.sin(snapshot.pitchRadians),
-    -Math.cos(snapshot.yawRadians) * cosPitch,
+    PositionAxis(-Math.sin(snapshot.yawRadians) * cosPitch),
+    PositionAxis(Math.sin(snapshot.pitchRadians)),
+    PositionAxis(-Math.cos(snapshot.yawRadians) * cosPitch),
   )
 }
 

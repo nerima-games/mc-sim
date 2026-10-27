@@ -1,6 +1,6 @@
 import { Context, Effect, Layer, Ref } from 'effect'
 import type { BlockType } from '@nerima-games/mc-kernel'
-import type { ItemStack } from '../domain/inventory.js'
+import type { ItemStack, ItemStackFailure } from '../domain/inventory.js'
 import type { DeltaTimeSecs } from '@nerima-games/mc-kernel'
 import * as Crop from '../domain/crop.js'
 
@@ -13,7 +13,7 @@ export type CropServiceApi = {
   readonly cropAt: (location: Crop.CropLocation) => Effect.Effect<Crop.CropState | null>
   readonly matureYieldsAt: (
     location: Crop.CropLocation,
-  ) => Effect.Effect<ReadonlyArray<ItemStack> | null>
+  ) => Effect.Effect<ReadonlyArray<ItemStack> | null, ItemStackFailure>
   readonly remove: (location: Crop.CropLocation) => Effect.Effect<Crop.CropState | null>
   readonly advance: (delta: DeltaTimeSecs) => Effect.Effect<void>
   readonly advanceByBoneMeal: (location: Crop.CropLocation) => Effect.Effect<boolean>
@@ -22,8 +22,8 @@ export type CropServiceApi = {
   readonly reset: Effect.Effect<void>
 }
 
-const CropServiceBase: Context.TagClass<CropService, '@nerima-games/mc-sim/CropService', CropServiceApi> =
-  Context.Tag('@nerima-games/mc-sim/CropService')<CropService, CropServiceApi>()
+const CropServiceBase: Context.ServiceClass<CropService, '@nerima-games/mc-sim/CropService', CropServiceApi> =
+  Context.Service<CropService, CropServiceApi>()('@nerima-games/mc-sim/CropService')
 
 export class CropService extends CropServiceBase {}
 
@@ -55,9 +55,11 @@ export const makeCropService = (): Effect.Effect<CropServiceApi> =>
         return crop === undefined ? null : copyCrop(crop)
       }),
     matureYieldsAt: (location) =>
-      Effect.map(Ref.get(state), (current) => {
+      Effect.flatMap(Ref.get(state), (current) => {
         const crop = current.get(Crop.cropLocationKey(location))
-        return crop === undefined ? null : Crop.matureYieldsFor(crop)
+        return crop === undefined
+          ? Effect.succeed(null)
+          : Effect.fromResult(Crop.matureYieldsFor(crop))
       }),
     remove: (location) =>
       Ref.modify(state, (current) => {

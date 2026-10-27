@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@effect/vitest'
 import type { BlockPosition } from '@nerima-games/mc-kernel'
-import { Effect, Layer } from 'effect'
+import { Effect, Layer, Result } from 'effect'
 import { CropService, CropServiceLayer } from '../src/application/crop-service'
 import { PlayerServiceLayer } from '../src/application/player-service'
 import { TimeServiceLayer } from '../src/application/time-service'
@@ -17,7 +17,15 @@ import {
   MonotonicTimeSecs,
 } from '@nerima-games/mc-kernel'
 import { makeSimStages } from '../src/stages/registration'
-import { itemStack } from '../src/domain/inventory'
+import { itemStack as itemStackResult, type ItemStack } from '../src/domain/inventory'
+
+const requireSuccess = <A, E>(result: Result.Result<A, E>): A => {
+  if (Result.isFailure(result)) throw result.failure
+  return result.success
+}
+
+const itemStack = (...args: Parameters<typeof itemStackResult>): ItemStack =>
+  requireSuccess(itemStackResult(...args))
 
 const location = (
   x: number,
@@ -79,7 +87,7 @@ describe('crop service', () => {
       yield* stages[0]?.run(DeltaTimeSecs(1)) ?? Effect.void
       for (const entry of planted) {
         expect(yield* crops.matureYieldsAt(entry.location)).toStrictEqual(
-          CROP_REGISTRY[entry.crop].guaranteedMatureYield,
+          requireSuccess(CROP_REGISTRY[entry.crop].guaranteedMatureYield),
         )
       }
     }).pipe(Effect.provide(ServicesLayer), Effect.provide(FrozenClockLayer)),
@@ -164,10 +172,10 @@ describe('crop service', () => {
       expect(yield* crops.snapshot).toStrictEqual(snapshot)
 
       const beforeInvalidRestore = yield* crops.snapshot
-      const result = yield* Effect.either(crops.restore({
+      const result = yield* Effect.result(crops.restore({
         crops: [{ ...beforeInvalidRestore.crops[0], growthSecs: -1 }],
       }))
-      expect(result._tag).toBe('Left')
+      expect(result._tag).toBe('Failure')
       expect(yield* crops.snapshot).toStrictEqual(beforeInvalidRestore)
     }).pipe(Effect.provide(CropServiceLayer)),
   )
@@ -182,11 +190,11 @@ describe('crop service', () => {
         growthSecs: 0,
       }
 
-      expect((yield* Effect.either(crops.restore({ crops: [], extra: true })))._tag).toBe('Left')
-      expect((yield* Effect.either(crops.restore({ crops: [crop, crop] })))._tag).toBe('Left')
-      expect((yield* Effect.either(crops.restore({
+      expect((yield* Effect.result(crops.restore({ crops: [], extra: true })))._tag).toBe('Failure')
+      expect((yield* Effect.result(crops.restore({ crops: [crop, crop] })))._tag).toBe('Failure')
+      expect((yield* Effect.result(crops.restore({
         crops: [{ ...crop, position: { x: 1.5, y: 64, z: 1 } }],
-      })))._tag).toBe('Left')
+      })))._tag).toBe('Failure')
     }).pipe(Effect.provide(CropServiceLayer)),
   )
 
@@ -216,19 +224,19 @@ describe('crop service', () => {
         position: { x: 1, y: 64, z: 1 },
         crop: 'potato_crop',
       }
-      expect((yield* Effect.either(crops.restore({ crops: [missingField] })))._tag).toBe('Left')
+      expect((yield* Effect.result(crops.restore({ crops: [missingField] })))._tag).toBe('Failure')
 
-      expect((yield* Effect.either(
+      expect((yield* Effect.result(
         crops.restore({ crops: [{ ...base, dimension: 'moon' }] }),
-      ))._tag).toBe('Left')
+      ))._tag).toBe('Failure')
 
-      expect((yield* Effect.either(
+      expect((yield* Effect.result(
         crops.restore({ crops: [{ ...base, crop: 'carrot_crop' }] }),
-      ))._tag).toBe('Left')
+      ))._tag).toBe('Failure')
 
-      expect((yield* Effect.either(
+      expect((yield* Effect.result(
         crops.restore({ crops: [{ ...base, position: { x: 1, y: 64 } }] }),
-      ))._tag).toBe('Left')
+      ))._tag).toBe('Failure')
     }).pipe(Effect.provide(CropServiceLayer)),
   )
 })

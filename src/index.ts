@@ -53,9 +53,14 @@ export * from './domain/wither.js'
 
 // --- Application: Effect services -------------------------------------------
 export * from './application/autosave.js'
+export * from './application/save-v3-migration.js'
 export * from './application/save-coordinator.js'
 export * from './application/save-service.js'
 export * from './application/crop-service.js'
+export * from './application/intent-queue.js'
+export * from './application/domain-event-bus.js'
+export * from './application/replicated-state.js'
+export * from './application/world-commit-coordinator.js'
 export * from './application/entity-manager.js'
 export * from './application/equipment-service.js'
 export * from './application/game-loop.js'
@@ -105,7 +110,7 @@ export {
   nextAnvilRepairCost,
   planAnvil,
   snapshotAnvilState,
-} from '@nerima-games/mc-kernel'
+} from './domain/anvil.js'
 
 export type {
   AnvilApplyResult,
@@ -125,18 +130,14 @@ export type {
   AnvilValidationIssue,
   CanonicalAnvilItemPayload,
   CanonicalAnvilState,
-} from '@nerima-games/mc-kernel'
+} from './domain/anvil.js'
 
 // `Dimension` is intentionally not re-exported here. `PlayerServiceApi` uses
 // the type owned and published by mc-kernel, so consumers import it from
 // that package instead of receiving a second spelling from this barrel.
 
-// Settings moved to mc-kernel 0.7.0 (merged with mc-compose's PlayerSettingsV1
-// half of the same domain, see mc-kernel's CHANGELOG). `domain/settings.ts` no
-// longer exists here — `application/settings-service.ts` is the Ref wrapper
-// over kernel's rules, and this re-export keeps `Settings`/`DEFAULT_SETTINGS`/
-// etc. reachable from this barrel exactly as they were before the move, same
-// as the Anvil re-export above.
+// Kernel owns settings values and shared constraints; sim retains the runtime
+// helpers removed from the kernel's public API.
 export {
   applySettings,
   DEFAULT_SETTINGS,
@@ -155,6 +156,6 @@ export {
   normaliseSettings,
   rebindKey,
   unbindKey,
-} from '@nerima-games/mc-kernel'
+} from './domain/settings.js'
 
-export type { GraphicsQuality, Settings } from '@nerima-games/mc-kernel'
+export type { GraphicsQuality, Settings } from './domain/settings.js'

@@ -5,11 +5,12 @@
  * If a failure escapes the repeated effect, autosave dies silently after the
  * first transient IndexedDB error and every later edit is lost at the next
  * crash. So recovery has to be INSIDE the tick, and it has to be
- * `catchAllCause` — a thrown exception is a `Cause.Die` that `catchAll` does
+ * `catchCause` — a thrown exception is a `Cause.Die` that `catch` does
  * not see.
  */
 import { describe, expect, it } from '@effect/vitest'
-import { Duration, Effect, Fiber, Ref, Schedule, TestClock } from 'effect'
+import { Duration, Effect, Fiber, Ref, Schedule } from 'effect'
+import { TestClock } from 'effect/testing'
 import {
   AUTO_SAVE_INTERVAL,
   autoSaveSchedule,
@@ -93,10 +94,10 @@ describe('REGRESSION: Schedule.spaced, not Schedule.fixed', () => {
       // back the moment it resumes, which is the stall the player sees.
       const runs = yield* Ref.make(0)
       const tick = Effect.sleep(Duration.millis(40)).pipe(
-        Effect.zipRight(Ref.update(runs, (count) => count + 1)),
+        Effect.andThen(Ref.update(runs, (count) => count + 1)),
       )
 
-      const fiber = yield* Effect.fork(
+      const fiber = yield* Effect.forkChild(
         Effect.repeat(tick, autoSaveSchedule(Duration.millis(100))),
       )
 
@@ -117,10 +118,10 @@ describe('REGRESSION: Schedule.spaced, not Schedule.fixed', () => {
       // coincide for the chosen numbers.
       const runs = yield* Ref.make(0)
       const tick = Effect.sleep(Duration.millis(40)).pipe(
-        Effect.zipRight(Ref.update(runs, (count) => count + 1)),
+        Effect.andThen(Ref.update(runs, (count) => count + 1)),
       )
 
-      const fiber = yield* Effect.fork(Effect.repeat(tick, Schedule.fixed(Duration.millis(100))))
+      const fiber = yield* Effect.forkChild(Effect.repeat(tick, Schedule.fixed(Duration.millis(100))))
 
       yield* TestClock.adjust(Duration.millis(1000))
       yield* Fiber.interrupt(fiber)
@@ -200,7 +201,7 @@ describe('startAutoSaveDaemon', () => {
       const runs = yield* Ref.make(0)
       const fiber = yield* startAutoSaveDaemon(
         Effect.sleep(Duration.millis(40)).pipe(
-          Effect.zipRight(Ref.update(runs, (count) => count + 1)),
+          Effect.andThen(Ref.update(runs, (count) => count + 1)),
         ),
         Duration.millis(100),
       )

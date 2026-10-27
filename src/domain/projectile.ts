@@ -1,6 +1,6 @@
-import { voxelRaycast } from '@nerima-games/mc-physics'
-import { Option } from 'effect'
-import type { Position } from '@nerima-games/mc-kernel'
+import { BlockLength, voxelRaycast } from '@nerima-games/mc-physics'
+import { Brand, Option, Result } from 'effect'
+import { PositionAxis, position, type Position } from '@nerima-games/mc-kernel'
 
 /** Projectile physics exposed through the simulation package's public API. */
 export {
@@ -33,16 +33,24 @@ export const raycastArrowBlock = (
   from: Position,
   to: Position,
   isBlocking: IsArrowBlocker,
-): Option.Option<ArrowBlockImpact> => {
-  const travel = {
-    x: to.x - from.x,
-    y: to.y - from.y,
-    z: to.z - from.z,
-  }
-  const maxDistance = Math.hypot(travel.x, travel.y, travel.z)
+): Result.Result<Option.Option<ArrowBlockImpact>, Brand.BrandError | RangeError> => {
+  const travelX = to.x - from.x
+  const travelY = to.y - from.y
+  const travelZ = to.z - from.z
+  const maxDistance = Math.hypot(travelX, travelY, travelZ)
+  const travel = Result.all([
+    PositionAxis.result(travelX),
+    PositionAxis.result(travelY),
+    PositionAxis.result(travelZ),
+    BlockLength.result(maxDistance),
+  ])
 
-  return Option.map(voxelRaycast(from, travel, maxDistance, isBlocking), (hit) => ({
-    distance: hit.distance,
-    point: { x: hit.point.x, y: hit.point.y, z: hit.point.z },
-  }))
+  return Result.flatMap(travel, ([x, y, z, distance]) =>
+    Result.map(voxelRaycast(from, position(x, y, z), distance, isBlocking), (hit) =>
+      Option.map(hit, (value) => ({
+        distance: value.distance,
+        point: value.point,
+      })),
+    ),
+  )
 }

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { Result } from 'effect'
 
 import {
   BREWING_FUEL_CHARGES,
@@ -9,13 +10,23 @@ import {
 import {
   activeBrewingRecipe,
   addBrewingFuel,
-  advanceBrewing,
+  advanceBrewing as advanceBrewingResult,
   brewingRecipeFor,
   emptyBrewingState,
   setBrewingBottle,
   setBrewingIngredient,
 } from '../src/domain/brewing'
-import { itemStack } from '../src/domain/inventory'
+import { itemStack as itemStackResult, type ItemStack } from '../src/domain/inventory'
+
+const requireSuccess = <A, E>(result: Result.Result<A, E>): A => {
+  if (Result.isFailure(result)) throw result.failure
+  return result.success
+}
+
+const itemStack = (...args: Parameters<typeof itemStackResult>): ItemStack =>
+  requireSuccess(itemStackResult(...args))
+const advanceBrewing = (...args: Parameters<typeof advanceBrewingResult>) =>
+  requireSuccess(advanceBrewingResult(...args))
 
 describe('brewing', () => {
   it('defines the starter brewing chain using kernel item identities', () => {

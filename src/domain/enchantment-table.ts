@@ -1,8 +1,8 @@
 import {
   AnvilEnchantmentId,
   type AnvilEnchantment,
-  type ItemType,
-} from '@nerima-games/mc-kernel'
+} from './anvil.js'
+import type { ItemType } from '@nerima-games/mc-kernel'
 
 import {
   enchantmentAppliesTo,

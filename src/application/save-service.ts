@@ -27,5 +27,8 @@ export const loadSimulation = (
 ): Effect.Effect<Option.Option<SimulationSave>, StorageError | SaveDecodeError, StoragePort> =>
   loadFrom(SIMULATION_SAVE_FORMAT, key)
 
-export const listSimulationSaves = (): Effect.Effect<SimulationSaveListing, StorageError, StoragePort> =>
-  listFrom(SIMULATION_SAVE_FORMAT)
+export const listSimulationSaves = (): Effect.Effect<
+  SimulationSaveListing,
+  StorageError | SaveDecodeError,
+  StoragePort
+> => listFrom(SIMULATION_SAVE_FORMAT)

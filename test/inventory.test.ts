@@ -1,25 +1,42 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Effect, Fiber } from 'effect'
+import { Effect, Fiber, Result } from 'effect'
 import {
-  addItem,
-  addItemStack,
+  addItem as addItemResult,
+  addItemStack as addItemStackResult,
   countOf,
   emptyInventory,
   INVENTORY_SLOT_COUNT,
   isEmpty,
-  itemStack,
+  itemStack as itemStackResult,
   maxStackCountForItem,
-  normaliseInventory,
-  removeItem,
-  removeItemAt,
+  normaliseInventory as normaliseInventoryResult,
+  removeItem as removeItemResult,
+  removeItemAt as removeItemAtResult,
   slotAt,
   type Inventory,
+  type ItemStack,
 } from '../src/domain/inventory'
 import { containerIdAt } from '../src/domain/container-storage'
 import { isItemType, RepairCost, type ItemType, type StackCount } from '@nerima-games/mc-kernel'
 import { makeInventoryService } from '../src/application/inventory-service'
-import { clickInventory } from '../src/application/inventory-interaction'
+import { clickInventory as clickInventoryResult } from '../src/application/inventory-interaction'
 import type { InventoryClick } from '../src/index'
+
+const requireSuccess = <A, E>(result: Result.Result<A, E>): A => {
+  if (Result.isFailure(result)) throw result.failure
+  return result.success
+}
+
+const itemStack = (...args: Parameters<typeof itemStackResult>): ItemStack =>
+  requireSuccess(itemStackResult(...args))
+const addItem = (...args: Parameters<typeof addItemResult>) => requireSuccess(addItemResult(...args))
+const addItemStack = (...args: Parameters<typeof addItemStackResult>) => requireSuccess(addItemStackResult(...args))
+const normaliseInventory = (...args: Parameters<typeof normaliseInventoryResult>) =>
+  requireSuccess(normaliseInventoryResult(...args))
+const removeItem = (...args: Parameters<typeof removeItemResult>) => requireSuccess(removeItemResult(...args))
+const removeItemAt = (...args: Parameters<typeof removeItemAtResult>) => requireSuccess(removeItemAtResult(...args))
+const clickInventory = (...args: Parameters<typeof clickInventoryResult>) =>
+  requireSuccess(clickInventoryResult(...args))
 
 /**
  * A slot holding a count `StackCount` would reject, or an item `ItemType` does
@@ -27,7 +44,7 @@ import type { InventoryClick } from '../src/index'
  *
  * BOTH CASTS ARE THE POINT: this is what a save written by another build, or by
  * an older schema, hands `restore`. `itemStack` cannot express either one —
- * `StackCount` is `Brand.refined` and throws, and `ItemType` is a closed union
+ * `StackCount` is `Brand.make` and throws, and `ItemType` is a closed union
  * since the kernel repoint — which is exactly why nothing inside the domain may
  * assume a slot it did not build is well-formed. JSON is not checked by
  * anything, and mc-save hands its parse straight back.
@@ -67,14 +84,11 @@ const corruptSlot = (item: string, count: number): Inventory => ({
 const FOREIGN_ITEM = 'mythril_ingot'
 
 describe('itemStack', () => {
-  it.effect('throws for a count over the item\'s own stack limit, naming the item and count', () =>
+  it.effect('returns a failure for a count over the item\'s own stack limit', () =>
     Effect.sync(() => {
-      // DN-06: the brand is applied HERE so an out-of-range count fails at the
-      // place that names it (a recipe output of 65, say) instead of flowing
-      // into a slot as a bare number.
-      expect(() => itemStack('stone', 65)).toThrow('Item stack count for stone must be an integer in [1, 64], received 65')
-      expect(() => itemStack('stone', 65)).toThrow(RangeError)
-      expect(() => itemStack('stone', 64)).not.toThrow()
+      const invalid = itemStackResult('stone', 65)
+      expect(Result.isFailure(invalid)).toBe(true)
+      expect(itemStack('stone', 64).count).toBe(64)
     }),
   )
 })
@@ -311,7 +325,7 @@ describe('removeItemAt', () => {
  * REGRESSION: this module is PURE AND TOTAL, as its header claims — including
  * on an inventory it did not build.
  *
- * `removeItem` wrote `StackCount(left)`, and `StackCount` is `Brand.refined`:
+ * `removeItem` wrote `StackCount(left)`, and `StackCount` is `Brand.make`:
  * it THREW for any remainder outside [0, 64], which a slot restored from
  * another build's save reaches immediately. In the frame loop that throw
  * becomes a `Cause.Die` that `application/game-loop.ts` logs and swallows, so
@@ -1033,7 +1047,7 @@ describe('InventoryService concurrency', () => {
 
       const fibers = yield* Effect.forEach(
         [0, 1],
-        () => Effect.fork(service.click({ _tag: 'LeftClick', slotIndex: 0, carried: undefined })),
+        () => Effect.forkDetach(service.click({ _tag: 'LeftClick', slotIndex: 0, carried: undefined })),
         { concurrency: 'unbounded' },
       )
       const results = yield* Effect.forEach(fibers, Fiber.join)
@@ -1075,7 +1089,7 @@ describe('InventoryService concurrency', () => {
 
       const fibers = yield* Effect.forEach(
         Array.from({ length: 20 }, (_, index) => index),
-        () => Effect.fork(service.removeAt(0, 'stone', 1)),
+        () => Effect.forkDetach(service.removeAt(0, 'stone', 1)),
         { concurrency: 'unbounded' },
       )
       const results = yield* Effect.forEach(fibers, Fiber.join)
@@ -1094,7 +1108,7 @@ describe('InventoryService concurrency', () => {
 
       const fibers = yield* Effect.forEach(
         Array.from({ length: 50 }, (_, index) => index),
-        () => Effect.fork(service.add('stone', 1)),
+        () => Effect.forkDetach(service.add('stone', 1)),
         { concurrency: 'unbounded' },
       )
       yield* Effect.forEach(fibers, Fiber.join)
@@ -1110,7 +1124,7 @@ describe('InventoryService concurrency', () => {
 
       const fibers = yield* Effect.forEach(
         Array.from({ length: 20 }, (_, index) => index),
-        () => Effect.fork(service.remove('stone', 1)),
+        () => Effect.forkDetach(service.remove('stone', 1)),
         { concurrency: 'unbounded' },
       )
       const removals = yield* Effect.forEach(fibers, Fiber.join)

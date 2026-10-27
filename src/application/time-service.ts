@@ -85,8 +85,8 @@ export type TimeServiceApi = {
   readonly restore: (state: Time.TimeState) => Effect.Effect<void>
 }
 
-const TimeServiceBase: Context.TagClass<TimeService, '@nerima-games/mc-sim/TimeService', TimeServiceApi> =
-  Context.Tag('@nerima-games/mc-sim/TimeService')<TimeService, TimeServiceApi>()
+const TimeServiceBase: Context.ServiceClass<TimeService, '@nerima-games/mc-sim/TimeService', TimeServiceApi> =
+  Context.Service<TimeService, TimeServiceApi>()('@nerima-games/mc-sim/TimeService')
 
 export class TimeService extends TimeServiceBase {}
 

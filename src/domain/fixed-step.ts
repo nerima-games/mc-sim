@@ -1,12 +1,13 @@
-import { Either } from 'effect'
+import { Brand, Result } from 'effect'
 import {
   addTick,
+  DeltaTimeSecs,
   FixedDurationSecs,
-  interpolationFraction,
+  InterpolationFraction,
   NonNegativeTickCount,
   SimulationTick,
   tickDuration,
-  type DeltaTimeSecs,
+  type DeltaTimeSecs as DeltaTimeSecsValue,
   type FixedDurationSecs as FixedDurationSecsValue,
   type InterpolationFraction as InterpolationFractionValue,
   type NonNegativeTickCount as NonNegativeTickCountValue,
@@ -39,6 +40,17 @@ export type FixedStepAdvance = {
   readonly overloaded: boolean
 }
 
+export type InvalidFixedStepConfiguration = {
+  readonly _tag: 'InvalidFixedStepConfiguration'
+  readonly field: 'catchUpWindow' | 'paused'
+}
+
+export type FixedStepFailure = Brand.BrandError | TimeOverflow | InvalidFixedStepConfiguration
+
+const invalidConfiguration = (
+  field: InvalidFixedStepConfiguration['field'],
+): InvalidFixedStepConfiguration => ({ _tag: 'InvalidFixedStepConfiguration', field })
+
 export const initialFixedStepAccumulator = (
   tick: SimulationTickValue = SimulationTick(0),
   duration: FixedDurationSecsValue = DEFAULT_TICK_DURATION,
@@ -61,36 +73,52 @@ export const resume = (state: FixedStepAccumulator): FixedStepAccumulator => ({
 
 export const advance = (
   state: FixedStepAccumulator,
-  delta: DeltaTimeSecs,
-): Either.Either<FixedStepAdvance, TimeOverflow> => {
-  if (state.paused) {
-    return Either.right({
-      state,
-      ticks: NonNegativeTickCount(0),
-      interpolationFraction: interpolationFraction(state.accumulator),
-      overloaded: false,
-    })
-  }
+  delta: DeltaTimeSecsValue,
+): Result.Result<FixedStepAdvance, FixedStepFailure> =>
+  Result.gen(function* () {
+    const validDelta = yield* DeltaTimeSecs.result(delta)
+    const accumulator = yield* FixedDurationSecs.result(state.accumulator)
+    const tick = yield* SimulationTick.result(state.tick)
+    const fixedIntervalSecs = yield* FixedDurationSecs.result(state.tickDuration)
+    const maxCatchUpTicks = yield* NonNegativeTickCount.result(state.maxCatchUpTicks)
 
-  const available = state.accumulator + delta
-  const maximum = state.tickDuration * state.maxCatchUpTicks
-  const overloaded = available > maximum
-  const bounded = Math.min(available, maximum)
-  const ticks = Math.min(state.maxCatchUpTicks, Math.floor(bounded / state.tickDuration))
-  const nextTick = addTick(state.tick, NonNegativeTickCount(ticks))
+    if (typeof state.paused !== 'boolean') {
+      return yield* Result.fail(invalidConfiguration('paused'))
+    }
 
-  if (Either.isLeft(nextTick)) return Either.left(nextTick.left)
+    if (state.paused) {
+      const fraction = yield* InterpolationFraction.result(accumulator / fixedIntervalSecs)
+      return {
+        state,
+        ticks: NonNegativeTickCount(0),
+        interpolationFraction: fraction,
+        overloaded: false,
+      }
+    }
 
-  const remainder = FixedDurationSecs(bounded - ticks * state.tickDuration)
-  const nextState: FixedStepAccumulator = { ...state, accumulator: remainder, tick: nextTick.right }
+    const available = accumulator + validDelta
+    const maximum = fixedIntervalSecs * maxCatchUpTicks
+    if (!Number.isFinite(maximum)) {
+      return yield* Result.fail(invalidConfiguration('catchUpWindow'))
+    }
 
-  return Either.right({
-    state: nextState,
-    ticks: NonNegativeTickCount(ticks),
-    interpolationFraction: interpolationFraction(remainder),
-    overloaded,
+    const overloaded = available > maximum
+    const bounded = Math.min(available, maximum)
+    const ticks = yield* NonNegativeTickCount.result(
+      Math.min(maxCatchUpTicks, Math.floor(bounded / fixedIntervalSecs)),
+    )
+    const nextTick = yield* addTick(tick, ticks)
+    const remainder = yield* FixedDurationSecs.result(bounded - ticks * fixedIntervalSecs)
+    const fraction = yield* InterpolationFraction.result(remainder / fixedIntervalSecs)
+    const nextState: FixedStepAccumulator = { ...state, accumulator: remainder, tick: nextTick }
+
+    return {
+      state: nextState,
+      ticks,
+      interpolationFraction: fraction,
+      overloaded,
+    }
   })
-}
 
 export const createFixedStepAccumulator: typeof initialFixedStepAccumulator = initialFixedStepAccumulator
 export const advanceFixedStep: typeof advance = advance

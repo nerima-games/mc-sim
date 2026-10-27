@@ -31,11 +31,11 @@ const validationError = (path: string, reason: string): Equipment.EquipmentValid
   reason,
 })
 
-const EquipmentServiceBase: Context.TagClass<
+const EquipmentServiceBase: Context.ServiceClass<
   EquipmentService,
   '@nerima-games/mc-sim/EquipmentService',
   EquipmentServiceApi
-> = Context.Tag('@nerima-games/mc-sim/EquipmentService')<EquipmentService, EquipmentServiceApi>()
+> = Context.Service<EquipmentService, EquipmentServiceApi>()('@nerima-games/mc-sim/EquipmentService')
 
 export class EquipmentService extends EquipmentServiceBase {}
 

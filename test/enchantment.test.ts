@@ -1,11 +1,11 @@
 import { describe, expect, it } from '@effect/vitest'
+import type { ItemType } from '@nerima-games/mc-kernel'
 import {
   AnvilEnchantmentId,
   type AnvilEnchantment,
   type AnvilItemPayload,
   type AnvilState,
-  type ItemType,
-} from '@nerima-games/mc-kernel'
+} from '../src/domain/anvil'
 import {
   applyVanillaAnvil,
   enchantmentAppliesTo,

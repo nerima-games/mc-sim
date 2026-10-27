@@ -13,16 +13,31 @@
  * tunnelling through walls on tab refocus.
  */
 import { describe, expect, it } from '@effect/vitest'
-import { Effect } from 'effect'
+import { Effect, Result } from 'effect'
 import {
-  clampFrameDelta,
+  clampFrameDelta as kernelClampFrameDelta,
+  DeltaTimeSecs,
   FIRST_FRAME_DELTA_SECS,
-  frameDeltaBetween,
-  frameDeltaLossBetween,
-  frameDeltaLossSecs,
+  frameDeltaBetween as kernelFrameDeltaBetween,
+  frameDeltaLossBetween as kernelFrameDeltaLossBetween,
+  frameDeltaLossSecs as kernelFrameDeltaLossSecs,
   MAX_FRAME_DELTA_SECS,
   MIN_FRAME_DELTA_SECS,
+  MonotonicTimeSecs,
 } from '@nerima-games/mc-kernel'
+
+const clampFrameDelta = (raw: number) => kernelClampFrameDelta(DeltaTimeSecs(raw))
+const frameDeltaBetween = (previous: number | undefined, current: number) =>
+  kernelFrameDeltaBetween(
+    previous === undefined ? undefined : MonotonicTimeSecs(previous),
+    MonotonicTimeSecs(current),
+  )
+const frameDeltaLossBetween = (previous: number | undefined, current: number) =>
+  kernelFrameDeltaLossBetween(
+    previous === undefined ? undefined : MonotonicTimeSecs(previous),
+    MonotonicTimeSecs(current),
+  )
+const frameDeltaLossSecs = (raw: number) => kernelFrameDeltaLossSecs(DeltaTimeSecs(raw))
 
 describe('clampFrameDelta', () => {
   it.effect('the three constants are the reference implementation values, literally', () =>
@@ -46,16 +61,16 @@ describe('clampFrameDelta', () => {
       // through every collider between here and there.
       expect(clampFrameDelta(30)).toBe(0.05)
       expect(clampFrameDelta(0.05001)).toBe(0.05)
-      expect(clampFrameDelta(Number.POSITIVE_INFINITY)).toBe(0.05)
+      expect(Result.isFailure(DeltaTimeSecs.result(Number.POSITIVE_INFINITY))).toBe(true)
     }),
   )
 
-  it.effect('clamps a denormal or negative delta up to 0.001, so no rate divides by zero', () =>
+  it.effect('clamps a denormal delta and rejects negative input before it reaches the clamp', () =>
     Effect.sync(() => {
       expect(clampFrameDelta(0)).toBe(0.001)
       expect(clampFrameDelta(1e-9)).toBe(0.001)
-      expect(clampFrameDelta(-5)).toBe(0.001)
-      expect(clampFrameDelta(Number.NEGATIVE_INFINITY)).toBe(0.001)
+      expect(Result.isFailure(DeltaTimeSecs.result(-5))).toBe(true)
+      expect(Result.isFailure(DeltaTimeSecs.result(Number.NEGATIVE_INFINITY))).toBe(true)
     }),
   )
 
@@ -66,18 +81,15 @@ describe('clampFrameDelta', () => {
     }),
   )
 
-  it.effect('maps NaN to the first-frame delta rather than poisoning every later position', () =>
+  it.effect('rejects NaN before it can poison every later position', () =>
     Effect.sync(() => {
-      // Math.min/Math.max propagate NaN, so the reference's expression would
-      // have returned NaN here. A NaN position is invisible and the bug
-      // surfaces thousands of frames from its cause.
-      expect(clampFrameDelta(Number.NaN)).toBe(FIRST_FRAME_DELTA_SECS)
+      expect(Result.isFailure(DeltaTimeSecs.result(Number.NaN))).toBe(true)
     }),
   )
 
-  it.effect('the result is always inside the clamp range, for any input at all', () =>
+  it.effect('the result is always inside the clamp range for any valid input', () =>
     Effect.sync(() => {
-      const inputs = [-1e9, -1, -0, 0, 1e-12, 0.0009, 0.001, 0.0167, 0.049, 0.05, 0.051, 1, 1e9]
+      const inputs = [-0, 0, 1e-12, 0.0009, 0.001, 0.0167, 0.049, 0.05, 0.051, 1, 1e9]
       for (const raw of inputs) {
         const clamped = clampFrameDelta(raw)
         expect(clamped).toBeGreaterThanOrEqual(MIN_FRAME_DELTA_SECS)
@@ -138,15 +150,15 @@ describe('frameDeltaLossSecs', () => {
     }),
   )
 
-  it.effect('the LOWER clamp is not a loss — it hands the world more time, not less', () =>
+  it.effect('the LOWER clamp is not a loss; negative and NaN inputs fail brand validation', () =>
     Effect.sync(() => {
       // Reporting these as a negative loss would let them cancel a real
       // background-tab gap and make the total read zero. They are bounded by
       // one frame and cannot accumulate into a visible drift; the upper clamp
       // can, which is the whole reason the counter exists.
       expect(frameDeltaLossSecs(0)).toBe(0)
-      expect(frameDeltaLossSecs(-30)).toBe(0)
-      expect(frameDeltaLossSecs(Number.NaN)).toBe(0)
+      expect(Result.isFailure(DeltaTimeSecs.result(-30))).toBe(true)
+      expect(Result.isFailure(DeltaTimeSecs.result(Number.NaN))).toBe(true)
     }),
   )
 

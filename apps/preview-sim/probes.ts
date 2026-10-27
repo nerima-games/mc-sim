@@ -20,7 +20,8 @@
  * findings on the day they were fixed would leave the next reader unable to
  * tell a boundary that was checked from one that was never looked at.
  */
-import { Duration, Effect, Fiber, Ref, Schedule, TestClock, TestContext, Layer } from 'effect'
+import { Duration, Effect, Fiber, Ref, Result, Schedule } from 'effect'
+import { TestClock } from 'effect/testing'
 import { autoSaveSchedule, startAutoSaveDaemon } from '../../src/application/autosave'
 import { makeGameLoop } from '../../src/application/game-loop'
 import { makeInventoryService } from '../../src/application/inventory-service'
@@ -28,11 +29,13 @@ import { makeTimeService } from '../../src/application/time-service'
 import { itemStack } from '../../src/domain/inventory'
 import {
   clampFrameDelta,
+  DeltaTimeSecs,
   FIRST_FRAME_DELTA_SECS,
   frameDeltaBetween,
   frameDeltaLossSecs,
   MAX_FRAME_DELTA_SECS,
   MIN_FRAME_DELTA_SECS,
+  MonotonicTimeSecs,
 } from '@nerima-games/mc-kernel'
 import {
   emptyInventory,
@@ -41,8 +44,8 @@ import {
   normaliseInventory,
   removeItem,
   type Inventory,
+  type ItemStackFailure,
 } from '../../src/domain/inventory'
-import { MonotonicTimeSecs } from '@nerima-games/mc-kernel'
 import * as Time from '../../src/domain/time-of-day'
 import { clockFace, fixed, padStart, pad } from './style'
 
@@ -75,11 +78,18 @@ const frameClampProbe = (): ReadonlyArray<string> => {
   ]
 
   const rows = inputs.map((raw) => {
-    const applied = clampFrameDelta(raw)
-    const lost = Number.isNaN(raw) ? 0 : raw - applied
+    const checked = DeltaTimeSecs.result(raw)
+    if (Result.isFailure(checked)) {
+      return (
+        `   ${cell(Number.isNaN(raw) ? 'NaN' : fixed(raw, 6), 14)}${cell('rejected', 12)}` +
+        `${padStart('—', 12)}${padStart('—', 14)}${padStart('—', 14)}`
+      )
+    }
+    const applied = clampFrameDelta(checked.success)
+    const lost = raw - applied
     return (
-      `   ${cell(Number.isNaN(raw) ? 'NaN' : fixed(raw, 6), 14)}${numberCell(applied, 6, 12)}` +
-      `${numberCell(lost, 6, 14)}${numberCell(frameDeltaLossSecs(raw), 6, 14)}`
+      `   ${cell(Number.isNaN(raw) ? 'NaN' : fixed(raw, 6), 14)}${cell('accepted', 12)}` +
+      `${numberCell(applied, 6, 12)}${numberCell(lost, 6, 14)}${numberCell(frameDeltaLossSecs(checked.success), 6, 14)}`
     )
   })
 
@@ -88,12 +98,12 @@ const frameClampProbe = (): ReadonlyArray<string> => {
       'FRAME-CLAMP',
       `clampFrameDelta over its whole range. Bounds [${String(MIN_FRAME_DELTA_SECS)}, ${String(MAX_FRAME_DELTA_SECS)}] s.`,
     ),
-    `   ${cell('raw', 14)}${padStart('applied', 12)}${padStart('raw-applied', 14)}${padStart('counted lost', 14)}`,
+    `   ${cell('raw', 14)}${padStart('validation', 12)}${padStart('applied', 12)}${padStart('raw-applied', 14)}${padStart('counted lost', 14)}`,
     ...rows,
     '',
-    `   NaN maps to FIRST_FRAME_DELTA_SECS ${String(FIRST_FRAME_DELTA_SECS)}, not to a propagated NaN.`,
+    `   DeltaTimeSecs.result rejects invalid raw inputs before clampFrameDelta; a missing previous instant uses FIRST_FRAME_DELTA_SECS ${String(FIRST_FRAME_DELTA_SECS)}.`,
     `   frameDeltaBetween(undefined, 5) = ${String(frameDeltaBetween(undefined, MonotonicTimeSecs(5)))}  (first frame)`,
-    `   frameDeltaBetween(10, 5)        = ${String(frameDeltaBetween(10, MonotonicTimeSecs(5)))}  (clock ran BACKWARDS; simulated time still moves forward)`,
+    `   frameDeltaBetween(10, 5)        = ${String(frameDeltaBetween(MonotonicTimeSecs(10), MonotonicTimeSecs(5)))}  (clock ran BACKWARDS; simulated time still moves forward)`,
     '',
     '   SIM-5 FIXED. The fourth column is provided by mc-kernel as frameDeltaLossSecs,',
     '   and application/game-loop.ts sums it across a generation as GameLoopApi.secondsLostToClamp.',
@@ -101,9 +111,9 @@ const frameClampProbe = (): ReadonlyArray<string> => {
     '   the 29.95 s a 30-second background tab costs is now a number a session can report instead',
     '   of one only this table could compute.',
     '',
-    '   Only the UPPER clamp counts. The negative rows hand the world MORE time than elapsed,',
-    '   which is bounded by one frame and cannot drift; counting them would let the two cancel',
-    '   and read as zero. Pinned by test/frame-timing.test.ts',
+    '   Only the UPPER clamp counts as lost time. Accepted sub-millisecond deltas hand the world',
+    '   MORE time than elapsed, which is bounded by one frame and cannot drift; invalid negative',
+    '   deltas are rejected before reaching the clamp. Pinned by test/frame-timing.test.ts',
     '   `the LOWER clamp is not a loss — it hands the world more time, not less` and',
     '   `loss and applied delta always add back up to the raw interval`.',
   ]
@@ -123,7 +133,7 @@ const timeOrderProbe = (): ReadonlyArray<string> => {
   // Age a world four in-game days, then "load" it two ways.
   let aged = fresh
   for (let day = 0; day < 4; day += 1) {
-    aged = Time.advance(aged, (Time.dayLengthSecs(aged) as unknown) as never)
+    aged = Time.advance(aged, DeltaTimeSecs(Time.dayLengthSecs(aged)))
   }
   const viaRestore = aged
   const viaConfigure = Time.setDayLengthThenTimeOfDay(
@@ -212,7 +222,7 @@ const timeRestoreProbe = Effect.gen(function* () {
   yield* time.setTimeOfDay(0.5)
   const afterSetter = yield* time.timeOfDay
 
-  yield* time.advance((1 as unknown) as never)
+  yield* time.advance(DeltaTimeSecs(1))
   const afterAdvance = yield* time.timeOfDay
 
   // A world that was saved four in-game days in must come back on the same
@@ -270,18 +280,18 @@ const inventoryProbe = Effect.gen(function* () {
 
   const overfull: Inventory = {
     slots: [
-      itemStack('stone', 64),
+      Result.getOrThrow(itemStack('stone', 64)),
       ...emptyInventory().slots.slice(1),
     ],
   }
-  const removal = attempt(() => removeItem(overfull, 'stone', 1))
+  const removal = attempt(() => Result.getOrThrow(removeItem(overfull, 'stone', 1)))
   const addition = attempt(() => {
     const service = emptyInventory()
     return service
   })
 
   // The sanctioned repair, which accounts for the surplus instead of dropping it.
-  const normalised = normaliseInventory(overfull)
+  const normalised = Result.getOrThrow(normaliseInventory(overfull))
   const usable = yield* makeInventoryService()
   yield* usable.restore(overfull)
   const removedFromRepaired = yield* usable.remove('stone', 70)
@@ -341,9 +351,9 @@ const inventoryProbe = Effect.gen(function* () {
 const autoSaveProbe = Effect.gen(function* () {
   const spacedRuns = yield* Ref.make(0)
   const spacedTick = Effect.sleep(Duration.millis(40)).pipe(
-    Effect.zipRight(Ref.update(spacedRuns, (count) => count + 1)),
+    Effect.andThen(Ref.update(spacedRuns, (count) => count + 1)),
   )
-  const spacedFiber = yield* Effect.fork(
+  const spacedFiber = yield* Effect.forkChild(
     Effect.repeat(spacedTick, autoSaveSchedule(Duration.millis(100))),
   )
   yield* TestClock.adjust(Duration.millis(1000))
@@ -351,9 +361,9 @@ const autoSaveProbe = Effect.gen(function* () {
 
   const fixedRuns = yield* Ref.make(0)
   const fixedTick = Effect.sleep(Duration.millis(40)).pipe(
-    Effect.zipRight(Ref.update(fixedRuns, (count) => count + 1)),
+    Effect.andThen(Ref.update(fixedRuns, (count) => count + 1)),
   )
-  const fixedFiber = yield* Effect.fork(
+  const fixedFiber = yield* Effect.forkChild(
     Effect.repeat(fixedTick, Schedule.fixed(Duration.millis(100))),
   )
   yield* TestClock.adjust(Duration.millis(1000))
@@ -451,7 +461,7 @@ const gameLoopProbe = Effect.gen(function* () {
     (at) => loop.submitFrame(at),
     { discard: true },
   )
-  yield* Effect.yieldNow()
+  yield* Effect.yieldNow
   yield* TestClock.adjust(Duration.millis(1))
 
   const seen = yield* Ref.get(processed)
@@ -530,11 +540,11 @@ const FOOTER: ReadonlyArray<string> = [
  * `--isolatedDeclarations` requires an explicit type on any binding whose
  * value reaches an export — including this private intermediate, since
  * `export const statsReport` below is typed by referring to it. None of the
- * four probes it yields from ever fails or leaves a requirement undischarged
- * (`Effect.provide` below clears `TestContext`), so `Effect<ReadonlyArray<string>,
- * never, never>` is exact, not a widened guess.
+ * (`Effect.provide` supplies `TestClock.layer()` and `Effect.scoped` closes the
+ * child-fiber scope). Inventory operations can fail with `ItemStackFailure`, so
+ * that channel is preserved for the caller instead of becoming a report line.
  */
-const statsReportEffect: Effect.Effect<ReadonlyArray<string>, never, never> = Effect.gen(function* () {
+const statsReportEffect: Effect.Effect<ReadonlyArray<string>, ItemStackFailure, never> = Effect.gen(function* () {
   const parts = [
     ...HEADER,
     ...frameClampProbe(),
@@ -546,6 +556,6 @@ const statsReportEffect: Effect.Effect<ReadonlyArray<string>, never, never> = Ef
     ...FOOTER,
   ]
   return parts.map(line)
-}).pipe(Effect.provide(TestContext.TestContext as Layer.Layer<never>))
+}).pipe(Effect.scoped, Effect.provide(TestClock.layer()))
 
-export const statsReport: Effect.Effect<ReadonlyArray<string>, never, never> = statsReportEffect
+export const statsReport: Effect.Effect<ReadonlyArray<string>, ItemStackFailure, never> = statsReportEffect

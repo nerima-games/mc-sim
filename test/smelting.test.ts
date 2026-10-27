@@ -1,16 +1,17 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Effect } from 'effect'
+import { Effect, Result } from 'effect'
 import { RepairCost } from '@nerima-games/mc-kernel'
 import {
-  addItem,
+  addItem as addItemResult,
   countOf,
   emptyInventory,
   INVENTORY_SLOT_COUNT,
-  itemStack,
+  itemStack as itemStackResult,
+  type ItemStack,
   type Inventory,
 } from '../src/domain/inventory'
 import {
-  advanceFurnace,
+  advanceFurnace as advanceFurnaceResult,
   collectFurnaceOutput,
   emptyFurnaceState,
   matchSmeltingRecipe,
@@ -18,7 +19,19 @@ import {
   validateFurnaceSnapshot,
   type FurnaceState,
 } from '../src/domain/smelting'
-import { STARTER_FUEL_RULES, STARTER_SMELTING_RECIPES } from '../src/domain/smelting-data'
+import { STARTER_FUEL_RULES, STARTER_SMELTING_RECIPES as starterSmeltingRecipesResult } from '../src/domain/smelting-data'
+
+const requireSuccess = <A, E>(result: Result.Result<A, E>): A => {
+  if (Result.isFailure(result)) throw result.failure
+  return result.success
+}
+
+const itemStack = (...args: Parameters<typeof itemStackResult>): ItemStack =>
+  requireSuccess(itemStackResult(...args))
+const addItem = (...args: Parameters<typeof addItemResult>) => requireSuccess(addItemResult(...args))
+const advanceFurnace = (...args: Parameters<typeof advanceFurnaceResult>) =>
+  requireSuccess(advanceFurnaceResult(...args))
+const STARTER_SMELTING_RECIPES = requireSuccess(starterSmeltingRecipesResult)
 
 const furnaceWith = (overrides: Partial<FurnaceState> = {}): FurnaceState => ({
   ...emptyFurnaceState(),

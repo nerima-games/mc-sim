@@ -1,5 +1,7 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Option } from 'effect'
+import { Option, Result } from 'effect'
+import { AngleRadians, DeltaTimeSecs, PositionAxis, position } from '@nerima-games/mc-kernel'
+import { BlocksPerSecond } from '@nerima-games/mc-physics'
 import {
   ARROW_PROFILE,
   launchProjectile,
@@ -14,7 +16,10 @@ import {
 
 const world: ProjectileWorld = {
   blockBounds: () => [],
-  bounds: { maxX: 10, maxY: 10, maxZ: 10, minX: -10, minY: -10, minZ: -10 },
+  bounds: {
+    maxX: PositionAxis(10), maxY: PositionAxis(10), maxZ: PositionAxis(10),
+    minX: PositionAxis(-10), minY: PositionAxis(-10), minZ: PositionAxis(-10),
+  },
   entities: [],
   isInWater: () => false,
 }
@@ -22,13 +27,13 @@ const world: ProjectileWorld = {
 describe('projectile facade', () => {
   it('publishes arrow physics values and types from mc-sim', () => {
     const launch: ProjectileLaunch = {
-      pitchRadians: 0,
-      position: { x: 0, y: 0, z: 0 },
-      speed: 3,
-      yawRadians: 0,
+      pitchRadians: AngleRadians(0),
+      position: position(PositionAxis(0), PositionAxis(0), PositionAxis(0)),
+      speed: BlocksPerSecond(3),
+      yawRadians: AngleRadians(0),
     }
     const arrow: Projectile = launchProjectile(launch)
-    const step: ProjectileStep = stepProjectile(arrow, 0.05, world, ARROW_PROFILE)
+    const step: ProjectileStep = stepProjectile(arrow, DeltaTimeSecs(0.05), world, ARROW_PROFILE)
     const hit: ProjectileHit | undefined = step.hit
 
     expect(arrow.state).toBe('flying')
@@ -38,11 +43,11 @@ describe('projectile facade', () => {
 
   it('resolves the first blocking voxel on an arrow segment', () => {
     const impact = raycastArrowBlock(
-      { x: 0.5, y: 0.5, z: 2.5 },
-      { x: 0.5, y: 0.5, z: -0.5 },
+      position(PositionAxis(0.5), PositionAxis(0.5), PositionAxis(2.5)),
+      position(PositionAxis(0.5), PositionAxis(0.5), PositionAxis(-0.5)),
       (x, y, z) => x === 0 && y === 0 && z === 0,
     )
 
-    expect(Option.getOrThrow(impact)).toStrictEqual({ distance: 1.5, point: { x: 0.5, y: 0.5, z: 1 } })
+    expect(Option.getOrThrow(Result.getOrThrow(impact))).toStrictEqual({ distance: 1.5, point: { x: 0.5, y: 0.5, z: 1 } })
   })
 })

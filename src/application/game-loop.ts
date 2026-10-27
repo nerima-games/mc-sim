@@ -1,5 +1,5 @@
 /**
- * The frame loop: `forkDaemon` + an explicit, re-entrant lifecycle.
+ * The frame loop: `forkDetach` + an explicit, re-entrant lifecycle.
  *
  * ---------------------------------------------------------------------------
  * Why a daemon, and why re-entrancy is designed in rather than retrofitted
@@ -15,25 +15,22 @@
  *     // A best-effort quit stop() can be cut off by its timeout, so rather
  *     // than fail "already running", tear down any lingering processing
  *     // fiber and start fresh ...
- *     // interruptFork (not interrupt): a previous session's fiber can be
- *     // slow to wind down after its scope closed — awaiting its exit here
- *     // deadlocked the next world's startup behind the loading screen.
+ *     // Its interruption was deliberately started without awaiting the old
+ *     // fiber's exit; waiting for slow teardown deadlocked the next world.
  *
  *   ts-minecraft/packages/game/application/game-loop.ts:198-201
- *     // interruptFork (not interrupt): a torn-down session's maintenance
- *     // fiber can take arbitrarily long to acknowledge interruption, and
- *     // awaiting it here left the second world stuck on the loading screen
- *     // forever (save & quit -> load hang).
+ *     // A torn-down maintenance fiber can take arbitrarily long to stop, so
+ *     // waiting for it left the second world stuck on the loading screen.
  *
  * Four rules follow, and all four are here from the first commit:
  *
- * 1. THE LOOP IS A DAEMON. `Effect.forkDaemon`, not `Effect.fork`. A frame loop
+ * 1. THE LOOP IS DETACHED. `Effect.forkDetach`, not a scoped fork. A frame loop
  *    tied to the calling scope dies when that scope closes — which for a UI
  *    callback is immediately.
  *
  * 2. TEARDOWN IS EXPLICIT AND NON-BLOCKING. `stop` flips the running flag,
  *    DETACHES every resource before interrupting anything, and uses
- *    `Fiber.interruptFork`. Detaching first means a `stop` that is itself cut
+ *    detached `Fiber.interrupt`. Detaching first means a `stop` that is itself cut
  *    short still leaves no reachable half-state. Not awaiting the interrupt
  *    means a slow fiber cannot deadlock the next `start`.
  *
@@ -78,7 +75,7 @@
  * applies to the delta clamp one level down, which discards simulated time by
  * design and now says how much: `secondsLostToClamp`.
  */
-import { Cause, Context, Effect, Either, Fiber, Layer, Option, Queue, Ref } from 'effect'
+import { Brand, Cause, Context, Effect, Fiber, Layer, Option, Queue, Ref, Result } from 'effect'
 import {
   DeltaTimeSecs,
   InterpolationFraction,
@@ -97,6 +94,7 @@ import {
   resume as resumeFixedStep,
   type FixedStepAccumulator,
   type FixedStepAdvance,
+  type FixedStepFailure,
 } from '../domain/fixed-step.js'
 
 /**
@@ -105,7 +103,7 @@ import {
  * The error channel is `never` on purpose. There is no sensible frame-level
  * recovery for "physics failed on frame 12048": a handler that can fail must
  * decide what to do about it itself. Defects still escape, and the loop logs
- * them — see `Effect.catchAllCause` below.
+ * them — see `Effect.catchCause` below.
  */
 export type FrameHandler = (dt: DeltaTimeSecs, tick?: SimulationTick) => Effect.Effect<void>
 
@@ -117,7 +115,7 @@ export type GameLoopApi = {
    * Install a handler and start the loop. Safe to call while already running:
    * the previous loop is torn down first and the frame clock restarts.
    */
-  readonly start: (handler: FrameHandler) => Effect.Effect<void>
+  readonly start: (handler: FrameHandler) => Effect.Effect<void, Brand.BrandError>
   readonly pause: Effect.Effect<void>
   readonly resume: Effect.Effect<void>
   /** Offer a frame instant. A no-op when the loop is stopped. */
@@ -171,11 +169,11 @@ export type GameLoopApi = {
   readonly interpolationFraction: Effect.Effect<InterpolationFraction>
   readonly overloaded: Effect.Effect<boolean>
   readonly timeOverflow: Effect.Effect<Option.Option<TimeOverflow>>
-  readonly advanceFrame: (delta: DeltaTimeSecs) => Effect.Effect<FixedStepAdvance, TimeOverflow>
+  readonly advanceFrame: (delta: DeltaTimeSecs) => Effect.Effect<FixedStepAdvance, FixedStepFailure>
 }
 
-const GameLoopBase: Context.TagClass<GameLoop, '@nerima-games/mc-sim/GameLoop', GameLoopApi> =
-  Context.Tag('@nerima-games/mc-sim/GameLoop')<GameLoop, GameLoopApi>()
+const GameLoopBase: Context.ServiceClass<GameLoop, '@nerima-games/mc-sim/GameLoop', GameLoopApi> =
+  Context.Service<GameLoop, GameLoopApi>()('@nerima-games/mc-sim/GameLoop')
 
 export class GameLoop extends GameLoopBase {}
 
@@ -226,7 +224,7 @@ const runPhysicsSubsteps = (
   ).pipe(
     // Catch each substep independently so a defect does not kill the loop or
     // skip the remaining substeps in this frame.
-    Effect.catchAllCause((cause) =>
+    Effect.catchCause((cause) =>
       Effect.logError(`Frame error: ${Cause.pretty(cause)}`),
     ),
     Effect.tap(() => Ref.update(frames, (count) => count + 1)),
@@ -234,11 +232,10 @@ const runPhysicsSubsteps = (
 
   return remaining === 1
     ? step
-    : step.pipe(
-        Effect.zipRight(
-          Effect.suspend(() =>
-            runPhysicsSubsteps(handler, frames, firstTick, remaining - 1, index + 1),
-          ),
+    : Effect.andThen(
+        step,
+        Effect.suspend(() =>
+          runPhysicsSubsteps(handler, frames, firstTick, remaining - 1, index + 1),
         ),
       )
 }
@@ -250,7 +247,7 @@ const detach = <A>(ref: Ref.Ref<Option.Option<A>>): Effect.Effect<Option.Option<
 export const makeGameLoop = (initialTick: SimulationTick = SimulationTick(0)): Effect.Effect<GameLoopApi> =>
   Effect.gen(function* () {
     const runningRef = yield* Ref.make(false)
-    const fiberRef = yield* Ref.make<Option.Option<Fiber.RuntimeFiber<void, never>>>(Option.none())
+    const fiberRef = yield* Ref.make<Option.Option<Fiber.Fiber<void, never>>>(Option.none())
     const generationRef = yield* Ref.make<Option.Option<Generation>>(Option.none())
     // The final tally of the generation that stopped last. Rule 4 in the module
     // header says each start owns its state and nothing long-lived is mutated;
@@ -281,11 +278,11 @@ export const makeGameLoop = (initialTick: SimulationTick = SimulationTick(0)): E
           Effect.flatMap(countersOf(previous), (counters) => Ref.set(lastCountersRef, counters)),
       })
 
-      // interruptFork, never interrupt: awaiting a fiber suspended deep inside
+      // Detach the interruption effect: awaiting a fiber suspended deep inside
       // a chunk-streaming operation is how the next world load deadlocks.
       yield* Option.match(fiber, {
         onNone: () => Effect.void,
-        onSome: (running) => Fiber.interruptFork(running),
+        onSome: (running) => Effect.forkDetach(Fiber.interrupt(running)),
       })
       yield* Option.match(generation, {
         onNone: () => Effect.void,
@@ -293,8 +290,11 @@ export const makeGameLoop = (initialTick: SimulationTick = SimulationTick(0)): E
       })
     })
 
-    const start = (handler: FrameHandler): Effect.Effect<void> =>
-      Effect.gen(function* () {
+    const start = (handler: FrameHandler): Effect.Effect<void, Brand.BrandError> => {
+      const validInitialTick = SimulationTick.result(initialTick)
+      if (Result.isFailure(validInitialTick)) return Effect.fail(validInitialTick.failure)
+
+      return Effect.gen(function* () {
         // Re-entrant. Not "fail if already running" — see the module header.
         yield* stop
 
@@ -313,7 +313,7 @@ export const makeGameLoop = (initialTick: SimulationTick = SimulationTick(0)): E
         const lostSecs = yield* Ref.make(0)
         const lastInstant = yield* Ref.make<MonotonicTimeSecs | undefined>(undefined)
         const fixedStep = yield* Ref.make(
-          initialFixedStepAccumulator(initialTick, tickDuration),
+          initialFixedStepAccumulator(validInitialTick.success, tickDuration),
         )
 
         const processOneFrame = Queue.take(queue).pipe(
@@ -339,20 +339,28 @@ export const makeGameLoop = (initialTick: SimulationTick = SimulationTick(0)): E
             Ref.get(fixedStep).pipe(
               Effect.flatMap((current) => {
                 const advanced = advanceFixedStep(current, frame.dt)
-                return Either.match(advanced, {
-                  onLeft: (error) => Ref.set(timeOverflowRef, Option.some(error)),
-                  onRight: (next) => Ref.set(fixedStep, next.state).pipe(
-                  Effect.zipRight(Ref.set(simulationTickRef, next.state.tick)),
-                  Effect.zipRight(Ref.set(interpolationFractionRef, next.interpolationFraction)),
-                  Effect.zipRight(Ref.set(overloadedRef, next.overloaded)),
-                  Effect.zipRight(
-                    runPhysicsSubsteps(
-                      handler,
-                      frames,
-                      Number(next.state.tick) - Number(next.ticks) + 1,
-                      Number(next.ticks) * PHYSICS_SUBSTEPS_PER_TICK,
+                return Result.match(advanced, {
+                  onFailure: (error) =>
+                    error._tag === 'TimeOverflow'
+                      ? Ref.set(timeOverflowRef, Option.some(error))
+                      : Effect.die(error),
+                  onSuccess: (next) => Effect.andThen(
+                    Ref.set(fixedStep, next.state),
+                    Effect.andThen(
+                      Ref.set(simulationTickRef, next.state.tick),
+                      Effect.andThen(
+                        Ref.set(interpolationFractionRef, next.interpolationFraction),
+                        Effect.andThen(
+                          Ref.set(overloadedRef, next.overloaded),
+                          runPhysicsSubsteps(
+                            handler,
+                            frames,
+                            Number(next.state.tick) - Number(next.ticks) + 1,
+                            Number(next.ticks) * PHYSICS_SUBSTEPS_PER_TICK,
+                          ),
+                        ),
+                      ),
                     ),
-                  ),
                   ),
                 })
               }),
@@ -363,9 +371,10 @@ export const makeGameLoop = (initialTick: SimulationTick = SimulationTick(0)): E
 
         yield* Ref.set(generationRef, Option.some({ queue, frames, dropped, lostSecs, fixedStep }))
         yield* Ref.set(runningRef, true)
-        const fiber = yield* Effect.forkDaemon(processOneFrame)
+        const fiber = yield* Effect.forkDetach(processOneFrame)
         yield* Ref.set(fiberRef, Option.some(fiber))
       })
+    }
 
     const withGeneration = <A>(
       whenStopped: Effect.Effect<A>,
@@ -375,7 +384,7 @@ export const makeGameLoop = (initialTick: SimulationTick = SimulationTick(0)): E
         Effect.flatMap(Option.match({ onNone: () => whenStopped, onSome: whenRunning })),
       )
 
-    const advanceFrame = (delta: DeltaTimeSecs): Effect.Effect<FixedStepAdvance, TimeOverflow> =>
+    const advanceFrame = (delta: DeltaTimeSecs): Effect.Effect<FixedStepAdvance, FixedStepFailure> =>
       Ref.get(generationRef).pipe(
         Effect.flatMap(
           Option.match({
@@ -383,14 +392,18 @@ export const makeGameLoop = (initialTick: SimulationTick = SimulationTick(0)): E
             onSome: (generation) =>
               Ref.get(generation.fixedStep).pipe(
                 Effect.flatMap((current) =>
-                  Either.match(advanceFixedStep(current, delta), {
-                    onLeft: (error) => Effect.fail(error),
-                    onRight: (next) =>
-                      Ref.set(generation.fixedStep, next.state).pipe(
-                        Effect.zipRight(Ref.set(simulationTickRef, next.state.tick)),
-                        Effect.zipRight(Ref.set(interpolationFractionRef, next.interpolationFraction)),
-                        Effect.zipRight(Ref.set(overloadedRef, next.overloaded)),
-                        Effect.as(next),
+                  Result.match(advanceFixedStep(current, delta), {
+                    onFailure: (error) => Effect.fail(error),
+                    onSuccess: (next) =>
+                      Effect.andThen(
+                        Ref.set(generation.fixedStep, next.state),
+                        Effect.andThen(
+                          Ref.set(simulationTickRef, next.state.tick),
+                          Effect.andThen(
+                            Ref.set(interpolationFractionRef, next.interpolationFraction),
+                            Ref.set(overloadedRef, next.overloaded).pipe(Effect.as(next)),
+                          ),
+                        ),
                       ),
                   }),
                 ),

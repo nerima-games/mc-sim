@@ -1,4 +1,5 @@
-import type { Position } from '@nerima-games/mc-kernel'
+import { Brand, Result } from 'effect'
+import { PositionAxis, position, type Position } from '@nerima-games/mc-kernel'
 
 export const WITHER_MAX_HEALTH = 300
 export const WITHER_SPAWN_CHARGE_SECS = 10
@@ -43,6 +44,7 @@ export type WitherStep = {
   readonly state: WitherState
   readonly spawnExplosion: { readonly power: 7; readonly position: Position } | undefined
 }
+export type WitherStepFailure = Brand.BrandError
 
 export type WitherDamageResult = {
   readonly state: WitherState
@@ -60,12 +62,13 @@ export type WitherSummonMatch = {
 }
 
 const finite = (value: number, fallback = 0): number => (Number.isFinite(value) ? value : fallback)
+
+
+const positionOf = (x: number, y: number, z: number): Position =>
+  position(PositionAxis(x), PositionAxis(y), PositionAxis(z))
 const nonNegative = (value: number): number => Math.max(0, finite(value))
-const repairPosition = (value: Position): Position => ({
-  x: finite(value?.x),
-  y: finite(value?.y),
-  z: finite(value?.z),
-})
+const repairPosition = (value: Position): Position =>
+  positionOf(finite(value?.x), finite(value?.y), finite(value?.z))
 
 const phaseForHealth = (healthPoints: number): Exclude<WitherPhase, 'charging'> =>
   healthPoints <= 0 ? 'dead' : healthPoints <= WITHER_ARMOUR_THRESHOLD ? 'armoured' : 'airborne'
@@ -75,31 +78,60 @@ export const createWither = (feetPosition: Position): WitherState => ({
   healthPoints: WITHER_MAX_HEALTH,
   chargeRemainingSecs: WITHER_SPAWN_CHARGE_SECS,
   feetPosition: repairPosition(feetPosition),
-  velocity: { x: 0, y: 0, z: 0 },
+  velocity: positionOf(0, 0, 0),
 })
 
 const scaledDirection = (from: Position, to: Position, magnitude: number): Position => {
-  const dx = to.x - from.x
-  const dy = to.y - from.y
-  const dz = to.z - from.z
+  const scale = Math.max(
+    Math.abs(from.x), Math.abs(from.y), Math.abs(from.z),
+    Math.abs(to.x), Math.abs(to.y), Math.abs(to.z),
+  )
+  if (scale === 0) return positionOf(0, 0, 0)
+  const dx = to.x / scale - from.x / scale
+  const dy = to.y / scale - from.y / scale
+  const dz = to.z / scale - from.z / scale
   const length = Math.hypot(dx, dy, dz)
   return length === 0
-    ? { x: 0, y: 0, z: 0 }
-    : { x: (dx / length) * magnitude, y: (dy / length) * magnitude, z: (dz / length) * magnitude }
+    ? positionOf(0, 0, 0)
+    : positionOf((dx / length) * magnitude, (dy / length) * magnitude, (dz / length) * magnitude)
 }
 
-const clampVelocity = (velocity: Position): Position => {
-  const speed = Math.hypot(velocity.x, velocity.y, velocity.z)
-  if (speed <= WITHER_MAX_SPEED) return velocity
-  const scale = WITHER_MAX_SPEED / speed
-  return { x: velocity.x * scale, y: velocity.y * scale, z: velocity.z * scale }
+const clampVelocity = (x: number, y: number, z: number): Position => {
+  const scale = Math.max(Math.abs(x), Math.abs(y), Math.abs(z))
+  if (scale === 0) return positionOf(0, 0, 0)
+  const normalizedX = x / scale
+  const normalizedY = y / scale
+  const normalizedZ = z / scale
+  const normalizedSpeed = Math.hypot(normalizedX, normalizedY, normalizedZ)
+  if (scale <= WITHER_MAX_SPEED / normalizedSpeed) return positionOf(x, y, z)
+  return positionOf(
+    (normalizedX / normalizedSpeed) * WITHER_MAX_SPEED,
+    (normalizedY / normalizedSpeed) * WITHER_MAX_SPEED,
+    (normalizedZ / normalizedSpeed) * WITHER_MAX_SPEED,
+  )
+}
+
+const accelerateAndClamp = (velocity: Position, acceleration: Position, delta: number): Position => {
+  const x = velocity.x + acceleration.x * delta
+  const y = velocity.y + acceleration.y * delta
+  const z = velocity.z + acceleration.z * delta
+  if (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z)) {
+    return clampVelocity(x, y, z)
+  }
+
+  // Dividing the updated velocity by delta preserves its direction while avoiding
+  // the overflowed magnitude that clampVelocity immediately reduces.
+  const scaledX = acceleration.x + velocity.x / delta
+  const scaledY = acceleration.y + velocity.y / delta
+  const scaledZ = acceleration.z + velocity.z / delta
+  return clampVelocity(scaledX, scaledY, scaledZ)
 }
 
 export const stepWither = (
   state: WitherState,
   deltaTimeSecs: number,
   targetPosition?: Position,
-): WitherStep => {
+): Result.Result<WitherStep, WitherStepFailure> => Result.gen(function* () {
   if (state.phase === 'dead') return { state, spawnExplosion: undefined }
   const delta = nonNegative(deltaTimeSecs)
 
@@ -118,26 +150,21 @@ export const stepWither = (
     return { state: { ...state, healthPoints, phase }, spawnExplosion: undefined }
   }
   const acceleration = scaledDirection(state.feetPosition, repairPosition(targetPosition), WITHER_FOLLOW_ACCELERATION)
-  const velocity = clampVelocity({
-    x: state.velocity.x + acceleration.x * delta,
-    y: state.velocity.y + acceleration.y * delta,
-    z: state.velocity.z + acceleration.z * delta,
-  })
+  const velocity = accelerateAndClamp(state.velocity, acceleration, delta)
+  const feetX = yield* PositionAxis.result(state.feetPosition.x + velocity.x * delta)
+  const feetY = yield* PositionAxis.result(state.feetPosition.y + velocity.y * delta)
+  const feetZ = yield* PositionAxis.result(state.feetPosition.z + velocity.z * delta)
   return {
     state: {
       ...state,
       phase,
       healthPoints,
       velocity,
-      feetPosition: {
-        x: state.feetPosition.x + velocity.x * delta,
-        y: state.feetPosition.y + velocity.y * delta,
-        z: state.feetPosition.z + velocity.z * delta,
-      },
+      feetPosition: position(feetX, feetY, feetZ),
     },
     spawnExplosion: undefined,
   }
-}
+})
 
 export const damageWither = (
   state: WitherState,
@@ -183,24 +210,33 @@ const add = (cell: BlockCell, dx: number, dy: number, dz: number): BlockCell => 
 export const matchWitherSummon = (
   base: BlockCell,
   blockAt: (cell: BlockCell) => WitherSummonMaterial | undefined,
-): WitherSummonMatch | undefined => {
-  for (const axis of ['x', 'z'] as const) {
-    const side = axis === 'x' ? ([1, 0, 0] as const) : ([0, 0, 1] as const)
-    const body = [base, add(base, 0, 1, 0), add(base, side[0], 1, side[2]), add(base, -side[0], 1, -side[2])]
-    const skulls = [-1, 0, 1].map((offset) => add(base, side[0] * offset, 2, side[2] * offset))
-    if (
-      body.every((cell) => blockAt(cell) === 'soul_sand' || blockAt(cell) === 'soul_soil') &&
-      skulls.every((cell) => blockAt(cell) === 'wither_skeleton_skull')
-    ) {
-      return {
-        axis,
-        spawnPosition: { x: base.x + 0.5, y: base.y + 1, z: base.z + 0.5 },
-        consumedBlocks: [...body, ...skulls],
+): Result.Result<WitherSummonMatch | undefined, Brand.BrandError> =>
+  Result.gen(function* () {
+    const x = yield* PositionAxis.result(base.x)
+    const y = yield* PositionAxis.result(base.y)
+    const z = yield* PositionAxis.result(base.z)
+    const validBase = { x, y, z }
+
+    for (const axis of ['x', 'z'] as const) {
+      const side = axis === 'x' ? ([1, 0, 0] as const) : ([0, 0, 1] as const)
+      const body = [validBase, add(validBase, 0, 1, 0), add(validBase, side[0], 1, side[2]), add(validBase, -side[0], 1, -side[2])]
+      const skulls = [-1, 0, 1].map((offset) => add(validBase, side[0] * offset, 2, side[2] * offset))
+      if (
+        body.every((cell) => blockAt(cell) === 'soul_sand' || blockAt(cell) === 'soul_soil') &&
+        skulls.every((cell) => blockAt(cell) === 'wither_skeleton_skull')
+      ) {
+        const spawnX = yield* PositionAxis.result(x + 0.5)
+        const spawnY = yield* PositionAxis.result(y + 1)
+        const spawnZ = yield* PositionAxis.result(z + 0.5)
+        return {
+          axis,
+          spawnPosition: position(spawnX, spawnY, spawnZ),
+          consumedBlocks: [...body, ...skulls],
+        }
       }
     }
-  }
-  return undefined
-}
+    return undefined
+  })
 
 export const serializeWither = (state: WitherState): WitherSnapshot => ({ kind: 'wither', version: 1, state })
 

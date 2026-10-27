@@ -34,8 +34,8 @@
  * The recovery therefore lives inside the tick, making it `Effect<void, never>`,
  * and the loop can never stop.
  *
- * `catchAllCause`, not `catchAll`: a thrown exception inside a save surfaces as
- * `Cause.Die`, which `catchAll` does not see. This mirrors
+ * `catchCause`, not `catch`: a thrown exception inside a save surfaces as
+ * `Cause.Die`, which `catch` does not see. This mirrors
  * ts-minecraft/packages/app/application/main/session-autosave.ts:20-33, whose
  * comment block is the clearest statement of the rule in the reference.
  *
@@ -69,7 +69,7 @@
  *   - `ClockPort` READS AN INSTANT. `monotonicSecs` and `wallClockEpochMillis`
  *     are its whole surface and are imported directly from
  *     `@nerima-games/mc-kernel`. A wider or narrower local copy of a
- *     `Context.Tag` resolved by textual key would be a runtime hazard.
+ *     `Context.Service` resolved by textual key would be a runtime hazard.
  *   - A schedule SLEEPS FOR A DURATION. There is no `sleep` on `ClockPort` and
  *     there cannot be one, so a Port-driven daemon would have to poll
  *     `monotonicSecs` in a loop — which needs something else to drive the poll,
@@ -110,7 +110,7 @@ const report = (
   reporter === undefined
     ? Effect.void
     : reporter(status).pipe(
-        Effect.catchAllCause((cause) => Effect.logError(`Auto-save status error: ${Cause.pretty(cause)}`)),
+        Effect.catchCause((cause) => Effect.logError(`Auto-save status error: ${Cause.pretty(cause)}`)),
       )
 
 /**
@@ -125,11 +125,13 @@ export const performAutoSaveTick = <E>(
   persist: Effect.Effect<void, E>,
   reporter?: AutoSaveStatusReporter,
 ): Effect.Effect<void> =>
-  report(reporter, 'saving').pipe(
-    Effect.zipRight(persist.pipe(Effect.zipLeft(report(reporter, 'saved')))),
-    Effect.catchAllCause((cause) =>
+  Effect.andThen(
+    report(reporter, 'saving'),
+    Effect.andThen(persist, report(reporter, 'saved')),
+  ).pipe(
+    Effect.catchCause((cause) =>
       Effect.logError(`Auto-save error: ${Cause.pretty(cause)}`).pipe(
-        Effect.zipRight(report(reporter, 'error')),
+        Effect.andThen(report(reporter, 'error')),
       ),
     ),
   )
@@ -145,11 +147,10 @@ export const autoSaveSchedule = (
 /**
  * Start the autosave daemon.
  *
- * `forkDaemon` for the same reason as the frame loop: autosave must outlive the
- * scope that happened to start it. The caller keeps the returned Fiber and
- * `Fiber.interruptFork`s it at world teardown — a leftover autosave daemon
- * writing the previous world's state into the new world's save is precisely the
- * class of bug plan.md §3.8 warns about.
+ * `forkDetach` for the same reason as the frame loop: autosave must outlive the
+ * scope that happened to start it. At world teardown, the caller detaches the
+ * `Fiber.interrupt` effect so a leftover autosave daemon cannot write the
+ * previous world's state into the new world's save.
  *
  * THE FIRST SAVE IS DUE AT t = `interval`, NOT AT t = 0. `Effect.schedule`, not
  * `Effect.repeat`: see the module header. The daemon is forked during world
@@ -159,7 +160,7 @@ export const startAutoSaveDaemon = <E>(
   persist: Effect.Effect<void, E>,
   interval: Duration.Duration = AUTO_SAVE_INTERVAL,
   reporter?: AutoSaveStatusReporter,
-): Effect.Effect<Fiber.RuntimeFiber<number, never>> =>
-  Effect.forkDaemon(
+): Effect.Effect<Fiber.Fiber<number, never>> =>
+  Effect.forkDetach(
     Effect.schedule(performAutoSaveTick(persist, reporter), autoSaveSchedule(interval)),
   )
