@@ -94,6 +94,7 @@ import {
   resume as resumeFixedStep,
   type FixedStepAccumulator,
   type FixedStepAdvance,
+  type FixedStepFailure,
 } from '../domain/fixed-step.js'
 
 /**
@@ -168,7 +169,7 @@ export type GameLoopApi = {
   readonly interpolationFraction: Effect.Effect<InterpolationFraction>
   readonly overloaded: Effect.Effect<boolean>
   readonly timeOverflow: Effect.Effect<Option.Option<TimeOverflow>>
-  readonly advanceFrame: (delta: DeltaTimeSecs) => Effect.Effect<FixedStepAdvance, TimeOverflow>
+  readonly advanceFrame: (delta: DeltaTimeSecs) => Effect.Effect<FixedStepAdvance, FixedStepFailure>
 }
 
 const GameLoopBase: Context.ServiceClass<GameLoop, '@nerima-games/mc-sim/GameLoop', GameLoopApi> =
@@ -336,7 +337,10 @@ export const makeGameLoop = (initialTick: SimulationTick = SimulationTick(0)): E
               Effect.flatMap((current) => {
                 const advanced = advanceFixedStep(current, frame.dt)
                 return Result.match(advanced, {
-                  onFailure: (error) => Ref.set(timeOverflowRef, Option.some(error)),
+                  onFailure: (error) =>
+                    error._tag === 'TimeOverflow'
+                      ? Ref.set(timeOverflowRef, Option.some(error))
+                      : Effect.die(error),
                   onSuccess: (next) => Effect.andThen(
                     Ref.set(fixedStep, next.state),
                     Effect.andThen(
@@ -376,7 +380,7 @@ export const makeGameLoop = (initialTick: SimulationTick = SimulationTick(0)): E
         Effect.flatMap(Option.match({ onNone: () => whenStopped, onSome: whenRunning })),
       )
 
-    const advanceFrame = (delta: DeltaTimeSecs): Effect.Effect<FixedStepAdvance, TimeOverflow> =>
+    const advanceFrame = (delta: DeltaTimeSecs): Effect.Effect<FixedStepAdvance, FixedStepFailure> =>
       Ref.get(generationRef).pipe(
         Effect.flatMap(
           Option.match({

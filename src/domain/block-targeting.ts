@@ -24,7 +24,17 @@ const targetBlockFromAim = (
 ): Result.Result<Option.Option<BlockTarget>, Brand.BrandError | RangeError> =>
   Result.gen(function* () {
     const distance = yield* BlockLength.result(maxDistance)
-    const hit = yield* voxelRaycast(aim.position, forwardVector(aim), distance, isTargetable)
+    const originX = yield* PositionAxis.result(aim.position.x)
+    const originY = yield* PositionAxis.result(aim.position.y)
+    const originZ = yield* PositionAxis.result(aim.position.z)
+    const yawRadians = yield* AngleRadians.result(aim.yawRadians)
+    const pitchRadians = yield* AngleRadians.result(aim.pitchRadians)
+    const validAim: BlockAim = {
+      position: position(originX, originY, originZ),
+      yawRadians,
+      pitchRadians,
+    }
+    const hit = yield* voxelRaycast(validAim.position, forwardVector(validAim), distance, isTargetable)
     if (Option.isNone(hit)) return Option.none()
 
     const positionX = yield* PositionAxis.result(hit.value.bx)
@@ -56,13 +66,16 @@ export const targetBlockFromPlayerPose = (
   isTargetable: IsTargetable,
 ): Result.Result<Option.Option<BlockTarget>, Brand.BrandError | RangeError> =>
   Result.gen(function* () {
-    const eyeY = yield* PositionAxis.result(playerPose.feetPosition.y + EYE_LEVEL_OFFSET)
+    const feetX = yield* PositionAxis.result(playerPose.feetPosition.x)
+    const feetY = yield* PositionAxis.result(playerPose.feetPosition.y)
+    const feetZ = yield* PositionAxis.result(playerPose.feetPosition.z)
+    const eyeY = yield* PositionAxis.result(feetY + EYE_LEVEL_OFFSET)
     const yawRadians = yield* AngleRadians.result(playerPose.yawRadians)
     const pitchRadians = yield* AngleRadians.result(playerPose.pitchRadians)
 
     return yield* targetBlockFromAim(
       {
-        position: position(playerPose.feetPosition.x, eyeY, playerPose.feetPosition.z),
+        position: position(feetX, eyeY, feetZ),
         yawRadians,
         pitchRadians,
       },

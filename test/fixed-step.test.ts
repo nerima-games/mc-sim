@@ -19,6 +19,12 @@ import {
 
 const dt = (seconds: number): DeltaTimeSecs => DeltaTimeSecs(seconds)
 const duration = (seconds: number): FixedDurationSecsValue => FixedDurationSecs(seconds)
+const advanceAtRuntime = (state: unknown, delta: unknown) => {
+  const args = JSON.parse('[null, null]')
+  args[0] = state
+  args[1] = delta
+  return Reflect.apply(advance, undefined, args)
+}
 
 describe('fixed-step accumulator', () => {
   it.effect('matches the fixed-step tick oracle for literal frame deltas', () =>
@@ -120,6 +126,53 @@ describe('fixed-step accumulator', () => {
       const result = advance(state, dt(0.05))
       expect(Result.isFailure(result)).toBe(true)
       if (Result.isFailure(result)) expect(result.failure._tag).toBe('TimeOverflow')
+    }),
+  )
+
+  it.effect('returns BrandError for negative and NaN runtime deltas', () =>
+    Effect.sync(() => {
+      for (const delta of [-0.05, Number.NaN]) {
+        const result = advanceAtRuntime(initialFixedStepAccumulator(), delta)
+        expect(Result.isFailure(result)).toBe(true)
+        if (Result.isFailure(result)) expect(result.failure._tag).toBe('BrandError')
+      }
+    }),
+  )
+
+  it.effect('returns BrandError for an invalid maxCatchUpTicks state', () =>
+    Effect.sync(() => {
+      for (const maxCatchUpTicks of [-1, Number.NaN]) {
+        const state = initialFixedStepAccumulator(SimulationTick(0), DEFAULT_TICK_DURATION, maxCatchUpTicks)
+        const result = advance(state, dt(0.05))
+        expect(Result.isFailure(result)).toBe(true)
+        if (Result.isFailure(result)) expect(result.failure._tag).toBe('BrandError')
+      }
+    }),
+  )
+
+  it.effect('returns typed failures for malformed runtime accumulator fields', () =>
+    Effect.sync(() => {
+      const initial = initialFixedStepAccumulator()
+      const malformed = [
+        { state: { ...initial, accumulator: null }, expectedTag: 'BrandError' },
+        { state: { ...initial, tick: null }, expectedTag: 'BrandError' },
+        { state: { ...initial, tickDuration: 0 }, expectedTag: 'BrandError' },
+        {
+          state: {
+            ...initial,
+            tickDuration: Number.MAX_VALUE,
+            maxCatchUpTicks: Number.MAX_SAFE_INTEGER,
+          },
+          expectedTag: 'InvalidFixedStepConfiguration',
+        },
+        { state: { ...initial, paused: 'paused' }, expectedTag: 'InvalidFixedStepConfiguration' },
+      ]
+
+      for (const { state, expectedTag } of malformed) {
+        const result = advanceAtRuntime(state, dt(0.05))
+        expect(Result.isFailure(result)).toBe(true)
+        if (Result.isFailure(result)) expect(result.failure._tag).toBe(expectedTag)
+      }
     }),
   )
 })

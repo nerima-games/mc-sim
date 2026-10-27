@@ -1,3 +1,4 @@
+import { Brand, Result } from 'effect'
 import { PositionAxis, position, type Position } from '@nerima-games/mc-kernel'
 
 export const WITHER_MAX_HEALTH = 300
@@ -184,24 +185,33 @@ const add = (cell: BlockCell, dx: number, dy: number, dz: number): BlockCell => 
 export const matchWitherSummon = (
   base: BlockCell,
   blockAt: (cell: BlockCell) => WitherSummonMaterial | undefined,
-): WitherSummonMatch | undefined => {
-  for (const axis of ['x', 'z'] as const) {
-    const side = axis === 'x' ? ([1, 0, 0] as const) : ([0, 0, 1] as const)
-    const body = [base, add(base, 0, 1, 0), add(base, side[0], 1, side[2]), add(base, -side[0], 1, -side[2])]
-    const skulls = [-1, 0, 1].map((offset) => add(base, side[0] * offset, 2, side[2] * offset))
-    if (
-      body.every((cell) => blockAt(cell) === 'soul_sand' || blockAt(cell) === 'soul_soil') &&
-      skulls.every((cell) => blockAt(cell) === 'wither_skeleton_skull')
-    ) {
-      return {
-        axis,
-        spawnPosition: positionOf(base.x + 0.5, base.y + 1, base.z + 0.5),
-        consumedBlocks: [...body, ...skulls],
+): Result.Result<WitherSummonMatch | undefined, Brand.BrandError> =>
+  Result.gen(function* () {
+    const x = yield* PositionAxis.result(base.x)
+    const y = yield* PositionAxis.result(base.y)
+    const z = yield* PositionAxis.result(base.z)
+    const validBase = { x, y, z }
+
+    for (const axis of ['x', 'z'] as const) {
+      const side = axis === 'x' ? ([1, 0, 0] as const) : ([0, 0, 1] as const)
+      const body = [validBase, add(validBase, 0, 1, 0), add(validBase, side[0], 1, side[2]), add(validBase, -side[0], 1, -side[2])]
+      const skulls = [-1, 0, 1].map((offset) => add(validBase, side[0] * offset, 2, side[2] * offset))
+      if (
+        body.every((cell) => blockAt(cell) === 'soul_sand' || blockAt(cell) === 'soul_soil') &&
+        skulls.every((cell) => blockAt(cell) === 'wither_skeleton_skull')
+      ) {
+        const spawnX = yield* PositionAxis.result(x + 0.5)
+        const spawnY = yield* PositionAxis.result(y + 1)
+        const spawnZ = yield* PositionAxis.result(z + 0.5)
+        return {
+          axis,
+          spawnPosition: position(spawnX, spawnY, spawnZ),
+          consumedBlocks: [...body, ...skulls],
+        }
       }
     }
-  }
-  return undefined
-}
+    return undefined
+  })
 
 export const serializeWither = (state: WitherState): WitherSnapshot => ({ kind: 'wither', version: 1, state })
 

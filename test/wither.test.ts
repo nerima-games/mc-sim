@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { Result } from 'effect'
 import { PositionAxis, position as coordinatePosition } from '@nerima-games/mc-kernel'
 import {
   WITHER_ARMOUR_THRESHOLD,
@@ -24,7 +25,12 @@ describe('wither summon', () => {
       put(x, 2, 0, 'wither_skeleton_skull')
     }
 
-    expect(matchWitherSummon({ x: 0, y: 0, z: 0 }, ({ x, y, z }) => blocks.get(`${x},${y},${z}`))).toEqual({
+    const result = matchWitherSummon(
+      { x: 0, y: 0, z: 0 },
+      ({ x, y, z }) => blocks.get(`${x},${y},${z}`),
+    )
+
+    expect(Result.getOrThrow(result)).toEqual({
       axis: 'x',
       spawnPosition: { x: 0.5, y: 1, z: 0.5 },
       consumedBlocks: [
@@ -35,7 +41,24 @@ describe('wither summon', () => {
   })
 
   it('rejects an incomplete skull row', () => {
-    expect(matchWitherSummon({ x: 0, y: 0, z: 0 }, ({ y }) => y < 2 ? 'soul_sand' : 'air')).toBeUndefined()
+    const result = matchWitherSummon(
+      { x: 0, y: 0, z: 0 },
+      ({ y }) => y < 2 ? 'soul_sand' : 'air',
+    )
+
+    expect(Result.getOrThrow(result)).toBeUndefined()
+  })
+
+  it('returns BrandError for a non-finite base before querying blocks', () => {
+    let blockLookupCalled = false
+    const result = matchWitherSummon({ x: Number.NaN, y: 0, z: 0 }, () => {
+      blockLookupCalled = true
+      return undefined
+    })
+
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) expect(result.failure._tag).toBe('BrandError')
+    expect(blockLookupCalled).toBe(false)
   })
 })
 describe('wither lifecycle', () => {

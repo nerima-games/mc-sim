@@ -44,6 +44,19 @@ describe('targetBlockFromCamera', () => {
 
     expect(Result.isFailure(target)).toBe(true)
   })
+
+  it('returns BrandError for a runtime NaN camera yaw before raycasting', () => {
+    const malformedCamera = Object.assign(cameraAt(0.5, 0, 2.5), { yawRadians: Number.NaN })
+    let raycastCalled = false
+    const target = targetBlockFromCamera(malformedCamera, 5, () => {
+      raycastCalled = true
+      return true
+    })
+
+    expect(Result.isFailure(target)).toBe(true)
+    if (Result.isFailure(target)) expect(target.failure).toHaveProperty('_tag', 'BrandError')
+    expect(raycastCalled).toBe(false)
+  })
 })
 
 describe('targetBlockFromPlayerPose', () => {
@@ -54,5 +67,23 @@ describe('targetBlockFromPlayerPose', () => {
     )
 
     expect(Option.getOrThrow(target).position).toStrictEqual(position(0, 1, 0))
+  })
+
+  it('returns BrandError for a runtime non-finite player x coordinate', () => {
+    const malformedPosition = Object.assign(position(0.5, 0, 2.5), { x: Number.NaN })
+    const playerPose = withFeetPosition(INITIAL_PLAYER_POSE, malformedPosition)
+    const target = targetBlockFromPlayerPose(playerPose, 5, () => true)
+
+    expect(Result.isFailure(target)).toBe(true)
+    if (Result.isFailure(target)) expect(target.failure).toHaveProperty('_tag', 'BrandError')
+  })
+
+  it('returns BrandError for a runtime non-finite player z coordinate', () => {
+    const malformedPosition = Object.assign(position(0.5, 0, 2.5), { z: Number.POSITIVE_INFINITY })
+    const playerPose = withFeetPosition(INITIAL_PLAYER_POSE, malformedPosition)
+    const target = targetBlockFromPlayerPose(playerPose, 5, () => true)
+
+    expect(Result.isFailure(target)).toBe(true)
+    if (Result.isFailure(target)) expect(target.failure).toHaveProperty('_tag', 'BrandError')
   })
 })
