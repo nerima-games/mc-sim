@@ -1283,7 +1283,7 @@ declare const raycastArrowBlock: (
 
 ## 10. Effect result Schemas
 
-The root barrel exports Effect Schemas for public operation results and their declared error unions. Property tests decode both channels with these Schemas. The newly exported Schemas are listed by owning module; names ending in `ErrorSchema`, `FailureSchema`, or `ValidationErrorSchema` describe error channels, while success and outcome Schemas describe successful values.
+The root barrel exports Effect Schemas for public operation results and their declared error unions. Property tests decode both channels with these Schemas. Newly exported result Schemas are listed by owning module; `TimeStateSchema` was already public and is also used to decode `Time.advance` results. Names ending in `ErrorSchema`, `FailureSchema`, or `ValidationErrorSchema` describe error channels, while success and outcome Schemas describe successful values.
 
 | Module | Exported Schemas |
 | --- | --- |
@@ -1298,16 +1298,22 @@ The root barrel exports Effect Schemas for public operation results and their de
 | `application/save-coordinator` | `SaveCoordinatorRequestSaveSuccessSchema`, `SaveSnapshotConsistencyErrorSchema`, `saveCoordinatorRequestSaveErrorSchema` |
 | `application/save-service` | `LoadSimulationSuccessSchema`, `SaveSimulationSuccessSchema`, `SimulationSaveErrorSchema` |
 | `application/save-v3-migration` | `SimulationSaveV3MigrationSuccessSchema`, `simulationSaveV3MigrationErrorSchema` |
+| `application/statistics-service` | `StatisticsServiceRecordErrorSchema`, `StatisticsServiceRecordSuccessSchema` |
 | `application/tnt-service` | `TntAdvanceOutcomeSchema`, `TntPrimeOutcomeSchema`, `TntServiceErrorSchema`, `TntServiceFailureSchema`, `TntServiceSnapshotErrorSchema`, `TntServiceSnapshotSuccessSchema` |
 | `application/vehicle-service` | `VehicleOperationErrorSchema`, `VehicleServiceDespawnSuccessSchema`, `VehicleServiceDismountSuccessSchema`, `VehicleServiceMountSuccessSchema`, `VehicleServiceNoFailureSchema`, `VehicleServiceOperationErrorSchema`, `VehicleServiceRestoreSuccessSchema`, `VehicleServiceSnapshotSuccessSchema`, `VehicleServiceSpawnSuccessSchema`, `VehicleServiceUpdateStateSuccessSchema`, `VehicleServiceUpdateTransformSuccessSchema`, `VehicleServiceUpdateVelocitySuccessSchema`, `VehicleServiceValidationErrorSchema`, `VehicleServiceVehiclesSuccessSchema`, `VehicleServiceVoidSuccessSchema` |
+| `application/vitals-service` | `DamageOutcomeSchema`, `VitalsServiceNoErrorSchema`, `VitalsServiceVoidSchema` |
 | `application/world-commit-coordinator` | `WorldCommitCoordinatorSnapshotErrorSchema` |
 | `domain/crop` | `CropLocationSchema`, `CropSnapshotSchema`, `CropStateSchema`, `CropTypeSchema`, `CropValidationErrorSchema` |
 | `domain/entity-types` | `EntityHealthPointsSchema`, `EntityRosterRepairCountSchema`, `EntityRosterSchema`, `EntitySchema`, `EntitySerialExhaustedSchema`, `EntitySerialSchema`, `RosterRepairSchema` |
 | `domain/equipment` | `DamageEquipmentResultSchema`, `DurabilitySchema`, `EquipmentItemFailureSchema`, `EquipmentItemSchema`, `EquipmentSchema`, `EquipmentSlotsSchema`, `EquipmentValidationErrorSchema` |
 | `domain/fishing` | `FishingFailureSchema`, `FishingInvalidLootRollSchema`, `FishingInvalidStateSchema` |
 | `domain/fixed-step` | `FixedStepAccumulatorSchema`, `FixedStepAdvanceSchema`, `FixedStepFailureSchema` |
+| `domain/statistics` | `StatisticsRecordFailureSchema`, `StatisticsSchema` |
+| `domain/time-of-day` | `TimeStateSchema` (existing public Schema used for result decoding) |
 | `domain/vehicle` | `VehiclePositionSchema`, `VehicleSchema`, `VehicleSnapshotSchema`, `VehicleValidationErrorSchema`, `VehicleVelocitySchema` |
+| `domain/vitals` | `FoodTickSignalSchema`, `VitalsSchema`, `VitalsViewSchema` |
 | `domain/weather` | `WeatherSchema`, `WeatherStateSchema`, `WeatherValidationFailureSchema` |
+| `domain/wither` | `WitherDamageResultSchema`, `WitherStateSchema`, `WitherStepFailureSchema`, `WitherStepSchema` |
 | `stages/registration` | `SimPhysicsConfigErrorSchema`, `SimPhysicsStagesSchema` |
 
 Schemas are strict decoders for the represented value. Constructors and snapshot-ingress functions that intentionally migrate older persisted shapes remain separate normalization paths; their retained entry points are listed in `docs/schema-decoder-audit.md`.
