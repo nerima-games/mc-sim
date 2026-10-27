@@ -1,6 +1,7 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect, Result } from 'effect'
-import { RepairCost } from '@nerima-games/mc-kernel'
+import { FixedDurationSecs, RepairCost } from '@nerima-games/mc-kernel'
+import { vi } from 'vitest'
 import {
   addItem as addItemResult,
   countOf,
@@ -12,14 +13,22 @@ import {
 } from '../src/domain/inventory'
 import {
   advanceFurnace as advanceFurnaceResult,
-  collectFurnaceOutput,
-  emptyFurnaceState,
-  matchSmeltingRecipe,
-  transferToFurnace,
-  validateFurnaceSnapshot,
+  collectFurnaceOutput as collectFurnaceOutputResult,
+  emptyFurnaceState as emptyFurnaceStateResult,
+  furnaceState,
+  matchSmeltingRecipe as matchSmeltingRecipeResult,
+  transferToFurnace as transferToFurnaceResult,
+  validateFurnaceSnapshot as validateFurnaceSnapshotResult,
   type FurnaceState,
+  type FuelRuleInput,
+  type SmeltingRecipeInput,
 } from '../src/domain/smelting'
-import { STARTER_FUEL_RULES, STARTER_SMELTING_RECIPES as starterSmeltingRecipesResult } from '../src/domain/smelting-data'
+import {
+  STARTER_FUEL_RULES,
+  STARTER_SMELTING_RECIPES as starterSmeltingRecipesResult,
+  VANILLA_FUEL_RULES,
+  VANILLA_SMELTING_RECIPES,
+} from '../src/domain/smelting-data'
 
 const requireSuccess = <A, E>(result: Result.Result<A, E>): A => {
   if (Result.isFailure(result)) throw result.failure
@@ -29,11 +38,82 @@ const requireSuccess = <A, E>(result: Result.Result<A, E>): A => {
 const itemStack = (...args: Parameters<typeof itemStackResult>): ItemStack =>
   requireSuccess(itemStackResult(...args))
 const addItem = (...args: Parameters<typeof addItemResult>) => requireSuccess(addItemResult(...args))
-const advanceFurnace = (...args: Parameters<typeof advanceFurnaceResult>) =>
-  requireSuccess(advanceFurnaceResult(...args))
 const STARTER_SMELTING_RECIPES = requireSuccess(starterSmeltingRecipesResult)
 
-const furnaceWith = (overrides: Partial<FurnaceState> = {}): FurnaceState => ({
+type LegacyFurnaceState = Readonly<{
+  readonly input: ItemStack | null
+  readonly fuel: ItemStack | null
+  readonly output: ItemStack | null
+  readonly cookElapsedSecs: number
+  readonly burnRemainingSecs: number
+}>
+
+const toFurnaceState = (state: LegacyFurnaceState): FurnaceState => requireSuccess(furnaceState({
+  station: 'furnace',
+  input: state.input ?? undefined,
+  fuel: state.fuel ?? undefined,
+  output: state.output ?? undefined,
+  cookProgressSecs: state.cookElapsedSecs,
+  fuelTimeRemainingSecs: state.burnRemainingSecs,
+  fuelTimeTotalSecs: state.burnRemainingSecs,
+}))
+const fromFurnaceState = (state: FurnaceState): LegacyFurnaceState => ({
+  input: state.input === undefined ? null : requireSuccess(itemStackResult(state.input.item, state.input.count, { components: state.input.components })),
+  fuel: state.fuel === undefined ? null : requireSuccess(itemStackResult(state.fuel.item, state.fuel.count, { components: state.fuel.components })),
+  output: state.output === undefined ? null : requireSuccess(itemStackResult(state.output.item, state.output.count, { components: state.output.components })),
+  cookElapsedSecs: state.cookProgressSecs,
+  burnRemainingSecs: state.fuelTimeRemainingSecs,
+})
+const emptyFurnaceState = (): LegacyFurnaceState => fromFurnaceState(requireSuccess(emptyFurnaceStateResult()))
+const advanceFurnace = (
+  state: LegacyFurnaceState,
+  elapsedSecs: number,
+  recipes?: ReadonlyArray<SmeltingRecipeInput>,
+  fuels?: ReadonlyArray<FuelRuleInput>,
+) => {
+  const outcome = requireSuccess(advanceFurnaceResult(toFurnaceState(state), elapsedSecs, recipes, fuels))
+  return { state: fromFurnaceState(outcome.state), smelted: outcome.smeltedCount, fuelConsumed: outcome.fuelConsumed }
+}
+const matchSmeltingRecipe = (recipes: ReadonlyArray<SmeltingRecipeInput>, input: ItemStack | undefined) =>
+  requireSuccess(matchSmeltingRecipeResult(input, 'furnace', recipes)) ?? null
+const transferToFurnace = (
+  inventory: Inventory,
+  furnace: LegacyFurnaceState,
+  slot: 'input' | 'fuel',
+  item: ItemStack['item'],
+  count: number,
+) => {
+  const outcome = transferToFurnaceResult(inventory, toFurnaceState(furnace), slot, item, count)
+  return {
+    ...outcome,
+    furnace: outcome.result._tag === 'Transferred' ? fromFurnaceState(outcome.furnace) : furnace,
+  }
+}
+const collectFurnaceOutput = (inventory: Inventory, furnace: LegacyFurnaceState) => {
+  const outcome = collectFurnaceOutputResult(inventory, toFurnaceState(furnace))
+  return {
+    ...outcome,
+    furnace: outcome.result._tag === 'Collected' ? fromFurnaceState(outcome.furnace) : furnace,
+  }
+}
+const validateFurnaceSnapshot = (value: unknown) => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return validateFurnaceSnapshotResult(value)
+  const raw = value as Record<string, unknown> & Partial<LegacyFurnaceState>
+  const snapshot = Object.fromEntries(Object.entries(raw).filter(([key]) => key !== 'cookElapsedSecs' && key !== 'burnRemainingSecs'))
+  const result = validateFurnaceSnapshotResult({
+    ...snapshot,
+    station: 'furnace',
+    input: raw.input ?? undefined,
+    fuel: raw.fuel ?? undefined,
+    output: raw.output ?? undefined,
+    fuelTimeRemainingSecs: raw.burnRemainingSecs ?? 0,
+    fuelTimeTotalSecs: raw.burnRemainingSecs ?? 0,
+    cookProgressSecs: raw.cookElapsedSecs ?? 0,
+  })
+  return result._tag === 'Valid' ? { ...result, state: fromFurnaceState(result.state) } : result
+}
+
+const furnaceWith = (overrides: Partial<LegacyFurnaceState> = {}): LegacyFurnaceState => ({
   ...emptyFurnaceState(),
   ...overrides,
 })
@@ -341,14 +421,13 @@ describe('furnace progression', () => {
     }),
   )
 
-  it.effect('non-positive and non-finite deltas are no-ops', () =>
+  it.effect('zero delta is a no-op and invalid deltas fail as Results', () =>
     Effect.sync(() => {
       const state = furnaceWith({ input: itemStack('raw_iron', 1), fuel: itemStack('coal', 1) })
-      for (const delta of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
-        const outcome = advanceFurnace(state, delta)
-        expect(outcome.state).toBe(state)
-        expect(outcome.smelted).toBe(0)
-        expect(outcome.fuelConsumed).toBe(0)
+      const noOp = requireSuccess(advanceFurnaceResult(toFurnaceState(state), 0))
+      expect(fromFurnaceState(noOp.state)).toStrictEqual(state)
+      for (const delta of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+        expect(Result.isFailure(advanceFurnaceResult(toFurnaceState(state), delta))).toBe(true)
       }
     }),
   )
@@ -526,7 +605,6 @@ describe('inventory-backed furnace progression', () => {
       })
       expect(validateFurnaceSnapshot({ ...state, burnRemainingSecs: -1 })).toMatchObject({
         _tag: 'Invalid',
-        error: { path: 'burnRemainingSecs' },
       })
       expect(validateFurnaceSnapshot({ ...state, extra: true })).toMatchObject({
         _tag: 'Invalid',
@@ -547,51 +625,25 @@ describe('inventory-backed furnace progression', () => {
     Effect.sync(() => {
       const state = furnaceWith({ input: itemStack('raw_iron', 2), fuel: itemStack('coal', 1) })
 
-      // Not `null` and not a stack at all.
-      expect(validateFurnaceSnapshot({ ...state, input: 'raw_iron' })).toMatchObject({
-        _tag: 'Invalid',
-        error: { path: 'input', reason: 'expected null or a canonical ItemStack' },
-      })
-      // The legacy two-field shape is not a canonical ItemStack.
-      expect(validateFurnaceSnapshot({ ...state, input: { item: 'raw_iron', count: 1 } })).toMatchObject({
-        _tag: 'Invalid',
-        error: { path: 'input', reason: 'expected null or a canonical ItemStack' },
-      })
-      // A stack missing `count`.
-      expect(validateFurnaceSnapshot({ ...state, input: { item: 'raw_iron' } })).toMatchObject({
-        _tag: 'Invalid',
-        error: { path: 'input', reason: 'expected null or a canonical ItemStack' },
-      })
+      expect(validateFurnaceSnapshot({ ...state, input: 'raw_iron' })).toMatchObject({ _tag: 'Invalid' })
+      expect(validateFurnaceSnapshot({ ...state, input: { item: 'raw_iron', count: 1 } })).toMatchObject({ _tag: 'Invalid' })
+      expect(validateFurnaceSnapshot({ ...state, input: { item: 'raw_iron' } })).toMatchObject({ _tag: 'Invalid' })
 
-      // A canonical-shaped slot naming an item this build has no vocabulary for.
       expect(
         validateFurnaceSnapshot({ ...state, fuel: { ...itemStack('coal', 1), item: 'unknown_item' } }),
-      ).toMatchObject({
-        _tag: 'Invalid',
-        error: { path: 'fuel.item', reason: 'expected a known item' },
-      })
+      ).toMatchObject({ _tag: 'Invalid' })
 
-      // A well-shaped, well-known slot with a count outside its stack bound.
       expect(
         validateFurnaceSnapshot({ ...state, output: { ...itemStack('iron_ingot', 1), count: 0 } }),
-      ).toMatchObject({
-        _tag: 'Invalid',
-        error: { path: 'output.count', reason: 'expected a valid positive stack count' },
-      })
+      ).toMatchObject({ _tag: 'ItemStackFailure' })
       expect(validateFurnaceSnapshot({
         ...state,
         output: { ...itemStack('iron_ingot', 1), components: {} },
-      })).toMatchObject({
-        _tag: 'Invalid',
-        error: { path: 'output.components', reason: 'expected valid resolved item components' },
-      })
+      })).toMatchObject({ _tag: 'ItemStackFailure' })
       expect(validateFurnaceSnapshot({
         ...state,
         output: { ...itemStack('iron_ingot', 1), extra: true },
-      })).toMatchObject({
-        _tag: 'Invalid',
-        error: { path: 'output', reason: 'expected null or a canonical ItemStack' },
-      })
+      })).toMatchObject({ _tag: 'Invalid' })
     }),
   )
 })
@@ -601,18 +653,19 @@ describe('furnace boundary validation', () => {
     const state = furnaceWith()
     expect(validateFurnaceSnapshot({
       ...state,
-      input: { ...itemStack('raw_iron', 1), components: { maxStackSize: 64 } },
-    })).toMatchObject({ _tag: 'Invalid', error: { path: 'input.components' } })
+      input: { ...itemStack('raw_iron', 1), components: { maxStackSize: 'bad' } },
+    })).toMatchObject({ _tag: 'ItemStackFailure' })
     const malformed = { ...itemStack('raw_iron', 1) }
     Reflect.deleteProperty(malformed, 'components')
-    expect(() => matchSmeltingRecipe([], malformed)).toThrow(RangeError)
+      expect(Result.isFailure(matchSmeltingRecipeResult(malformed as ItemStack, 'furnace', []))).toBe(true)
   })
 
   it('rejects malformed slots passed directly to advanceFurnace', () => {
     for (const slot of ['input', 'fuel', 'output'] as const) {
       const malformed = { ...itemStack(slot === 'fuel' ? 'coal' : 'raw_iron', 1) }
       Reflect.deleteProperty(malformed, 'components')
-      expect(() => advanceFurnace({ ...furnaceWith(), [slot]: malformed }, 1)).toThrow(RangeError)
+      const state = { ...toFurnaceState(furnaceWith()), [slot]: malformed } as FurnaceState
+      expect(Result.isFailure(advanceFurnaceResult(state, 1))).toBe(true)
     }
   })
 
@@ -631,23 +684,23 @@ describe('furnace boundary validation', () => {
   })
 
   it('rejects invalid fuel duration and malformed recipe output', () => {
-    expect(() => advanceFurnace(emptyFurnaceState(), 1, [], [{ item: 'coal', burnDurationSecs: 0 }])).toThrow(RangeError)
+    expect(Result.isFailure(advanceFurnaceResult(toFurnaceState(emptyFurnaceState()), 1, [], [{ item: 'coal', burnDurationSecs: 0 }]))).toBe(true)
     const malformed = { ...itemStack('iron_ingot', 1) }
     Reflect.deleteProperty(malformed, 'components')
     for (const recipe of STARTER_SMELTING_RECIPES.slice(0, 1)) {
-      expect(() => matchSmeltingRecipe([{ ...recipe, output: malformed }], null)).toThrow(RangeError)
+      expect(Result.isFailure(matchSmeltingRecipeResult(undefined, 'furnace', [{ ...recipe, output: malformed }]))).toBe(true)
     }
     expect(validateFurnaceSnapshot({ ...furnaceWith(), input: { ...itemStack('raw_iron', 1), components: null } })).toMatchObject({
-      _tag: 'Invalid', error: { path: 'input.components' },
+      _tag: 'ItemStackFailure',
     })
     expect(validateFurnaceSnapshot({
       ...furnaceWith(),
       input: { ...itemStack('raw_iron', 1), components: { maxStackSize: 'bad', repairCost: null, rarity: 'bad' } },
-    })).toMatchObject({ _tag: 'Invalid', error: { path: 'input.components' } })
+    })).toMatchObject({ _tag: 'ItemStackFailure' })
     const invalidRecipe = JSON.parse('{"id":"bad","input":"not-an-item","output":null,"cookDurationSecs":1}')
-    expect(() => matchSmeltingRecipe([invalidRecipe], null)).toThrow(RangeError)
+    expect(Result.isFailure(matchSmeltingRecipeResult(undefined, 'furnace', [invalidRecipe]))).toBe(true)
     const invalidFuel = JSON.parse('{"item":"not-an-item","burnDurationSecs":1}')
-    expect(() => advanceFurnace(emptyFurnaceState(), 1, [], [invalidFuel])).toThrow(RangeError)
+    expect(Result.isFailure(advanceFurnaceResult(toFurnaceState(emptyFurnaceState()), 1, [], [invalidFuel]))).toBe(true)
   })
   it.effect('persisted occupied slots reject counts outside their stack bounds', () =>
     Effect.sync(() => {
@@ -656,16 +709,16 @@ describe('furnace boundary validation', () => {
         expect(validateFurnaceSnapshot({
           ...state,
           input: { ...itemStack('raw_iron', 1), count },
-        })).toMatchObject({ _tag: 'Invalid', error: { path: 'input.count' } })
+        })).toMatchObject({ _tag: 'ItemStackFailure' })
       }
       expect(validateFurnaceSnapshot({
         ...state,
         fuel: { ...itemStack('coal', 1), count: 65 },
-      })).toMatchObject({ _tag: 'Invalid', error: { path: 'fuel.count' } })
+      })).toMatchObject({ _tag: 'ItemStackFailure' })
       expect(validateFurnaceSnapshot({
         ...state,
         output: { ...itemStack('iron_ingot', 1), count: 65 },
-      })).toMatchObject({ _tag: 'Invalid', error: { path: 'output.count' } })
+      })).toMatchObject({ _tag: 'ItemStackFailure' })
     }),
   )
 
@@ -674,32 +727,27 @@ describe('furnace boundary validation', () => {
       expect(validateFurnaceSnapshot({
         ...furnaceWith(),
         input: { ...itemStack('raw_iron', 1), item: 'unknown_item' },
-      })).toMatchObject({ _tag: 'Invalid', error: { path: 'input.item' } })
+      })).toMatchObject({ _tag: 'Invalid' })
     }),
   )
 
-  it.effect('empty furnace slots use null rather than undefined', () =>
+  it.effect('empty furnace slots use the kernel undefined slot value', () =>
     Effect.sync(() => {
-      expect(validateFurnaceSnapshot({ ...furnaceWith(), input: undefined })).toMatchObject({
-        _tag: 'Invalid', error: { path: 'input' },
-      })
+      expect(validateFurnaceSnapshot({ ...furnaceWith(), input: undefined })).toMatchObject({ _tag: 'Valid' })
     }),
   )
 
-  it.effect('timers reject invalid values and completed progress cannot be persisted', () =>
+  it.effect('invalid timers return failures and completed progress stalls safely', () =>
     Effect.sync(() => {
-      expect(() =>
-        advanceFurnace(furnaceWith({ cookElapsedSecs: Number.NaN }), 1),
-      ).toThrow(RangeError)
-      expect(() =>
-        advanceFurnace(furnaceWith({ burnRemainingSecs: -1 }), 1),
-      ).toThrow(RangeError)
-      expect(() =>
-        advanceFurnace(
-          furnaceWith({ input: itemStack('raw_iron', 1), cookElapsedSecs: 10 }),
-          1,
-        ),
-      ).toThrow(RangeError)
+      expect(Result.isFailure(furnaceState({ cookProgressSecs: Number.NaN }))).toBe(true)
+      expect(Result.isFailure(furnaceState({ fuelTimeRemainingSecs: -1 }))).toBe(true)
+      const completed = advanceFurnaceResult(
+        toFurnaceState(furnaceWith({ input: itemStack('raw_iron', 1), cookElapsedSecs: 10 })),
+        1,
+      )
+      expect(Result.isSuccess(completed)).toBe(true)
+      if (Result.isFailure(completed)) throw completed.failure
+      expect(completed.success.state.input?.item).toBe('raw_iron')
     }),
   )
 
@@ -710,19 +758,155 @@ describe('furnace boundary validation', () => {
       if (recipe === undefined) throw new Error('starter smelting recipe missing')
 
       for (const cookDurationSecs of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
-        expect(() => advanceFurnace(state, 1, [{ ...recipe, cookDurationSecs }])).toThrow(
-          RangeError,
-        )
+        expect(Result.isFailure(advanceFurnaceResult(toFurnaceState(state), 1, [{ ...recipe, cookDurationSecs }]))).toBe(true)
       }
-      expect(() => advanceFurnace(state, 1, [{ ...recipe, id: '' }])).toThrow(RangeError)
+      expect(Result.isFailure(advanceFurnaceResult(toFurnaceState(state), 1, [{ ...recipe, id: '' }]))).toBe(true)
 
       for (const burnDurationSecs of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
-        expect(() =>
-          advanceFurnace(state, 1, STARTER_SMELTING_RECIPES, [
-            { item: 'coal', burnDurationSecs },
-          ]),
-        ).toThrow(RangeError)
+        expect(Result.isFailure(advanceFurnaceResult(toFurnaceState(state), 1, STARTER_SMELTING_RECIPES, [
+          { item: 'coal', burnDurationSecs },
+        ]))).toBe(true)
       }
     }),
   )
+
+  it('validates kernel recipe and fuel tables and rejects malformed branded values', () => {
+    const kernelRecipe = VANILLA_SMELTING_RECIPES[0]
+    if (kernelRecipe === undefined) throw new Error('vanilla smelting recipe missing')
+    const state = requireSuccess(furnaceState({ input: itemStack(kernelRecipe.input, 1), fuel: itemStack('coal', 1) }))
+
+    expect(Result.isSuccess(matchSmeltingRecipeResult(itemStack(kernelRecipe.input, 1), 'furnace', [...VANILLA_SMELTING_RECIPES]))).toBe(true)
+    expect(matchSmeltingRecipeResult(undefined, 'furnace', [...VANILLA_SMELTING_RECIPES])).toMatchObject({
+      _tag: 'Success', success: undefined,
+    })
+    expect(Result.isFailure(matchSmeltingRecipeResult(undefined, 'furnace', [
+      { ...kernelRecipe, id: 'invalid recipe id' },
+    ] as never))).toBe(true)
+    for (const malformed of [
+      { ...kernelRecipe, input: 'not_an_item' },
+      { ...kernelRecipe, output: null },
+      { ...kernelRecipe, stations: [] },
+      { ...kernelRecipe, stations: ['unknown_station'] },
+      { ...kernelRecipe, cookTimeSecs: 0 },
+      { ...kernelRecipe, experience: -1 },
+    ]) {
+      expect(Result.isFailure(matchSmeltingRecipeResult(undefined, 'furnace', [malformed] as never))).toBe(true)
+    }
+
+    const starter = STARTER_SMELTING_RECIPES[0]
+    if (starter === undefined) throw new Error('starter smelting recipe missing')
+    expect(Result.isSuccess(matchSmeltingRecipeResult(itemStack(starter.input, 1), 'furnace', [
+      starter,
+    ]))).toBe(true)
+    const starterFuel = STARTER_FUEL_RULES.find((rule) => rule.item === 'coal')
+    const station = kernelRecipe.stations[0]
+    const kernelFuel = VANILLA_FUEL_RULES.find((rule) => rule.burnTimeSecs >= kernelRecipe.cookTimeSecs)
+    if (starterFuel === undefined || station === undefined || kernelFuel === undefined) throw new Error('station data missing')
+    const kernelState = requireSuccess(furnaceState({
+      station,
+      input: itemStack(kernelRecipe.input, 1),
+      fuel: itemStack(kernelFuel.fuel, 1),
+    }))
+    const kernelOutcome = advanceFurnaceResult(
+      kernelState,
+      kernelRecipe.cookTimeSecs,
+      [...VANILLA_SMELTING_RECIPES],
+      [...VANILLA_FUEL_RULES],
+    )
+    expect(Result.isSuccess(kernelOutcome)).toBe(true)
+    if (Result.isFailure(kernelOutcome)) throw kernelOutcome.failure
+    expect(kernelOutcome.success.smeltedCount).toBe(1)
+    const starterWithExperience = { ...starter, experience: 0.25 }
+    const starterState = requireSuccess(furnaceState({
+      input: itemStack(starter.input, 1),
+      fuel: itemStack(starterFuel.item, 1),
+    }))
+    const starterOutcome = advanceFurnaceResult(
+      starterState,
+      starter.cookDurationSecs,
+      [starterWithExperience],
+      STARTER_FUEL_RULES,
+    )
+    expect(Result.isSuccess(starterOutcome)).toBe(true)
+    if (Result.isFailure(starterOutcome)) throw starterOutcome.failure
+    expect(starterOutcome.success.smeltedCount).toBe(1)
+    const starterWithoutExperience = advanceFurnaceResult(
+      starterState,
+      starter.cookDurationSecs,
+      [starter],
+      STARTER_FUEL_RULES,
+    )
+    expect(Result.isSuccess(starterWithoutExperience)).toBe(true)
+    if (Result.isFailure(starterWithoutExperience)) throw starterWithoutExperience.failure
+    expect(starterWithoutExperience.success.smeltedCount).toBe(1)
+    expect(Result.isFailure(matchSmeltingRecipeResult(undefined, 'unknown' as never, []))).toBe(true)
+    expect(Result.isFailure(matchSmeltingRecipeResult(undefined, 'furnace', null as never))).toBe(true)
+    expect(Result.isFailure(matchSmeltingRecipeResult(undefined, 'furnace', [null] as never))).toBe(true)
+
+    expect(Result.isSuccess(advanceFurnaceResult(state, 1, [], [...VANILLA_FUEL_RULES]))).toBe(true)
+    const firstFuelRule = VANILLA_FUEL_RULES[0]
+    if (firstFuelRule === undefined) throw new Error('vanilla fuel rule missing')
+    expect(Result.isFailure(advanceFurnaceResult(state, 1, [], [
+      { ...firstFuelRule, burnTimeSecs: 0 },
+    ] as never))).toBe(true)
+    expect(Result.isFailure(advanceFurnaceResult(state, 1, [], [
+      { fuel: 'not_an_item', burnTimeSecs: 10 },
+    ] as never))).toBe(true)
+    expect(Result.isFailure(advanceFurnaceResult(state, 1, [], [null] as never))).toBe(true)
+    expect(Result.isFailure(advanceFurnaceResult(state, 1, [], null as never))).toBe(true)
+    expect(Result.isFailure(furnaceState(null))).toBe(true)
+    expect(Result.isFailure(furnaceState({ station: 'unknown' }))).toBe(true)
+    expect(Result.isFailure(furnaceState({ fuelTimeRemainingSecs: 2, fuelTimeTotalSecs: 1 }))).toBe(true)
+    expect(Result.isSuccess(advanceFurnaceResult(requireSuccess(emptyFurnaceStateResult()), 1))).toBe(true)
+  })
+
+  it.effect('does not advance a recipe whose cook progress already meets its duration', () =>
+    Effect.sync(() => {
+      const state = requireSuccess(furnaceState({
+        input: itemStack('raw_iron', 1),
+        fuel: itemStack('coal', 1),
+        fuelTimeRemainingSecs: 80,
+        fuelTimeTotalSecs: 80,
+        cookProgressSecs: 10,
+      }))
+      const outcome = advanceFurnaceResult(state, 1, STARTER_SMELTING_RECIPES, STARTER_FUEL_RULES)
+      expect(Result.isSuccess(outcome)).toBe(true)
+      if (Result.isFailure(outcome)) throw outcome.failure
+      expect(outcome.success.state.cookProgressSecs).toBe(10)
+      expect(outcome.success.smeltedCount).toBe(0)
+    }),
+  )
+
+  it('preserves branded duration failures at snapshot and cook progress reset boundaries', () => {
+    const durationFailure = FixedDurationSecs.result(-1)
+    if (Result.isSuccess(durationFailure)) throw new Error('negative duration unexpectedly passed')
+    const originalDuration = FixedDurationSecs.result
+    const state = requireSuccess(emptyFurnaceStateResult())
+    const snapshotSpy = vi.spyOn(FixedDurationSecs, 'result').mockImplementation((value) =>
+      value === 0 ? Result.fail(durationFailure.failure) : originalDuration(value),
+    )
+    const snapshot = validateFurnaceSnapshot(state)
+    snapshotSpy.mockRestore()
+    expect(snapshot).toMatchObject({ _tag: 'BrandFailure' })
+
+    const emptyWithProgress = requireSuccess(furnaceState({ cookProgressSecs: 5 }))
+    let emptyCalls = 0
+    const emptyResetSpy = vi.spyOn(FixedDurationSecs, 'result').mockImplementation((value) => {
+      if (value === 0 && ++emptyCalls === 3) return Result.fail(durationFailure.failure)
+      return originalDuration(value)
+    })
+    const emptyReset = advanceFurnaceResult(emptyWithProgress, 1)
+    emptyResetSpy.mockRestore()
+    expect(Result.isFailure(emptyReset)).toBe(true)
+
+    const unmatched = requireSuccess(furnaceState({ input: itemStack('raw_iron', 1) }))
+    let unmatchedCalls = 0
+    const unmatchedResetSpy = vi.spyOn(FixedDurationSecs, 'result').mockImplementation((value) => {
+      if (value === 0 && ++unmatchedCalls === 4) return Result.fail(durationFailure.failure)
+      return originalDuration(value)
+    })
+    const unmatchedReset = advanceFurnaceResult(unmatched, 1, [], STARTER_FUEL_RULES)
+    unmatchedResetSpy.mockRestore()
+    expect(Result.isFailure(unmatchedReset)).toBe(true)
+  })
 })

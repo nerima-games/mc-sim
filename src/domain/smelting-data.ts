@@ -1,16 +1,28 @@
 import { Result } from 'effect'
+import {
+  VANILLA_FUEL_RULES as kernelVanillaFuelRules,
+  VANILLA_SMELTING_RECIPES as kernelVanillaSmeltingRecipes,
+  type FuelRule as KernelFuelRule,
+  type FuelRuleTable as KernelFuelRuleTable,
+  type SmeltingRecipe as KernelSmeltingRecipe,
+  type SmeltingRecipeTable as KernelSmeltingRecipeTable,
+} from '@nerima-games/mc-kernel'
 import { itemStack } from './inventory.js'
 import type { ItemStackFailure } from './inventory.js'
-import type { FuelRule, SmeltingRecipe } from './smelting.js'
+import type { StarterFuelRule, StarterSmeltingRecipe } from './smelting.js'
+
+export const VANILLA_SMELTING_RECIPES: KernelSmeltingRecipeTable = kernelVanillaSmeltingRecipes
+export const VANILLA_FUEL_RULES: KernelFuelRuleTable = kernelVanillaFuelRules
+export type { KernelFuelRule, KernelSmeltingRecipe }
 
 const starterRecipe = (
   id: string,
-  input: SmeltingRecipe['input'],
+  input: StarterSmeltingRecipe['input'],
   output: ReturnType<typeof itemStack>,
-): Result.Result<SmeltingRecipe, ItemStackFailure> =>
+): Result.Result<StarterSmeltingRecipe, ItemStackFailure> =>
   Result.map(output, (stack) => ({ id, input, output: stack, cookDurationSecs: 10 }))
 
-export const STARTER_SMELTING_RECIPES: Result.Result<ReadonlyArray<SmeltingRecipe>, ItemStackFailure> = Result.all([
+export const STARTER_SMELTING_RECIPES: Result.Result<ReadonlyArray<StarterSmeltingRecipe>, ItemStackFailure> = Result.all([
   starterRecipe('mc-sim:iron-ingot', 'raw_iron', itemStack('iron_ingot', 1)),
   starterRecipe('mc-sim:stone', 'cobblestone', itemStack('stone', 1)),
   starterRecipe('mc-sim:glass', 'sand', itemStack('glass', 1)),
@@ -29,7 +41,7 @@ export const STARTER_SMELTING_RECIPES: Result.Result<ReadonlyArray<SmeltingRecip
   starterRecipe('mc-sim:nether-brick', 'netherrack', itemStack('nether_brick', 1)),
 ])
 
-export const STARTER_FUEL_RULES: ReadonlyArray<FuelRule> = [
+export const STARTER_FUEL_RULES: ReadonlyArray<StarterFuelRule> = [
   { item: 'coal', burnDurationSecs: 80 },
   { item: 'coal_block', burnDurationSecs: 800 },
   { item: 'oak_log', burnDurationSecs: 15 },
