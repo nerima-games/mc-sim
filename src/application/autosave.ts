@@ -90,7 +90,7 @@
  * the service is replaced, so the executable tests provide the guard against
  * accidentally introducing a direct wall-clock read.
  */
-import { Cause, Duration, Effect, Fiber, Schedule } from 'effect'
+import { Cause, Duration, Effect, Fiber, Schedule, Schema } from 'effect'
 
 export type AutoSaveStatus = 'saving' | 'saved' | 'error'
 
@@ -160,6 +160,27 @@ export type InvalidAutoSaveInterval = Readonly<{
   readonly message: 'Auto-save interval must be a finite Duration between 1 and Number.MAX_SAFE_INTEGER milliseconds'
 }>
 
+export const InvalidAutoSaveIntervalSchema: Schema.Codec<InvalidAutoSaveInterval, unknown> = Schema.Struct({
+  _tag: Schema.Literal('InvalidAutoSaveInterval'),
+  message: Schema.Literal(
+    'Auto-save interval must be a finite Duration between 1 and Number.MAX_SAFE_INTEGER milliseconds',
+  ),
+})
+
+export type AutoSaveSchedule = Schedule.Schedule<number>
+
+const isAutoSaveSchedule = (value: unknown): value is AutoSaveSchedule => Schedule.isSchedule(value)
+
+export const AutoSaveScheduleSchema: Schema.Codec<AutoSaveSchedule, unknown> =
+  Schema.declare(isAutoSaveSchedule)
+
+export type AutoSaveDaemon = Fiber.Fiber<number, never>
+
+const isAutoSaveDaemon = (value: unknown): value is AutoSaveDaemon => Fiber.isFiber(value)
+
+export const AutoSaveDaemonSchema: Schema.Codec<AutoSaveDaemon, unknown> =
+  Schema.declare(isAutoSaveDaemon)
+
 const invalidAutoSaveInterval = (): InvalidAutoSaveInterval => ({
   _tag: 'InvalidAutoSaveInterval',
   message: 'Auto-save interval must be a finite Duration between 1 and Number.MAX_SAFE_INTEGER milliseconds',
@@ -167,7 +188,7 @@ const invalidAutoSaveInterval = (): InvalidAutoSaveInterval => ({
 
 const makeAutoSaveSchedule = (
   interval: unknown,
-): Effect.Effect<Schedule.Schedule<number>, InvalidAutoSaveInterval> =>
+): Effect.Effect<AutoSaveSchedule, InvalidAutoSaveInterval> =>
   Effect.suspend(() => {
     try {
       if (!Duration.isDuration(interval)) return Effect.fail(invalidAutoSaveInterval())
@@ -185,13 +206,13 @@ const makeAutoSaveSchedule = (
     }
   })
 
-export function autoSaveSchedule(): Effect.Effect<Schedule.Schedule<number>, InvalidAutoSaveInterval>
+export function autoSaveSchedule(): Effect.Effect<AutoSaveSchedule, InvalidAutoSaveInterval>
 export function autoSaveSchedule(
   interval: Duration.Duration,
-): Effect.Effect<Schedule.Schedule<number>, InvalidAutoSaveInterval>
+): Effect.Effect<AutoSaveSchedule, InvalidAutoSaveInterval>
 export function autoSaveSchedule(
   interval?: Duration.Duration,
-): Effect.Effect<Schedule.Schedule<number>, InvalidAutoSaveInterval> {
+): Effect.Effect<AutoSaveSchedule, InvalidAutoSaveInterval> {
   return makeAutoSaveSchedule(arguments.length === 0 ? AUTO_SAVE_INTERVAL : interval)
 }
 

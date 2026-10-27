@@ -251,6 +251,12 @@ it('autoSaveSchedule returns typed failures for invalid or overflowing Duration 
     fc.property(hostileScalar, (millis) => {
       if (typeof millis !== 'number') return
       const outcome = Effect.runSync(Effect.result(App.autoSaveSchedule(Duration.millis(millis))))
+      assertEffectOutcome(
+        'autoSaveSchedule',
+        () => outcome,
+        App.AutoSaveScheduleSchema,
+        App.InvalidAutoSaveIntervalSchema,
+      )
       if (Number.isFinite(millis) && millis >= 1 && millis <= Number.MAX_SAFE_INTEGER) {
         expect(Result.isSuccess(outcome)).toBe(true)
         if (Result.isSuccess(outcome)) expect(Schedule.isSchedule(outcome.success)).toBe(true)
