@@ -2,9 +2,9 @@ import { describe, expect, it } from '@effect/vitest'
 import { Effect, Result } from 'effect'
 import { makeEquipmentService } from '../src/application/equipment-service'
 import {
-  durability,
+  durability as durabilityResult,
   emptyEquipment,
-  equipmentItem,
+  equipmentItem as equipmentItemResult,
   type EquipmentItem,
   type EquipmentSlot,
 } from '../src/domain/equipment'
@@ -15,6 +15,14 @@ const itemStack = (...args: Parameters<typeof itemStackResult>): ItemStack => {
   if (Result.isFailure(result)) throw result.failure
   return result.success
 }
+
+const requireSuccess = <A, E>(result: Result.Result<A, E>): A => {
+  if (Result.isFailure(result)) throw result.failure
+  return result.success
+}
+
+const durability = (current: number, max: number) => requireSuccess(durabilityResult(current, max))
+const equipmentItem = (...args: Parameters<typeof equipmentItemResult>) => requireSuccess(equipmentItemResult(...args))
 
 const helmet = (current = 165): EquipmentItem =>
   equipmentItem(itemStack('iron_helmet', 1), durability(current, 165))

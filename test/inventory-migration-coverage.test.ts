@@ -12,12 +12,25 @@ import * as Player from '../src/domain/player-storage.js'
 import * as Recipe from '../src/domain/recipe.js'
 import { STARTER_RECIPES } from '../src/domain/recipe-data.js'
 
-const kernelFailures = vi.hoisted(() => ({ itemStackFailureCountdown: 0 }))
+const kernelFailures = vi.hoisted(() => ({ itemStackFailureCountdown: 0, itemDamageFailureCountdown: 0 }))
 
 vi.mock('@nerima-games/mc-kernel', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@nerima-games/mc-kernel')>()
   return {
     ...actual,
+    ItemDamage: Object.assign(
+      (value: number) => actual.ItemDamage(value),
+      actual.ItemDamage,
+      {
+        result: (value: number) => {
+          if (kernelFailures.itemDamageFailureCountdown > 0) {
+            kernelFailures.itemDamageFailureCountdown -= 1
+            if (kernelFailures.itemDamageFailureCountdown === 0) return actual.ItemDamage.result(Number.NaN)
+          }
+          return actual.ItemDamage.result(value)
+        },
+      },
+    ),
     itemStack: (...args: Parameters<typeof actual.itemStack>) => {
       if (kernelFailures.itemStackFailureCountdown > 0) {
         kernelFailures.itemStackFailureCountdown -= 1
@@ -33,6 +46,7 @@ vi.mock('@nerima-games/mc-kernel', async (importOriginal) => {
 
 afterEach(() => {
   kernelFailures.itemStackFailureCountdown = 0
+  kernelFailures.itemDamageFailureCountdown = 0
 })
 
 const requireSuccess = <A, E>(result: Result.Result<A, E>): A => {
@@ -382,6 +396,48 @@ describe('container storage constructor-failure edges', () => {
 })
 
 describe('player storage constructor-failure edges', () => {
+  it.effect('keeps the inventory service snapshot unchanged when durability branding fails', () =>
+    Effect.gen(function* () {
+      const service = yield* makeInventoryService({
+        slots: [stack('bow'), stack('stone'), ...Array.from({ length: 34 }, () => undefined)],
+      })
+      const before = yield* service.storageSnapshot
+      kernelFailures.itemDamageFailureCountdown = 1
+
+      const result = yield* service.consumeAndDamageAt({
+        consume: { item: 'stone', count: 1 },
+        damage: { location: { _tag: 'Inventory', slotIndex: 0 }, expectedItem: 'bow', amount: 1 },
+      })
+      expect(result).toMatchObject({
+        _tag: 'EquipmentFailure', error: { _tag: 'BrandError' },
+      })
+      expect(yield* service.storageSnapshot).toStrictEqual(before)
+    }),
+  )
+
+  it('keeps storage unchanged when damage construction returns a BrandError', () => {
+    const storage = Player.storageFromInventory({
+      slots: [stack('bow'), stack('stone'), ...Array.from({ length: 34 }, () => undefined)],
+    })
+    kernelFailures.itemDamageFailureCountdown = 1
+
+    const damaged = Player.damageAt(storage, { _tag: 'Inventory', slotIndex: 0 }, 1)
+    expect(damaged.result).toMatchObject({
+      _tag: 'EquipmentFailure', error: { _tag: 'BrandError' },
+    })
+    expect(damaged.storage).toBe(storage)
+
+    kernelFailures.itemDamageFailureCountdown = 1
+    const consumed = Player.consumeAndDamageAt(storage, {
+      consume: { item: 'stone', count: 1 },
+      damage: { location: { _tag: 'Inventory', slotIndex: 0 }, expectedItem: 'bow', amount: 1 },
+    })
+    expect(consumed.result).toMatchObject({
+      _tag: 'EquipmentFailure', error: { _tag: 'BrandError' },
+    })
+    expect(consumed.storage).toBe(storage)
+  })
+
   it('returns snapshot failures from the outer player-storage validator', () => {
     const empty = Player.emptyPlayerStorage()
     const result = Player.validatePlayerStorageSnapshot({

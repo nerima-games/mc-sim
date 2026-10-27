@@ -32,6 +32,7 @@ import {
   InventoryServiceLayer,
 } from '../src/application/inventory-service'
 import type { ItemStackFailure } from '../src/domain/inventory'
+import type { PlayerStorageFailure } from '../src/domain/player-storage'
 import type { RecipeFailure } from '../src/domain/recipe'
 import { PlayerService, PlayerServiceLayer, type PlayerServiceInputError } from '../src/application/player-service'
 import { TimeService, TimeServiceLayer } from '../src/application/time-service'
@@ -638,7 +639,7 @@ describe('mc-sim is a real GameModule', () => {
       // (mx-gameplay) and the reader (mx-ui) end up with two instances.
       const module: GameModule<
         InventoryService | PlayerService | TimeService | CropService,
-        ItemStackFailure | PlayerServiceInputError | RecipeFailure,
+        ItemStackFailure | PlayerServiceInputError | RecipeFailure | PlayerStorageFailure,
         never,
         PlayerService | TimeService | CropService
       > = simModule

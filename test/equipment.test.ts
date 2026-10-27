@@ -1,22 +1,27 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect, Result } from 'effect'
+import { EQUIPMENT_CATALOG as KERNEL_EQUIPMENT_CATALOG } from '@nerima-games/mc-kernel/domain/equipment'
 import {
   damageEquipment,
-  durability,
+  durability as durabilityResult,
   durabilityForItem,
   emptyEquipment,
+  EQUIPMENT_CATALOG,
   equip,
   equipmentDefinitionFor,
-  equipmentItem,
+  equipmentItem as equipmentItemResult,
   equippedAt,
   isDamageableItemType,
+  isEquipmentSlot,
   isEquippableItemType,
   itemDurabilityDefinitionFor,
   swapEquipment,
   unequip,
   validateEquipmentSnapshot,
+  type Equipment,
   type EquipmentItem,
 } from '../src/domain/equipment'
+import { buildRuntimeEquipmentCatalog } from '../src/domain/equipment-catalog'
 import { itemStack as itemStackResult, type ItemStack } from '../src/domain/inventory'
 
 const itemStack = (...args: Parameters<typeof itemStackResult>): ItemStack => {
@@ -24,6 +29,14 @@ const itemStack = (...args: Parameters<typeof itemStackResult>): ItemStack => {
   if (Result.isFailure(result)) throw result.failure
   return result.success
 }
+
+const requireSuccess = <A, E>(result: Result.Result<A, E>): A => {
+  if (Result.isFailure(result)) throw result.failure
+  return result.success
+}
+
+const durability = (current: number, max: number) => requireSuccess(durabilityResult(current, max))
+const equipmentItem = (...args: Parameters<typeof equipmentItemResult>) => requireSuccess(equipmentItemResult(...args))
 
 const helmet = (current = 165): EquipmentItem =>
   equipmentItem(itemStack('iron_helmet', 1), durability(current, 165))
@@ -60,6 +73,11 @@ describe('equipment domain', () => {
       expect(equipmentDefinitionFor('stone_sword')).toStrictEqual({ slot: 'offhand' })
       expect(equipmentDefinitionFor('iron_sword')).toStrictEqual({ slot: 'offhand' })
       expect(equipmentDefinitionFor('diamond_sword')).toStrictEqual({ slot: 'offhand' })
+      for (const item of Object.keys(EQUIPMENT_CATALOG)) {
+        const definition = equipmentDefinitionFor(item as keyof typeof EQUIPMENT_CATALOG)
+        expect(KERNEL_EQUIPMENT_CATALOG[item as keyof typeof KERNEL_EQUIPMENT_CATALOG].slots)
+          .toContain(definition?.slot)
+      }
       expect(itemDurabilityDefinitionFor('iron_helmet')).toStrictEqual({ maxDurability: 165 })
       expect(durabilityForItem('shears')).toStrictEqual({ current: 238, max: 238 })
       expect(durabilityForItem('wooden_pickaxe')).toStrictEqual({ current: 59, max: 59 })
@@ -88,18 +106,37 @@ describe('equipment domain', () => {
     }),
   )
 
+  it.effect('filters kernel slots to the runtime subset without choosing a fallback', () =>
+    Effect.sync(() => {
+      const catalog = buildRuntimeEquipmentCatalog(
+        ['helmet', 'tool', 'unsupported'] as const,
+        {
+          helmet: { slots: ['head', 'mainhand'] },
+          tool: { slots: ['mainhand', 'offhand'] },
+          unsupported: { slots: ['mainhand'] },
+        },
+        isEquipmentSlot,
+      )
+
+      expect(catalog).toStrictEqual({
+        helmet: { slot: 'head' },
+        tool: { slot: 'offhand' },
+      })
+    }),
+  )
+
   it.effect('constructs only valid catalog equipment with canonical durability', () =>
     Effect.sync(() => {
       expect(equipmentItem(itemStack('iron_boots', 1))).toStrictEqual({
         ...itemStack('iron_boots', 1), durability: { current: 195, max: 195 },
       })
-      expect(() => equipmentItem(itemStack('stone', 1))).toThrow(RangeError)
+      expect(Result.isFailure(equipmentItemResult(itemStack('stone', 1)))).toBe(true)
       expect(equipmentItem(itemStack('bow', 1))).toStrictEqual({
         ...itemStack('bow', 1), durability: { current: 384, max: 384 },
       })
-      expect(() => equipmentItem({ ...itemStack('stone', 2), item: 'iron_helmet' })).toThrow(RangeError)
-      expect(() => equipmentItem(itemStack('iron_helmet', 1), null)).toThrow(RangeError)
-      expect(() => equipmentItem(itemStack('iron_helmet', 1), durability(64, 64))).toThrow(RangeError)
+      expect(Result.isFailure(equipmentItemResult({ ...itemStack('stone', 2), item: 'iron_helmet' }))).toBe(true)
+      expect(Result.isFailure(equipmentItemResult(itemStack('iron_helmet', 1), null))).toBe(true)
+      expect(Result.isFailure(equipmentItemResult(itemStack('iron_helmet', 1), durability(64, 64)))).toBe(true)
     }),
   )
 
@@ -232,9 +269,29 @@ describe('equipment domain', () => {
 
   it.effect('rejects zero, excessive, and non-integral durability', () =>
     Effect.sync(() => {
-      expect(() => durability(0, 1)).toThrow(RangeError)
-      expect(() => durability(2, 1)).toThrow(RangeError)
-      expect(() => durability(0.5, 1)).toThrow(RangeError)
+      expect(Result.isFailure(durabilityResult(0, 1))).toBe(true)
+      expect(Result.isFailure(durabilityResult(2, 1))).toBe(true)
+      expect(Result.isFailure(durabilityResult(0.5, 1))).toBe(true)
+      expect(durabilityResult(1, Number.NaN)).toMatchObject({
+        _tag: 'Failure', failure: { _tag: 'BrandError' },
+      })
+    }),
+  )
+
+  it.effect('preserves a brand failure when equipment durability is already malformed', () =>
+    Effect.sync(() => {
+      const corrupt = {
+        slots: {
+          ...emptyEquipment().slots,
+          offhand: { ...flint(), durability: { current: Number.NaN, max: 64 } },
+        },
+      } as unknown as Equipment
+      const outcome = damageEquipment(corrupt, 'offhand', 1)
+
+      expect(outcome).toMatchObject({
+        equipment: corrupt,
+        result: { _tag: 'EquipmentFailure', error: { _tag: 'BrandError' } },
+      })
     }),
   )
 

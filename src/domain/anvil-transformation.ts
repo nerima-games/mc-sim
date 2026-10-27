@@ -8,11 +8,12 @@ import {
   type CompiledAnvilEnchantmentRule,
   type CompiledAnvilRuleSet,
 } from './anvil-validation.js'
-import { AnvilMaterialCost } from './anvil-primitives.js'
+import { anvilMaterialCostFromInvariant } from './anvil-primitives.js'
 import type {
   AnvilDurability,
   AnvilEnchantment,
   AnvilEnchantmentId,
+  AnvilMaterialCost,
   AnvilPlan,
   CanonicalAnvilItemPayload,
 } from './anvil.js'
@@ -39,7 +40,7 @@ export const initialTransformationOf = (left: CanonicalAnvilItemPayload): Transf
   durability: left.durability === null ? null : { ...left.durability },
   enchantments: [...left.enchantments],
   operationCost: 0,
-  materialCost: AnvilMaterialCost(0),
+  materialCost: anvilMaterialCostFromInvariant(0),
   rightContributed: false,
 })
 
@@ -69,7 +70,7 @@ const repairWithSameItem = (
       ...transformation,
       durability: { current: repaired, max: transformation.durability.max },
       operationCost: safeAdd(transformation.operationCost, 2),
-      materialCost: AnvilMaterialCost(1),
+      materialCost: anvilMaterialCostFromInvariant(1),
       rightContributed: true,
     },
   }
@@ -110,7 +111,7 @@ const repairWithMaterial = (
         max: transformation.durability.max,
       },
       operationCost: safeAdd(transformation.operationCost, units),
-      materialCost: AnvilMaterialCost(units),
+      materialCost: anvilMaterialCostFromInvariant(units),
       rightContributed: true,
     },
   }
@@ -177,7 +178,7 @@ const mergeOneEnchantment = (
         transformation.operationCost,
         mergedLevel * definition.costPerLevel,
       ),
-      materialCost: AnvilMaterialCost(Math.max(transformation.materialCost, 1)),
+      materialCost: anvilMaterialCostFromInvariant(Math.max(transformation.materialCost, 1)),
       rightContributed: true,
     },
   }
