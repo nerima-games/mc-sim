@@ -188,6 +188,16 @@ describe('spawnEntity / despawnEntity', () => {
     }),
   )
 
+  it.effect('skips a serial already present when a restored counter lags behind the roster', () =>
+    Effect.sync(() => {
+      const first = spawnEntity(emptyRoster<Fuse>(), creeper(0))
+      const staleCounter = { ...first.roster, nextSerial: EntitySerial(0) }
+      const second = spawnEntity(staleCounter, creeper(1))
+
+      expect(second.entity.id).toBe('e:1')
+    }),
+  )
+
   it.effect('is deterministic — the same spawn sequence produces the same ids', () =>
     Effect.sync(() => {
       // plan.md §5.1-3 makes determinism the precondition for using the
@@ -231,7 +241,11 @@ describe('spawnEntity / despawnEntity', () => {
     Effect.sync(() => {
       const lastId = mintEntityId(EntitySerial(Number.MAX_SAFE_INTEGER))
       const outcome = normaliseRosterResult(savedRoster({
-        entities: [{ ...creeper(0), id: lastId }, { ...creeper(1), id: lastId }],
+        entities: [
+          { ...creeper(0), id: lastId },
+          { ...creeper(1), id: lastId },
+          { ...creeper(2), id: lastId },
+        ],
         nextSerial: Number.MAX_SAFE_INTEGER,
       }))
 

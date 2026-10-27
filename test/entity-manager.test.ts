@@ -47,6 +47,20 @@ const savedRoster = (value: unknown): EntityRoster<Fuse> => value as EntityRoste
 const idle = { transition: UNCHANGED, emit: undefined }
 
 describe('EntityManager — the roster', () => {
+  it.effect('fails construction when an initial roster cannot reidentify a duplicate serial', () =>
+    Effect.gen(function* () {
+      const lastId = mintEntityId(EntitySerial(Number.MAX_SAFE_INTEGER))
+      const roster = savedRoster({
+        entities: [{ ...creeper(1), id: lastId }, { ...creeper(2), id: lastId }],
+        nextSerial: Number.MAX_SAFE_INTEGER,
+      })
+
+      const result = yield* Effect.result(makeEntityManager<Fuse>(roster))
+      expect(result._tag).toBe('Failure')
+      if (result._tag === 'Failure') expect(result.failure).toStrictEqual({ _tag: 'EntitySerialExhausted' })
+    }),
+  )
+
   it.effect('fails at serial exhaustion without changing the roster', () =>
     Effect.gen(function* () {
       const roster = savedRoster({ entities: [], nextSerial: Number.MAX_SAFE_INTEGER })
