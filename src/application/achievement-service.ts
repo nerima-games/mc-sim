@@ -186,6 +186,34 @@ const AchievementUnlockRequestSchema = Schema.Struct({
   tick: SimulationTickSchema,
 })
 
+
+const AchievementUnlockEventSchema = Schema.Struct({
+  _tag: Schema.Literal('AchievementUnlocked'),
+  tick: SimulationTickSchema,
+  player: EntityIdSchema,
+  achievement: AchievementIdSchema,
+})
+
+const PendingAchievementUnlockSchema = Schema.Struct({
+  _tag: Schema.Literal('PendingAchievementUnlock'),
+  world: WorldIdSchema,
+  expectedRevision: WorldRevisionSchema,
+  candidate: Schema.Struct({
+    ownerId: ReplicatedOwnerIdSchema,
+    state: AchievementStatisticsSchema,
+  }),
+  event: AchievementUnlockEventSchema,
+})
+
+const ReplicatedWorldDeltaEnvelopeSchema = Schema.Struct({
+  world: WorldIdSchema,
+  revision: WorldRevisionSchema,
+  changes: Schema.Array(Schema.Struct({
+    owner: ReplicatedOwnerIdSchema,
+    state: Schema.Unknown,
+  })),
+})
+
 export const makeAchievementService = (): Effect.Effect<
   AchievementServiceApi,
   never,
@@ -230,56 +258,59 @@ export const makeAchievementService = (): Effect.Effect<
         }
       })
 
-    const finalizeCommittedUnlock: AchievementServiceApi['finalizeCommittedUnlock'] = (
-      pending,
-      delta,
-    ) => {
-      const reason: AchievementCommitMismatchReason | undefined =
-        delta.world !== pending.world
-          ? 'world'
-          : delta.revision !== pending.expectedRevision + 1
-            ? 'revision'
-            : delta.changes.filter((change) => change.owner === pending.candidate.ownerId).length !== 1 ||
-                !delta.changes.some(
-                  (change) =>
-                    change.owner === pending.candidate.ownerId &&
-                    matchesCandidate(change.state, pending.candidate.state),
-                )
-              ? 'owner-state'
-              : undefined
+    const finalizeCommittedUnlock: AchievementServiceApi['finalizeCommittedUnlock'] = (pending, delta) =>
+      Effect.suspend(() =>
+        Effect.gen(function* () {
+          const validPending = yield* Schema.decodeUnknownEffect(PendingAchievementUnlockSchema)(pending)
+          const validDelta = yield* Schema.decodeUnknownEffect(ReplicatedWorldDeltaEnvelopeSchema)(delta)
+          const expectedRevision = yield* Schema.decodeUnknownEffect(WorldRevisionSchema)(
+            validPending.expectedRevision + 1,
+          )
+          const ownerChanges = validDelta.changes.filter(
+            (change) => change.owner === validPending.candidate.ownerId,
+          )
+          const reason: AchievementCommitMismatchReason | undefined =
+            validDelta.world !== validPending.world
+              ? 'world'
+              : validDelta.revision !== expectedRevision
+                ? 'revision'
+                : validPending.candidate.ownerId !== ACHIEVEMENT_REPLICATED_OWNER_ID ||
+                    ownerChanges.length !== 1 ||
+                    !ownerChanges.some((change) =>
+                      matchesCandidate(change.state, validPending.candidate.state),
+                    )
+                  ? 'owner-state'
+                  : undefined
 
-      if (reason !== undefined) {
-        return Effect.fail(
-          new AchievementCommitMismatch({
-            expectedWorld: pending.world,
-            actualWorld: delta.world,
-            expectedRevision: pending.expectedRevision + 1,
-            actualRevision: delta.revision,
-            ownerId: ACHIEVEMENT_REPLICATED_OWNER_ID,
-            reason,
-          }),
-        )
-      }
+          if (reason !== undefined) {
+            return yield* Effect.fail(
+              new AchievementCommitMismatch({
+                expectedWorld: validPending.world,
+                actualWorld: validDelta.world,
+                expectedRevision,
+                actualRevision: validDelta.revision,
+                ownerId: ACHIEVEMENT_REPLICATED_OWNER_ID,
+                reason,
+              }),
+            )
+          }
 
-      return Effect.flatMap(
-        Ref.modify(finalizedRevisions, (current) => {
-          if (current.has(delta.revision)) return [false, current]
-          const next = new Set(current)
-          next.add(delta.revision)
-          return [true, next]
+          const shouldFinalize = yield* Ref.modify(finalizedRevisions, (current) => {
+            if (current.has(validDelta.revision)) return [false, current]
+            const next = new Set(current)
+            next.add(validDelta.revision)
+            return [true, next]
+          })
+          if (shouldFinalize) {
+            yield* Effect.uninterruptible(
+              Effect.andThen(
+                statistics.restore(validPending.candidate.state),
+                eventBus.publish(validPending.event),
+              ),
+            )
+          }
         }),
-        (shouldFinalize) =>
-          shouldFinalize
-            ? Effect.uninterruptible(
-                Effect.andThen(
-                  statistics.restore(pending.candidate.state),
-                  eventBus.publish(pending.event),
-                ),
-              )
-            : Effect.succeed(undefined),
       )
-    }
-
     const unlock: AchievementServiceApi['unlock'] = (request) =>
       Effect.flatMap(stageUnlock(request), (staged) => {
         if (staged._tag === 'AchievementAlreadyUnlocked') return Effect.succeed(undefined)

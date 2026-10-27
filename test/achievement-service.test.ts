@@ -348,4 +348,69 @@ describe('AchievementService', () => {
       expect(events.map((event) => event._tag)).toStrictEqual(['AchievementUnlocked', 'LevelUp'])
     }).pipe(Effect.provide(achievementLayer())),
   )
+
+  it.effect('malformed finalization envelopes fail before restoring or publishing', () =>
+    Effect.gen(function* () {
+      const service = yield* AchievementService
+      const statistics = yield* StatisticsService
+      const coordinator = yield* WorldCommitCoordinator
+      const bus = yield* DomainEventBus
+      const collectOne = yield* Effect.forkChild(bus.events.pipe(Stream.take(1), Stream.runCollect))
+      yield* Effect.yieldNow
+
+      const staged = yield* service.stageUnlock(request)
+      if (staged._tag === 'AchievementAlreadyUnlocked') {
+        expect(staged._tag).toBe('PendingAchievementUnlock')
+        return
+      }
+      const delta = yield* coordinator.commit({
+        expectedRevision: staged.expectedRevision,
+        expectedDimensions: [],
+        changes: [staged.candidate],
+      })
+      const invalidArguments: ReadonlyArray<ReadonlyArray<unknown>> = [
+        [null, delta],
+        [{ ...staged, expectedRevision: -1 }, delta],
+        [{ ...staged, expectedRevision: Number.MAX_SAFE_INTEGER }, delta],
+        [staged, { ...delta, revision: Number.NaN }],
+        [staged, { ...delta, changes: null }],
+        [
+          staged,
+          {
+            ...delta,
+            changes: [{
+              owner: ACHIEVEMENT_REPLICATED_OWNER_ID,
+              state: { counters: null, unlocked: [] },
+            }],
+          },
+        ],
+        [{ ...staged, candidate: { ...staged.candidate, ownerId: 'another-owner' } }, delta],
+      ]
+
+      for (const args of invalidArguments) {
+        const invoke = () => Reflect.apply(service.finalizeCommittedUnlock, undefined, args)
+        expect(invoke).not.toThrow()
+        const outcome = yield* Effect.result(invoke() as Effect.Effect<void, unknown>)
+        expect(outcome._tag).toBe('Failure')
+        if (outcome._tag === 'Failure') {
+          expect(typeof (outcome.failure as { _tag?: unknown })._tag).toBe('string')
+        }
+      }
+
+      const exhaustedRevision = yield* Effect.result(
+        Reflect.apply(service.finalizeCommittedUnlock, undefined, [
+          { ...staged, expectedRevision: Number.MAX_SAFE_INTEGER },
+          delta,
+        ]) as Effect.Effect<void, unknown>,
+      )
+      expect(exhaustedRevision._tag).toBe('Failure')
+      if (exhaustedRevision._tag === 'Failure') {
+        expect((exhaustedRevision.failure as { _tag?: unknown })._tag).toBe('SchemaError')
+      }
+
+      expect(yield* statistics.snapshot).toStrictEqual({ counters: {}, unlocked: [] })
+      yield* bus.publish(probeEvent)
+      expect(yield* Fiber.join(collectOne)).toStrictEqual([probeEvent])
+    }).pipe(Effect.provide(achievementLayer())),
+  )
 })
