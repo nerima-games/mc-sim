@@ -20,6 +20,22 @@ export const EMPTY_STATISTICS: Statistics = { counters: {}, unlocked: [] }
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
+const isValidStatisticsRecord = (statistics: unknown): boolean => {
+  if (!isRecord(statistics) || !isRecord(statistics['counters']) || !Array.isArray(statistics['unlocked'])) {
+    return false
+  }
+
+  return (
+    Object.values(statistics['counters']).every(
+      (value) => typeof value === 'number' && Number.isFinite(value) && value > 0,
+    ) &&
+    statistics['unlocked'].every((value, index, all) => {
+      const decoded = Schema.decodeUnknownResult(AchievementIdSchema)(value)
+      return decoded._tag === 'Success' && all.indexOf(decoded.success) === index
+    })
+  )
+}
+
 /**
  * Statistics and achievements: the RECORD, and nothing that decides what to
  * record.
@@ -94,7 +110,7 @@ export const record = (
   key: StatisticKey,
   amount: unknown = 1,
 ): Result.Result<Statistics, StatisticsRecordFailure> => {
-  if (!isValidStatistics(statistics)) {
+  if (!isValidStatisticsRecord(statistics)) {
     return Result.fail({ _tag: 'StatisticsRecordFailure', path: 'statistics', reason: 'invalid statistics record' })
   }
   if (typeof key !== 'string') {
@@ -185,18 +201,4 @@ export const normaliseStatistics = (statistics: unknown): Statistics => {
  * needs to distinguish a save it must repair from one it may load verbatim, and
  * `restore` has no error channel to tell it with.
  */
-export const isValidStatistics = (statistics: unknown): boolean => {
-  if (!isRecord(statistics) || !isRecord(statistics['counters']) || !Array.isArray(statistics['unlocked'])) {
-    return false
-  }
-
-  return (
-    Object.values(statistics['counters']).every(
-      (value) => typeof value === 'number' && Number.isFinite(value) && value > 0,
-    ) &&
-    statistics['unlocked'].every((value, index, all) => {
-      const id = achievementIdOf(value)
-      return id !== undefined && all.indexOf(id) === index
-    })
-  )
-}
+export const isValidStatistics: (statistics: unknown) => boolean = isValidStatisticsRecord
