@@ -85,7 +85,6 @@ export const PlayerStorageSnapshotSchema: Schema.Codec<PlayerStorage.PlayerStora
       : durability === null
   })))
 
-const SafeIntegerSchema = Schema.Int.check(Schema.makeFilter(Number.isSafeInteger))
 const PositiveSafeIntegerSchema = Schema.Int.check(Schema.makeFilter((value) => Number.isSafeInteger(value) && value > 0))
 
 export const CreateContainerResultSchema: AnySchema = Schema.Union([
@@ -107,7 +106,7 @@ export const ContainerTransferResultSchema: AnySchema = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal('InvalidContainerSlot') }),
   Schema.Struct({ _tag: Schema.Literal('InvalidCount') }),
   Schema.Struct({ _tag: Schema.Literal('EmptySource') }),
-  Schema.Struct({ _tag: Schema.Literal('InsufficientSource'), available: SafeIntegerSchema }),
+  Schema.Struct({ _tag: Schema.Literal('InsufficientSource'), available: PositiveSafeIntegerSchema }),
   Schema.Struct({ _tag: Schema.Literal('DestinationMismatch') }),
   Schema.Struct({ _tag: Schema.Literal('DestinationFull') }),
   Schema.Struct({ _tag: Schema.Literal('InvalidDirection') }),
@@ -126,7 +125,7 @@ export const ContainerExtractResultSchema: AnySchema = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal('InvalidContainerSlot') }),
   Schema.Struct({ _tag: Schema.Literal('InvalidCount') }),
   Schema.Struct({ _tag: Schema.Literal('EmptySource') }),
-  Schema.Struct({ _tag: Schema.Literal('InsufficientSource'), available: SafeIntegerSchema }),
+  Schema.Struct({ _tag: Schema.Literal('InsufficientSource'), available: PositiveSafeIntegerSchema }),
   Schema.Struct({ _tag: Schema.Literal('InvalidSourceStack') }),
   Schema.Struct({ _tag: Schema.Literal('InvalidSourceDurability') }),
   Schema.Struct({ _tag: Schema.Literal('InvalidRequest') }),
@@ -146,7 +145,7 @@ export const ContainerMoveResultSchema: AnySchema = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal('InvalidDestinationSlot') }),
   Schema.Struct({ _tag: Schema.Literal('InvalidCount') }),
   Schema.Struct({ _tag: Schema.Literal('EmptySource') }),
-  Schema.Struct({ _tag: Schema.Literal('InsufficientSource'), available: SafeIntegerSchema }),
+  Schema.Struct({ _tag: Schema.Literal('InsufficientSource'), available: PositiveSafeIntegerSchema }),
   Schema.Struct({ _tag: Schema.Literal('DestinationMismatch') }),
   Schema.Struct({ _tag: Schema.Literal('DestinationFull') }),
   Schema.Struct({ _tag: Schema.Literal('InvalidSourceStack') }),

@@ -169,7 +169,13 @@ it('public result schemas validate branded recipes, stored stacks, and container
   })).toBe(false)
   expect(Schema.is(App.ContainerTransferResultSchema)({
     _tag: 'InsufficientSource', available: -1,
+  })).toBe(false)
+  expect(Schema.is(App.ContainerTransferResultSchema)({
+    _tag: 'InsufficientSource', available: 1,
   })).toBe(true)
+  expect(Schema.is(App.ContainerTransferResultSchema)({
+    _tag: 'InsufficientSource', available: Number.MAX_SAFE_INTEGER + 1,
+  })).toBe(false)
 
   const helmet = {
     ...Result.getOrThrow(App.itemStack('iron_helmet', 1)),
