@@ -1,5 +1,5 @@
 import type { ItemStack } from './inventory.js'
-import { Brand, Result } from 'effect'
+import { Brand, Result, Schema } from 'effect'
 import type {
   DamageableItemType as KernelDamageableItemType,
   EquippableItemType as KernelEquippableItemType,
@@ -9,7 +9,15 @@ import {
   EQUIPMENT_CATALOG as KERNEL_EQUIPMENT_CATALOG,
   ITEM_DURABILITY_CATALOG as KERNEL_ITEM_DURABILITY_CATALOG,
 } from '@nerima-games/mc-kernel/domain/equipment'
-import { ItemDamage, MaxDamage, isItemStack, type ItemType } from '@nerima-games/mc-kernel'
+import {
+  ITEM_TYPES,
+  MAX_STACK_COUNT,
+  ItemDamage,
+  MaxDamage,
+  isItemComponents,
+  isItemStack,
+  type ItemType,
+} from '@nerima-games/mc-kernel'
 import { buildRuntimeEquipmentCatalog } from './equipment-catalog.js'
 
 export const EQUIPMENT_SLOTS = ['head', 'chest', 'legs', 'feet', 'offhand'] as const
@@ -128,6 +136,43 @@ export type DamageEquipmentResult =
       readonly item: EquipmentItem
       readonly applied: number
     }
+
+const PositiveSafeIntegerSchema = Schema.Int.check(
+  Schema.makeFilter((value) => Number.isSafeInteger(value) && value > 0),
+)
+
+export const DurabilitySchema: Schema.Codec<Durability> = Schema.Struct({
+  current: PositiveSafeIntegerSchema,
+  max: PositiveSafeIntegerSchema,
+}).check(Schema.makeFilter(({ current, max }) => current <= max))
+
+const StackCountSchema = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: MAX_STACK_COUNT }))
+  .pipe(Schema.brand('StackCount')) as Schema.Codec<ItemStack['count'], number>
+
+const ItemComponentsSchema: Schema.Schema<ItemStack['components']> = Schema.declare(isItemComponents)
+
+export const EquipmentItemSchema: Schema.Schema<EquipmentItem> = Schema.Struct({
+  item: Schema.Literals(ITEM_TYPES),
+  count: StackCountSchema,
+  components: ItemComponentsSchema,
+  durability: Schema.NullOr(DurabilitySchema),
+}).check(Schema.makeFilter(({ item, count, components }) => isItemStack({ item, count, components })))
+
+const equipmentItemForSlotSchema = (slot: EquipmentSlot): Schema.Schema<EquipmentItem> =>
+  EquipmentItemSchema.check(Schema.makeFilter((item) =>
+    item.durability !== null && isEquipmentItemForSlot(slot, item)))
+
+export const EquipmentSlotsSchema: Schema.Schema<EquipmentSlots> = Schema.Struct({
+  head: Schema.NullOr(equipmentItemForSlotSchema('head')),
+  chest: Schema.NullOr(equipmentItemForSlotSchema('chest')),
+  legs: Schema.NullOr(equipmentItemForSlotSchema('legs')),
+  feet: Schema.NullOr(equipmentItemForSlotSchema('feet')),
+  offhand: Schema.NullOr(equipmentItemForSlotSchema('offhand')),
+})
+
+export const EquipmentSchema: Schema.Schema<Equipment> = Schema.Struct({
+  slots: EquipmentSlotsSchema,
+})
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
