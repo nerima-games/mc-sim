@@ -1,8 +1,16 @@
 import fc from 'fast-check'
-import { Effect, Layer, Ref, Result, Schema } from 'effect'
+import { Deferred, Effect, Layer, Ref, Result, Schema } from 'effect'
 import { expect, it } from 'vitest'
 import { InMemoryStorageLayer } from '@nerima-games/mc-save'
-import { DIMENSIONS, DimensionRevisionSchema, SimulationTick, WorldIdSchema } from '@nerima-games/mc-kernel'
+import {
+  ChunkAxis,
+  DIMENSIONS,
+  DimensionRevisionSchema,
+  SimulationTick,
+  WorldIdSchema,
+  chunkCoord,
+} from '@nerima-games/mc-kernel'
+import type { Chunk } from '@nerima-games/mc-worldgen'
 import * as PublicApplication from '../src/index.js'
 import * as Camera from '../src/domain/camera-pose.js'
 import { EntityKind } from '../src/domain/entity.js'
@@ -17,7 +25,12 @@ import {
   makeWorldCommitCoordinator,
   WorldCommitCoordinatorErrorSchema,
 } from '../src/application/world-commit-coordinator.js'
-import { makeSaveCoordinator } from '../src/application/save-coordinator.js'
+import {
+  makeSaveCoordinator,
+  type DimensionChunk,
+  type SaveCoordinatorApi,
+  type SaveCoordinatorPublication,
+} from '../src/application/save-coordinator.js'
 import { loadSimulation, saveSimulation, simulationSaveKey } from '../src/application/save-service.js'
 import { migrateSimulationSaveV3 } from '../src/application/save-v3-migration.js'
 import { makePlayerService } from '../src/application/player-service.js'
@@ -318,21 +331,104 @@ it('entity manager spawn and restore repair hostile coordinates, health, serials
   )
 })
 
-it('save coordinator publishes a stable finite snapshot and tracks retained chunk counts', async () => {
-  const coordinator = await Effect.runPromise(makeSaveCoordinator({
+const saveCoordinatorChunk = (cx: number, cz: number): DimensionChunk => {
+  const chunk: Chunk = {
+    coord: chunkCoord(Result.getOrThrow(ChunkAxis.result(cx)), Result.getOrThrow(ChunkAxis.result(cz))),
+    blocks: new Uint16Array(1),
+    biomes: [],
+  }
+  return { dimension: 'overworld', chunk }
+}
+
+it('save coordinator decodes requestSave outcomes and publishes the known, retained, resident snapshot', async () => {
+  type State = { readonly tick: number }
+  const publications = await Effect.runPromise(Ref.make<ReadonlyArray<SaveCoordinatorPublication<State>>>([]))
+  const coordinator = await Effect.runPromise(makeSaveCoordinator<State, never>({
+    initialKnownChunks: [saveCoordinatorChunk(0, 0)],
+    snapshotResidents: Effect.succeed([saveCoordinatorChunk(1, 0)]),
+    currentGeneration: Effect.succeed(7),
+    snapshotState: Effect.succeed({ tick: 42 }),
+    publish: (publication) => Ref.update(publications, (all) => [...all, publication]),
+  }))
+  await Effect.runPromise(coordinator.retainChunk(saveCoordinatorChunk(2, 0)))
+
+  const successSchema = PublicApplication.SaveCoordinatorRequestSaveSuccessSchema
+  const errorSchema = PublicApplication.saveCoordinatorRequestSaveErrorSchema(Schema.Never)
+  const outcome = await assertEffectResult(
+    'SaveCoordinator.requestSave stable publication', () => coordinator.requestSave, [], successSchema, errorSchema,
+  )
+  expect(Result.isSuccess(outcome)).toBe(true)
+  if (Result.isSuccess(outcome)) {
+    expect(Schema.decodeUnknownSync(successSchema)(outcome.success)).toBeUndefined()
+  }
+
+  const [publication] = await Effect.runPromise(Ref.get(publications))
+  expect(publication?.state).toStrictEqual({ tick: 42 })
+  expect(publication?.chunks.map(({ dimension, chunk }) =>
+    `${dimension}:${String(chunk.coord.cx)},${String(chunk.coord.cz)}`,
+  ).sort()).toStrictEqual(['overworld:0,0', 'overworld:1,0', 'overworld:2,0'])
+  expect(await Effect.runPromise(coordinator.knownChunkCount)).toBe(3)
+  expect(await Effect.runPromise(coordinator.retainedChunkCount)).toBe(0)
+})
+
+it('save coordinator decodes caller publish errors through the declared error union', async () => {
+  const coordinator = await Effect.runPromise(makeSaveCoordinator<{ readonly tick: number }, string>({
     initialKnownChunks: [],
     snapshotResidents: Effect.succeed([]),
-    currentGeneration: Effect.succeed(0),
-    snapshotState: Effect.succeed({ tick: 0 }),
-    publish: () => Effect.void,
+    currentGeneration: Effect.succeed(1),
+    snapshotState: Effect.succeed({ tick: 1 }),
+    publish: () => Effect.fail('storage quota exceeded'),
   }))
+  const successSchema = PublicApplication.SaveCoordinatorRequestSaveSuccessSchema
+  const errorSchema = PublicApplication.saveCoordinatorRequestSaveErrorSchema(Schema.String)
+  const outcome = await assertEffectResult(
+    'SaveCoordinator.requestSave caller publication failure', () => coordinator.requestSave, [], successSchema,
+    errorSchema,
+  )
+  expect(Result.isFailure(outcome)).toBe(true)
+  if (Result.isFailure(outcome)) {
+    expect(Schema.decodeUnknownSync(errorSchema)(outcome.failure)).toBe('storage quota exceeded')
+  }
+})
 
-  await Effect.runPromise(Effect.result(coordinator.requestSave))
-  const counts = await Effect.runPromise(Effect.all([
-    coordinator.knownChunkCount,
-    coordinator.retainedChunkCount,
-  ]))
-  expect(counts).toStrictEqual([0, 0])
+it('save coordinator decodes the typed failure after every snapshot generation remains unstable', async () => {
+  type State = { readonly tick: number }
+  const coordinatorDeferred = await Effect.runPromise(Deferred.make<SaveCoordinatorApi<never>>())
+  const retainViaCoordinator = (chunk: DimensionChunk): Effect.Effect<void> =>
+    Effect.flatMap(Deferred.await(coordinatorDeferred), (api) => api.retainChunk(chunk))
+  let attempts = 0
+  const snapshotResidents = Effect.suspend((): Effect.Effect<ReadonlyArray<DimensionChunk>> => {
+    attempts += 1
+    return Effect.andThen(
+      retainViaCoordinator(saveCoordinatorChunk(attempts, 0)),
+      Effect.succeed<ReadonlyArray<DimensionChunk>>([]),
+    )
+  })
+  const publicationCount = await Effect.runPromise(Ref.make(0))
+  const coordinator = await Effect.runPromise(makeSaveCoordinator<State, never>({
+    initialKnownChunks: [],
+    snapshotResidents,
+    currentGeneration: Effect.succeed(1),
+    snapshotState: Effect.succeed({ tick: 1 }),
+    publish: () => Ref.update(publicationCount, (count) => count + 1),
+  }))
+  await Effect.runPromise(Deferred.succeed(coordinatorDeferred, coordinator))
+
+  const successSchema = PublicApplication.SaveCoordinatorRequestSaveSuccessSchema
+  const errorSchema = PublicApplication.saveCoordinatorRequestSaveErrorSchema(Schema.Never)
+  const outcome = await assertEffectResult(
+    'SaveCoordinator.requestSave unstable generation', () => coordinator.requestSave, [], successSchema, errorSchema,
+  )
+  expect(Result.isFailure(outcome)).toBe(true)
+  if (Result.isFailure(outcome)) {
+    const error = Schema.decodeUnknownSync(errorSchema)(outcome.failure)
+    expect(error).toBeInstanceOf(PublicApplication.SaveSnapshotConsistencyError)
+    expect(error).toMatchObject({ _tag: 'SaveSnapshotConsistencyError', attempts: 8 })
+  }
+  expect(attempts).toBe(8)
+  expect(await Effect.runPromise(Ref.get(publicationCount))).toBe(0)
+  expect(await Effect.runPromise(coordinator.knownChunkCount)).toBe(0)
+  expect(await Effect.runPromise(coordinator.retainedChunkCount)).toBe(8)
 })
 
 it('simulation save boundary returns typed failures for hostile payloads and safe options for arbitrary keys', async () => {

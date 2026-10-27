@@ -57,6 +57,16 @@ const SaveSnapshotConsistencyErrorBase: new (args: {
 
 export class SaveSnapshotConsistencyError extends SaveSnapshotConsistencyErrorBase {}
 
+export const SaveCoordinatorRequestSaveSuccessSchema: Schema.Codec<void, undefined> = Schema.Undefined
+
+export const SaveSnapshotConsistencyErrorSchema: Schema.Codec<SaveSnapshotConsistencyError, unknown> =
+  Schema.instanceOf(SaveSnapshotConsistencyError)
+
+export const saveCoordinatorRequestSaveErrorSchema = <E, Encoded, DecodingServices, EncodingServices>(
+  publishErrorSchema: Schema.Codec<E, Encoded, DecodingServices, EncodingServices>,
+): Schema.Codec<E | SaveSnapshotConsistencyError, unknown, DecodingServices, EncodingServices> =>
+  Schema.Union([publishErrorSchema, SaveSnapshotConsistencyErrorSchema])
+
 export type SaveCoordinatorOptions<State, E> = {
   readonly initialKnownChunks: Iterable<DimensionChunk>
   /** Chunks the host currently has resident (loaded), read fresh on every snapshot attempt. */
