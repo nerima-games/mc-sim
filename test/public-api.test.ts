@@ -201,6 +201,8 @@ type IntegratedPublicTypeSurface = readonly [
   PublicApiTypes.CoreTickCoordinator,
   PublicApiTypes.CoreTickOptions,
   PublicApiTypes.CoreTickInputError,
+  PublicApiTypes.CoreTickPostCommitFailure<never>,
+  PublicApiTypes.CoreTickTerminated<never>,
   PublicApiTypes.CoreTickError<never>,
   PublicApiTypes.CoreTickApi,
   PublicApiTypes.DamageAmount,
@@ -221,12 +223,14 @@ type IntegratedPublicTypeSurface = readonly [
   PublicApiTypes.HungerPoints,
   PublicApiTypes.SaturationModifier,
   PublicApiTypes.TotalExperience,
+  PublicApiTypes.StatisticsRecordFailure,
   PublicApiTypes.WitherChargeRemainingSecs,
   PublicApiTypes.WitherDamageAmount,
   PublicApiTypes.WitherExplosionPower,
   PublicApiTypes.WitherHealthPoints,
   PublicApiTypes.WitherProjectileSpeed,
   PublicApiTypes.WitherSummonMaterial,
+  PublicTestingTypes.HeadlessHarnessStages,
   PublicTestingTypes.HeadlessHarnessSessionFactoryApi,
   PublicTestingTypes.HeadlessSessionRestoreError,
 ]
@@ -398,7 +402,7 @@ it('publishes the C1-C5 service and schema entry points', () => {
   expect(WorldCommitCoordinator).toBeDefined()
   expect(WorldCommitCoordinatorLayer).toBeDefined()
   expect(HeadlessHarness).toBeDefined()
-  expect(HeadlessHarnessTestLayer).toBeDefined()
+  expect(typeof HeadlessHarnessTestLayer).toBe('function')
   expect(HeadlessHarnessSessionFactory).toBeDefined()
   expect(HeadlessHarnessSessionFactoryLayer).toBeDefined()
   expect(PublicTesting).toHaveProperty('HeadlessHarnessSessionFactoryLayer')
