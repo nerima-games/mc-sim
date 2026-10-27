@@ -1,10 +1,21 @@
-export const fixedStepParityCases = [
+export const fixedStepParityCases: ReadonlyArray<{
+  readonly delta: number
+  readonly tickDuration?: number
+  readonly ticks: number
+  readonly tick: number
+  readonly remainder: number
+  readonly fraction: number
+  readonly overloaded: boolean
+}> = [
   { delta: 0.05, ticks: 1, tick: 1, remainder: 0, fraction: 0, overloaded: false },
   { delta: 0.1, ticks: 2, tick: 2, remainder: 0, fraction: 0, overloaded: false },
   { delta: 0.12, ticks: 2, tick: 2, remainder: 0.02, fraction: 0.4, overloaded: false },
   { delta: 0.01, ticks: 0, tick: 0, remainder: 0.01, fraction: 0.2, overloaded: false },
   { delta: 0.3, ticks: 5, tick: 5, remainder: 0, fraction: 0, overloaded: true },
-] as const
+  // Regression cases use the configured 0.1s duration, not the 0.05s default.
+  { delta: 0.025, tickDuration: 0.1, ticks: 0, tick: 0, remainder: 0.025, fraction: 0.25, overloaded: false },
+  { delta: 0.075, tickDuration: 0.1, ticks: 0, tick: 0, remainder: 0.075, fraction: 0.75, overloaded: false },
+]
 
 export const fixedStepMainParityInput: {
   readonly initialTick: number

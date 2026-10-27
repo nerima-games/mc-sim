@@ -72,7 +72,7 @@ describe('fixed-step accumulator', () => {
     }),
   )
 
-  it.effect('keeps the base output fraction for a custom fixed duration', () =>
+  it.effect('calculates the interpolation fraction against a custom fixed duration', () =>
     Effect.sync(() => {
       const state = initialFixedStepAccumulator(SimulationTick(0), duration(0.1))
       const result = advance(state, dt(0.025))
@@ -81,12 +81,26 @@ describe('fixed-step accumulator', () => {
       if (Result.isSuccess(result)) {
         expect(result.success.ticks).toBe(0)
         expect(result.success.state.accumulator).toBeCloseTo(0.025)
-        expect(result.success.interpolationFraction).toBeCloseTo(0.5)
+        expect(result.success.interpolationFraction).toBeCloseTo(0.25)
       }
     }),
   )
 
-  it.effect('keeps the base output fraction while paused with a custom fixed duration', () =>
+  it.effect('accepts a custom-duration remainder above the default tick duration', () =>
+    Effect.sync(() => {
+      const state = initialFixedStepAccumulator(SimulationTick(0), duration(0.1))
+      const result = advance(state, dt(0.075))
+
+      expect(Result.isSuccess(result)).toBe(true)
+      if (Result.isSuccess(result)) {
+        expect(result.success.ticks).toBe(0)
+        expect(result.success.state.accumulator).toBeCloseTo(0.075)
+        expect(result.success.interpolationFraction).toBeCloseTo(0.75)
+      }
+    }),
+  )
+
+  it.effect('uses the custom fixed duration for paused interpolation fractions', () =>
     Effect.sync(() => {
       const state = initialFixedStepAccumulator(SimulationTick(0), duration(0.1))
       const active = advance(state, dt(0.025))
@@ -99,7 +113,7 @@ describe('fixed-step accumulator', () => {
         if (Result.isSuccess(paused)) {
           expect(paused.success.ticks).toBe(0)
           expect(paused.success.state.accumulator).toBeCloseTo(0.025)
-          expect(paused.success.interpolationFraction).toBeCloseTo(0.5)
+          expect(paused.success.interpolationFraction).toBeCloseTo(0.25)
         }
       }
     }),

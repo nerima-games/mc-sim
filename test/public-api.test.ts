@@ -1,5 +1,5 @@
 import { expect, it } from '@effect/vitest'
-import { DeltaTimeSecs, PositionAxis, SimulationTick, position } from '@nerima-games/mc-kernel'
+import { DeltaTimeSecs, FixedDurationSecs, PositionAxis, SimulationTick, position } from '@nerima-games/mc-kernel'
 import { Effect, Result } from 'effect'
 import {
   EntityId,
@@ -55,7 +55,11 @@ const normalizeFixedStepResult = (result: ReturnType<typeof advanceFixedStep>) =
 it.effect('preserves fixed-step outputs for Effect 4 parity inputs', () =>
   Effect.sync(() => {
     for (const row of fixedStepParityCases) {
-      const result = advanceFixedStep(initialFixedStepAccumulator(), DeltaTimeSecs(row.delta))
+      const state =
+        row.tickDuration === undefined
+          ? initialFixedStepAccumulator()
+          : initialFixedStepAccumulator(SimulationTick(0), FixedDurationSecs(row.tickDuration))
+      const result = advanceFixedStep(state, DeltaTimeSecs(row.delta))
       if (Result.isFailure(result)) throw new Error('fixed-step parity input failed')
 
       expect(result.success.ticks).toBe(row.ticks)
