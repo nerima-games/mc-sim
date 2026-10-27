@@ -14,12 +14,12 @@ const assertInvalidIntervalResult = (
 ): void => {
   expect(Result.isFailure(result), propertyName).toBe(true)
   if (Result.isFailure(result)) {
-    expect(Schema.is(Sim.InvalidAutoSaveIntervalSchema)(result.failure), propertyName + ' runtime Schema').toBe(true)
+    expect(Schema.is(Sim.InvalidAutoSaveIntervalSchema)(result.failure), `${propertyName} runtime Schema`).toBe(true)
     const decoded = Schema.decodeUnknownResult(
       Sim.InvalidAutoSaveIntervalSchema,
       { onExcessProperty: 'error' },
     )(result.failure)
-    expect(decoded._tag, propertyName + ' failure decoding').toBe('Success')
+    expect(decoded._tag, `${propertyName} failure decoding`).toBe('Success')
   }
 }
 
@@ -37,7 +37,7 @@ const assertAutoSaveScheduleOutcome = (
     assertInvalidIntervalResult(propertyName, outcome)
     return
   }
-  expect(Schedule.isSchedule(outcome.success), propertyName + ' opaque schedule').toBe(true)
+  expect(Schedule.isSchedule(outcome.success), `${propertyName} opaque schedule`).toBe(true)
 }
 
 const assertAutoSaveDaemonOutcome = (
@@ -54,7 +54,7 @@ const assertAutoSaveDaemonOutcome = (
     assertInvalidIntervalResult(propertyName, outcome)
     return
   }
-  expect(Fiber.isFiber(outcome.success), propertyName + ' opaque fiber').toBe(true)
+  expect(Fiber.isFiber(outcome.success), `${propertyName} opaque fiber`).toBe(true)
 }
 
 const assertInvalidInterval = (interval: unknown): void => {

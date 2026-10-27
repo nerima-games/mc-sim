@@ -145,8 +145,8 @@ export const makeVehicleService = (
       Ref.modify(state, f).pipe(Effect.flatten)
     return {
       vehicles: Ref.get(state).pipe(Effect.map((snapshot) => snapshot.vehicles)),
-      spawn: (type, dimension, position, yawRadians = AngleRadians(0)) => modify((snapshot) => {
-        const nextPosition = vehiclePosition(position)
+      spawn: (type, dimension, positionInput, yawRadians = AngleRadians(0)) => modify((snapshot) => {
+        const nextPosition = vehiclePosition(positionInput)
         if ((type !== 'boat' && type !== 'minecart') || !isDimension(dimension) || nextPosition === undefined || !Number.isFinite(yawRadians))
           return [Effect.fail(operationError('invalid-transform')), snapshot]
         if (snapshot.nextSerial === Number.MAX_SAFE_INTEGER)
@@ -204,8 +204,8 @@ export const makeVehicleService = (
         if (nextVelocity === undefined) return [Effect.fail(operationError('invalid-transform')), snapshot]
         return update(snapshot, id, true, (vehicle) => ({ ...vehicle, velocity: nextVelocity }))
       }),
-      updateTransform: (id, dimension, position, yawRadians) => modify((snapshot) => {
-        const nextPosition = vehiclePosition(position)
+      updateTransform: (id, dimension, positionInput, yawRadians) => modify((snapshot) => {
+        const nextPosition = vehiclePosition(positionInput)
         if (!isDimension(dimension) || nextPosition === undefined || !Number.isFinite(yawRadians))
           return [Effect.fail(operationError('invalid-transform')), snapshot]
         return update(snapshot, id, true, (vehicle) => ({

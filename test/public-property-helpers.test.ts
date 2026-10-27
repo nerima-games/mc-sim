@@ -174,87 +174,98 @@ const decodes = (schema: DecodableSchema, value: unknown): boolean => {
 
 const astTag = (ast: unknown): string => String((ast as { readonly _tag?: unknown })._tag)
 
-const candidateValues = (
-  ast: SchemaAST.AST,
-  ancestors: ReadonlySet<SchemaAST.AST> = new Set(),
-): ReadonlyArray<unknown> => {
-  const typeAst = SchemaAST.toType(ast)
-  if (ancestors.has(typeAst)) return []
-  const nextAncestors = new Set(ancestors).add(typeAst)
+type ObjectsAst = Extract<SchemaAST.AST, { readonly _tag: 'Objects' }>
+type ArraysAst = Extract<SchemaAST.AST, { readonly _tag: 'Arrays' }>
+type CandidateGenerator = (ast: SchemaAST.AST, ancestors?: ReadonlySet<SchemaAST.AST>) => ReadonlyArray<unknown>
+
+const filterCandidateValues = (ast: SchemaAST.AST, values: ReadonlyArray<unknown>): ReadonlyArray<unknown> => {
   const schema = Schema.make(ast) as DecodableSchema
-  const keepDecodable = (values: ReadonlyArray<unknown>): ReadonlyArray<unknown> => {
-    const unique: Array<unknown> = []
-    for (const value of values) {
-      if (!decodes(schema, value)) continue
-      if (!unique.some((previous) => Object.is(previous, value))) unique.push(value)
-      if (unique.length === MAX_CANDIDATES) break
-    }
-    return unique
+  const unique: Array<unknown> = []
+  for (const value of values) {
+    if (!decodes(schema, value)) continue
+    if (!unique.some((previous) => Object.is(previous, value))) unique.push(value)
+    if (unique.length === MAX_CANDIDATES) break
   }
+  return unique
+}
 
-  switch (typeAst._tag) {
-    case 'Objects': {
-      const properties = typeAst.propertySignatures.map((property) => {
-        const optional = SchemaAST.isOptional(property.type) || property.type.context?.constructorDefault !== undefined
-        const values = candidateValues(property.type, nextAncestors)
-        return { property, optional, values }
-      })
-      if (properties.some(({ optional, values }) => !optional && values.length === 0)) return []
+const candidateObjectValues = (
+  typeAst: ObjectsAst,
+  ast: SchemaAST.AST,
+  ancestors: ReadonlySet<SchemaAST.AST>,
+  candidate: CandidateGenerator,
+): ReadonlyArray<unknown> => {
+  const properties = typeAst.propertySignatures.map((property) => ({
+    property,
+    optional: SchemaAST.isOptional(property.type) || property.type.context?.constructorDefault !== undefined,
+    values: candidate(property.type, ancestors),
+  }))
+  if (properties.some(({ optional, values }) => !optional && values.length === 0)) return []
 
-      const rows: Array<Record<PropertyKey, unknown>> = []
-      for (let trial = 0; trial < MAX_CANDIDATES * 4; trial += 1) {
-        const row: Record<PropertyKey, unknown> = {}
-        let hasRequiredValues = true
-        properties.forEach(({ property, optional, values }, propertyIndex) => {
-          if (values.length === 0) return
-          const propertySeed = [...String(property.name)].reduce(
-            (seed, character) => Math.imul(seed ^ character.charCodeAt(0), 16777619),
-            2166136261,
-          )
-          const choiceSeed = (Math.imul(trial + 1, 1103515245) + propertySeed + propertyIndex * 12345) >>> 0
-          const choiceIndex = trial < MAX_CANDIDATES ? trial % values.length : choiceSeed % values.length
-          const omitOptional = optional && trial >= MAX_CANDIDATES && choiceSeed % 7 === 0
-          if (omitOptional) return
-          const value = values[choiceIndex]
-          if (value === undefined && !values.includes(undefined)) {
-            hasRequiredValues = false
-            return
-          }
-          row[property.name] = value
-        })
-        if (hasRequiredValues) rows.push(row)
+  const rows: Array<Record<PropertyKey, unknown>> = []
+  for (let trial = 0; trial < MAX_CANDIDATES * 4; trial += 1) {
+    const row: Record<PropertyKey, unknown> = {}
+    let hasRequiredValues = true
+    properties.forEach(({ property, optional, values }, propertyIndex) => {
+      if (values.length === 0) return
+      const propertySeed = [...String(property.name)].reduce(
+        (seed, character) => Math.imul(seed ^ character.charCodeAt(0), 16777619),
+        2166136261,
+      )
+      const choiceSeed = (Math.imul(trial + 1, 1103515245) + propertySeed + propertyIndex * 12345) >>> 0
+      const choiceIndex = trial < MAX_CANDIDATES ? trial % values.length : choiceSeed % values.length
+      if (optional && trial >= MAX_CANDIDATES && choiceSeed % 7 === 0) return
+      const value = values[choiceIndex]
+      if (value === undefined && !values.includes(undefined)) {
+        hasRequiredValues = false
+        return
       }
-      return keepDecodable(rows)
-    }
-    case 'Union':
-      return keepDecodable(typeAst.types.flatMap((member) => candidateValues(member, nextAncestors)))
-    case 'Arrays': {
-      const values: Array<unknown> = []
-      const fixedCandidates = typeAst.elements.map((element) => candidateValues(element, nextAncestors))
-      const fixed = fixedCandidates.map((candidates) => candidates[0])
-      if (fixedCandidates.every((candidates) => candidates.length > 0)) values.push(fixed)
-      values.push([])
-      const rest = typeAst.rest.flatMap((element) => candidateValues(element, nextAncestors))
-      for (const value of rest.slice(0, 4)) values.push([...fixed, value])
-      return keepDecodable(values)
-    }
-    case 'Suspend':
-      return candidateValues(typeAst.thunk(), nextAncestors)
+      row[property.name] = value
+    })
+    if (hasRequiredValues) rows.push(row)
+  }
+  return filterCandidateValues(ast, rows)
+}
+
+const candidateArrayValues = (
+  typeAst: ArraysAst,
+  ast: SchemaAST.AST,
+  ancestors: ReadonlySet<SchemaAST.AST>,
+  candidate: CandidateGenerator,
+): ReadonlyArray<unknown> => {
+  const fixedCandidates = typeAst.elements.map((element) => candidate(element, ancestors))
+  const fixed = fixedCandidates.map((candidates) => candidates[0])
+  const values: Array<unknown> = []
+  if (fixedCandidates.every((candidates) => candidates.length > 0)) values.push(fixed)
+  values.push([])
+  const rest = typeAst.rest.flatMap((element) => candidate(element, ancestors))
+  for (const value of rest.slice(0, 4)) values.push([...fixed, value])
+  return filterCandidateValues(ast, values)
+}
+
+const candidateLeafValues = (
+  typeAst: SchemaAST.AST,
+  ast: SchemaAST.AST,
+  ancestors: ReadonlySet<SchemaAST.AST>,
+  candidate: CandidateGenerator,
+): ReadonlyArray<unknown> => {
+  const filter = (values: ReadonlyArray<unknown>) => filterCandidateValues(ast, values)
+  switch (typeAst._tag) {
     case 'Declaration':
-      return keepDecodable([
-        ...typeAst.typeParameters.flatMap((parameter) => candidateValues(parameter, nextAncestors)),
+      return filter([
+        ...typeAst.typeParameters.flatMap((parameter) => candidate(parameter, ancestors)),
         ...opaqueDeclarationCandidates,
       ])
     case 'Enum':
-      return keepDecodable(typeAst.enums.map(([, value]) => value)).slice(0, MAX_CANDIDATES)
+      return filter(typeAst.enums.map(([, value]) => value))
     case 'TemplateLiteral':
-      return keepDecodable(['a', 'minecraft:stone', '0']).slice(0, MAX_CANDIDATES)
+      return filter(['a', 'minecraft:stone', '0'])
     case 'Boolean':
-      return keepDecodable([false, true]).slice(0, MAX_CANDIDATES)
+      return filter([false, true])
     case 'Literal':
-      return keepDecodable([typeAst.literal]).slice(0, MAX_CANDIDATES)
+      return filter([typeAst.literal])
     case 'Number':
-      return keepDecodable([
+      return filter([
         0,
         1,
         -1,
@@ -269,31 +280,46 @@ const candidateValues = (
         100_000,
         Number.MAX_SAFE_INTEGER,
         Number.MIN_SAFE_INTEGER,
-      ]).slice(0, MAX_CANDIDATES)
+      ])
     case 'String':
-      return keepDecodable(['', 'a', 'stone', 'minecraft:stone', 'minecraft:air', 'minecraft:stick', 'minecraft:book'])
-        .slice(0, MAX_CANDIDATES)
+      return filter(['', 'a', 'stone', 'minecraft:stone', 'minecraft:air', 'minecraft:stick', 'minecraft:book'])
     case 'BigInt':
-      return keepDecodable([0n, 1n, -1n]).slice(0, MAX_CANDIDATES)
+      return filter([0n, 1n, -1n])
     case 'Symbol':
-      return keepDecodable([Symbol.for('public-schema-sample')]).slice(0, MAX_CANDIDATES)
+      return filter([Symbol.for('public-schema-sample')])
     case 'UniqueSymbol':
-      return keepDecodable([typeAst.symbol]).slice(0, MAX_CANDIDATES)
+      return filter([typeAst.symbol])
     case 'Null':
       return [null]
     case 'Undefined':
     case 'Void':
-      return keepDecodable([undefined, null, false, 0, '']).slice(0, MAX_CANDIDATES)
+      return filter([undefined, null, false, 0, ''])
     case 'Never':
       return []
     case 'Unknown':
     case 'Any':
       return [undefined, null, false, 0, '', {}, []]
     case 'ObjectKeyword':
-      return keepDecodable([{}, [], new Date(0)]).slice(0, MAX_CANDIDATES)
+      return filter([{}, [], new Date(0)])
     default:
-      throw new Error('Unclassified Schema AST node: ' + astTag(typeAst))
+      throw new Error(`Unclassified Schema AST node: ${astTag(typeAst)}`)
   }
+}
+
+const candidateValues: CandidateGenerator = (
+  ast: SchemaAST.AST,
+  ancestors: ReadonlySet<SchemaAST.AST> = new Set(),
+): ReadonlyArray<unknown> => {
+  const typeAst = SchemaAST.toType(ast)
+  if (ancestors.has(typeAst)) return []
+  const nextAncestors = new Set(ancestors).add(typeAst)
+  if (typeAst._tag === 'Objects') return candidateObjectValues(typeAst, ast, nextAncestors, candidateValues)
+  if (typeAst._tag === 'Union') {
+    return filterCandidateValues(ast, typeAst.types.flatMap((member) => candidateValues(member, nextAncestors)))
+  }
+  if (typeAst._tag === 'Arrays') return candidateArrayValues(typeAst, ast, nextAncestors, candidateValues)
+  if (typeAst._tag === 'Suspend') return candidateValues(typeAst.thunk(), nextAncestors)
+  return candidateLeafValues(typeAst, ast, nextAncestors, candidateValues)
 }
 
 const publicSchemas = (): ReadonlyArray<PublicSchema> => {
@@ -309,55 +335,63 @@ const publicSchemas = (): ReadonlyArray<PublicSchema> => {
   expect(factories).toStrictEqual([...schemaFactoryExports].sort())
   for (const { name, schema } of schemas) {
     if (SchemaAST.toType(schema.ast)._tag === 'Declaration') {
-      expect(opaqueSchemaInputProviders[name], name + ' opaque public Schema has an explicit sample provider').toBeDefined()
+      expect(opaqueSchemaInputProviders[name], `${name} opaque public Schema has an explicit sample provider`).toBeDefined()
     }
   }
   for (const name of schemasWithoutValues) {
     const schema = schemas.find((candidate) => candidate.name === name)?.schema
-    expect(schema, name + ' classified as an uninhabited public Schema').toBeDefined()
-    expect(SchemaAST.toType(schema!.ast)._tag, name + ' is uninhabited').toBe('Never')
+    expect(schema, `${name} classified as an uninhabited public Schema`).toBeDefined()
+    expect(SchemaAST.toType(schema!.ast)._tag, `${name} is uninhabited`).toBe('Never')
   }
   expect(schemas.length).toBeGreaterThan(0)
   return schemas
 }
 
+const knownLeafAstTags: ReadonlySet<string> = new Set([
+  'Boolean',
+  'Declaration',
+  'Enum',
+  'Literal',
+  'Never',
+  'Null',
+  'Number',
+  'String',
+  'Undefined',
+  'Void',
+  'Unknown',
+  'Any',
+  'BigInt',
+  'Symbol',
+  'UniqueSymbol',
+  'ObjectKeyword',
+  'TemplateLiteral',
+])
+
+const declarationChildren = (typeAst: SchemaAST.AST): ReadonlyArray<SchemaAST.AST> => {
+  switch (typeAst._tag) {
+    case 'Objects':
+      return [
+        ...typeAst.propertySignatures.map((property) => property.type),
+        ...typeAst.indexSignatures.map((signature) => signature.type),
+      ]
+    case 'Union':
+      return typeAst.types
+    case 'Arrays':
+      return [...typeAst.elements, ...typeAst.rest]
+    case 'Suspend':
+      return [typeAst.thunk()]
+    default:
+      if (knownLeafAstTags.has(typeAst._tag)) return []
+      throw new Error(`Unclassified Schema AST node while finding declarations: ${astTag(typeAst)}`)
+  }
+}
+
 const containsDeclaration = (ast: SchemaAST.AST, ancestors: ReadonlySet<SchemaAST.AST> = new Set()): boolean => {
   const typeAst = SchemaAST.toType(ast)
+  if (typeAst._tag === 'Declaration') return true
   if (ancestors.has(typeAst)) return false
   const nextAncestors = new Set(ancestors).add(typeAst)
-  switch (typeAst._tag) {
-    case 'Declaration':
-      return true
-    case 'Objects':
-      return typeAst.propertySignatures.some((property) => containsDeclaration(property.type, nextAncestors)) ||
-        typeAst.indexSignatures.some((signature) => containsDeclaration(signature.type, nextAncestors))
-    case 'Union':
-      return typeAst.types.some((member) => containsDeclaration(member, nextAncestors))
-    case 'Arrays':
-      return typeAst.elements.some((element) => containsDeclaration(element, nextAncestors)) ||
-        typeAst.rest.some((element) => containsDeclaration(element, nextAncestors))
-    case 'Suspend':
-      return containsDeclaration(typeAst.thunk(), nextAncestors)
-    case 'Boolean':
-    case 'Enum':
-    case 'Literal':
-    case 'Never':
-    case 'Null':
-    case 'Number':
-    case 'String':
-    case 'Undefined':
-    case 'Void':
-    case 'Unknown':
-    case 'Any':
-    case 'BigInt':
-    case 'Symbol':
-    case 'UniqueSymbol':
-    case 'ObjectKeyword':
-    case 'TemplateLiteral':
-      return false
-    default:
-      throw new Error('Unclassified Schema AST node while finding declarations: ' + astTag(typeAst))
-  }
+  return declarationChildren(typeAst).some((child) => containsDeclaration(child, nextAncestors))
 }
 
 const arbitrarySamples = (schema: DecodableSchema): ReadonlyArray<unknown> => {
@@ -372,10 +406,10 @@ const arbitrarySamples = (schema: DecodableSchema): ReadonlyArray<unknown> => {
 const rootSamples = (name: string, schema: DecodableSchema): ReadonlyArray<unknown> => {
   const typeAst = SchemaAST.toType(schema.ast)
   if (typeAst._tag === 'Never') {
-    expect(schemasWithoutValues, name + ' has no generated value because its Schema is Never').toContain(name)
+    expect(schemasWithoutValues, `${name} has no generated value because its Schema is Never`).toContain(name)
     return []
   }
-  expect(schemasWithoutValues, name + ' is not unexpectedly uninhabited').not.toContain(name)
+  expect(schemasWithoutValues, `${name} is not unexpectedly uninhabited`).not.toContain(name)
 
   const provider = opaqueSchemaInputProviders[name]
   const candidates: Array<unknown> = provider === undefined ? [] : [provider()]
@@ -389,10 +423,10 @@ const rootSamples = (name: string, schema: DecodableSchema): ReadonlyArray<unkno
     )
     if (!isOpaqueDeclarationFailure && !isClassifiedAstFallback) throw error
     if (isOpaqueDeclarationFailure && !containsDeclaration(schema.ast)) {
-      throw new Error(name + ' Arbitrary reported an opaque Declaration absent from its public Schema AST')
+      throw new Error(`${name} Arbitrary reported an opaque Declaration absent from its public Schema AST`, { cause: error })
     }
     if (isClassifiedAstFallback) {
-      expect(schemasUsingAstFallbackForArbitrary, name + ' has an explicit AST generator fallback').toContain(name)
+      expect(schemasUsingAstFallbackForArbitrary, `${name} has an explicit AST generator fallback`).toContain(name)
     }
   }
   candidates.push(...candidateValues(schema.ast))
@@ -403,15 +437,25 @@ const rootSamples = (name: string, schema: DecodableSchema): ReadonlyArray<unkno
     if (valid.length === MAX_CANDIDATES) break
   }
   if (provider !== undefined && !valid.some((value) => Object.is(value, candidates[0]))) {
-    throw new Error(name + ' opaque sample provider returned a value rejected by its public Schema')
+    throw new Error(`${name} opaque sample provider returned a value rejected by its public Schema`)
   }
   if (valid.length === 0) {
-    throw new Error(name + ' has no valid generated sample; candidates=' + candidates.length + ':' + candidates.slice(0, 8).map(String).join('|'))
+    throw new Error(`${name} has no valid generated sample; candidates=${candidates.length}:${candidates.slice(0, 8).map(String).join('|')}`)
   }
   return valid
 }
 
-const collectRequiredFields = (
+type RequiredFieldTraversal = {
+  readonly schemaName: string
+  readonly rootSchema: DecodableSchema
+  readonly rootSample: unknown
+  readonly path: string
+  readonly inputPath: ReadonlyArray<MutationSegment>
+  readonly ancestors: ReadonlySet<SchemaAST.AST>
+  readonly cases: Array<RequiredFieldCase>
+}
+
+type RequiredFieldCollector = (
   schemaName: string,
   rootSchema: DecodableSchema,
   rootSample: unknown,
@@ -421,103 +465,130 @@ const collectRequiredFields = (
   inputPath: ReadonlyArray<MutationSegment>,
   ancestors: ReadonlySet<SchemaAST.AST>,
   cases: Array<RequiredFieldCase>,
+) => void
+
+const collectObjectRequiredFields = (
+  typeAst: ObjectsAst,
+  value: unknown,
+  context: RequiredFieldTraversal,
+  collect: RequiredFieldCollector,
 ): void => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return
+  for (const property of typeAst.propertySignatures) {
+    if (!Object.prototype.hasOwnProperty.call(value, property.name)) continue
+    const fieldValue = Reflect.get(value, property.name)
+    const fieldPath = `${context.path}.${String(property.name)}`
+    const propertyPath = [...context.inputPath, { kind: 'property' as const, key: property.name }]
+    if (!SchemaAST.isOptional(property.type) && property.type.context?.constructorDefault === undefined) {
+      context.cases.push({
+        path: fieldPath,
+        schemaName: context.schemaName,
+        rootSchema: context.rootSchema,
+        sample: context.rootSample,
+        inputPath: propertyPath,
+        fieldSchema: Schema.make(property.type) as DecodableSchema,
+      })
+    }
+    collect(
+      context.schemaName,
+      context.rootSchema,
+      context.rootSample,
+      property.type,
+      fieldValue,
+      fieldPath,
+      propertyPath,
+      context.ancestors,
+      context.cases,
+    )
+  }
+}
+
+const collectUnionRequiredFields = (
+  typeAst: Extract<SchemaAST.AST, { readonly _tag: 'Union' }>,
+  value: unknown,
+  context: RequiredFieldTraversal,
+  collect: RequiredFieldCollector,
+): void => {
+  typeAst.types.forEach((member, index) => {
+    if (!decodes(Schema.make(member) as DecodableSchema, value)) return
+    collect(
+      context.schemaName,
+      context.rootSchema,
+      context.rootSample,
+      member,
+      value,
+      `${context.path}|${index}`,
+      context.inputPath,
+      context.ancestors,
+      context.cases,
+    )
+  })
+}
+
+const collectArrayRequiredFields = (
+  typeAst: ArraysAst,
+  value: unknown,
+  context: RequiredFieldTraversal,
+  collect: RequiredFieldCollector,
+): void => {
+  if (!Array.isArray(value)) return
+  value.forEach((item, index) => {
+    const member = typeAst.elements[index] ?? typeAst.rest.find((restType) =>
+      decodes(Schema.make(restType) as DecodableSchema, item))
+    if (member === undefined) return
+    collect(
+      context.schemaName,
+      context.rootSchema,
+      context.rootSample,
+      member,
+      item,
+      `${context.path}[${index}]`,
+      [...context.inputPath, { kind: 'arrayItem' as const, index }],
+      context.ancestors,
+      context.cases,
+    )
+  })
+}
+
+const collectRequiredFields: RequiredFieldCollector = (
+  schemaName,
+  rootSchema,
+  rootSample,
+  ast,
+  value,
+  path,
+  inputPath,
+  ancestors,
+  cases,
+) => {
   const typeAst = SchemaAST.toType(ast)
   if (ancestors.has(typeAst)) return
-  const nextAncestors = new Set(ancestors).add(typeAst)
+  const context: RequiredFieldTraversal = {
+    schemaName,
+    rootSchema,
+    rootSample,
+    path,
+    inputPath,
+    ancestors: new Set(ancestors).add(typeAst),
+    cases,
+  }
 
   switch (typeAst._tag) {
-    case 'Objects': {
-      if (typeof value !== 'object' || value === null || Array.isArray(value)) return
-      for (const property of typeAst.propertySignatures) {
-        if (!Object.prototype.hasOwnProperty.call(value, property.name)) continue
-        const fieldValue = Reflect.get(value, property.name)
-        const fieldPath = path + '.' + String(property.name)
-        const propertyPath = [...inputPath, { kind: 'property' as const, key: property.name }]
-        if (!SchemaAST.isOptional(property.type) && property.type.context?.constructorDefault === undefined) {
-          cases.push({
-            path: fieldPath,
-            schemaName,
-            rootSchema,
-            sample: rootSample,
-            inputPath: propertyPath,
-            fieldSchema: Schema.make(property.type) as DecodableSchema,
-          })
-        }
-        collectRequiredFields(
-          schemaName,
-          rootSchema,
-          rootSample,
-          property.type,
-          fieldValue,
-          fieldPath,
-          propertyPath,
-          nextAncestors,
-          cases,
-        )
-      }
+    case 'Objects':
+      collectObjectRequiredFields(typeAst, value, context, collectRequiredFields)
       return
-    }
     case 'Union':
-      typeAst.types.forEach((member, index) => {
-        if (decodes(Schema.make(member) as DecodableSchema, value)) {
-          collectRequiredFields(
-            schemaName,
-            rootSchema,
-            rootSample,
-            member,
-            value,
-            path + '|' + index,
-            inputPath,
-            nextAncestors,
-            cases,
-          )
-        }
-      })
+      collectUnionRequiredFields(typeAst, value, context, collectRequiredFields)
       return
     case 'Arrays':
-      if (!Array.isArray(value)) return
-      value.forEach((item, index) => {
-        const member = typeAst.elements[index] ?? typeAst.rest.find((restType) =>
-          decodes(Schema.make(restType) as DecodableSchema, item))
-        if (member !== undefined) {
-          collectRequiredFields(
-            schemaName,
-            rootSchema,
-            rootSample,
-            member,
-            item,
-            path + '[' + index + ']',
-            [...inputPath, { kind: 'arrayItem' as const, index }],
-            nextAncestors,
-            cases,
-          )
-        }
-      })
+      collectArrayRequiredFields(typeAst, value, context, collectRequiredFields)
       return
     case 'Suspend':
-      collectRequiredFields(schemaName, rootSchema, rootSample, typeAst.thunk(), value, path, inputPath, nextAncestors, cases)
-      return
-    case 'Declaration':
-    case 'Boolean':
-    case 'Enum':
-    case 'Literal':
-    case 'Never':
-    case 'Null':
-    case 'Number':
-    case 'String':
-    case 'Undefined':
-    case 'Void':
-    case 'Unknown':
-    case 'Any':
-    case 'BigInt':
-    case 'Symbol':
-    case 'UniqueSymbol':
-    case 'ObjectKeyword':
-    case 'TemplateLiteral':
+      collectRequiredFields(schemaName, rootSchema, rootSample, typeAst.thunk(), value, path, inputPath, context.ancestors, cases)
       return
     default:
-      throw new Error('Unclassified Schema AST node in ' + schemaName + ': ' + astTag(typeAst))
+      if (knownLeafAstTags.has(typeAst._tag)) return
+      throw new Error(`Unclassified Schema AST node in ${schemaName}: ${astTag(typeAst)}`)
   }
 }
 
@@ -593,7 +664,7 @@ const generatedCases = (): ReadonlyArray<RequiredFieldCase> => {
     const samples = rootSamples(name, schema)
     if (opaqueSchemaInputProviders[name] !== undefined) usedProviders.add(name)
     for (const sample of samples) {
-      expect(decodes(schema, sample), name + ' valid sample').toBe(true)
+      expect(decodes(schema, sample), `${name} valid sample`).toBe(true)
       collectRequiredFields(name, schema, sample, schema.ast, sample, name, [], new Set(), allCases)
     }
   }
@@ -635,14 +706,14 @@ const mutationCandidatesBySchema = (mutation: 'missing' | 'null'): ReadonlyMap<s
     }
 
     for (const field of eligibleCases) {
-      expect(decodes(field.rootSchema, field.sample), schemaName + ' original sample before ' + mutation).toBe(true)
+      expect(decodes(field.rootSchema, field.sample), `${schemaName} original sample before ${mutation}`).toBe(true)
       if (!decodes(field.rootSchema, mutateSample(field.sample, field.inputPath, mutation))) {
         selected.set(schemaName, field)
         break
       }
     }
     if (!selected.has(schemaName)) {
-      throw new Error(schemaName + ' has eligible required fields but no ' + mutation + ' mutation was rejected')
+      throw new Error(`${schemaName} has eligible required fields but no ${mutation} mutation was rejected`)
     }
   }
 
@@ -663,10 +734,10 @@ it('public barrel Schemas reject an omitted required property from a valid sampl
   const selected = mutationCandidatesBySchema('missing')
 
   for (const field of selected.values()) {
-    expect(decodes(field.rootSchema, field.sample), field.schemaName + ' original sample').toBe(true)
+    expect(decodes(field.rootSchema, field.sample), `${field.schemaName} original sample`).toBe(true)
     expect(
       decodes(field.rootSchema, mutateSample(field.sample, field.inputPath, 'missing')),
-      field.path + ' missing required field',
+      `${field.path} missing required field`,
     ).toBe(false)
   }
 })
@@ -675,10 +746,10 @@ it('public barrel Schemas reject null for a required non-null field from a valid
   const selected = mutationCandidatesBySchema('null')
 
   for (const field of selected.values()) {
-    expect(decodes(field.rootSchema, field.sample), field.schemaName + ' original sample').toBe(true)
+    expect(decodes(field.rootSchema, field.sample), `${field.schemaName} original sample`).toBe(true)
     expect(
       decodes(field.rootSchema, mutateSample(field.sample, field.inputPath, 'null')),
-      field.path + ' non-null required field',
+      `${field.path} non-null required field`,
     ).toBe(false)
   }
 })

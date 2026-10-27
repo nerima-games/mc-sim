@@ -105,6 +105,50 @@ const queuedIntentKeys = (value: unknown): ReadonlyArray<readonly [number, strin
   Schema.decodeUnknownSync(Schema.Array(PublicApplication.QueuedIntentSchema))(value)
     .map(({ sequence, intent }) => [sequence, intent.id] as const)
 
+const captureEffectOutcome = async (
+  propertyName: string,
+  effect: Effect.Effect<unknown, unknown, never>,
+  successSchema: Schema.ConstraintDecoder<unknown>,
+  failureSchema: Schema.ConstraintDecoder<unknown>,
+): Promise<Result.Result<unknown, unknown>> => {
+  const outcome = await Effect.runPromise(Effect.result(effect))
+  const schema = Result.isFailure(outcome) ? failureSchema : successSchema
+  const value = Result.isFailure(outcome) ? outcome.failure : outcome.success
+  expect(Schema.is(schema)(value), `${propertyName} runtime Schema`).toBe(true)
+  const decoded = Schema.decodeUnknownResult(schema, { onExcessProperty: 'error' })(value)
+  expect(decoded._tag, propertyName).toBe('Success')
+  return outcome
+}
+
+const requireEffectSuccess = <A>(
+  outcome: Result.Result<unknown, unknown>,
+  schema: Schema.ConstraintDecoder<A>,
+  propertyName: string,
+): A => {
+  if (Result.isFailure(outcome)) throw outcome.failure
+  const decoded = Schema.decodeUnknownResult(schema, { onExcessProperty: 'error' })(outcome.success)
+  expect(decoded._tag, `${propertyName} decoding`).toBe('Success')
+  if (Result.isFailure(decoded)) throw decoded.failure
+  return decoded.success
+}
+
+const makeSnapshotOperationAsserter = (
+  captureSnapshot: (propertyName: string) => Promise<Result.Result<unknown, unknown>>,
+) => async (
+  propertyName: string,
+  effect: Effect.Effect<unknown, unknown, never>,
+  successSchema: Schema.ConstraintDecoder<unknown>,
+  failureSchema: Schema.ConstraintDecoder<unknown>,
+): Promise<Result.Result<unknown, unknown>> => {
+  const before = await captureSnapshot(`${propertyName} snapshot before`)
+  const outcome = await captureEffectOutcome(propertyName, effect, successSchema, failureSchema)
+  const after = await captureSnapshot(`${propertyName} snapshot after`)
+  if (Result.isFailure(outcome) && Result.isSuccess(before) && Result.isSuccess(after)) {
+    expect(after.success).toEqual(before.success)
+  }
+  return outcome
+}
+
 it('IntentQueue assigns sequences, orders ready intents, and preserves future entries', async () => {
   const queuedIntentSchema = Schema.Array(PublicApplication.QueuedIntentSchema)
 
@@ -113,26 +157,28 @@ it('IntentQueue assigns sequences, orders ready intents, and preserves future en
       fc.record({ targetTicks: fc.array(fc.nat(8), { minLength: 1, maxLength: 5 }), readyTick: fc.nat(8) }),
       async ({ targetTicks, readyTick }) => {
         const queue = await makeIntentQueue(targetTicks.length)
-        const admitted: Array<{ readonly sequence: number; readonly targetTick: number; readonly id: string }> = []
-
-        for (const [index, targetTick] of targetTicks.entries()) {
-          const intent = Schema.decodeUnknownSync(PublicApplication.IntentSchema)({
-            id: `property-intent-${index}`,
-            targetTick,
-            source: 'local',
-            payload: { _tag: 'MeleeAttack', actor: `property-actor-${index}` },
-          })
-          const outcome = await assertEffectResult(
-            'IntentQueue.enqueue', queue.enqueue, [intent], PublicApplication.IntentSequenceSchema,
-            PublicApplication.IntentQueueEnqueueFailureSchema,
-          )
-          expect(Result.isSuccess(outcome)).toBe(true)
-          if (Result.isSuccess(outcome)) {
-            const sequence = Schema.decodeUnknownSync(PublicApplication.IntentSequenceSchema)(outcome.success)
-            expect(sequence).toBe(index)
-            admitted.push({ sequence, targetTick, id: intent.id })
-          }
-        }
+        const admitted = await targetTicks.reduce<Promise<Array<{ readonly sequence: number; readonly targetTick: number; readonly id: string }>>>(
+          (previous, targetTick, index) => previous.then(async (entries) => {
+            const intent = Schema.decodeUnknownSync(PublicApplication.IntentSchema)({
+              id: `property-intent-${index}`,
+              targetTick,
+              source: 'local',
+              payload: { _tag: 'MeleeAttack', actor: `property-actor-${index}` },
+            })
+            const outcome = await assertEffectResult(
+              'IntentQueue.enqueue', queue.enqueue, [intent], PublicApplication.IntentSequenceSchema,
+              PublicApplication.IntentQueueEnqueueFailureSchema,
+            )
+            expect(Result.isSuccess(outcome)).toBe(true)
+            if (Result.isSuccess(outcome)) {
+              const sequence = Schema.decodeUnknownSync(PublicApplication.IntentSequenceSchema)(outcome.success)
+              expect(sequence).toBe(index)
+              entries.push({ sequence, targetTick, id: intent.id })
+            }
+            return entries
+          }),
+          Promise.resolve([]),
+        )
 
         const readyOutcome = await assertEffectResult(
           'IntentQueue.takeReady ready tick', queue.takeReady, [readyTick],
@@ -1114,141 +1160,33 @@ it('world commits validate hostile dimension expectation collections before conf
 it('crop, equipment, and vehicle services keep hostile requests and snapshots safe', async () => {
   const crops = await Effect.runPromise(PublicApplication.makeCropService())
   const equipment = await Effect.runPromise(PublicApplication.makeEquipmentService())
-
-  const captureCropOutcome = async (
-    propertyName: string,
-    effect: Effect.Effect<unknown, unknown, never>,
-    successSchema: Schema.ConstraintDecoder<unknown>,
-    failureSchema: Schema.ConstraintDecoder<unknown>,
-  ): Promise<Result.Result<unknown, unknown>> => {
-    const outcome = await Effect.runPromise(Effect.result(effect))
-    const conforms = Result.isFailure(outcome)
-      ? Schema.is(failureSchema)(outcome.failure)
-      : Schema.is(successSchema)(outcome.success)
-    expect(conforms, propertyName + ' runtime Schema').toBe(true)
-    const decoded = Result.isFailure(outcome)
-      ? Schema.decodeUnknownResult(failureSchema, { onExcessProperty: 'error' })(outcome.failure)
-      : Schema.decodeUnknownResult(successSchema, { onExcessProperty: 'error' })(outcome.success)
-    expect(decoded._tag, propertyName).toBe('Success')
-    return outcome
-  }
-
-  const assertCropOperation = async (
-    propertyName: string,
-    effect: Effect.Effect<unknown, unknown, never>,
-    successSchema: Schema.ConstraintDecoder<unknown>,
-    failureSchema: Schema.ConstraintDecoder<unknown>,
-  ): Promise<Result.Result<unknown, unknown>> => {
-    const before = await captureCropOutcome(
-      propertyName + ' snapshot before',
-      crops.snapshot,
-      PublicApplication.CropServiceSnapshotSuccessSchema,
-      PublicApplication.CropServiceNoFailureSchema,
-    )
-    const outcome = await captureCropOutcome(propertyName, effect, successSchema, failureSchema)
-    const after = await captureCropOutcome(
-      propertyName + ' snapshot after',
-      crops.snapshot,
-      PublicApplication.CropServiceSnapshotSuccessSchema,
-      PublicApplication.CropServiceNoFailureSchema,
-    )
-    if (Result.isFailure(outcome) && Result.isSuccess(before) && Result.isSuccess(after)) {
-      expect(after.success).toEqual(before.success)
-    }
-    return outcome
-  }
-
-  const captureEquipmentOutcome = async (
-    propertyName: string,
-    effect: Effect.Effect<unknown, unknown, never>,
-    successSchema: Schema.ConstraintDecoder<unknown>,
-    failureSchema: Schema.ConstraintDecoder<unknown>,
-  ): Promise<Result.Result<unknown, unknown>> => {
-    const outcome = await Effect.runPromise(Effect.result(effect))
-    const decoded = Result.isFailure(outcome)
-      ? Schema.decodeUnknownResult(failureSchema, { onExcessProperty: 'error' })(outcome.failure)
-      : Schema.decodeUnknownResult(successSchema, { onExcessProperty: 'error' })(outcome.success)
-    expect(decoded._tag, propertyName).toBe('Success')
-    return outcome
-  }
-
-  const assertEquipmentOperation = async (
-    propertyName: string,
-    effect: Effect.Effect<unknown, unknown, never>,
-    successSchema: Schema.ConstraintDecoder<unknown>,
-    failureSchema: Schema.ConstraintDecoder<unknown>,
-  ): Promise<Result.Result<unknown, unknown>> => {
-    const before = await captureEquipmentOutcome(
-      propertyName + ' snapshot before',
-      equipment.snapshot,
-      PublicApplication.EquipmentServiceSnapshotSuccessSchema,
-      PublicApplication.EquipmentServiceNoFailureSchema,
-    )
-    const outcome = await captureEquipmentOutcome(propertyName, effect, successSchema, failureSchema)
-    const after = await captureEquipmentOutcome(
-      propertyName + ' snapshot after',
-      equipment.snapshot,
-      PublicApplication.EquipmentServiceSnapshotSuccessSchema,
-      PublicApplication.EquipmentServiceNoFailureSchema,
-    )
-    if (Result.isFailure(outcome) && Result.isSuccess(before) && Result.isSuccess(after)) {
-      expect(after.success).toEqual(before.success)
-    }
-    return outcome
-  }
-
+  const captureCropOutcome = captureEffectOutcome
+  const captureEquipmentOutcome = captureEffectOutcome
+  const assertCropOperation = makeSnapshotOperationAsserter((propertyName) => captureEffectOutcome(
+    propertyName,
+    crops.snapshot,
+    PublicApplication.CropServiceSnapshotSuccessSchema,
+    PublicApplication.CropServiceNoFailureSchema,
+  ))
+  const assertEquipmentOperation = makeSnapshotOperationAsserter((propertyName) => captureEffectOutcome(
+    propertyName,
+    equipment.snapshot,
+    PublicApplication.EquipmentServiceSnapshotSuccessSchema,
+    PublicApplication.EquipmentServiceNoFailureSchema,
+  ))
   let vehicles: PublicApplication.VehicleServiceApi | undefined
-
-  const captureVehicleOutcome = async (
-    propertyName: string,
-    effect: Effect.Effect<unknown, unknown, never>,
-    successSchema: Schema.ConstraintDecoder<unknown>,
-    failureSchema: Schema.ConstraintDecoder<unknown>,
-  ): Promise<Result.Result<unknown, unknown>> => {
-    const outcome = await Effect.runPromise(Effect.result(effect))
-    const decoded = Result.isFailure(outcome)
-      ? Schema.decodeUnknownResult(failureSchema, { onExcessProperty: 'error' })(outcome.failure)
-      : Schema.decodeUnknownResult(successSchema, { onExcessProperty: 'error' })(outcome.success)
-    expect(decoded._tag, propertyName).toBe('Success')
-    return outcome
-  }
-
-  const requireVehicleSuccess = <A>(
-    outcome: Result.Result<unknown, unknown>,
-    schema: Schema.ConstraintDecoder<A>,
-  ): A => {
-    if (Result.isFailure(outcome)) throw outcome.failure
-    const decoded = Schema.decodeUnknownResult(schema, { onExcessProperty: 'error' })(outcome.success)
-    expect(decoded._tag, 'Vehicle success decoding').toBe('Success')
-    if (Result.isFailure(decoded)) throw decoded.failure
-    return decoded.success
-  }
-
-  const assertVehicleOperation = async (
-    propertyName: string,
-    effect: Effect.Effect<unknown, unknown, never>,
-    successSchema: Schema.ConstraintDecoder<unknown>,
-    failureSchema: Schema.ConstraintDecoder<unknown>,
-  ): Promise<Result.Result<unknown, unknown>> => {
+  const captureVehicleOutcome = captureEffectOutcome
+  const requireVehicleSuccess = <A>(outcome: Result.Result<unknown, unknown>, schema: Schema.ConstraintDecoder<A>): A =>
+    requireEffectSuccess(outcome, schema, 'Vehicle success')
+  const assertVehicleOperation = makeSnapshotOperationAsserter((propertyName) => {
     if (vehicles === undefined) throw new Error('VehicleService must be initialized before its operations are checked')
-    const before = await captureVehicleOutcome(
-      propertyName + ' snapshot before',
+    return captureEffectOutcome(
+      propertyName,
       vehicles.snapshot,
       PublicApplication.VehicleServiceSnapshotSuccessSchema,
       PublicApplication.VehicleServiceNoFailureSchema,
     )
-    const outcome = await captureVehicleOutcome(propertyName, effect, successSchema, failureSchema)
-    const after = await captureVehicleOutcome(
-      propertyName + ' snapshot after',
-      vehicles.snapshot,
-      PublicApplication.VehicleServiceSnapshotSuccessSchema,
-      PublicApplication.VehicleServiceNoFailureSchema,
-    )
-    if (Result.isFailure(outcome) && Result.isSuccess(before) && Result.isSuccess(after)) {
-      expect(after.success).toEqual(before.success)
-    }
-    return outcome
-  }
+  })
 
   const initialVehicleService = await Effect.runPromise(Effect.result(PublicApplication.makeVehicleService()))
   if (Result.isFailure(initialVehicleService)) {
@@ -1522,7 +1460,19 @@ it('crop, equipment, and vehicle services keep hostile requests and snapshots sa
     }),
     checks,
   )
+})
 
+it('VehicleService preserves valid lifecycle transitions and snapshots', async () => {
+  const vehicleService = await Effect.runPromise(PublicApplication.makeVehicleService())
+  const captureVehicleOutcome = captureEffectOutcome
+  const requireVehicleSuccess = <A>(outcome: Result.Result<unknown, unknown>, schema: Schema.ConstraintDecoder<A>): A =>
+    requireEffectSuccess(outcome, schema, 'Vehicle success')
+  const assertVehicleOperation = makeSnapshotOperationAsserter((propertyName) => captureEffectOutcome(
+    propertyName,
+    vehicleService.snapshot,
+    PublicApplication.VehicleServiceSnapshotSuccessSchema,
+    PublicApplication.VehicleServiceNoFailureSchema,
+  ))
   const validVehicleBaseline = await assertVehicleOperation(
     'VehicleService.restore lifecycle baseline',
     vehicleService.restore(PublicApplication.emptyVehicleSnapshot()),
@@ -1725,6 +1675,17 @@ it('crop, equipment, and vehicle services keep hostile requests and snapshots sa
     expect(finalVehicleSnapshot.success).toMatchObject({ vehicles: [], nextSerial: 2 })
   }
 
+})
+
+it('CropService preserves valid lifecycle transitions and snapshots', async () => {
+  const crops = await Effect.runPromise(PublicApplication.makeCropService())
+  const captureCropOutcome = captureEffectOutcome
+  const assertCropOperation = makeSnapshotOperationAsserter((propertyName) => captureEffectOutcome(
+    propertyName,
+    crops.snapshot,
+    PublicApplication.CropServiceSnapshotSuccessSchema,
+    PublicApplication.CropServiceNoFailureSchema,
+  ))
   const location = Schema.decodeUnknownSync(PublicApplication.CropLocationSchema)({
     dimension: DIMENSIONS[0],
     position: { x: 7, y: 64, z: -3 },
@@ -1767,15 +1728,18 @@ it('crop, equipment, and vehicle services keep hostile requests and snapshots sa
   )
   expect(Result.isSuccess(immatureYields) && immatureYields.success).toBeNull()
 
-  for (let growth = 0; growth < 16; growth += 1) {
-    const advanced = await assertCropOperation(
-      'CropService.advanceByBoneMeal',
-      crops.advanceByBoneMeal(location),
-      PublicApplication.CropServiceAdvanceByBoneMealSuccessSchema,
-      PublicApplication.CropServiceValidationErrorSchema,
-    )
-    expect(Result.isSuccess(advanced) && advanced.success).toBe(true)
-  }
+  await Array.from({ length: 16 }).reduce<Promise<void>>(
+    (previous) => previous.then(async () => {
+      const advanced = await assertCropOperation(
+        'CropService.advanceByBoneMeal',
+        crops.advanceByBoneMeal(location),
+        PublicApplication.CropServiceAdvanceByBoneMealSuccessSchema,
+        PublicApplication.CropServiceValidationErrorSchema,
+      )
+      expect(Result.isSuccess(advanced) && advanced.success).toBe(true)
+    }),
+    Promise.resolve(),
+  )
 
   const matureCrop = await assertCropOperation(
     'CropService.cropAt after bone meal',
@@ -1864,7 +1828,17 @@ it('crop, equipment, and vehicle services keep hostile requests and snapshots sa
   )
   expect(Result.isSuccess(resetSnapshot)).toBe(true)
   if (Result.isSuccess(resetSnapshot)) expect(resetSnapshot.success).toMatchObject({ crops: [] })
+})
 
+it('EquipmentService preserves valid lifecycle transitions and snapshots', async () => {
+  const equipment = await Effect.runPromise(PublicApplication.makeEquipmentService())
+  const captureEquipmentOutcome = captureEffectOutcome
+  const assertEquipmentOperation = makeSnapshotOperationAsserter((propertyName) => captureEffectOutcome(
+    propertyName,
+    equipment.snapshot,
+    PublicApplication.EquipmentServiceSnapshotSuccessSchema,
+    PublicApplication.EquipmentServiceNoFailureSchema,
+  ))
   const requireValue = <A, E>(result: Result.Result<A, E>): A => {
     if (Result.isFailure(result)) throw result.failure
     return result.success
@@ -2101,7 +2075,7 @@ it('fishing, projectile, and TNT coordinators return typed outcomes for hostile 
     const conforms = Result.isFailure(outcome)
       ? Schema.is(PublicApplication.FishingServiceErrorSchema)(outcome.failure)
       : Schema.is(successSchema)(outcome.success)
-    expect(conforms, propertyName + ' runtime Schema').toBe(true)
+    expect(conforms, `${propertyName} runtime Schema`).toBe(true)
     const decoded = Result.isFailure(outcome)
       ? Schema.decodeUnknownResult(PublicApplication.FishingServiceErrorSchema, { onExcessProperty: 'error' })(outcome.failure)
       : Schema.decodeUnknownResult(successSchema, { onExcessProperty: 'error' })(outcome.success)
@@ -2143,9 +2117,9 @@ it('fishing, projectile, and TNT coordinators return typed outcomes for hostile 
     before: FishingState
     after: FishingState
   }>> => {
-    const before = await captureFishingState(propertyName + ' snapshot before')
+    const before = await captureFishingState(`${propertyName} snapshot before`)
     const outcome = await captureFishingOutcome(propertyName, effect, successSchema)
-    const after = await captureFishingState(propertyName + ' snapshot after')
+    const after = await captureFishingState(`${propertyName} snapshot after`)
     if (Result.isFailure(outcome)) expect(after).toEqual(before)
     else assertFishingStateInvariants(after)
     return { outcome, before, after }
@@ -2202,9 +2176,9 @@ it('fishing, projectile, and TNT coordinators return typed outcomes for hostile 
     const outcome = await Effect.runPromise(Effect.result(effect))
     const schema = Result.isFailure(outcome) ? failureSchema : successSchema
     const value = Result.isFailure(outcome) ? outcome.failure : outcome.success
-    expect(Schema.is(schema)(value), propertyName + ' runtime Schema').toBe(true)
+    expect(Schema.is(schema)(value), `${propertyName} runtime Schema`).toBe(true)
     const decoded = Schema.decodeUnknownResult(schema, { onExcessProperty: 'error' })(value)
-    expect(decoded._tag, propertyName + ' decoding').toBe('Success')
+    expect(decoded._tag, `${propertyName} decoding`).toBe('Success')
     return outcome
   }
 
@@ -2240,14 +2214,14 @@ it('fishing, projectile, and TNT coordinators return typed outcomes for hostile 
     effect: Effect.Effect<unknown, unknown, never>,
     successSchema: Schema.ConstraintDecoder<unknown>,
   ) => {
-    const before = await captureProjectileSnapshot(propertyName + ' snapshot before')
+    const before = await captureProjectileSnapshot(`${propertyName} snapshot before`)
     const outcome = await captureProjectileOutcome(
       propertyName,
       effect,
       successSchema,
       PublicApplication.ProjectileServiceErrorSchema,
     )
-    const after = await captureProjectileSnapshot(propertyName + ' snapshot after')
+    const after = await captureProjectileSnapshot(`${propertyName} snapshot after`)
     if (Result.isFailure(outcome)) expect(after).toEqual(before)
     return { outcome, before, after }
   }
@@ -2261,9 +2235,9 @@ it('fishing, projectile, and TNT coordinators return typed outcomes for hostile 
     const outcome = await Effect.runPromise(Effect.result(effect))
     const schema = Result.isFailure(outcome) ? failureSchema : successSchema
     const value = Result.isFailure(outcome) ? outcome.failure : outcome.success
-    expect(Schema.is(schema)(value), propertyName + ' runtime Schema').toBe(true)
+    expect(Schema.is(schema)(value), `${propertyName} runtime Schema`).toBe(true)
     const decoded = Schema.decodeUnknownResult(schema, { onExcessProperty: 'error' })(value)
-    expect(decoded._tag, propertyName + ' decoding').toBe('Success')
+    expect(decoded._tag, `${propertyName} decoding`).toBe('Success')
     return outcome
   }
 
@@ -2293,14 +2267,14 @@ it('fishing, projectile, and TNT coordinators return typed outcomes for hostile 
     effect: Effect.Effect<unknown, unknown, never>,
     successSchema: Schema.ConstraintDecoder<unknown>,
   ) => {
-    const before = await captureTntSnapshot(propertyName + ' snapshot before')
+    const before = await captureTntSnapshot(`${propertyName} snapshot before`)
     const outcome = await captureTntOutcome(
       propertyName,
       effect,
       successSchema,
       PublicApplication.TntServiceErrorSchema,
     )
-    const after = await captureTntSnapshot(propertyName + ' snapshot after')
+    const after = await captureTntSnapshot(`${propertyName} snapshot after`)
     const ids = after.state.tnts.map((tnt) => tnt.id)
     expect(new Set(ids).size).toBe(ids.length)
     if (Result.isFailure(outcome)) expect(after).toEqual(before)

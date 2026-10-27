@@ -170,37 +170,6 @@ export const EquipmentItemSchema: Schema.Codec<EquipmentItem, unknown> = Schema.
   durability: Schema.NullOr(DurabilitySchema),
 }).check(Schema.makeFilter(({ item, count, components }) => isItemStack({ item, count, components })))
 
-const equipmentItemForSlotSchema = (slot: EquipmentSlot): Schema.Codec<EquipmentItem, unknown> =>
-  EquipmentItemSchema.check(Schema.makeFilter((item) =>
-    item.durability !== null && isEquipmentItemForSlot(slot, item)))
-
-export const EquipmentSlotsSchema: Schema.Codec<EquipmentSlots, unknown> = Schema.Struct({
-  head: Schema.NullOr(equipmentItemForSlotSchema('head')),
-  chest: Schema.NullOr(equipmentItemForSlotSchema('chest')),
-  legs: Schema.NullOr(equipmentItemForSlotSchema('legs')),
-  feet: Schema.NullOr(equipmentItemForSlotSchema('feet')),
-  offhand: Schema.NullOr(equipmentItemForSlotSchema('offhand')),
-})
-
-export const EquipmentSchema: Schema.Codec<Equipment, unknown> = Schema.Struct({
-  slots: EquipmentSlotsSchema,
-})
-
-export const DamageEquipmentResultSchema: Schema.Codec<DamageEquipmentResult, unknown> = Schema.Union([
-  Schema.TaggedStruct('InvalidAmount', { amount: Schema.Number }),
-  Schema.TaggedStruct('Empty', {}),
-  Schema.TaggedStruct('NotDamageable', { item: EquipmentItemSchema }),
-  Schema.TaggedStruct('EquipmentFailure', { error: EquipmentItemFailureSchema }),
-  Schema.TaggedStruct('Damaged', {
-    item: EquipmentItemSchema,
-    applied: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER })),
-  }),
-  Schema.TaggedStruct('Broken', {
-    item: EquipmentItemSchema,
-    applied: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER })),
-  }),
-])
-
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
@@ -252,10 +221,43 @@ export const isValidDurabilityForItem = (
   return definition !== undefined && isDurability(value) && value.max === definition.maxDurability
 }
 
-export const isEquipmentItemForSlot = (
+export function isEquipmentItemForSlot(
   slot: EquipmentSlot,
   item: EquipmentItem,
-): item is ValidEquipmentItem => equipmentDefinitionFor(item.item)?.slot === slot && isEquipmentItem(item)
+): item is ValidEquipmentItem {
+  return equipmentDefinitionFor(item.item)?.slot === slot && isEquipmentItem(item)
+}
+
+const equipmentItemForSlotSchema = (slot: EquipmentSlot): Schema.Codec<EquipmentItem, unknown> =>
+  EquipmentItemSchema.check(Schema.makeFilter((item) =>
+    item.durability !== null && isEquipmentItemForSlot(slot, item)))
+
+export const EquipmentSlotsSchema: Schema.Codec<EquipmentSlots, unknown> = Schema.Struct({
+  head: Schema.NullOr(equipmentItemForSlotSchema('head')),
+  chest: Schema.NullOr(equipmentItemForSlotSchema('chest')),
+  legs: Schema.NullOr(equipmentItemForSlotSchema('legs')),
+  feet: Schema.NullOr(equipmentItemForSlotSchema('feet')),
+  offhand: Schema.NullOr(equipmentItemForSlotSchema('offhand')),
+})
+
+export const EquipmentSchema: Schema.Codec<Equipment, unknown> = Schema.Struct({
+  slots: EquipmentSlotsSchema,
+})
+
+export const DamageEquipmentResultSchema: Schema.Codec<DamageEquipmentResult, unknown> = Schema.Union([
+  Schema.TaggedStruct('InvalidAmount', { amount: Schema.Number }),
+  Schema.TaggedStruct('Empty', {}),
+  Schema.TaggedStruct('NotDamageable', { item: EquipmentItemSchema }),
+  Schema.TaggedStruct('EquipmentFailure', { error: EquipmentItemFailureSchema }),
+  Schema.TaggedStruct('Damaged', {
+    item: EquipmentItemSchema,
+    applied: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER })),
+  }),
+  Schema.TaggedStruct('Broken', {
+    item: EquipmentItemSchema,
+    applied: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER })),
+  }),
+])
 
 export const durability = (current: number, max: number): Result.Result<Durability, DurabilityFailure> => {
   const currentResult = ItemDamage.result(current)
