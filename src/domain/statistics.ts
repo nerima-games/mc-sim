@@ -15,6 +15,22 @@ export type StatisticsRecordFailure = Readonly<{
   readonly reason: string
 }>
 
+const PositiveFiniteCounterSchema = Schema.Finite.check(Schema.isGreaterThan(0))
+
+const StatisticsFieldsSchema = Schema.Struct({
+  counters: Schema.Record(Schema.String, PositiveFiniteCounterSchema),
+  unlocked: Schema.Array(AchievementIdSchema),
+})
+
+export const StatisticsSchema: Schema.Schema<Statistics> = StatisticsFieldsSchema.check(
+  Schema.makeFilter((statistics) => new Set(statistics.unlocked).size === statistics.unlocked.length),
+)
+
+export const StatisticsRecordFailureSchema: Schema.Schema<StatisticsRecordFailure> = Schema.TaggedStruct(
+  'StatisticsRecordFailure',
+  { path: Schema.String, reason: Schema.String },
+)
+
 export const EMPTY_STATISTICS: Statistics = { counters: {}, unlocked: [] }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>

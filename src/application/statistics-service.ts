@@ -26,8 +26,12 @@
  * the inventory has it. Fewer services when the state is shared; separate
  * services when the resets differ.
  */
-import { Context, Effect, Layer, Ref, Result } from 'effect'
+import { Context, Effect, Layer, Ref, Result, Schema } from 'effect'
 import * as Statistics from '../domain/statistics.js'
+
+export const StatisticsServiceRecordSuccessSchema: Schema.Schema<void> = Schema.Undefined
+export const StatisticsServiceRecordErrorSchema: Schema.Schema<Statistics.StatisticsRecordFailure> =
+  Statistics.StatisticsRecordFailureSchema
 
 export type StatisticsServiceApi = {
   /** Whole record, for persistence and for mx-ui's statistics screen. */
