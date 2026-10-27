@@ -146,6 +146,19 @@ describe('wither lifecycle', () => {
     }
   })
 
+  it('clamps velocity before integrating a very large finite timestep', () => {
+    const airborne = step(createWither(position(0, 0, 0)), 10).state
+    const delta = 3.1e307
+
+    const result = stepWither(airborne, delta, position(1, 0, 0))
+
+    expect(Result.isSuccess(result)).toBe(true)
+    if (Result.isSuccess(result)) {
+      expect(result.success.state.velocity).toEqual(position(5, 0, 0))
+      expect(result.success.state.feetPosition).toEqual(position(1.55e308, 0, 0))
+    }
+  })
+
   it('returns a BrandError when the next position is not finite', () => {
     const feetPosition = position(Number.MAX_VALUE, 0, 0)
     const state = {

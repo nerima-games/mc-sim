@@ -96,11 +96,40 @@ const scaledDirection = (from: Position, to: Position, magnitude: number): Posit
     : positionOf((dx / length) * magnitude, (dy / length) * magnitude, (dz / length) * magnitude)
 }
 
-const clampVelocity = (velocity: Position): Position => {
-  const speed = Math.hypot(velocity.x, velocity.y, velocity.z)
-  if (speed <= WITHER_MAX_SPEED) return velocity
-  const scale = WITHER_MAX_SPEED / speed
-  return positionOf(velocity.x * scale, velocity.y * scale, velocity.z * scale)
+const clampVelocity = (x: number, y: number, z: number): Position => {
+  const scale = Math.max(Math.abs(x), Math.abs(y), Math.abs(z))
+  if (scale === 0) return positionOf(0, 0, 0)
+  const normalizedX = x / scale
+  const normalizedY = y / scale
+  const normalizedZ = z / scale
+  const normalizedSpeed = Math.hypot(normalizedX, normalizedY, normalizedZ)
+  if (scale <= WITHER_MAX_SPEED / normalizedSpeed) return positionOf(x, y, z)
+  return positionOf(
+    (normalizedX / normalizedSpeed) * WITHER_MAX_SPEED,
+    (normalizedY / normalizedSpeed) * WITHER_MAX_SPEED,
+    (normalizedZ / normalizedSpeed) * WITHER_MAX_SPEED,
+  )
+}
+
+const accelerateAndClamp = (velocity: Position, acceleration: Position, delta: number): Position => {
+  const x = velocity.x + acceleration.x * delta
+  const y = velocity.y + acceleration.y * delta
+  const z = velocity.z + acceleration.z * delta
+  if (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z)) {
+    return clampVelocity(x, y, z)
+  }
+
+  // Scale by delta before multiplying so a large finite timestep cannot overflow
+  // the velocity that is immediately capped to WITHER_MAX_SPEED.
+  const scaledX = acceleration.x + velocity.x / delta
+  const scaledY = acceleration.y + velocity.y / delta
+  const scaledZ = acceleration.z + velocity.z / delta
+  const scaledSpeed = Math.hypot(scaledX, scaledY, scaledZ)
+  if (scaledSpeed === 0) return positionOf(0, 0, 0)
+  if (scaledSpeed > WITHER_MAX_SPEED / delta) {
+    return clampVelocity(scaledX, scaledY, scaledZ)
+  }
+  return clampVelocity(scaledX * delta, scaledY * delta, scaledZ * delta)
 }
 
 export const stepWither = (
@@ -126,11 +155,7 @@ export const stepWither = (
     return { state: { ...state, healthPoints, phase }, spawnExplosion: undefined }
   }
   const acceleration = scaledDirection(state.feetPosition, repairPosition(targetPosition), WITHER_FOLLOW_ACCELERATION)
-  const velocity = clampVelocity(positionOf(
-    state.velocity.x + acceleration.x * delta,
-    state.velocity.y + acceleration.y * delta,
-    state.velocity.z + acceleration.z * delta,
-  ))
+  const velocity = accelerateAndClamp(state.velocity, acceleration, delta)
   const feetX = yield* PositionAxis.result(state.feetPosition.x + velocity.x * delta)
   const feetY = yield* PositionAxis.result(state.feetPosition.y + velocity.y * delta)
   const feetZ = yield* PositionAxis.result(state.feetPosition.z + velocity.z * delta)
