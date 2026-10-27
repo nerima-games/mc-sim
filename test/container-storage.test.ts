@@ -8,6 +8,7 @@ import {
   DISPENSER_CONTAINER_CAPACITY,
   containerIdAt,
   createContainer,
+  drainContainer,
   emptyContainerStorage,
   HOPPER_CONTAINER_CAPACITY,
   extractContainerItem,
@@ -53,6 +54,31 @@ describe('container storage domain', () => {
     const id = worldContainerIdAt(address)
 
     expect(id).toBe('nether:12,64,-7')
+  })
+
+  it('returns typed failures when hostile records throw during address and storage checks', () => {
+    const unreadable = () => new Proxy({}, {
+      ownKeys: () => { throw new Error('unreadable external record') },
+      get: () => { throw new Error('unreadable external record') },
+    })
+
+    expect(containerIdAt('overworld', unreadable())).toStrictEqual({ _tag: 'InvalidContainerPosition' })
+    expect(worldContainerIdAt(unreadable())).toStrictEqual({ _tag: 'InvalidContainerAddress' })
+    expect(findContainer(unreadable(), 'chest-a')).toStrictEqual({ _tag: 'InvalidContainerStorage' })
+  })
+
+  it('returns a typed failure when drainContainer storage access throws', () => {
+    const stored = createContainer(emptyContainerStorage(), 'drain-me').storage.containers
+    const storage = new Proxy({ containers: stored }, {
+      get: (target, property, receiver) => {
+        if (property === 'containers') throw new Error('unreadable containers')
+        return Reflect.get(target, property, receiver)
+      },
+    })
+
+    expect(drainContainer(storage, 'drain-me')).toStrictEqual({ _tag: 'InvalidContainerStorage' })
+    expect(stored).toHaveLength(1)
+    expect(stored[0]?.id).toBe('drain-me')
   })
 
   it('validates a branded world container id directly', () => {
