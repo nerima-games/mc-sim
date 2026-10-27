@@ -241,25 +241,20 @@ it('normaliseInventory rejects overflow while discarding invalid stacks', () => 
 })
 
 it('normaliseInventory rejects overflow in remaining-item totals', () => {
-  fc.assert(
-    fc.property(fc.constant(Number.MAX_VALUE), (count) => {
-      const normalized = Sim.normaliseInventory({
-        slots: [
-          { item: 'stone', count },
-          { item: 'dirt', count },
-        ],
-      } as never)
-      expect(Result.isFailure(normalized)).toBe(true)
-      if (Result.isFailure(normalized)) {
-        expect(normalized.failure).toMatchObject({
-          _tag: 'ItemValidationFailure',
-          field: 'leftover',
-          kind: 'RangeError',
-        })
-      }
-    }),
-    checks,
-  )
+  const normalized = Sim.normaliseInventory({
+    slots: [
+      { item: 'stone', count: Number.MAX_VALUE },
+      { item: 'dirt', count: Number.MAX_VALUE },
+    ],
+  } as never)
+  expect(Result.isFailure(normalized)).toBe(true)
+  if (Result.isFailure(normalized)) {
+    expect(normalized.failure).toMatchObject({
+      _tag: 'ItemValidationFailure',
+      field: 'leftover',
+      kind: 'RangeError',
+    })
+  }
 })
 
 it('player-storage numeric fields do not produce invalid success values', () => {
