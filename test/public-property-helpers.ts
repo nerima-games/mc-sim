@@ -85,15 +85,10 @@ export const hostileItemStack: fc.Arbitrary<unknown> = fc.oneof(
   fc.record({ item: hostileValue, count: hostileNumber, components: hostileValue }),
 )
 
-const schemaPredicates = new WeakMap<Schema.Schema<unknown>, (value: unknown) => boolean>()
-
-const schemaIs = (schema: Schema.Schema<unknown>, value: unknown): boolean => {
-  let predicate = schemaPredicates.get(schema)
-  if (predicate === undefined) {
-    predicate = Schema.is(schema)
-    schemaPredicates.set(schema, predicate)
-  }
-  return predicate(value)
+const decodeOutcome = (schema: Schema.Schema<unknown>, value: unknown) => {
+  // Source exports widen decoder services to `unknown`; these result schemas are synchronous and service-free.
+  const decoder = schema as unknown as Schema.ConstraintDecoder<unknown, never>
+  return Schema.decodeUnknownResult(decoder, { onExcessProperty: 'error' })(value)
 }
 
 export const assertResultContract = (
@@ -103,11 +98,11 @@ export const assertResultContract = (
   failureSchema: Schema.Schema<unknown>,
 ): void => {
   const outcome = call()
-  if (Result.isFailure(outcome)) {
-    expect(schemaIs(failureSchema, outcome.failure), `${propertyName}: failure schema`).toBe(true)
-    return
-  }
-  expect(schemaIs(successSchema, outcome.success), `${propertyName}: success schema`).toBe(true)
+  const decoded = Result.isFailure(outcome)
+    ? decodeOutcome(failureSchema, outcome.failure)
+    : decodeOutcome(successSchema, outcome.success)
+  const branch = Result.isFailure(outcome) ? 'failure' : 'success'
+  expect(decoded._tag, `${propertyName}: ${branch} Schema decode`).toBe('Success')
 }
 
 export const assertEffectOutcome: typeof assertResultContract = assertResultContract

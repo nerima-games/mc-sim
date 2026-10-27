@@ -391,6 +391,13 @@ it('rejects missing success fields, unknown error tags, and invalid branded valu
     TransferFailureSchema,
   )).toThrow()
 
+  expect(() => assertResultContract(
+    'transfer',
+    () => Result.succeed({ _tag: 'Transferred', count: 2, item: 'stone', unexpected: true }),
+    TransferSuccessSchema,
+    TransferFailureSchema,
+  )).toThrow()
+
   const BrandedCountSchema = Schema.Int.check(Schema.isGreaterThan(0)).pipe(Schema.brand('BrandedCount'))
   expect(() => assertResultContract(
     'branded count',

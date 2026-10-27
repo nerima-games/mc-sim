@@ -46,7 +46,8 @@ it('makeTimeService returns a Schema-valid brand failure for a null constructor 
       const outcome = await Effect.runPromise(Effect.result(invokeEffect(App.makeTimeService, [initial])))
       expect(Result.isFailure(outcome)).toBe(true)
       if (Result.isFailure(outcome)) {
-        expect(Schema.is(App.BrandErrorSchema)(outcome.failure)).toBe(true)
+        const decoded = Schema.decodeUnknownResult(App.BrandErrorSchema, { onExcessProperty: 'error' })(outcome.failure)
+        expect(decoded._tag, 'makeTimeService failure Schema decode').toBe('Success')
       }
     }),
     checks,
@@ -234,7 +235,11 @@ it('EntityManager construction repairs hostile saved fields and sweep keeps its 
         }],
       }
       const managerOutcome = await Effect.runPromise(Effect.result(invokeEffect(App.makeEntityManager, [roster])))
-      if (Result.isFailure(managerOutcome)) return
+      if (Result.isFailure(managerOutcome)) {
+        const decoded = Schema.decodeUnknownResult(App.EntitySerialExhaustedSchema, { onExcessProperty: 'error' })(managerOutcome.failure)
+        expect(decoded._tag, 'makeEntityManager failure Schema decode').toBe('Success')
+        return
+      }
       const snapshot = await Effect.runPromise(managerOutcome.success.snapshot)
       expect(Number.isSafeInteger(snapshot.nextSerial)).toBe(true)
       expect(new Set(snapshot.entities.map(({ id }) => id)).size).toBe(snapshot.entities.length)
@@ -332,7 +337,11 @@ it('PlayerService constructor and restore schema-gate dimension outcomes', () =>
     ))
     expect(Result.isFailure(initial)).toBe(true)
     if (Result.isFailure(initial)) {
-      expect(Schema.is(App.PlayerServiceInputErrorSchema)(initial.failure)).toBe(true)
+      const decoded = Schema.decodeUnknownResult(
+        App.PlayerServiceInputErrorSchema,
+        { onExcessProperty: 'error' },
+      )(initial.failure)
+      expect(decoded._tag, 'PlayerService constructor failure Schema decode').toBe('Success')
       expect(initial.failure).toMatchObject({ reason: 'invalid-dimension', field: 'dimension' })
     }
   }), checks)

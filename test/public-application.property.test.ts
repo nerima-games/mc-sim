@@ -1052,6 +1052,12 @@ it('stage movement inputs stay bounded and invalid physics configuration is a ty
         jumpSpeed: 0,
       }]) as Effect.Effect<unknown, unknown, never>
       const outcome = await Effect.runPromise(Effect.result(effect))
+      assertEffectOutcome(
+        'makeSimStagesWithPhysics invalid walkSpeed',
+        () => outcome,
+        PublicApplication.SimPhysicsStagesSchema,
+        PublicApplication.SimPhysicsConfigErrorSchema,
+      )
       expect(Result.isFailure(outcome)).toBe(true)
     }),
     checks,
