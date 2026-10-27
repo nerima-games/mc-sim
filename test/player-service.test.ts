@@ -1,8 +1,17 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Effect } from 'effect'
+import { Effect, Layer, Schema } from 'effect'
 import { INITIAL_PLAYER_DIMENSION, makePlayerService } from '../src/application/player-service'
+import { PLAYER_REPLICATED_OWNER_ID, PlayerServiceSnapshotSchema } from '../src/application/replicated-state'
 import { INITIAL_PLAYER_POSE } from '../src/domain/camera-pose'
-import { PositionAxis, position as kernelPosition, type Dimension } from '@nerima-games/mc-kernel'
+import {
+  DimensionRevisionSchema,
+  PositionAxis,
+  WorldIdSchema,
+  WorldRevisionSchema,
+  position as kernelPosition,
+  type Dimension,
+} from '@nerima-games/mc-kernel'
+import { makeWorldCommitCoordinator, WorldCommitCoordinator } from '../src/application/world-commit-coordinator'
 
 const position = (x: number, y: number, z: number) =>
   kernelPosition(PositionAxis(x), PositionAxis(y), PositionAxis(z))
@@ -156,6 +165,72 @@ describe('REGRESSION: reset is a whole fresh world', () => {
       yield* player.reset
 
       expect(yield* player.dimension).toBe('overworld')
+    }),
+  )
+})
+
+describe('PlayerService replicated snapshots', () => {
+  it.effect('reads committed state at the coordinator revision and submits local candidates through its owner API', () =>
+    Effect.gen(function* () {
+      const player = yield* makePlayerService()
+      const initialCandidate = yield* player.replicatedCandidate
+      const world = yield* Schema.decodeUnknownEffect(WorldIdSchema)('player-world')
+      const revisionZero = yield* Schema.decodeUnknownEffect(WorldRevisionSchema)(0)
+      const revisionOne = yield* Schema.decodeUnknownEffect(WorldRevisionSchema)(1)
+      const dimensionRevisionZero = yield* Schema.decodeUnknownEffect(DimensionRevisionSchema)(0)
+      const dimensionRevisionOne = yield* Schema.decodeUnknownEffect(DimensionRevisionSchema)(1)
+      const coordinator = yield* makeWorldCommitCoordinator({
+        world,
+        owners: [{
+          ownerId: PLAYER_REPLICATED_OWNER_ID,
+          schema: PlayerServiceSnapshotSchema,
+          initialState: initialCandidate,
+        }],
+      })
+      const coordinatorLayer = Layer.succeed(WorldCommitCoordinator, coordinator)
+      const destination = position(12, 70, -4)
+
+      yield* player.moveTo(destination)
+      yield* player.setDimension('nether')
+      yield* player.look(0.5, 0.25)
+      const beforeCommit = yield* Effect.provide(player.snapshot, coordinatorLayer)
+
+      expect(beforeCommit.revision).toBe(0)
+      expect(beforeCommit.state.pose.feetPosition).toStrictEqual({
+        dimension: 'overworld',
+        x: 0,
+        y: 0,
+        z: 0,
+      })
+
+      const delta = yield* Effect.provide(
+        player.submitReplicatedCandidate(revisionZero, dimensionRevisionZero),
+        coordinatorLayer,
+      )
+      const committed = yield* Effect.provide(player.snapshot, coordinatorLayer)
+
+      expect(delta.revision).toBe(1)
+      expect(delta.changes.map(({ owner }) => owner)).toStrictEqual([PLAYER_REPLICATED_OWNER_ID])
+      expect(committed.revision).toBe(delta.revision)
+      expect(committed.state.pose.feetPosition).toStrictEqual({
+        dimension: 'nether',
+        x: 12,
+        y: 70,
+        z: -4,
+      })
+      expect(committed.state.pose.yawRadians).toBe(0.5)
+      expect(committed.state.pose.pitchRadians).toBe(0.25)
+      expect(yield* coordinator.dimensionRevision('overworld')).toBe(1)
+      expect(yield* coordinator.dimensionRevision('nether')).toBe(1)
+
+      yield* player.look(0.25, 0)
+      const sameDimensionDelta = yield* Effect.provide(
+        player.submitReplicatedCandidate(revisionOne, dimensionRevisionOne),
+        coordinatorLayer,
+      )
+      expect(sameDimensionDelta.revision).toBe(2)
+      expect(yield* coordinator.dimensionRevision('overworld')).toBe(1)
+      expect(yield* coordinator.dimensionRevision('nether')).toBe(2)
     }),
   )
 })
