@@ -395,27 +395,25 @@ describe('SettingsService', () => {
     }),
   )
 
-  it.effect('restore keeps valid branded settings', () =>
+  it.effect('restores and repairs malformed stored settings', () =>
     Effect.gen(function* () {
-      // The second entry point. `makeSettingsService`'s header records what
-      // happened elsewhere in this repository when only one entry point was
-      // guarded: a layer built from stored values and `restore` disagreeing
-      // about what "legal" means.
       const settings = yield* makeSettingsService()
-
-      const fromDisk: Settings = {
-        ...DEFAULT_SETTINGS,
-        renderDistance: RenderDistanceChunks(16),
-        fovDegrees: FieldOfViewDegrees(75),
-      }
+      const fromDisk = rawSettings({
+        renderDistance: 0,
+        fovDegrees: 179,
+        mouseSensitivity: 99,
+        audioEnabled: 'true',
+        keyBindings: { jump: 123 },
+      })
 
       yield* settings.restore(fromDisk)
       const restored = yield* settings.snapshot
 
-      expect(restored.renderDistance).toBe(16)
-      expect(restored.fovDegrees).toBe(75)
+      expect(restored.renderDistance).toBe(2)
+      expect(restored.fovDegrees).toBe(110)
+      expect(restored.mouseSensitivity).toBe(3)
       expect(restored.audioEnabled).toBe(DEFAULT_SETTINGS.audioEnabled)
-      expect(normaliseSettings(fromDisk)).toEqual(restored)
+      expect(restored.keyBindings).toEqual({})
     }),
   )
 

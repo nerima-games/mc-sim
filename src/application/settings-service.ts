@@ -88,7 +88,7 @@ export type SettingsServiceApi = {
    * no error channel — a player whose stored FOV is out of range should get a
    * playable FOV, not a game that refuses to start.
    */
-  readonly restore: (settings: Settings) => Effect.Effect<void>
+  readonly restore: (settings: unknown) => Effect.Effect<void>
   /**
    * RESTORE DEFAULTS — the settings screen's button. NOT the world-teardown
    * path. See the module header.
