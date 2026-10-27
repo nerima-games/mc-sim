@@ -33,6 +33,8 @@ import {
   FIRST_FRAME_DELTA_SECS,
   frameDeltaBetween,
   frameDeltaLossSecs,
+  FixedDurationSecs,
+  InterpolationFraction,
   MAX_FRAME_DELTA_SECS,
   MIN_FRAME_DELTA_SECS,
   MonotonicTimeSecs,
@@ -126,9 +128,19 @@ const frameClampProbe = (): ReadonlyArray<string> => {
 const timeOrderProbe = (): ReadonlyArray<string> => {
   const fresh = Time.INITIAL_TIME_STATE
 
-  const safe = Time.setTimeOfDay(Time.setDayLength(fresh, 600), 0.3)
-  const unsafe = Time.setDayLength(Time.setTimeOfDay(fresh, 0.3), 600)
-  const combined = Time.setDayLengthThenTimeOfDay(fresh, 600, 0.3)
+  const safe = Time.setTimeOfDay(
+    Time.setDayLength(fresh, FixedDurationSecs(600)),
+    InterpolationFraction(0.3),
+  )
+  const unsafe = Time.setDayLength(
+    Time.setTimeOfDay(fresh, InterpolationFraction(0.3)),
+    FixedDurationSecs(600),
+  )
+  const combined = Time.setDayLengthThenTimeOfDay(
+    fresh,
+    FixedDurationSecs(600),
+    InterpolationFraction(0.3),
+  )
 
   // Age a world four in-game days, then "load" it two ways.
   let aged = fresh
@@ -138,12 +150,15 @@ const timeOrderProbe = (): ReadonlyArray<string> => {
   const viaRestore = aged
   const viaConfigure = Time.setDayLengthThenTimeOfDay(
     aged,
-    Time.dayLengthSecs(aged),
-    Time.timeOfDay(aged),
+    FixedDurationSecs(Time.dayLengthSecs(aged)),
+    InterpolationFraction(Time.timeOfDay(aged)),
   )
 
   // The module header's OTHER worked example, with the day length the test uses.
-  const unsafeShorter = Time.setDayLength(Time.setTimeOfDay(fresh, 0.3), 200)
+  const unsafeShorter = Time.setDayLength(
+    Time.setTimeOfDay(fresh, InterpolationFraction(0.3)),
+    FixedDurationSecs(200),
+  )
 
   const clockOf = (state: Time.TimeState): string => clockFace(Time.timeOfDay(state))
 
@@ -219,7 +234,7 @@ const timeRestoreProbe = Effect.gen(function* () {
     dayLengthSecs: yield* time.dayLengthSecs,
   }
 
-  yield* time.setTimeOfDay(0.5)
+  yield* time.setTimeOfDay(InterpolationFraction(0.5))
   const afterSetter = yield* time.timeOfDay
 
   yield* time.advance(DeltaTimeSecs(1))

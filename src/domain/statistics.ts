@@ -1,9 +1,15 @@
+import { AchievementIdSchema } from '@nerima-games/mc-kernel'
+import { Schema } from 'effect'
+import type { DomainEventAchievementId } from '@nerima-games/mc-kernel'
+
 export type StatisticKey = string
-export type AchievementId = string
+export type AchievementId = DomainEventAchievementId
 export type Statistics = Readonly<{
   counters: Readonly<Record<StatisticKey, number>>
-  unlocked: ReadonlyArray<AchievementId>
+  unlocked: ReadonlyArray<string>
 }>
+
+export const EMPTY_STATISTICS: Statistics = { counters: {}, unlocked: [] }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -61,15 +67,13 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
  * vocabulary is the more expensive thing to hold.
  */
 
-export const EMPTY_STATISTICS: Statistics = { counters: {}, unlocked: [] }
-
 /** A value with no magnitude contributes nothing. `domain/vitals.ts` argues the case. */
 const delta = (value: number): number =>
   typeof value === 'number' && Number.isFinite(value) ? value : 0
 
 /** How many times something has been counted. Never `undefined`, never negative. */
 export const counterOf = (statistics: Statistics, key: StatisticKey): number =>
-  Math.max(0, delta(statistics.counters[key] ?? 0))
+  Math.max(0, delta(statistics['counters'][key] ?? 0))
 
 /**
  * Count something. `amount` defaults to one, which is the overwhelming case.
@@ -92,12 +96,12 @@ export const record = (statistics: Statistics, key: StatisticKey, amount = 1): S
 
   return {
     ...statistics,
-    counters: { ...statistics.counters, [key]: Math.max(0, counterOf(statistics, key) + by) },
+    counters: { ...statistics['counters'], [key]: Math.max(0, counterOf(statistics, key) + by) },
   }
 }
 
 export const isUnlocked = (statistics: Statistics, id: AchievementId): boolean =>
-  statistics.unlocked.includes(id)
+  statistics['unlocked'].includes(id)
 
 /**
  * Unlock an achievement. IDEMPOTENT.
@@ -111,7 +115,7 @@ export const isUnlocked = (statistics: Statistics, id: AchievementId): boolean =
 export const unlock = (statistics: Statistics, id: AchievementId): Statistics =>
   isUnlocked(statistics, id)
     ? statistics
-    : { ...statistics, unlocked: [...statistics.unlocked, id] }
+    : { ...statistics, unlocked: [...statistics['unlocked'], id] }
 
 /**
  * Repair a record read from persistence.
@@ -123,14 +127,18 @@ export const unlock = (statistics: Statistics, id: AchievementId): Statistics =>
  * string, an entry whose value is `NaN` — all of them satisfy the declaration at
  * the seam where the save was written by a different version.
  *
- * Non-string ids and non-countable values are DROPPED rather than coerced. That
- * is the opposite of what the vitals repair does, and the difference is that a
- * vital has a meaningful nearest legal value (zero health is a state a player
- * can be in) while an achievement id does not: coercing `null` to `'null'`
- * would unlock an achievement that does not exist and no screen could remove.
+ * Values rejected by the kernel's `AchievementIdSchema` and non-countable
+ * values are dropped. Kernel `Statistics.unlocked` remains a string array for
+ * save compatibility; decoding here admits event-branded IDs into the
+ * application model.
  */
-export const normaliseStatistics = (statistics: Statistics): Statistics => {
-  const source: unknown = statistics.counters
+const achievementIdOf = (value: unknown): AchievementId | undefined => {
+  const decoded = Schema.decodeUnknownResult(AchievementIdSchema)(value)
+  return decoded._tag === 'Success' ? decoded.success : undefined
+}
+
+export const normaliseStatistics = (statistics: unknown): Statistics => {
+  const source: unknown = isRecord(statistics) ? statistics['counters'] : undefined
   const counters: Record<StatisticKey, number> = {}
   if (isRecord(source)) {
     for (const [key, value] of Object.entries(source)) {
@@ -141,11 +149,14 @@ export const normaliseStatistics = (statistics: Statistics): Statistics => {
     }
   }
 
-  const unlocked = Array.isArray(statistics.unlocked)
-    ? statistics.unlocked.filter(
-        (id, index, all): boolean => typeof id === 'string' && all.indexOf(id) === index,
-      )
-    : []
+  const unlocked: AchievementId[] = []
+  const unlockedSource: unknown = isRecord(statistics) ? statistics['unlocked'] : undefined
+  if (Array.isArray(unlockedSource)) {
+    for (const value of unlockedSource) {
+      const id = achievementIdOf(value)
+      if (id !== undefined && !unlocked.includes(id)) unlocked.push(id)
+    }
+  }
 
   return { counters, unlocked }
 }
@@ -157,18 +168,18 @@ export const normaliseStatistics = (statistics: Statistics): Statistics => {
  * needs to distinguish a save it must repair from one it may load verbatim, and
  * `restore` has no error channel to tell it with.
  */
-export const isValidStatistics = (statistics: Statistics): boolean => {
-  const counters: unknown = statistics.counters
-  if (typeof counters !== 'object' || counters === null || !Array.isArray(statistics.unlocked)) {
+export const isValidStatistics = (statistics: unknown): boolean => {
+  if (!isRecord(statistics) || !isRecord(statistics['counters']) || !Array.isArray(statistics['unlocked'])) {
     return false
   }
 
   return (
-    Object.values(counters).every(
+    Object.values(statistics['counters']).every(
       (value) => typeof value === 'number' && Number.isFinite(value) && value > 0,
     ) &&
-    statistics.unlocked.every(
-      (id, index, all) => typeof id === 'string' && all.indexOf(id) === index,
-    )
+    statistics['unlocked'].every((value, index, all) => {
+      const id = achievementIdOf(value)
+      return id !== undefined && all.indexOf(id) === index
+    })
   )
 }

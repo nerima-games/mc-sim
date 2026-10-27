@@ -7,24 +7,26 @@ import {
 } from '../src/application/settings-service'
 import {
   applySettings,
+  COLOR_VISION_CORRECTIONS,
+  DEFAULT_SETTINGS,
+  GRAPHICS_PRESETS,
   isGraphicsQuality,
   isValidSettings,
   keyBindingFor,
+  normaliseSettings,
+  REDUCED_MOTION_SETTINGS,
+  rebindKey as domainRebindKey,
+  unbindKey as domainUnbindKey,
 } from '../src/domain/settings'
 import {
-  DEFAULT_SETTINGS,
   FieldOfViewDegrees,
-  GRAPHICS_QUALITIES,
   InputAction,
   KeyCode,
   MouseSensitivity,
-  normaliseSettings,
-  rebindKey as kernelRebindKey,
   RenderDistanceChunks,
-  unbindKey as kernelUnbindKey,
   VolumeLevel,
-  type Settings,
 } from '@nerima-games/mc-kernel'
+import type { Settings } from '../src/domain/settings'
 
 const withSettings = (patch: Partial<Settings>): Settings => ({ ...DEFAULT_SETTINGS, ...patch })
 const rawSettings = (patch: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> => ({
@@ -32,67 +34,58 @@ const rawSettings = (patch: Readonly<Record<string, unknown>>): Readonly<Record<
   ...patch,
 })
 const rebindKey = (settings: Settings, action: string, code: string): Settings =>
-  kernelRebindKey(settings, InputAction(action), KeyCode(code))
+  domainRebindKey(settings, InputAction(action), KeyCode(code))
 const unbindKey = (settings: Settings, action: string): Settings =>
-  kernelUnbindKey(settings, InputAction(action))
+  domainUnbindKey(settings, InputAction(action))
 
-/**
- * THE regression test for the second-owner refusal.
- *
- * The reference's `SettingsSchema` holds `dayLengthSeconds`
- * (settings.schema.ts:54) while its `TimeService` holds the same quantity as the
- * denominator of a tick counter. `mx-gameplay/docs/architecture.md:142-148`
- * records what a duplicated day length cost when the two disagreed: the sky
- * jumped on world load, and only mc-sim's answer was saved.
- *
- * The rules themselves moved to `@nerima-games/mc-kernel` 0.7.0 (this repo's
- * own `domain/settings.ts` and mc-compose's independent `PlayerSettingsV1`
- * copy were merged there), so this is now a regression test for the WIRING —
- * that `SettingsService` round-trips exactly kernel's field set and adds
- * nothing of its own — rather than for a ruleset this package still owns.
- * If a `dayLength` field ever appears in what this service reports, this
- * goes red before anybody has to notice the sky.
- */
-describe('REGRESSION: settings must not become a second owner of the day length', () => {
-  it.effect('no field here names a day, a difficulty or a preset', () =>
+describe('W4-R3 persistent settings ownership', () => {
+  it.effect('stores the full presentation and world settings schema', () =>
     Effect.sync(() => {
-      expect(Object.keys(DEFAULT_SETTINGS).sort()).toEqual([
-        'audioEnabled',
-        'captionsEnabled',
-        'fovDegrees',
-        'graphicsQuality',
-        'keyBindings',
-        'masterVolume',
-        'mouseSensitivity',
-        'musicVolume',
-        'renderDistance',
-        'sfxVolume',
-      ])
+      expect(DEFAULT_SETTINGS.difficulty).toBe('normal')
+      expect(DEFAULT_SETTINGS.fovDegrees).toBe(75)
+      expect(DEFAULT_SETTINGS.uiScale).toBe(1)
+      expect(DEFAULT_SETTINGS.reducedMotion).toBe('system')
+      expect(DEFAULT_SETTINGS.colorVisionCorrection).toBe('off')
+      expect(DEFAULT_SETTINGS.graphicsPreset).toBe('medium')
+      expect(isValidSettings(DEFAULT_SETTINGS)).toBe(true)
     }),
   )
 
-  it.effect('a patch naming a refused field cannot install one', () =>
+  it.effect('repairs invalid persisted values for each newly owned field', () =>
     Effect.sync(() => {
-      // Rebuilding through `normaliseSettings` writes the
-      // ten fields it knows and nothing else. A save from a build that had more
-      // therefore cannot smuggle one back in.
-      const patched = normaliseSettings({
+      const repaired = normaliseSettings({
         ...DEFAULT_SETTINGS,
-        dayLengthSeconds: 1200,
-        difficulty: 'hard',
+        difficulty: 'nightmare',
+        uiScale: 3,
+        reducedMotion: 'sometimes',
+        colorVisionCorrection: 'monochrome',
+        graphicsPreset: 'ulra',
       })
 
-      expect(Object.keys(patched).sort()).toEqual(Object.keys(DEFAULT_SETTINGS).sort())
+      expect(repaired.difficulty).toBe(DEFAULT_SETTINGS.difficulty)
+      expect(repaired.uiScale).toBe(1.5)
+      expect(repaired.reducedMotion).toBe(DEFAULT_SETTINGS.reducedMotion)
+      expect(repaired.colorVisionCorrection).toBe(DEFAULT_SETTINGS.colorVisionCorrection)
+      expect(repaired.graphicsPreset).toBe(DEFAULT_SETTINGS.graphicsPreset)
+      expect(repaired.graphicsQuality).toBe(repaired.graphicsPreset)
+    }),
+  )
+})
+
+describe('settings normalisation input boundary', () => {
+  it.effect('repairs non-record saves and rejects them as already-valid settings', () =>
+    Effect.sync(() => {
+      expect(normaliseSettings(null)).toEqual(DEFAULT_SETTINGS)
+      expect(normaliseSettings([])).toEqual(DEFAULT_SETTINGS)
+      expect(isValidSettings(null)).toBe(false)
+      expect(isValidSettings([])).toBe(false)
     }),
   )
 })
 
 /**
- * These defaults are kernel's, not this repository's — `DEFAULT_SETTINGS` is
- * imported, not defined here. What this repository still owns is the CLAIM
- * that these are the values `makeSettingsService()` actually starts a player
- * with, which is what the `SettingsService` describe block below re-checks
- * end to end. Two values changed under mc-kernel 0.7.0's reconciliation
+ * Existing defaults come from mc-kernel; the W4-R3 fields are owned here.
+ * Two values changed under mc-kernel 0.7.0's reconciliation
  * against mc-compose's `PlayerSettingsV1` (the independent copy that shipped
  * to real players): `audioEnabled` false→true (the browser autoplay gate
  * already blocks a cold-open blast, so `false` bought no safety, only a
@@ -102,12 +95,13 @@ describe('REGRESSION: settings must not become a second owner of the day length'
  * here at their NEW values so a future accidental revert is caught, not
  * because this repository re-derived either number.
  */
-describe('the defaults are kernel’s reconciled values', () => {
-  it.effect('every fresh-user value is what mc-kernel’s DEFAULT_SETTINGS states', () =>
+describe('existing defaults stay reconciled with mc-kernel', () => {
+  it.effect('existing fresh-user values remain unchanged', () =>
     Effect.sync(() => {
       expect(DEFAULT_SETTINGS.renderDistance).toBe(5)
       expect(DEFAULT_SETTINGS.fovDegrees).toBe(75)
       expect(DEFAULT_SETTINGS.graphicsQuality).toBe('medium')
+      expect(DEFAULT_SETTINGS.graphicsPreset).toBe('medium')
       expect(DEFAULT_SETTINGS.audioEnabled).toBe(true)
       expect(DEFAULT_SETTINGS.mouseSensitivity).toBe(1)
       expect(DEFAULT_SETTINGS.masterVolume).toBe(0.8)
@@ -115,6 +109,9 @@ describe('the defaults are kernel’s reconciled values', () => {
       expect(DEFAULT_SETTINGS.sfxVolume).toBe(1)
       expect(DEFAULT_SETTINGS.captionsEnabled).toBe(true)
       expect(DEFAULT_SETTINGS.keyBindings).toEqual({})
+      expect(GRAPHICS_PRESETS).toEqual(['low', 'medium', 'high', 'ultra'])
+      expect(REDUCED_MOTION_SETTINGS).toEqual(['system', 'full', 'reduced'])
+      expect(COLOR_VISION_CORRECTIONS).toEqual(['off', 'protanopia', 'deuteranopia', 'tritanopia'])
     }),
   )
 
@@ -134,6 +131,34 @@ describe('locally owned settings API', () => {
       expect(updated.audioEnabled).toBe(false)
       expect(updated.renderDistance).toBe(DEFAULT_SETTINGS.renderDistance)
       expect(updated.fovDegrees).toBe(DEFAULT_SETTINGS.fovDegrees)
+    }),
+  )
+
+  it.effect('keeps the preset and legacy graphics quality patches in sync', () =>
+    Effect.sync(() => {
+      const presetPatch = applySettings(DEFAULT_SETTINGS, { graphicsPreset: 'high' })
+      const legacyPatch = applySettings(DEFAULT_SETTINGS, { graphicsQuality: 'low' })
+
+      expect(presetPatch.graphicsPreset).toBe('high')
+      expect(presetPatch.graphicsQuality).toBe('high')
+      expect(legacyPatch.graphicsPreset).toBe('low')
+      expect(legacyPatch.graphicsQuality).toBe('low')
+    }),
+  )
+
+  it.effect('uses a valid legacy graphics quality when the preset is invalid', () =>
+    Effect.sync(() => {
+      const legacy = normaliseSettings(
+        rawSettings({ graphicsPreset: 'ulra', graphicsQuality: 'high' }),
+      )
+      const fallback = normaliseSettings(
+        rawSettings({ graphicsPreset: 'ulra', graphicsQuality: 'ulra' }),
+      )
+
+      expect(legacy.graphicsPreset).toBe('high')
+      expect(legacy.graphicsQuality).toBe('high')
+      expect(fallback.graphicsPreset).toBe(DEFAULT_SETTINGS.graphicsPreset)
+      expect(fallback.graphicsQuality).toBe(DEFAULT_SETTINGS.graphicsQuality)
     }),
   )
 
@@ -171,6 +196,18 @@ describe('values are clamped into the reference’s ranges', () => {
     }),
   )
 
+  it.effect('UI scale falls back for NaN and non-numeric saved values', () =>
+    Effect.sync(() => {
+      expect(normaliseSettings(rawSettings({ uiScale: 1.25 })).uiScale).toBe(1.25)
+      expect(normaliseSettings(rawSettings({ uiScale: Number.NaN })).uiScale).toBe(
+        DEFAULT_SETTINGS.uiScale,
+      )
+      expect(normaliseSettings(rawSettings({ uiScale: 'large' })).uiScale).toBe(
+        DEFAULT_SETTINGS.uiScale,
+      )
+    }),
+  )
+
   it.effect('mouse sensitivity is in [0.1, 3]', () =>
     Effect.sync(() => {
       // settings.schema.ts:50. Zero is refused because a sensitivity of zero is
@@ -200,8 +237,8 @@ describe('values are clamped into the reference’s ranges', () => {
       expect(normaliseSettings(rawSettings({ graphicsQuality: 'ulra' })).graphicsQuality).toBe(
         'medium',
       )
-      expect(GRAPHICS_QUALITIES).toContain('ultra')
-      expect(GRAPHICS_QUALITIES).not.toContain('ulra')
+      expect(GRAPHICS_PRESETS).toContain('ultra')
+      expect(GRAPHICS_PRESETS).not.toContain('ulra')
     }),
   )
 
@@ -255,6 +292,15 @@ describe('key bindings are overrides, not a roster', () => {
       expect(keyBindingFor(bound, 'jump')).toBe('Space')
       expect(keyBindingFor(bound, 'sneak')).toBeUndefined()
       expect(keyBindingFor(unbindKey(bound, 'jump'), 'jump')).toBeUndefined()
+    }),
+  )
+
+  it.effect('preserves settings when an untyped caller supplies an invalid action value', () =>
+    Effect.sync(() => {
+      expect(InputAction.result('')._tag).toBe('Failure')
+      expect(
+        domainRebindKey(DEFAULT_SETTINGS, '' as InputAction, KeyCode('Space')),
+      ).toBe(DEFAULT_SETTINGS)
     }),
   )
 
@@ -351,6 +397,19 @@ describe('key bindings are overrides, not a roster', () => {
 })
 
 describe('SettingsService', () => {
+  it.effect('computes a candidate without installing it for a coordinator commit', () =>
+    Effect.gen(function* () {
+      const settings = yield* makeSettingsService()
+      const candidate = yield* settings.candidate({ difficulty: 'hard', uiScale: 1.25 })
+
+      expect(candidate.difficulty).toBe('hard')
+      expect(candidate.uiScale).toBe(1.25)
+      expect(yield* settings.snapshot).toEqual(DEFAULT_SETTINGS)
+      yield* settings.restore(candidate)
+      expect(yield* settings.snapshot).toEqual(candidate)
+    }),
+  )
+
   it.effect('update patches some fields and leaves the rest', () =>
     Effect.gen(function* () {
       const settings = yield* makeSettingsService()

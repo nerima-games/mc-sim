@@ -61,7 +61,14 @@
  * loop, and is passed down. That is what makes fast-forward possible: a
  * scenario test can advance a simulated week in a few microseconds.
  */
-import type { DeltaTimeSecs } from "@nerima-games/mc-kernel"
+import { Brand, Result } from 'effect'
+import {
+  FixedDurationSecs,
+  InterpolationFraction,
+  PositiveTickCount,
+  SimulationTick,
+  type DeltaTimeSecs,
+} from '@nerima-games/mc-kernel'
 
 /** Simulation ticks per second. Vanilla parity; the reference uses the same rate. */
 export const TICKS_PER_SECOND = 60
@@ -272,7 +279,17 @@ export const advance = (state: TimeState, dt: DeltaTimeSecs): TimeState => ({
  * untouched, so the time of day this state reports afterwards is generally not
  * the one it reported before. See the module header.
  */
-export const setDayLength = (state: TimeState, seconds: number): TimeState => ({
+export const simulationTickToDayFraction = (
+  rawTick: number,
+  dayLengthTicks: number,
+): Result.Result<InterpolationFraction, Brand.BrandError> =>
+  Result.flatMap(SimulationTick.result(rawTick), (tick) =>
+    Result.flatMap(PositiveTickCount.result(dayLengthTicks), (dayTicks) =>
+      InterpolationFraction.result(Math.min(MAX_TIME_FRACTION, (tick % dayTicks) / dayTicks)),
+    ),
+  )
+
+export const setDayLength = (state: TimeState, seconds: FixedDurationSecs): TimeState => ({
   ...state,
   dayLengthTicks: clampDayLengthSecs(seconds) * TICKS_PER_SECOND,
 })
@@ -284,9 +301,9 @@ export const setDayLength = (state: TimeState, seconds: number): TimeState => ({
  * be correct when this runs. Note that this also resets the day counter to 0,
  * i.e. it moves within day zero — matching the reference.
  */
-export const setTimeOfDay = (state: TimeState, fraction: number): TimeState => ({
+export const setTimeOfDay = (state: TimeState, fraction: InterpolationFraction): TimeState => ({
   ...state,
-  ticks: clampFraction(fraction) * state.dayLengthTicks,
+  ticks: Math.floor(clampFraction(fraction) * state.dayLengthTicks),
 })
 
 /**
@@ -300,6 +317,6 @@ export const setTimeOfDay = (state: TimeState, fraction: number): TimeState => (
  */
 export const setDayLengthThenTimeOfDay = (
   state: TimeState,
-  seconds: number,
-  fraction: number,
+  seconds: FixedDurationSecs,
+  fraction: InterpolationFraction,
 ): TimeState => setTimeOfDay(setDayLength(state, seconds), fraction)

@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Effect } from 'effect'
+import { Effect, Schema } from 'effect'
+import { AchievementIdSchema } from '@nerima-games/mc-kernel'
 import {
   makeStatisticsService,
   StatisticsService,
@@ -15,6 +16,8 @@ import {
   unlock,
   type Statistics,
 } from '../src/domain/statistics'
+
+const achievementId = Schema.decodeUnknownSync(AchievementIdSchema)
 
 describe('counting', () => {
   it.effect('a counter starts at zero and is never undefined', () =>
@@ -81,8 +84,8 @@ describe('achievements are recorded, never decided', () => {
       // An achievement stage re-evaluating a registry every frame would append
       // once per frame otherwise, and the first symptom would be a save file
       // growing without bound rather than a wrong screen.
-      const once = unlock(EMPTY_STATISTICS, 'time-to-mine')
-      const twice = unlock(once, 'time-to-mine')
+      const once = unlock(EMPTY_STATISTICS, achievementId('time-to-mine'))
+      const twice = unlock(once, achievementId('time-to-mine'))
 
       expect(twice.unlocked).toEqual(['time-to-mine'])
       expect(twice).toBe(once)
@@ -91,11 +94,14 @@ describe('achievements are recorded, never decided', () => {
 
   it.effect('unlock order is kept, because a toast needs to know what was just earned', () =>
     Effect.sync(() => {
-      const earned = unlock(unlock(unlock(EMPTY_STATISTICS, 'a'), 'b'), 'c')
+      const earned = unlock(
+        unlock(unlock(EMPTY_STATISTICS, achievementId('a')), achievementId('b')),
+        achievementId('c'),
+      )
 
       expect(earned.unlocked).toEqual(['a', 'b', 'c'])
-      expect(isUnlocked(earned, 'b')).toBe(true)
-      expect(isUnlocked(earned, 'd')).toBe(false)
+      expect(isUnlocked(earned, achievementId('b'))).toBe(true)
+      expect(isUnlocked(earned, achievementId('d'))).toBe(false)
     }),
   )
 
@@ -113,6 +119,13 @@ describe('achievements are recorded, never decided', () => {
 })
 
 describe('normaliseStatistics is total over what a save can contain', () => {
+  it.effect('non-record save values normalize to empty statistics', () =>
+    Effect.sync(() => {
+      expect(normaliseStatistics(null)).toStrictEqual({ counters: {}, unlocked: [] })
+      expect(normaliseStatistics('corrupt statistics')).toStrictEqual({ counters: {}, unlocked: [] })
+    }),
+  )
+
   it.effect('malformed shapes become records isValidStatistics accepts', () =>
     Effect.sync(() => {
       const malformed: ReadonlyArray<Statistics> = [
@@ -123,6 +136,7 @@ describe('normaliseStatistics is total over what a save can contain', () => {
         { counters: { mined: -4 }, unlocked: [] },
         { counters: { mined: '9' as unknown as number }, unlocked: [] },
         { counters: {}, unlocked: ['a', 'a', 'a'] },
+        { counters: {}, unlocked: ['', 'a'] },
         { counters: {}, unlocked: [null as unknown as string, 'a'] },
       ]
 
@@ -132,14 +146,13 @@ describe('normaliseStatistics is total over what a save can contain', () => {
     }),
   )
 
-  it.effect('a non-string id is DROPPED, not coerced', () =>
+  it.effect('an id rejected by the kernel schema is DROPPED, not coerced', () =>
     Effect.sync(() => {
-      // Coercing `null` to `'null'` would unlock an achievement that does not
-      // exist and that no screen could remove. A vital has a meaningful nearest
-      // legal value; an identity does not.
+      // Save compatibility keeps IDs encoded as strings, so the event schema
+      // must validate them before they enter the branded application model.
       const repaired = normaliseStatistics({
         counters: {},
-        unlocked: [null as unknown as string, 'time-to-mine', 7 as unknown as string],
+        unlocked: ['', null as unknown as string, 'time-to-mine', 7 as unknown as string],
       })
 
       expect(repaired.unlocked).toEqual(['time-to-mine'])
@@ -185,6 +198,12 @@ describe('isValidStatistics rejects what normaliseStatistics repairs', () => {
       ).toBe(false)
     }),
   )
+
+  it.effect('an empty persisted ID is invalid under the kernel event schema', () =>
+    Effect.sync(() => {
+      expect(isValidStatistics({ counters: {}, unlocked: [''] })).toBe(false)
+    }),
+  )
 })
 
 describe('StatisticsService', () => {
@@ -194,11 +213,11 @@ describe('StatisticsService', () => {
 
       yield* statistics.record('blocks.mined')
       yield* statistics.record('blocks.mined', 4)
-      yield* statistics.unlock('time-to-mine')
+      yield* statistics.unlock(achievementId('time-to-mine'))
 
       expect(yield* statistics.counterOf('blocks.mined')).toBe(5)
-      expect(yield* statistics.isUnlocked('time-to-mine')).toBe(true)
-      expect(yield* statistics.isUnlocked('acquire-hardware')).toBe(false)
+      expect(yield* statistics.isUnlocked(achievementId('time-to-mine'))).toBe(true)
+      expect(yield* statistics.isUnlocked(achievementId('acquire-hardware'))).toBe(false)
     }),
   )
 
@@ -207,7 +226,7 @@ describe('StatisticsService', () => {
       const statistics = yield* makeStatisticsService()
 
       yield* Effect.all(
-        Array.from({ length: 100 }, () => statistics.unlock('time-to-mine')),
+        Array.from({ length: 100 }, () => statistics.unlock(achievementId('time-to-mine'))),
         { concurrency: 'unbounded' },
       )
 
@@ -268,7 +287,7 @@ describe('StatisticsService', () => {
       const statistics = yield* makeStatisticsService()
 
       yield* statistics.record('deaths', 12)
-      yield* statistics.unlock('time-to-mine')
+      yield* statistics.unlock(achievementId('time-to-mine'))
       yield* statistics.reset
 
       expect(yield* statistics.snapshot).toEqual(EMPTY_STATISTICS)

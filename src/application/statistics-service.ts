@@ -43,6 +43,9 @@ export type StatisticsServiceApi = {
   /**
    * Mark an achievement earned. Idempotent.
    *
+   * This updates only the local statistics snapshot. Simulation commits that
+   * also publish `AchievementUnlocked` use `AchievementService`'s staged path.
+   *
    * mc-sim holds no registry and evaluates no predicate: the reference's
    * `evaluateUnlocks` sweep over `isUnlocked: (stats) => boolean` entries
    * (ts-minecraft/packages/entity/domain/achievement/achievement.ts:24-44) is a
