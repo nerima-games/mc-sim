@@ -1,11 +1,11 @@
 import fc from 'fast-check'
-import { Effect, Schema } from 'effect'
+import { Effect, Result, Schema } from 'effect'
 import { expect, it } from 'vitest'
 import { WorldIdSchema } from '@nerima-games/mc-kernel'
 import * as Sim from '../src/index.js'
-import { makeCoreTick } from '../src/application/core.js'
+import { makeCoreTick, makeCoreTickErrorSchema } from '../src/application/core.js'
 import { makeWorldCommitCoordinator } from '../src/application/world-commit-coordinator.js'
-import { invokeEffect } from './public-property-helpers.js'
+import { assertEffectOutcome, invokeEffect } from './public-property-helpers.js'
 
 const malformedEnvelope: fc.Arbitrary<unknown> = fc.constantFrom(
   null,
@@ -23,8 +23,14 @@ it('core tick constructor returns a typed failure for malformed options envelope
       const outcome = await Effect.runPromise(
         Effect.result(invokeEffect(makeCoreTick, [options])),
       )
-      expect(outcome._tag).toBe('Failure')
-      if (outcome._tag === 'Failure') expect(outcome.failure._tag).toBe('CoreTickInvalidOptions')
+      assertEffectOutcome(
+        'makeCoreTick malformed options',
+        () => outcome,
+        Schema.Never,
+        makeCoreTickErrorSchema(Schema.Never),
+      )
+      expect(Result.isFailure(outcome)).toBe(true)
+      if (Result.isFailure(outcome)) expect(outcome.failure._tag).toBe('CoreTickInvalidOptions')
     }),
     { numRuns: 100 },
   )
@@ -36,7 +42,13 @@ it('world commit coordinator constructor returns typed failures for malformed op
       const outcome = await Effect.runPromise(
         Effect.result(invokeEffect(makeWorldCommitCoordinator, [options])),
       )
-      expect(outcome._tag).toBe('Failure')
+      assertEffectOutcome(
+        'makeWorldCommitCoordinator malformed options',
+        () => outcome,
+        Schema.Never,
+        Sim.WorldCommitCoordinatorErrorSchema,
+      )
+      expect(Result.isFailure(outcome)).toBe(true)
     }),
     { numRuns: 100 },
   )
@@ -48,8 +60,14 @@ it('world commit coordinator constructor returns typed failures for malformed op
       owners: [{ ownerId: Sim.makeReplicatedOwnerId('invalid-owner-schema'), schema: null as never, initialState: {} }],
     }),
   ))
-  expect(invalidOwner._tag).toBe('Failure')
-  if (invalidOwner._tag === 'Failure') {
+  assertEffectOutcome(
+    'makeWorldCommitCoordinator invalid owner schema',
+    () => invalidOwner,
+    Schema.Never,
+    Sim.WorldCommitCoordinatorErrorSchema,
+  )
+  expect(Result.isFailure(invalidOwner)).toBe(true)
+  if (Result.isFailure(invalidOwner)) {
     expect(invalidOwner.failure._tag).toBe('WorldCommitCoordinatorInvalidOptions')
   }
 })
@@ -60,7 +78,13 @@ it('save coordinator constructor returns a typed failure for a null options enve
       const outcome = await Effect.runPromise(
         Effect.result(invokeEffect(Sim.makeSaveCoordinator, [options])),
       )
-      expect(outcome._tag).toBe('Failure')
+      assertEffectOutcome(
+        'makeSaveCoordinator null options',
+        () => outcome,
+        Schema.Never,
+        Sim.BrandErrorSchema,
+      )
+      expect(Result.isFailure(outcome)).toBe(true)
     }),
     { numRuns: 100 },
   )

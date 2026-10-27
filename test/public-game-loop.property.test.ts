@@ -1,5 +1,5 @@
 import fc from 'fast-check'
-import { Effect, Result } from 'effect'
+import { Effect, Result, Schema } from 'effect'
 import { expect, it } from 'vitest'
 import * as Sim from '../src/index.js'
 import { makeGameLoop } from '../src/application/game-loop.js'
@@ -21,12 +21,18 @@ it('starts for valid initial ticks and returns a typed failure for other values'
 
       try {
         const started = await Effect.runPromise(Effect.result(loop.start(() => Effect.void)))
+        assertEffectOutcome(
+          'GameLoop.start',
+          () => started,
+          Schema.Void,
+          Sim.BrandErrorSchema,
+        )
         if (hasValidInitialTick(value)) {
-          expect(started._tag).toBe('Success')
+          expect(Result.isSuccess(started)).toBe(true)
           expect(await Effect.runPromise(loop.isRunning)).toBe(true)
         } else {
-          expect(started._tag).toBe('Failure')
-          if (started._tag === 'Failure') expect(started.failure._tag).toBe('BrandError')
+          expect(Result.isFailure(started)).toBe(true)
+          if (Result.isFailure(started)) expect(started.failure._tag).toBe('BrandError')
           expect(await Effect.runPromise(loop.isRunning)).toBe(false)
         }
       } finally {

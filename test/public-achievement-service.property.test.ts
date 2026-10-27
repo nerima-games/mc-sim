@@ -12,12 +12,14 @@ import {
   ACHIEVEMENT_OWNER_REGISTRATION,
   ACHIEVEMENT_REPLICATED_OWNER_ID,
   AchievementService,
+  AchievementServiceErrorSchema,
   AchievementServiceLayer,
 } from '../src/application/achievement-service'
 import { DomainEventBus, DomainEventBusLayer, EventSubscriberCapacitySchema } from '../src/application/domain-event-bus'
 import { StatisticsService, StatisticsServiceLayer } from '../src/application/statistics-service'
 import { WorldCommitCoordinator, WorldCommitCoordinatorLayer } from '../src/application/world-commit-coordinator'
 import {
+  assertEffectOutcome,
   hostileValue,
   invokeEffect,
 } from './public-property-helpers'
@@ -93,6 +95,12 @@ describe('public AchievementService finalization properties', () => {
         if (operation === undefined) return
 
         const outcome = await Effect.runPromise(Effect.result(operation))
+        assertEffectOutcome(
+          'AchievementService.finalizeCommittedUnlock',
+          () => outcome,
+          Schema.Void,
+          AchievementServiceErrorSchema,
+        )
         expect(Result.isFailure(outcome)).toBe(true)
         if (expectedErrorTag !== undefined && Result.isFailure(outcome)) {
           expect((outcome.failure as { _tag?: unknown })._tag).toBe(expectedErrorTag)

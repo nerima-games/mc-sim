@@ -5,7 +5,14 @@ import { BlockLength, HalfHeight } from '@nerima-games/mc-physics'
 import { NoiseSeed } from '@nerima-games/mc-worldgen'
 import * as App from '../src/index.js'
 import * as Testing from '../src/testing/index.js'
-import { hostileValue, isRecord, invoke, invokeEffect } from './public-property-helpers.js'
+import {
+  assertEffectOutcome,
+  assertResultContract,
+  hostileValue,
+  isRecord,
+  invoke,
+  invokeEffect,
+} from './public-property-helpers.js'
 
 const validResolve = {
   halfWidth: BlockLength(0.3),
@@ -28,36 +35,62 @@ const simulationLayer = Layer.mergeAll(
 )
 
 const stageConstructors = [
-  App.makeSimStagesWithPhysics,
-  App.makeControllableSimStagesWithPhysics,
+  { name: 'makeSimStagesWithPhysics', construct: App.makeSimStagesWithPhysics },
+  { name: 'makeControllableSimStagesWithPhysics', construct: App.makeControllableSimStagesWithPhysics },
 ] as const
 
-const expectStageOutcome = (outcome: unknown): void => {
-  expect(isRecord(outcome)).toBe(true)
-  if (!isRecord(outcome)) return
+const expectStageArrayOutcome = (
+  propertyName: string,
+  outcome: Result.Result<unknown, unknown>,
+  expectedSuccess: boolean,
+): void => {
+  assertEffectOutcome(
+    propertyName,
+    () => outcome,
+    App.SimPhysicsStagesSchema,
+    App.SimPhysicsConfigErrorSchema,
+  )
+  expect(Result.isSuccess(outcome)).toBe(expectedSuccess)
+}
 
-  if (outcome['_tag'] === 'Failure') {
-    const failure = outcome['failure'] ?? outcome['error']
-    expect(isRecord(failure)).toBe(true)
-    if (!isRecord(failure)) return
-    expect(failure['_tag']).toBe('SimPhysicsConfigError')
-    expect(['config', 'resolve', 'walkSpeed', 'jumpSpeed']).toContain(failure['field'])
+const expectControllableStageOutcome = (
+  propertyName: string,
+  outcome: Result.Result<unknown, unknown>,
+  expectedSuccess: boolean,
+): void => {
+  if (Result.isFailure(outcome)) {
+    assertEffectOutcome(propertyName, () => outcome, Schema.Never, App.SimPhysicsConfigErrorSchema)
+    expect(expectedSuccess).toBe(false)
     return
   }
 
-  expect(outcome['_tag']).toBe('Success')
-  const success = outcome['success'] ?? outcome['value']
-  if (Array.isArray(success)) {
-    expect(success.length).toBeGreaterThan(0)
-    expect(success.every(isRecord)).toBe(true)
-    return
+  expect(expectedSuccess).toBe(true)
+  expect(isRecord(outcome.success)).toBe(true)
+  if (!isRecord(outcome.success)) return
+  const success = outcome.success
+  assertResultContract(
+    `${propertyName}.stages`,
+    () => Result.succeed(success['stages']),
+    App.SimPhysicsStagesSchema,
+    Schema.Never,
+  )
+  expect(isRecord(success['state'])).toBe(true)
+  if (isRecord(success['state'])) {
+    expect(Object.keys(success['state']).sort()).toStrictEqual([
+      'accumulatedFallDistance',
+      'isGrounded',
+      'jumpIntent',
+      'landingImpact',
+      'movementIntent',
+      'physicsConfig',
+      'resolvedFeetPosition',
+      'velocity',
+    ])
+    for (const field of Object.values(success['state'])) expect(field).toBeDefined()
   }
-  expect(isRecord(success)).toBe(true)
-  if (!isRecord(success)) return
-  expect(Array.isArray(success['stages'])).toBe(true)
-  expect((success['stages'] as ReadonlyArray<unknown>).length).toBeGreaterThan(0)
   expect(isRecord(success['input'])).toBe(true)
   if (isRecord(success['input'])) {
+    expect(Object.keys(success['input']).sort()).toStrictEqual(['setJumpIntent', 'setMovementIntent'])
     expect(typeof success['input']['setMovementIntent']).toBe('function')
     expect(typeof success['input']['setJumpIntent']).toBe('function')
   }
@@ -84,16 +117,16 @@ it('stage physics constructors return typed failures for hostile config and reso
 
   await fc.assert(
     fc.asyncProperty(hostileConfig, async (config) => {
-      await Promise.all(stageConstructors.map(async (constructor) => {
+      await Promise.all(stageConstructors.map(async ({ name, construct }) => {
         let effect: unknown
-        expect(() => { effect = invoke(constructor, [config]) }).not.toThrow()
+        expect(() => { effect = invoke(construct, [config]) }).not.toThrow()
         const outcome = await Effect.runPromise(
           Effect.result(Effect.provide(effect as Effect.Effect<unknown, unknown, never>, simulationLayer)),
         )
-        expectStageOutcome(outcome)
-        if (isRecord(outcome) && outcome['_tag'] === 'Failure') {
-          const failure = outcome['failure'] ?? outcome['error']
-          expect(isRecord(failure) && failure['_tag'] === 'SimPhysicsConfigError').toBe(true)
+        if (name === 'makeSimStagesWithPhysics') {
+          expectStageArrayOutcome(name, outcome, false)
+        } else {
+          expectControllableStageOutcome(name, outcome, false)
         }
       }))
     }),
@@ -104,18 +137,20 @@ it('stage physics constructors return typed failures for hostile config and reso
 it('stage physics constructors handle hostile scalar fields without throwing or succeeding invalid configs', async () => {
   await fc.assert(
     fc.asyncProperty(fc.tuple(hostileValue, hostileValue), async ([walkSpeed, jumpSpeed]) => {
-      await Promise.all(stageConstructors.map(async (constructor) => {
+      await Promise.all(stageConstructors.map(async ({ name, construct }) => {
         let effect: unknown
-        expect(() => { effect = invoke(constructor, [validConfig(walkSpeed, jumpSpeed)]) }).not.toThrow()
+        expect(() => { effect = invoke(construct, [validConfig(walkSpeed, jumpSpeed)]) }).not.toThrow()
         const outcome = await Effect.runPromise(
           Effect.result(Effect.provide(effect as Effect.Effect<unknown, unknown, never>, simulationLayer)),
         )
-        expectStageOutcome(outcome)
 
         const validSpeed = (value: unknown): boolean =>
           typeof value === 'number' && Number.isFinite(value) && value >= 0
-        if (!validSpeed(walkSpeed) || !validSpeed(jumpSpeed)) {
-          expect(isRecord(outcome) && outcome['_tag']).toBe('Failure')
+        const expectedSuccess = validSpeed(walkSpeed) && validSpeed(jumpSpeed)
+        if (name === 'makeSimStagesWithPhysics') {
+          expectStageArrayOutcome(name, outcome, expectedSuccess)
+        } else {
+          expectControllableStageOutcome(name, outcome, expectedSuccess)
         }
       }))
     }),
@@ -213,10 +248,13 @@ it('headless harness rejects malformed reset envelopes before closing or replaci
             const resetOutcome = yield* Effect.result(
               resetEffect as Effect.Effect<void, unknown, never>,
             )
+            assertEffectOutcome(
+              'HeadlessHarness.reset malformed input',
+              () => resetOutcome,
+              Schema.Void,
+              App.SchemaErrorSchema,
+            )
             expect(Result.isFailure(resetOutcome)).toBe(true)
-            if (Result.isFailure(resetOutcome)) {
-              expect(isRecord(resetOutcome.failure) && resetOutcome.failure['_tag']).toBe('SchemaError')
-            }
 
             expect(runtime.sessions).toHaveLength(1)
             expect(runtime.sessions[0]?.closed).toBe(0)

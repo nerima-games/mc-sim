@@ -8,11 +8,13 @@ import {
   EntityKind,
   IntentQueueCapacitySchema,
   IntentQueueFull,
+  IntentQueueEnqueueFailureSchema,
   IntentQueueLayer,
   IntentQueue,
   IntentSchema,
   IntentSequenceSchema,
   QueuedIntentSchema,
+  SchemaErrorSchema,
   WEATHERS,
   WitherChargeRemainingSecs,
   WitherHealthPoints,
@@ -44,12 +46,36 @@ import {
   HeadlessHarnessTestLayer,
   RandomSeedSchema,
   StateHashSchema,
+  StateHashNonJsonValue,
   TickCountSchema,
   type HeadlessHarnessSession,
   type HeadlessHarnessSessionFactoryApi,
   type HeadlessHarnessStages,
 } from '../src/testing/index.js'
-import { finiteTree, hostileScalarInput, isRecord, invoke, structuredInput } from './public-property-helpers.js'
+import {
+  assertEffectOutcome,
+  assertResultContract,
+  finiteTree,
+  hostileScalarInput,
+  isRecord,
+  invoke,
+  structuredInput,
+} from './public-property-helpers.js'
+
+const HeadlessHarnessNotInitializedSchema = Schema.instanceOf(HeadlessHarnessNotInitialized)
+const HeadlessHarnessStepErrorSchema = Schema.Union([
+  HeadlessHarnessNotInitializedSchema,
+  SchemaErrorSchema,
+])
+const HeadlessHarnessStateHashErrorSchema = Schema.Union([
+  HeadlessHarnessNotInitializedSchema,
+  SchemaErrorSchema,
+  Schema.instanceOf(StateHashNonJsonValue),
+])
+const HeadlessHarnessEnqueueErrorSchema = Schema.Union([
+  HeadlessHarnessNotInitializedSchema,
+  IntentQueueEnqueueFailureSchema,
+])
 
 const hostileValue = hostileScalarInput({
   numbers: fc.oneof(
@@ -388,6 +414,18 @@ it('HeadlessHarness validates hostile seeds and ticks before reset and exercises
             const oneTick = Schema.decodeUnknownSync(TickCountSchema)(1)
             const beforeResetStep = yield* Effect.result(harness.step(oneTick))
             const beforeResetHash = yield* Effect.result(harness.stateHash)
+            assertEffectOutcome(
+              'HeadlessHarness.step before reset',
+              () => beforeResetStep,
+              Schema.Void,
+              HeadlessHarnessStepErrorSchema,
+            )
+            assertEffectOutcome(
+              'HeadlessHarness.stateHash before reset',
+              () => beforeResetHash,
+              StateHashSchema,
+              HeadlessHarnessStateHashErrorSchema,
+            )
             expect(Result.isFailure(beforeResetStep)).toBe(true)
             expect(Result.isFailure(beforeResetHash)).toBe(true)
 
@@ -407,13 +445,23 @@ it('HeadlessHarness validates hostile seeds and ticks before reset and exercises
             }
 
             const hash = yield* Effect.result(harness.stateHash)
+            assertEffectOutcome(
+              'HeadlessHarness.stateHash after reset',
+              () => hash,
+              StateHashSchema,
+              HeadlessHarnessStateHashErrorSchema,
+            )
             expect(Result.isSuccess(hash)).toBe(true)
-            if (Result.isSuccess(hash)) expect(hash.success).toMatch(/^[0-9a-f]{64}$/)
 
             yield* harness.reset(resetInput)
             const repeatedHash = yield* Effect.result(harness.stateHash)
+            assertEffectOutcome(
+              'HeadlessHarness.stateHash after repeated reset',
+              () => repeatedHash,
+              StateHashSchema,
+              HeadlessHarnessStateHashErrorSchema,
+            )
             expect(Result.isSuccess(repeatedHash)).toBe(true)
-            if (Result.isSuccess(repeatedHash)) expect(repeatedHash.success).toMatch(/^[0-9a-f]{64}$/)
             return executedTicks
           }).pipe(Effect.provide(layer)),
         )
@@ -493,7 +541,9 @@ it('HeadlessHarnessSessionFactory open and openRestored return valid sessions or
           if (openRestored === undefined) throw new Error('openRestored must be available on the public factory')
           const restored = yield* Effect.result(openRestored(worldSeed, restoreInput, noOpStages))
           if (Result.isFailure(restored)) {
-            expect(restored.failure).toBeDefined()
+            // The test subpath has no serializable session-restore error Schema; each declared failure is an Error.
+            expect(restored.failure).toBeInstanceOf(Error)
+            if (restored.failure instanceof Error) expect(restored.failure.message.length).toBeGreaterThan(0)
             return
           }
 
@@ -562,8 +612,20 @@ it('Hostile intent fields return typed HeadlessHarness.enqueue outcomes without 
       await Effect.runPromise(
         Effect.gen(function* () {
           const harness = yield* HeadlessHarness
+          assertResultContract(
+            'IntentSchema.decodeUnknownResult',
+            () => decodedIntent,
+            IntentSchema,
+            SchemaErrorSchema,
+          )
           const beforeReset = yield* Effect.result(
             invoke(harness.enqueue, [input]) as Effect.Effect<unknown, unknown>,
+          )
+          assertEffectOutcome(
+            'HeadlessHarness.enqueue before reset',
+            () => beforeReset,
+            IntentSequenceSchema,
+            HeadlessHarnessEnqueueErrorSchema,
           )
           expect(Result.isFailure(beforeReset)).toBe(true)
           if (Result.isFailure(beforeReset)) {
@@ -580,6 +642,12 @@ it('Hostile intent fields return typed HeadlessHarness.enqueue outcomes without 
             randomSeed: Schema.decodeUnknownSync(RandomSeedSchema)(1),
           })
           const admitted = yield* Effect.result(harness.enqueue(decodedIntent.success))
+          assertEffectOutcome(
+            'HeadlessHarness.enqueue admitted intent',
+            () => admitted,
+            IntentSequenceSchema,
+            HeadlessHarnessEnqueueErrorSchema,
+          )
           expect(Result.isSuccess(admitted)).toBe(true)
           if (Result.isSuccess(admitted)) {
             expect(Number.isSafeInteger(admitted.success)).toBe(true)
@@ -587,6 +655,12 @@ it('Hostile intent fields return typed HeadlessHarness.enqueue outcomes without 
           }
 
           const full = yield* Effect.result(harness.enqueue(decodedIntent.success))
+          assertEffectOutcome(
+            'HeadlessHarness.enqueue full queue',
+            () => full,
+            IntentSequenceSchema,
+            HeadlessHarnessEnqueueErrorSchema,
+          )
           expect(Result.isFailure(full)).toBe(true)
           if (Result.isFailure(full)) expect(full.failure).toBeInstanceOf(IntentQueueFull)
 
@@ -596,6 +670,12 @@ it('Hostile intent fields return typed HeadlessHarness.enqueue outcomes without 
 
       for (const queued of observedQueued) {
         const decodedQueued = Schema.decodeUnknownResult(QueuedIntentSchema)(queued)
+        assertResultContract(
+          'QueuedIntentSchema.decodeUnknownResult',
+          () => decodedQueued,
+          QueuedIntentSchema,
+          SchemaErrorSchema,
+        )
         expect(Result.isSuccess(decodedQueued)).toBe(true)
         if (Result.isSuccess(decodedQueued)) {
           expect(Number.isSafeInteger(decodedQueued.success.sequence)).toBe(true)

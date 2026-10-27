@@ -252,10 +252,13 @@ it('makeInventoryService returns its typed failure for a null constructor envelo
   await fc.assert(
     fc.asyncProperty(fc.constant(null), async (initial) => {
       const outcome = await Effect.runPromise(Effect.result(invokeEffect(App.makeInventoryService, [initial])))
+      assertEffectOutcome(
+        'makeInventoryService null initial inventory',
+        () => outcome,
+        Schema.Never,
+        App.InventoryServiceConstructorErrorSchema,
+      )
       expect(Result.isFailure(outcome)).toBe(true)
-      if (Result.isFailure(outcome)) {
-        expect(Schema.is(App.InventoryServiceConstructorErrorSchema)(outcome.failure)).toBe(true)
-      }
     }),
     checks,
   )
@@ -335,10 +338,13 @@ it('DomainEventBusLayer rejects invalid capacities or provides a usable bus', as
           expect(outcome.success.events).toBeDefined()
         }
       } else {
+        assertEffectOutcome(
+          'DomainEventBusLayer invalid capacity',
+          () => outcome,
+          Schema.Never,
+          App.DomainEventBusErrorSchema,
+        )
         expect(Result.isFailure(outcome)).toBe(true)
-        if (Result.isFailure(outcome)) {
-          expect(Schema.is(App.DomainEventBusErrorSchema)(outcome.failure)).toBe(true)
-        }
       }
     }),
     checks,
