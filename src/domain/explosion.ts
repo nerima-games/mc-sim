@@ -87,13 +87,15 @@ const validationFailure = (path: string, reason: string): ExplosionValidationFai
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
+const keyOf = ({ x, y, z }: ExplosionBlockPosition): string => `${x},${y},${z}`
+
 const checkedBlockReader = (reader: ExplosionBlockReader) => {
   let failure: ExplosionValidationFailure | undefined
-  const read: ExplosionBlockReader = (position) => {
-    const value: unknown = reader(position)
+  const read: ExplosionBlockReader = (blockPosition) => {
+    const value: unknown = reader(blockPosition)
     if (value === undefined) return undefined
     if (!isRecord(value)) {
-      failure ??= validationFailure(`blocks[${keyOf(position)}]`, 'expected a block snapshot')
+      failure ??= validationFailure(`blocks[${keyOf(blockPosition)}]`, 'expected a block snapshot')
       return undefined
     }
     const resistance = value['resistance']
@@ -103,18 +105,50 @@ const checkedBlockReader = (reader: ExplosionBlockReader) => {
       resistance < 0 || resistance > Number.MAX_SAFE_INTEGER
     ) {
       failure ??= validationFailure(
-        `blocks[${keyOf(position)}].resistance`,
+        `blocks[${keyOf(blockPosition)}].resistance`,
         'must be finite, non-negative and within the safe numeric range',
       )
       return undefined
     }
     if (typeof destructible !== 'boolean') {
-      failure ??= validationFailure(`blocks[${keyOf(position)}].destructible`, 'must be a boolean')
+      failure ??= validationFailure(`blocks[${keyOf(blockPosition)}].destructible`, 'must be a boolean')
       return undefined
     }
     return { resistance, destructible }
   }
   return { read, failure: () => failure }
+}
+
+const normaliseLimit = (
+  value: unknown,
+  path: string,
+  fallback: number,
+): Result.Result<number, ExplosionValidationFailure> => {
+  if (value === undefined) return Result.succeed(fallback)
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+    return Result.fail(validationFailure(path, 'must be a non-negative safe integer'))
+  }
+  return Result.succeed(value)
+}
+
+const normaliseLimits = (
+  limits: unknown,
+): Result.Result<ExplosionLimits, ExplosionValidationFailure> => {
+  if (limits === undefined) return Result.succeed({ ...DEFAULT_EXPLOSION_LIMITS })
+  if (!isRecord(limits)) return Result.fail(validationFailure('limits', 'expected an object'))
+  return Result.map(Result.all([
+    normaliseLimit(limits['maxVisitedBlocks'], 'limits.maxVisitedBlocks', DEFAULT_EXPLOSION_LIMITS.maxVisitedBlocks),
+    normaliseLimit(limits['maxRaySteps'], 'limits.maxRaySteps', DEFAULT_EXPLOSION_LIMITS.maxRaySteps),
+    normaliseLimit(
+      limits['maxAffectedEntities'],
+      'limits.maxAffectedEntities',
+      DEFAULT_EXPLOSION_LIMITS.maxAffectedEntities,
+    ),
+  ]), ([maxVisitedBlocks, maxRaySteps, maxAffectedEntities]) => ({
+    maxVisitedBlocks,
+    maxRaySteps,
+    maxAffectedEntities,
+  }))
 }
 
 export const validateExplosionRequest = (
@@ -160,38 +194,6 @@ export const validateExplosionRequest = (
   return Result.map(normaliseLimits(request.limits), () => undefined)
 }
 
-const normaliseLimit = (
-  value: unknown,
-  path: string,
-  fallback: number,
-): Result.Result<number, ExplosionValidationFailure> => {
-  if (value === undefined) return Result.succeed(fallback)
-  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
-    return Result.fail(validationFailure(path, 'must be a non-negative safe integer'))
-  }
-  return Result.succeed(value)
-}
-
-const normaliseLimits = (
-  limits: unknown,
-): Result.Result<ExplosionLimits, ExplosionValidationFailure> => {
-  if (limits === undefined) return Result.succeed({ ...DEFAULT_EXPLOSION_LIMITS })
-  if (!isRecord(limits)) return Result.fail(validationFailure('limits', 'expected an object'))
-  return Result.map(Result.all([
-    normaliseLimit(limits['maxVisitedBlocks'], 'limits.maxVisitedBlocks', DEFAULT_EXPLOSION_LIMITS.maxVisitedBlocks),
-    normaliseLimit(limits['maxRaySteps'], 'limits.maxRaySteps', DEFAULT_EXPLOSION_LIMITS.maxRaySteps),
-    normaliseLimit(
-      limits['maxAffectedEntities'],
-      'limits.maxAffectedEntities',
-      DEFAULT_EXPLOSION_LIMITS.maxAffectedEntities,
-    ),
-  ]), ([maxVisitedBlocks, maxRaySteps, maxAffectedEntities]) => ({
-    maxVisitedBlocks,
-    maxRaySteps,
-    maxAffectedEntities,
-  }))
-}
-
 const HASH_SEED_FACTOR = 19.19
 const HASH_X_FACTOR = 12.9898
 const HASH_Y_FACTOR = 78.233
@@ -208,8 +210,6 @@ const hashUnit = (seed: number, x: number, y: number, z: number): number => {
     ) * HASH_SCALE
   return value - Math.floor(value)
 }
-
-const keyOf = ({ x, y, z }: ExplosionBlockPosition): string => `${x},${y},${z}`
 
 const positionOf = (x: number, y: number, z: number): Position =>
   position(PositionAxis(x), PositionAxis(y), PositionAxis(z))
