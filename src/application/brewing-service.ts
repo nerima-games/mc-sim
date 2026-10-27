@@ -9,6 +9,7 @@ import {
   setBrewingIngredient,
   validateBrewingSnapshot,
   BrewingFailureSchema,
+  BrewingStateSchema,
   type BrewingFailure,
   type BrewingOutcome,
   type BrewingState,
@@ -22,20 +23,8 @@ import {
   type WorldCommitCoordinatorError,
 } from './world-commit-coordinator.js'
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
-
-const isBrewingServiceState = (value: unknown): value is BrewingState => {
-  if (!isRecord(value)) return false
-  const fields = ['bottles', 'ingredient', 'fuel', 'fuelCharges', 'brewProgressSecs']
-  if (Object.keys(value).length !== fields.length || !fields.every((field) => Object.hasOwn(value, field))) {
-    return false
-  }
-  return Result.isSuccess(brewingState(value))
-}
-
-export const BrewingServiceStateSchema: Schema.Codec<BrewingState, BrewingState> =
-  Schema.declare<BrewingState>(isBrewingServiceState)
+export const BrewingServiceStateSchema: Schema.Codec<BrewingState, unknown> =
+  BrewingStateSchema
 
 export type BrewingServiceError =
   | BrewingFailure

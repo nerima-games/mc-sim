@@ -77,6 +77,8 @@ describe('BrewingService', () => {
         1,
         null,
         [],
+        {},
+        { bottles: null, ingredient: undefined, fuel: undefined, fuelCharges: 0, brewProgressSecs: 0 },
         { bottles: [] },
         {
           bottles: [undefined, undefined, undefined],
@@ -115,7 +117,7 @@ describe('BrewingService', () => {
         expect(Result.isFailure(invalidAdvance)).toBe(true)
         const invalidRestore = yield* Effect.result(brewing.restore({ bottles: [] }))
         expect(Result.isFailure(invalidRestore)).toBe(true)
-        expect(yield* brewing.snapshot).toBe(before)
+        expect(yield* brewing.snapshot).toStrictEqual(before)
       }),
     ),
   )
