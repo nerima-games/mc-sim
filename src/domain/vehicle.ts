@@ -1,14 +1,22 @@
+import { Schema } from 'effect'
 import {
   AngleRadians,
+  DIMENSIONS,
   EntitySerial,
   isDimension,
   OccupantId,
   PositionAxis,
   position,
+  VEHICLE_TYPES,
   VehicleId,
   VehicleValidationPath,
   VehicleValidationReason,
   VehicleVelocityComponent,
+  type Dimension,
+  type EntitySerial as EntitySerialType,
+  type OccupantId as OccupantIdType,
+  type VehicleId as VehicleIdType,
+  type VehicleType,
   type Vehicle,
   type VehicleSnapshot,
   type VehicleValidationError,
@@ -26,6 +34,64 @@ export type {
   VehicleValidationError,
   VehicleValidationResult,
 } from '@nerima-games/mc-kernel'
+
+const NonNegativeSafeIntegerSchema = Schema.Int.check(
+  Schema.makeFilter((value) => Number.isSafeInteger(value) && value >= 0),
+)
+
+const VehicleIdSchema: Schema.Codec<VehicleIdType, string> =
+  Schema.String.check(Schema.isPattern(/\S/)).pipe(Schema.brand('VehicleId'))
+const OccupantIdSchema: Schema.Codec<OccupantIdType, string> =
+  Schema.String.check(Schema.isPattern(/\S/)).pipe(Schema.brand('VehicleOccupantId'))
+const EntitySerialSchema: Schema.Codec<EntitySerialType, number> = NonNegativeSafeIntegerSchema.pipe(
+  Schema.brand('EntitySerial'),
+)
+const PositionAxisSchema: Schema.Codec<Position['x'], number> = Schema.Finite.pipe(Schema.brand('PositionAxis'))
+export const VehiclePositionSchema: Schema.Codec<Position, { readonly x: number; readonly y: number; readonly z: number }> =
+  Schema.Struct({
+    x: PositionAxisSchema,
+    y: PositionAxisSchema,
+    z: PositionAxisSchema,
+  })
+const VehicleVelocityComponentSchema: Schema.Codec<VehicleVelocity['x'], number> =
+  Schema.Finite.pipe(Schema.brand('VehicleVelocityComponent'))
+export const VehicleVelocitySchema: Schema.Codec<VehicleVelocity, { readonly x: number; readonly y: number; readonly z: number }> =
+  Schema.Struct({
+    x: VehicleVelocityComponentSchema,
+    y: VehicleVelocityComponentSchema,
+    z: VehicleVelocityComponentSchema,
+  })
+const AngleRadiansSchema: Schema.Codec<Vehicle['yawRadians'], number> = Schema.Finite.pipe(
+  Schema.brand('AngleRadians'),
+)
+const DimensionSchema: Schema.Codec<Dimension> = Schema.Literals(DIMENSIONS)
+const VehicleTypeSchema: Schema.Codec<VehicleType> = Schema.Literals(VEHICLE_TYPES)
+
+export const VehicleSchema: Schema.Codec<Vehicle, unknown> = Schema.Struct({
+  id: VehicleIdSchema,
+  type: VehicleTypeSchema,
+  dimension: DimensionSchema,
+  position: VehiclePositionSchema,
+  velocity: VehicleVelocitySchema,
+  yawRadians: AngleRadiansSchema,
+  occupant: Schema.optional(OccupantIdSchema),
+})
+
+export const VehicleSnapshotSchema: Schema.Codec<VehicleSnapshot, unknown> = Schema.Struct({
+  vehicles: Schema.Array(VehicleSchema),
+  nextSerial: EntitySerialSchema,
+})
+
+const VehicleValidationPathSchema: Schema.Codec<VehicleValidationError['path'], string> =
+  Schema.String.pipe(Schema.brand('VehicleValidationPath'))
+const VehicleValidationReasonSchema: Schema.Codec<VehicleValidationError['reason'], string> =
+  Schema.String.pipe(Schema.brand('VehicleValidationReason'))
+
+export const VehicleValidationErrorSchema: Schema.Codec<VehicleValidationError, unknown> =
+  Schema.TaggedStruct('VehicleValidationError', {
+    path: VehicleValidationPathSchema,
+    reason: VehicleValidationReasonSchema,
+  })
 
 const invalidError = (path: string, reason: string): VehicleValidationError => ({
   _tag: 'VehicleValidationError',

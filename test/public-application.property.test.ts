@@ -969,7 +969,6 @@ it('world commits validate hostile dimension expectation collections before conf
 it('crop, equipment, and vehicle services keep hostile requests and snapshots safe', async () => {
   const crops = await Effect.runPromise(PublicApplication.makeCropService())
   const equipment = await Effect.runPromise(PublicApplication.makeEquipmentService())
-  const vehicles = await Effect.runPromise(PublicApplication.makeVehicleService())
 
   const captureCropOutcome = async (
     propertyName: string,
@@ -978,6 +977,10 @@ it('crop, equipment, and vehicle services keep hostile requests and snapshots sa
     failureSchema: Schema.ConstraintDecoder<unknown>,
   ): Promise<Result.Result<unknown, unknown>> => {
     const outcome = await Effect.runPromise(Effect.result(effect))
+    const conforms = Result.isFailure(outcome)
+      ? Schema.is(failureSchema)(outcome.failure)
+      : Schema.is(successSchema)(outcome.success)
+    expect(conforms, propertyName + ' runtime Schema').toBe(true)
     const decoded = Result.isFailure(outcome)
       ? Schema.decodeUnknownResult(failureSchema, { onExcessProperty: 'error' })(outcome.failure)
       : Schema.decodeUnknownResult(successSchema, { onExcessProperty: 'error' })(outcome.success)
@@ -1047,6 +1050,91 @@ it('crop, equipment, and vehicle services keep hostile requests and snapshots sa
       expect(after.success).toEqual(before.success)
     }
     return outcome
+  }
+
+  let vehicles: PublicApplication.VehicleServiceApi | undefined
+
+  const captureVehicleOutcome = async (
+    propertyName: string,
+    effect: Effect.Effect<unknown, unknown, never>,
+    successSchema: Schema.ConstraintDecoder<unknown>,
+    failureSchema: Schema.ConstraintDecoder<unknown>,
+  ): Promise<Result.Result<unknown, unknown>> => {
+    const outcome = await Effect.runPromise(Effect.result(effect))
+    const decoded = Result.isFailure(outcome)
+      ? Schema.decodeUnknownResult(failureSchema, { onExcessProperty: 'error' })(outcome.failure)
+      : Schema.decodeUnknownResult(successSchema, { onExcessProperty: 'error' })(outcome.success)
+    expect(decoded._tag, propertyName).toBe('Success')
+    return outcome
+  }
+
+  const requireVehicleSuccess = <A>(
+    outcome: Result.Result<unknown, unknown>,
+    schema: Schema.ConstraintDecoder<A>,
+  ): A => {
+    if (Result.isFailure(outcome)) throw outcome.failure
+    const decoded = Schema.decodeUnknownResult(schema, { onExcessProperty: 'error' })(outcome.success)
+    expect(decoded._tag, 'Vehicle success decoding').toBe('Success')
+    if (Result.isFailure(decoded)) throw decoded.failure
+    return decoded.success
+  }
+
+  const assertVehicleOperation = async (
+    propertyName: string,
+    effect: Effect.Effect<unknown, unknown, never>,
+    successSchema: Schema.ConstraintDecoder<unknown>,
+    failureSchema: Schema.ConstraintDecoder<unknown>,
+  ): Promise<Result.Result<unknown, unknown>> => {
+    if (vehicles === undefined) throw new Error('VehicleService must be initialized before its operations are checked')
+    const before = await captureVehicleOutcome(
+      propertyName + ' snapshot before',
+      vehicles.snapshot,
+      PublicApplication.VehicleServiceSnapshotSuccessSchema,
+      PublicApplication.VehicleServiceNoFailureSchema,
+    )
+    const outcome = await captureVehicleOutcome(propertyName, effect, successSchema, failureSchema)
+    const after = await captureVehicleOutcome(
+      propertyName + ' snapshot after',
+      vehicles.snapshot,
+      PublicApplication.VehicleServiceSnapshotSuccessSchema,
+      PublicApplication.VehicleServiceNoFailureSchema,
+    )
+    if (Result.isFailure(outcome) && Result.isSuccess(before) && Result.isSuccess(after)) {
+      expect(after.success).toEqual(before.success)
+    }
+    return outcome
+  }
+
+  const initialVehicleService = await Effect.runPromise(Effect.result(PublicApplication.makeVehicleService()))
+  if (Result.isFailure(initialVehicleService)) {
+    expect(Schema.is(PublicApplication.VehicleServiceValidationErrorSchema)(initialVehicleService.failure)).toBe(true)
+    const decoded = Schema.decodeUnknownResult(PublicApplication.VehicleServiceValidationErrorSchema, {
+      onExcessProperty: 'error',
+    })(initialVehicleService.failure)
+    expect(decoded._tag, 'VehicleService factory failure').toBe('Success')
+    throw new Error('default VehicleService factory unexpectedly failed')
+  }
+  vehicles = initialVehicleService.success
+  const vehicleService = vehicles
+  const initialVehicleSnapshot = await captureVehicleOutcome(
+    'VehicleService.snapshot initial state',
+    vehicleService.snapshot,
+    PublicApplication.VehicleServiceSnapshotSuccessSchema,
+    PublicApplication.VehicleServiceNoFailureSchema,
+  )
+  const initialVehicleList = await captureVehicleOutcome(
+    'VehicleService.vehicles initial state',
+    vehicleService.vehicles,
+    PublicApplication.VehicleServiceVehiclesSuccessSchema,
+    PublicApplication.VehicleServiceNoFailureSchema,
+  )
+  expect(Result.isSuccess(initialVehicleSnapshot)).toBe(true)
+  expect(Result.isSuccess(initialVehicleList)).toBe(true)
+  if (Result.isSuccess(initialVehicleSnapshot) && Result.isSuccess(initialVehicleList)) {
+    const decodedSnapshot = requireVehicleSuccess(initialVehicleSnapshot, PublicApplication.VehicleSnapshotSchema)
+    const decodedVehicles = requireVehicleSuccess(initialVehicleList, PublicApplication.VehicleServiceVehiclesSuccessSchema)
+    expect(decodedSnapshot).toEqual({ vehicles: [], nextSerial: 0 })
+    expect(decodedVehicles).toEqual(decodedSnapshot.vehicles)
   }
 
   await fc.assert(
@@ -1170,28 +1258,327 @@ it('crop, equipment, and vehicle services keep hostile requests and snapshots sa
       )
       expect(Result.isSuccess(equipmentSnapshot)).toBe(true)
 
+      const factoryOutcome = await Effect.runPromise(
+        Effect.result(invokeEffect(PublicApplication.makeVehicleService, [value])),
+      )
+      if (Result.isFailure(factoryOutcome)) {
+        expect(Schema.is(PublicApplication.VehicleServiceValidationErrorSchema)(factoryOutcome.failure)).toBe(true)
+        const decoded = Schema.decodeUnknownResult(PublicApplication.VehicleServiceValidationErrorSchema, {
+          onExcessProperty: 'error',
+        })(factoryOutcome.failure)
+        expect(decoded._tag, 'VehicleService factory hostile failure').toBe('Success')
+      } else {
+        const factorySnapshot = await captureVehicleOutcome(
+          'VehicleService factory hostile snapshot',
+          factoryOutcome.success.snapshot,
+          PublicApplication.VehicleServiceSnapshotSuccessSchema,
+          PublicApplication.VehicleServiceNoFailureSchema,
+        )
+        const factoryVehicles = await captureVehicleOutcome(
+          'VehicleService factory hostile vehicles',
+          factoryOutcome.success.vehicles,
+          PublicApplication.VehicleServiceVehiclesSuccessSchema,
+          PublicApplication.VehicleServiceNoFailureSchema,
+        )
+        expect(Result.isSuccess(factorySnapshot)).toBe(true)
+        expect(Result.isSuccess(factoryVehicles)).toBe(true)
+        if (Result.isSuccess(factorySnapshot) && Result.isSuccess(factoryVehicles)) {
+          const decodedSnapshot = requireVehicleSuccess(factorySnapshot, PublicApplication.VehicleSnapshotSchema)
+          const decodedVehicles = requireVehicleSuccess(factoryVehicles, PublicApplication.VehicleServiceVehiclesSuccessSchema)
+          expect(decodedVehicles).toEqual(decodedSnapshot.vehicles)
+        }
+      }
+
+      const emptyVehicleState = await assertVehicleOperation(
+        'VehicleService.restore empty baseline',
+        vehicleService.restore(PublicApplication.emptyVehicleSnapshot()),
+        PublicApplication.VehicleServiceRestoreSuccessSchema,
+        PublicApplication.VehicleServiceValidationErrorSchema,
+      )
+      expect(Result.isSuccess(emptyVehicleState)).toBe(true)
+      const emptyVehicleSnapshot = await captureVehicleOutcome(
+        'VehicleService.snapshot empty baseline',
+        vehicleService.snapshot,
+        PublicApplication.VehicleServiceSnapshotSuccessSchema,
+        PublicApplication.VehicleServiceNoFailureSchema,
+      )
+      expect(Result.isSuccess(emptyVehicleSnapshot)).toBe(true)
+      if (Result.isSuccess(emptyVehicleSnapshot)) {
+        expect(emptyVehicleSnapshot.success).toEqual({ vehicles: [], nextSerial: 0 })
+      }
+
       const vector = { x: amount, y: value, z: amount }
-      await runEffectResult(vehicles.spawn, [value, value, vector, amount])
-      await runEffectResult(vehicles.despawn, [value])
-      await runEffectResult(vehicles.mount, [value, value])
-      await runEffectResult(vehicles.dismount, [value, value])
-      await runEffectResult(vehicles.updateVelocity, [value, vector])
-      await runEffectResult(vehicles.updateTransform, [value, value, vector, amount])
-      await runEffectResult(vehicles.updateState, [value, {
+      await assertVehicleOperation(
+        'VehicleService.spawn hostile',
+        invokeEffect(vehicleService.spawn, [value, value, vector, amount]),
+        PublicApplication.VehicleServiceSpawnSuccessSchema,
+        PublicApplication.VehicleServiceOperationErrorSchema,
+      )
+      const despawn = await assertVehicleOperation(
+        'VehicleService.despawn hostile',
+        invokeEffect(vehicleService.despawn, [value]),
+        PublicApplication.VehicleServiceDespawnSuccessSchema,
+        PublicApplication.VehicleServiceNoFailureSchema,
+      )
+      expect(Result.isSuccess(despawn)).toBe(true)
+      await assertVehicleOperation(
+        'VehicleService.mount hostile',
+        invokeEffect(vehicleService.mount, [value, value]),
+        PublicApplication.VehicleServiceMountSuccessSchema,
+        PublicApplication.VehicleServiceOperationErrorSchema,
+      )
+      await assertVehicleOperation(
+        'VehicleService.dismount hostile',
+        invokeEffect(vehicleService.dismount, [value, value]),
+        PublicApplication.VehicleServiceDismountSuccessSchema,
+        PublicApplication.VehicleServiceOperationErrorSchema,
+      )
+      await assertVehicleOperation(
+        'VehicleService.updateVelocity hostile',
+        invokeEffect(vehicleService.updateVelocity, [value, vector]),
+        PublicApplication.VehicleServiceUpdateVelocitySuccessSchema,
+        PublicApplication.VehicleServiceOperationErrorSchema,
+      )
+      await assertVehicleOperation(
+        'VehicleService.updateTransform hostile',
+        invokeEffect(vehicleService.updateTransform, [value, value, vector, amount]),
+        PublicApplication.VehicleServiceUpdateTransformSuccessSchema,
+        PublicApplication.VehicleServiceOperationErrorSchema,
+      )
+      await assertVehicleOperation(
+        'VehicleService.updateState hostile',
+        invokeEffect(vehicleService.updateState, [value, {
         dimension: value,
         position: vector,
         velocity: vector,
         yawRadians: amount,
-      }])
-      await runEffectResult(vehicles.restore, [value])
-      await Effect.runPromise(vehicles.snapshot)
-
-      await Effect.runPromise(
-        Effect.result(invokeEffect(PublicApplication.makeVehicleService, [value])),
+        }]),
+        PublicApplication.VehicleServiceUpdateStateSuccessSchema,
+        PublicApplication.VehicleServiceOperationErrorSchema,
+      )
+      await assertVehicleOperation(
+        'VehicleService.restore hostile',
+        invokeEffect(vehicleService.restore, [value]),
+        PublicApplication.VehicleServiceRestoreSuccessSchema,
+        PublicApplication.VehicleServiceValidationErrorSchema,
+      )
+      await captureVehicleOutcome(
+        'VehicleService.snapshot after hostile requests',
+        vehicleService.snapshot,
+        PublicApplication.VehicleServiceSnapshotSuccessSchema,
+        PublicApplication.VehicleServiceNoFailureSchema,
+      )
+      await captureVehicleOutcome(
+        'VehicleService.vehicles after hostile requests',
+        vehicleService.vehicles,
+        PublicApplication.VehicleServiceVehiclesSuccessSchema,
+        PublicApplication.VehicleServiceNoFailureSchema,
       )
     }),
     checks,
   )
+
+  const validVehicleBaseline = await assertVehicleOperation(
+    'VehicleService.restore lifecycle baseline',
+    vehicleService.restore(PublicApplication.emptyVehicleSnapshot()),
+    PublicApplication.VehicleServiceRestoreSuccessSchema,
+    PublicApplication.VehicleServiceValidationErrorSchema,
+  )
+  expect(Result.isSuccess(validVehicleBaseline)).toBe(true)
+  const vehiclePosition = Schema.decodeUnknownSync(PublicApplication.VehiclePositionSchema)({
+    x: 1,
+    y: 64,
+    z: 2,
+  })
+  const secondPosition = Schema.decodeUnknownSync(PublicApplication.VehiclePositionSchema)({
+    x: 3,
+    y: 64,
+    z: 4,
+  })
+  const vehicleVelocity = Schema.decodeUnknownSync(PublicApplication.VehicleVelocitySchema)({
+    x: 0.5,
+    y: -1,
+    z: 2,
+  })
+
+  const spawnedVehicle = await assertVehicleOperation(
+    'VehicleService.spawn valid boat',
+    invokeEffect(vehicleService.spawn, ['boat', 'overworld', vehiclePosition, Math.PI / 2]),
+    PublicApplication.VehicleServiceSpawnSuccessSchema,
+    PublicApplication.VehicleServiceOperationErrorSchema,
+  )
+  const firstVehicle = requireVehicleSuccess(spawnedVehicle, PublicApplication.VehicleSchema)
+  expect(firstVehicle).toMatchObject({ id: 'v:0', type: 'boat', dimension: 'overworld' })
+  const spawnedCart = await assertVehicleOperation(
+    'VehicleService.spawn valid minecart',
+    invokeEffect(vehicleService.spawn, ['minecart', 'overworld', secondPosition, 0]),
+    PublicApplication.VehicleServiceSpawnSuccessSchema,
+    PublicApplication.VehicleServiceOperationErrorSchema,
+  )
+  const secondVehicle = requireVehicleSuccess(spawnedCart, PublicApplication.VehicleSchema)
+  expect(secondVehicle.id).toBe('v:1')
+
+  const mounted = await assertVehicleOperation(
+    'VehicleService.mount valid occupant',
+    vehicleService.mount(firstVehicle.id, PublicApplication.OccupantId('rider')),
+    PublicApplication.VehicleServiceMountSuccessSchema,
+    PublicApplication.VehicleServiceOperationErrorSchema,
+  )
+  expect(Result.isSuccess(mounted)).toBe(true)
+  const duplicateOccupant = await assertVehicleOperation(
+    'VehicleService.mount duplicate occupant',
+    vehicleService.mount(secondVehicle.id, PublicApplication.OccupantId('rider')),
+    PublicApplication.VehicleServiceMountSuccessSchema,
+    PublicApplication.VehicleServiceOperationErrorSchema,
+  )
+  expect(Result.isFailure(duplicateOccupant)).toBe(true)
+  if (Result.isFailure(duplicateOccupant)) expect(duplicateOccupant.failure).toMatchObject({ reason: 'duplicate-occupant' })
+  const mountedSecond = await assertVehicleOperation(
+    'VehicleService.mount second occupant',
+    vehicleService.mount(secondVehicle.id, PublicApplication.OccupantId('passenger')),
+    PublicApplication.VehicleServiceMountSuccessSchema,
+    PublicApplication.VehicleServiceOperationErrorSchema,
+  )
+  expect(Result.isSuccess(mountedSecond)).toBe(true)
+  const snapshotAfterMounts = await captureVehicleOutcome(
+    'VehicleService.snapshot after mounts',
+    vehicleService.snapshot,
+    PublicApplication.VehicleServiceSnapshotSuccessSchema,
+    PublicApplication.VehicleServiceNoFailureSchema,
+  )
+  expect(requireVehicleSuccess(snapshotAfterMounts, PublicApplication.VehicleSnapshotSchema).vehicles).toMatchObject([
+    { id: 'v:0', occupant: 'rider' },
+    { id: 'v:1', occupant: 'passenger' },
+  ])
+
+  const velocityUpdate = await assertVehicleOperation(
+    'VehicleService.updateVelocity valid',
+    vehicleService.updateVelocity(firstVehicle.id, vehicleVelocity),
+    PublicApplication.VehicleServiceUpdateVelocitySuccessSchema,
+    PublicApplication.VehicleServiceOperationErrorSchema,
+  )
+  expect(Result.isSuccess(velocityUpdate)).toBe(true)
+  const transformUpdate = await assertVehicleOperation(
+    'VehicleService.updateTransform valid',
+    invokeEffect(vehicleService.updateTransform, [firstVehicle.id, 'nether', secondPosition, Math.PI]),
+    PublicApplication.VehicleServiceUpdateTransformSuccessSchema,
+    PublicApplication.VehicleServiceOperationErrorSchema,
+  )
+  expect(Result.isSuccess(transformUpdate)).toBe(true)
+  const stateUpdate = await assertVehicleOperation(
+    'VehicleService.updateState valid',
+    invokeEffect(vehicleService.updateState, [firstVehicle.id, {
+      dimension: 'end',
+      position: vehiclePosition,
+      velocity: vehicleVelocity,
+      yawRadians: 0.25,
+      occupant: PublicApplication.OccupantId('rider'),
+    }]),
+    PublicApplication.VehicleServiceUpdateStateSuccessSchema,
+    PublicApplication.VehicleServiceOperationErrorSchema,
+  )
+  expect(Result.isSuccess(stateUpdate)).toBe(true)
+  const duplicateStateOccupant = await assertVehicleOperation(
+    'VehicleService.updateState duplicate occupant',
+    invokeEffect(vehicleService.updateState, [secondVehicle.id, {
+      dimension: 'overworld',
+      position: secondPosition,
+      velocity: vehicleVelocity,
+      yawRadians: 0,
+      occupant: PublicApplication.OccupantId('rider'),
+    }]),
+    PublicApplication.VehicleServiceUpdateStateSuccessSchema,
+    PublicApplication.VehicleServiceOperationErrorSchema,
+  )
+  expect(Result.isFailure(duplicateStateOccupant)).toBe(true)
+  if (Result.isFailure(duplicateStateOccupant)) {
+    expect(duplicateStateOccupant.failure).toMatchObject({ reason: 'duplicate-occupant' })
+  }
+
+  const validVehicleSnapshotOutcome = await captureVehicleOutcome(
+    'VehicleService.snapshot after updates',
+    vehicleService.snapshot,
+    PublicApplication.VehicleServiceSnapshotSuccessSchema,
+    PublicApplication.VehicleServiceNoFailureSchema,
+  )
+  const validVehicleSnapshot = requireVehicleSuccess(
+    validVehicleSnapshotOutcome,
+    PublicApplication.VehicleSnapshotSchema,
+  )
+  expect(validVehicleSnapshot.vehicles).toMatchObject([
+    { id: 'v:0', dimension: 'end', velocity: { x: 0.5, y: -1, z: 2 }, occupant: 'rider' },
+    { id: 'v:1', dimension: 'overworld', occupant: 'passenger' },
+  ])
+  const dismounted = await assertVehicleOperation(
+    'VehicleService.dismount valid occupant',
+    vehicleService.dismount(secondVehicle.id, PublicApplication.OccupantId('passenger')),
+    PublicApplication.VehicleServiceDismountSuccessSchema,
+    PublicApplication.VehicleServiceOperationErrorSchema,
+  )
+  expect(Result.isSuccess(dismounted)).toBe(true)
+  const snapshotAfterDismount = await captureVehicleOutcome(
+    'VehicleService.snapshot after dismount',
+    vehicleService.snapshot,
+    PublicApplication.VehicleServiceSnapshotSuccessSchema,
+    PublicApplication.VehicleServiceNoFailureSchema,
+  )
+  expect(requireVehicleSuccess(snapshotAfterDismount, PublicApplication.VehicleSnapshotSchema).vehicles).toMatchObject([
+    { id: 'v:0', occupant: 'rider' },
+    { id: 'v:1' },
+  ])
+  const vehicleValidRestore = await assertVehicleOperation(
+    'VehicleService.restore valid snapshot',
+    vehicleService.restore(validVehicleSnapshot),
+    PublicApplication.VehicleServiceRestoreSuccessSchema,
+    PublicApplication.VehicleServiceValidationErrorSchema,
+  )
+  expect(Result.isSuccess(vehicleValidRestore)).toBe(true)
+  const snapshotAfterRestore = await captureVehicleOutcome(
+    'VehicleService.snapshot after valid restore',
+    vehicleService.snapshot,
+    PublicApplication.VehicleServiceSnapshotSuccessSchema,
+    PublicApplication.VehicleServiceNoFailureSchema,
+  )
+  expect(requireVehicleSuccess(snapshotAfterRestore, PublicApplication.VehicleSnapshotSchema)).toEqual(validVehicleSnapshot)
+  const vehicleInvalidRestore = await assertVehicleOperation(
+    'VehicleService.restore malformed snapshot',
+    vehicleService.restore({ vehicles: [{ _tag: 'Vehicle' }], nextSerial: -1 }),
+    PublicApplication.VehicleServiceRestoreSuccessSchema,
+    PublicApplication.VehicleServiceValidationErrorSchema,
+  )
+  expect(Result.isFailure(vehicleInvalidRestore)).toBe(true)
+
+  const firstDespawn = await assertVehicleOperation(
+    'VehicleService.despawn first vehicle',
+    vehicleService.despawn(firstVehicle.id),
+    PublicApplication.VehicleServiceDespawnSuccessSchema,
+    PublicApplication.VehicleServiceNoFailureSchema,
+  )
+  expect(Result.isSuccess(firstDespawn) && firstDespawn.success).toBe(true)
+  const secondDespawn = await assertVehicleOperation(
+    'VehicleService.despawn second vehicle',
+    vehicleService.despawn(secondVehicle.id),
+    PublicApplication.VehicleServiceDespawnSuccessSchema,
+    PublicApplication.VehicleServiceNoFailureSchema,
+  )
+  expect(Result.isSuccess(secondDespawn) && secondDespawn.success).toBe(true)
+  const repeatedDespawn = await assertVehicleOperation(
+    'VehicleService.despawn missing vehicle',
+    vehicleService.despawn(firstVehicle.id),
+    PublicApplication.VehicleServiceDespawnSuccessSchema,
+    PublicApplication.VehicleServiceNoFailureSchema,
+  )
+  expect(Result.isSuccess(repeatedDespawn) && repeatedDespawn.success).toBe(false)
+  const finalVehicleSnapshot = await captureVehicleOutcome(
+    'VehicleService.snapshot after despawn',
+    vehicleService.snapshot,
+    PublicApplication.VehicleServiceSnapshotSuccessSchema,
+    PublicApplication.VehicleServiceNoFailureSchema,
+  )
+  expect(Result.isSuccess(finalVehicleSnapshot)).toBe(true)
+  if (Result.isSuccess(finalVehicleSnapshot)) {
+    expect(finalVehicleSnapshot.success).toMatchObject({ vehicles: [], nextSerial: 2 })
+  }
 
   const location = Schema.decodeUnknownSync(PublicApplication.CropLocationSchema)({
     dimension: DIMENSIONS[0],
