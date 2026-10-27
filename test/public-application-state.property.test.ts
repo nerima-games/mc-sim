@@ -406,6 +406,22 @@ it('SettingsService candidates, updates, and key mutations keep a valid snapshot
   )
 })
 
+it('SettingsService.restore decodes its void result and installs normalized external state', async () => {
+  await fc.assert(
+    fc.asyncProperty(fc.anything({ maxDepth: 3 }), async (input) => {
+      const settings = await Effect.runPromise(App.makeSettingsService())
+      const restored = await Effect.runPromise(Effect.result(invokeEffect(settings.restore, [input])))
+      assertEffectOutcome('SettingsService.restore', () => restored, Schema.Void, Schema.Never)
+      expect(Result.isSuccess(restored)).toBe(true)
+
+      const snapshot = await Effect.runPromise(settings.snapshot)
+      expect(App.isValidSettings(snapshot)).toBe(true)
+      expect(snapshot).toStrictEqual(App.normaliseSettings(input))
+    }),
+    checks,
+  )
+})
+
 it('StatisticsService unlock and restore repair hostile saved counters and achievement IDs', async () => {
   await fc.assert(
     fc.asyncProperty(
