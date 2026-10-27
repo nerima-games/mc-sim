@@ -331,16 +331,34 @@ it('testing-barrel schemas reject hostile values or decode values matching their
       const randomSeed = Schema.decodeUnknownResult(RandomSeedSchema)(input)
       const tickCount = Schema.decodeUnknownResult(TickCountSchema)(input)
       const stateHash = Schema.decodeUnknownResult(StateHashSchema)(input)
+      const validRandomSeed = typeof input === 'number' && Number.isSafeInteger(input)
+      const validTickCount = typeof input === 'number' && Number.isSafeInteger(input) && input > 0
+      const validStateHash = typeof input === 'string' && /^[0-9a-f]{64}$/.test(input)
 
-      expect(Result.isFailure(randomSeed) || Result.isSuccess(randomSeed)).toBe(true)
-      expect(Result.isFailure(tickCount) || Result.isSuccess(tickCount)).toBe(true)
-      expect(Result.isFailure(stateHash) || Result.isSuccess(stateHash)).toBe(true)
-      if (Result.isSuccess(randomSeed)) expect(Number.isInteger(randomSeed.success)).toBe(true)
-      if (Result.isSuccess(tickCount)) {
-        expect(Number.isInteger(tickCount.success)).toBe(true)
-        expect(tickCount.success).toBeGreaterThan(0)
-      }
-      if (Result.isSuccess(stateHash)) expect(stateHash.success).toMatch(/^[0-9a-f]{64}$/)
+      assertResultContract(
+        'RandomSeedSchema.decodeUnknownResult',
+        () => randomSeed,
+        RandomSeedSchema,
+        SchemaErrorSchema,
+      )
+      assertResultContract(
+        'TickCountSchema.decodeUnknownResult',
+        () => tickCount,
+        TickCountSchema,
+        SchemaErrorSchema,
+      )
+      assertResultContract(
+        'StateHashSchema.decodeUnknownResult',
+        () => stateHash,
+        StateHashSchema,
+        SchemaErrorSchema,
+      )
+      expect(Result.isSuccess(randomSeed)).toBe(validRandomSeed)
+      expect(Result.isSuccess(tickCount)).toBe(validTickCount)
+      expect(Result.isSuccess(stateHash)).toBe(validStateHash)
+      if (Result.isSuccess(randomSeed)) expect(randomSeed.success).toBe(input)
+      if (Result.isSuccess(tickCount)) expect(tickCount.success).toBe(input)
+      if (Result.isSuccess(stateHash)) expect(stateHash.success).toBe(input)
     }),
     checks,
   )
@@ -430,18 +448,39 @@ it('HeadlessHarness validates hostile seeds and ticks before reset and exercises
             expect(Result.isFailure(beforeResetHash)).toBe(true)
 
             const randomSeed = Schema.decodeUnknownResult(RandomSeedSchema)(randomSeedInput)
-            expect(Result.isFailure(randomSeed) || Result.isSuccess(randomSeed)).toBe(true)
-            if (Result.isFailure(randomSeed) || Math.abs(randomSeed.success) > 32) return undefined
+            const validRandomSeed = typeof randomSeedInput === 'number' && Number.isSafeInteger(randomSeedInput)
+            assertResultContract(
+              'RandomSeedSchema.decodeUnknownResult',
+              () => randomSeed,
+              RandomSeedSchema,
+              SchemaErrorSchema,
+            )
+            expect(Result.isSuccess(randomSeed)).toBe(validRandomSeed)
+            if (Result.isFailure(randomSeed)) return undefined
+            expect(randomSeed.success).toBe(randomSeedInput)
+            if (Math.abs(randomSeed.success) > 32) return undefined
 
             const resetInput = { worldSeed: NoiseSeed(worldSeed), randomSeed: randomSeed.success }
             yield* harness.reset(resetInput)
 
             const tickCount = Schema.decodeUnknownResult(TickCountSchema)(rawTickCount)
-            expect(Result.isFailure(tickCount) || Result.isSuccess(tickCount)).toBe(true)
+            const validTickCount = typeof rawTickCount === 'number' &&
+              Number.isSafeInteger(rawTickCount) &&
+              rawTickCount > 0
+            assertResultContract(
+              'TickCountSchema.decodeUnknownResult',
+              () => tickCount,
+              TickCountSchema,
+              SchemaErrorSchema,
+            )
+            expect(Result.isSuccess(tickCount)).toBe(validTickCount)
             let executedTicks = 0
-            if (Result.isSuccess(tickCount) && tickCount.success <= 4) {
-              executedTicks = tickCount.success
-              yield* harness.step(tickCount.success)
+            if (Result.isSuccess(tickCount)) {
+              expect(tickCount.success).toBe(rawTickCount)
+              if (tickCount.success <= 4) {
+                executedTicks = tickCount.success
+                yield* harness.step(tickCount.success)
+              }
             }
 
             const hash = yield* Effect.result(harness.stateHash)
