@@ -454,19 +454,20 @@ describe('REGRESSION: normaliseInventory re-establishes the slot count without l
 
   it.effect('what genuinely does not fit is REPORTED, in the same currency as add', () =>
     Effect.sync(() => {
-      // A save whose every slot is over-full cannot be made to fit. The excess
-      // becomes dropped-item entities on the ground, which is what the caller
-      // does with `add`'s leftover — so it must not be swallowed here either.
+      // A corrupt stack beyond total inventory capacity must surface its excess
+      // as dropped-item entities, matching what the caller does with `add`'s
+      // leftover.
+      const capacity = INVENTORY_SLOT_COUNT * maxStackCountForItem('dirt')
       const crammed: Inventory = {
-        slots: Array.from({ length: INVENTORY_SLOT_COUNT }, () => ({
+        slots: [{
           ...itemStack('dirt', 1),
-          count: 100 as StackCount,
-        })),
+          count: (capacity + 1) as StackCount,
+        }],
       }
       const repaired = normaliseInventory(crammed)
 
-      expect(countOf(repaired.inventory, 'dirt')).toBe(INVENTORY_SLOT_COUNT * maxStackCountForItem('dirt'))
-      expect(repaired.leftover).toBe(INVENTORY_SLOT_COUNT * (100 - maxStackCountForItem('dirt')))
+      expect(countOf(repaired.inventory, 'dirt')).toBe(capacity)
+      expect(repaired.leftover).toBe(1)
     }),
   )
 
@@ -578,15 +579,17 @@ describe('REGRESSION: InventoryService.restore is the guarded path, and reports 
   it.effect('restore resolves to the leftover, which the caller drops on the ground', () =>
     Effect.gen(function* () {
       const service = yield* makeInventoryService()
+      const capacity = INVENTORY_SLOT_COUNT * maxStackCountForItem('dirt')
+      const totalItems = INVENTORY_SLOT_COUNT * 100
       const crammed: Inventory = {
-        slots: Array.from({ length: INVENTORY_SLOT_COUNT }, () => ({
+        slots: [{
           ...itemStack('dirt', 1),
-          count: 100 as StackCount,
-        })),
+          count: totalItems as StackCount,
+        }],
       }
 
-      expect(yield* service.restore(crammed)).toBe(INVENTORY_SLOT_COUNT * 36)
-      expect(yield* service.countOf('dirt')).toBe(INVENTORY_SLOT_COUNT * maxStackCountForItem('dirt'))
+      expect(yield* service.restore(crammed)).toBe(totalItems - capacity)
+      expect(yield* service.countOf('dirt')).toBe(capacity)
     }),
   )
 
