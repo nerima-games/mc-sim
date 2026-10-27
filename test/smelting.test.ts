@@ -2,6 +2,7 @@ import { describe, expect, it } from '@effect/vitest'
 import { Effect, Result } from 'effect'
 import { FixedDurationSecs, RepairCost } from '@nerima-games/mc-kernel'
 import { vi } from 'vitest'
+import * as inventoryModule from '../src/domain/inventory'
 import {
   addItem as addItemResult,
   countOf,
@@ -17,6 +18,7 @@ import {
   emptyFurnaceState as emptyFurnaceStateResult,
   furnaceState,
   matchSmeltingRecipe as matchSmeltingRecipeResult,
+  selectFurnaceTransfer,
   transferToFurnace as transferToFurnaceResult,
   validateFurnaceSnapshot as validateFurnaceSnapshotResult,
   type FurnaceState,
@@ -583,6 +585,43 @@ describe('inventory-backed furnace progression', () => {
     }),
   )
 
+  it('preserves both sides when collection rejects an invalid inventory or furnace', () => {
+    const inventory = emptyInventory()
+    const furnace = requireSuccess(furnaceState({ output: itemStack('iron_ingot', 3) }))
+    const invalidInventory = { slots: ['not-an-item-stack'] } as unknown as Inventory
+    const invalidInventoryResult = collectFurnaceOutputResult(invalidInventory, furnace)
+    expect(invalidInventoryResult.result).toStrictEqual({ _tag: 'InvalidInput', field: 'inventory' })
+    expect(invalidInventoryResult.inventory).toBe(invalidInventory)
+    expect(invalidInventoryResult.furnace).toBe(furnace)
+
+    const invalidFurnace = { ...furnace, station: 'unknown' } as unknown as FurnaceState
+    const invalidFurnaceResult = collectFurnaceOutputResult(inventory, invalidFurnace)
+    expect(invalidFurnaceResult.result).toStrictEqual({ _tag: 'InvalidInput', field: 'furnace' })
+    expect(invalidFurnaceResult.inventory).toBe(inventory)
+    expect(invalidFurnaceResult.furnace).toBe(invalidFurnace)
+  })
+
+  it('preserves both sides when inserting collected output fails', () => {
+    const inventory = emptyInventory()
+    const furnace = requireSuccess(furnaceState({ output: itemStack('iron_ingot', 3) }))
+    const failure = itemStackResult('iron_ingot', 0)
+    if (Result.isSuccess(failure)) throw new Error('invalid item count unexpectedly passed')
+
+    const addItemStackSpy = vi.spyOn(inventoryModule, 'addItemStack')
+      .mockReturnValue(Result.fail(failure.failure))
+    try {
+      const outcome = collectFurnaceOutputResult(inventory, furnace)
+
+      expect(addItemStackSpy).toHaveBeenCalledTimes(1)
+      expect(addItemStackSpy).toHaveBeenCalledWith(inventory, furnace.output)
+      expect(outcome.result).toStrictEqual({ _tag: 'ItemStackFailure', error: failure.failure })
+      expect(outcome.inventory).toBe(inventory)
+      expect(outcome.furnace).toBe(furnace)
+    } finally {
+      addItemStackSpy.mockRestore()
+    }
+  })
+
   it.effect('validates JSON round trips and rejects corrupt persisted state', () =>
     Effect.sync(() => {
       const state = furnaceWith({
@@ -681,6 +720,47 @@ describe('furnace boundary validation', () => {
     })
     expect(transferToFurnace({ slots: [itemStack('raw_iron', 1), modified, ...emptyInventory().slots.slice(2)] },
       emptyFurnaceState(), 'input', 'raw_iron', 2).result).toMatchObject({ _tag: 'InsufficientItems' })
+  })
+
+  it('rejects invalid transfer slots and items without changing either side', () => {
+    const inventory = addItem(emptyInventory(), 'raw_iron', 1).inventory
+    const furnace = toFurnaceState(emptyFurnaceState())
+
+    const invalidSlotSelection = selectFurnaceTransfer(inventory, furnace, 'output' as never, 'raw_iron', 1)
+    expect(invalidSlotSelection).toStrictEqual({
+      _tag: 'Rejected',
+      result: { _tag: 'InvalidInput', field: 'slot' },
+    })
+    const invalidSlotTransfer = transferToFurnaceResult(inventory, furnace, 'output' as never, 'raw_iron', 1)
+    expect(invalidSlotTransfer.result).toStrictEqual({ _tag: 'InvalidInput', field: 'slot' })
+    expect(invalidSlotTransfer.inventory).toBe(inventory)
+    expect(invalidSlotTransfer.furnace).toBe(furnace)
+
+    const invalidItemSelection = selectFurnaceTransfer(inventory, furnace, 'input', 'not_a_item' as never, 1)
+    expect(invalidItemSelection).toStrictEqual({
+      _tag: 'Rejected',
+      result: { _tag: 'InvalidInput', field: 'item' },
+    })
+    const invalidItemTransfer = transferToFurnaceResult(inventory, furnace, 'input', 'not_a_item' as never, 1)
+    expect(invalidItemTransfer.result).toStrictEqual({ _tag: 'InvalidInput', field: 'item' })
+    expect(invalidItemTransfer.inventory).toBe(inventory)
+    expect(invalidItemTransfer.furnace).toBe(furnace)
+  })
+
+  it('rejects a corrupt non-selected inventory slot after transfer selection', () => {
+    const selected = itemStack('raw_iron', 1)
+    const inventory = {
+      slots: [selected, 'not-an-item-stack', ...emptyInventory().slots.slice(2)],
+    } as unknown as Inventory
+    const furnace = toFurnaceState(emptyFurnaceState())
+    const selection = selectFurnaceTransfer(inventory, furnace, 'input', 'raw_iron', 1)
+    expect(selection).toMatchObject({ _tag: 'Ready', selected })
+
+    const outcome = transferToFurnaceResult(inventory, furnace, 'input', 'raw_iron', 1)
+
+    expect(outcome.result).toStrictEqual({ _tag: 'InvalidInput', field: 'inventory' })
+    expect(outcome.inventory).toBe(inventory)
+    expect(outcome.furnace).toBe(furnace)
   })
 
   it('rejects invalid fuel duration and malformed recipe output', () => {
@@ -840,7 +920,10 @@ describe('furnace boundary validation', () => {
     expect(Result.isSuccess(starterWithoutExperience)).toBe(true)
     if (Result.isFailure(starterWithoutExperience)) throw starterWithoutExperience.failure
     expect(starterWithoutExperience.success.smeltedCount).toBe(1)
-    expect(Result.isFailure(matchSmeltingRecipeResult(undefined, 'unknown' as never, []))).toBe(true)
+    expect(matchSmeltingRecipeResult(undefined, 'unknown' as never, [])).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'SmeltingValidationFailure', path: 'station', reason: 'unknown cooking station' },
+    })
     expect(Result.isFailure(matchSmeltingRecipeResult(undefined, 'furnace', null as never))).toBe(true)
     expect(Result.isFailure(matchSmeltingRecipeResult(undefined, 'furnace', [null] as never))).toBe(true)
 
@@ -856,7 +939,10 @@ describe('furnace boundary validation', () => {
     expect(Result.isFailure(advanceFurnaceResult(state, 1, [], [null] as never))).toBe(true)
     expect(Result.isFailure(advanceFurnaceResult(state, 1, [], null as never))).toBe(true)
     expect(Result.isFailure(furnaceState(null))).toBe(true)
-    expect(Result.isFailure(furnaceState({ station: 'unknown' }))).toBe(true)
+    expect(furnaceState({ station: 'unknown' })).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'FurnaceStateValidationFailure', path: 'station', reason: 'expected a cooking station' },
+    })
     expect(Result.isFailure(furnaceState({ fuelTimeRemainingSecs: 2, fuelTimeTotalSecs: 1 }))).toBe(true)
     expect(Result.isSuccess(advanceFurnaceResult(requireSuccess(emptyFurnaceStateResult()), 1))).toBe(true)
   })
