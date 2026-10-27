@@ -80,6 +80,11 @@ export const structuredInput = (
 
 export const unknownValue: fc.Arbitrary<unknown> = structuredInput(hostileValue)
 
+export const hostileItemStack: fc.Arbitrary<unknown> = fc.oneof(
+  unknownValue,
+  fc.record({ item: hostileValue, count: hostileNumber, components: hostileValue }),
+)
+
 export const assertResultContract = (
   value: unknown,
   validSuccess: (success: unknown) => boolean = finiteTree,

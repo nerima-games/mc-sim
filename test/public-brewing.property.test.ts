@@ -3,20 +3,16 @@ import { Result } from 'effect'
 import { expect, it } from 'vitest'
 import { isItemStack } from '@nerima-games/mc-kernel'
 import * as Sim from '../src/index.js'
-import { assertResultContract, finiteTree, hostileNumber, hostileValue, isRecord, unknownValue } from './public-property-helpers.js'
+import { assertResultContract, finiteTree, hostileItemStack, hostileNumber, hostileValue, isRecord, unknownValue } from './public-property-helpers.js'
 
 const checks = { numRuns: 80 }
 const recipe = Sim.STARTER_BREWING_RECIPES[0]
-const hostileStack = fc.oneof(
-  unknownValue,
-  fc.record({ item: hostileValue, count: hostileNumber, components: hostileValue }),
-)
 const hostileState = fc.oneof(
   unknownValue,
   fc.record({
-    bottles: fc.array(hostileStack, { maxLength: 4 }),
-    ingredient: hostileStack,
-    fuel: hostileStack,
+    bottles: fc.array(hostileItemStack, { maxLength: 4 }),
+    ingredient: hostileItemStack,
+    fuel: hostileItemStack,
     fuelCharges: hostileNumber,
     brewProgressSecs: hostileNumber,
   }),
@@ -31,7 +27,7 @@ if (recipe === undefined) throw new Error('starter brewing recipe missing')
 
 it('brewing helpers return typed failures for hostile envelopes without throwing', () => {
   fc.assert(
-    fc.property(hostileState, hostileStack, hostileRecipes, hostileNumber, (state, input, recipes, index) => {
+    fc.property(hostileState, hostileItemStack, hostileRecipes, hostileNumber, (state, input, recipes, index) => {
       assertResultContract(Sim.brewingState(state))
       assertResultContract(Sim.matchBrewingRecipe(state as never, input as never, recipes as never))
       assertResultContract(Sim.brewingRecipeFor(input as never, state as never, recipes as never))

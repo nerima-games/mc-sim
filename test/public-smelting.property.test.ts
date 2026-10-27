@@ -2,26 +2,22 @@ import fc from 'fast-check'
 import { Result } from 'effect'
 import { expect, it } from 'vitest'
 import * as Sim from '../src/index.js'
-import { assertResultContract, finiteTree, hostileNumber, hostileValue, isRecord, unknownValue } from './public-property-helpers.js'
+import { assertResultContract, finiteTree, hostileItemStack, hostileNumber, hostileValue, isRecord, unknownValue } from './public-property-helpers.js'
 
 const checks = { numRuns: 80 }
 const starterRecipes = Result.getOrThrow(Sim.STARTER_SMELTING_RECIPES)
 const recipe = starterRecipes[0]
-const hostileStack = fc.oneof(
-  unknownValue,
-  fc.record({ item: hostileValue, count: hostileNumber, components: hostileValue }),
-)
 const hostileInventory = fc.oneof(
   unknownValue,
-  fc.record({ slots: fc.array(hostileStack, { maxLength: 8 }) }),
+  fc.record({ slots: fc.array(hostileItemStack, { maxLength: 8 }) }),
 )
 const hostileFurnace = fc.oneof(
   unknownValue,
   fc.record({
     station: hostileValue,
-    input: hostileStack,
-    fuel: hostileStack,
-    output: hostileStack,
+    input: hostileItemStack,
+    fuel: hostileItemStack,
+    output: hostileItemStack,
     fuelTimeRemainingSecs: hostileNumber,
     fuelTimeTotalSecs: hostileNumber,
     cookProgressSecs: hostileNumber,
@@ -32,7 +28,7 @@ const hostileRecipe = fc.oneof(
   fc.record({
     id: hostileValue,
     input: hostileValue,
-    output: hostileStack,
+    output: hostileItemStack,
     cookDurationSecs: hostileNumber,
     experience: hostileNumber,
   }),
@@ -57,7 +53,7 @@ const assertTransferOutcome = (value: unknown): void => {
 
 it('furnace construction, matching, transfer selection, and collection handle hostile envelopes', () => {
   fc.assert(
-    fc.property(hostileInventory, hostileFurnace, hostileStack, hostileValue, hostileRecipes, hostileNumber, (inventory, furnace, input, slot, recipes, count) => {
+    fc.property(hostileInventory, hostileFurnace, hostileItemStack, hostileValue, hostileRecipes, hostileNumber, (inventory, furnace, input, slot, recipes, count) => {
       assertResultContract(Sim.furnaceState(furnace))
       assertResultContract(Sim.matchSmeltingRecipe(input as never, slot as never, recipes as never))
 
