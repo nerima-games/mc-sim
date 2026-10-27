@@ -104,12 +104,20 @@ export const placeBlock = (
       : { kind: 'rejected', reason: 'unsupported' }
   })
 
-export const placeableBlockFromItem = (item: ItemType): PlaceableBlock | undefined => {
+export const placeableBlockFromItem = (
+  item: ItemType,
+): Result.Result<PlaceableBlock | undefined, BlockRegistryFailure> => {
   if (!isPlaceableItem(item)) {
-    return undefined
+    return Result.succeed(undefined)
   }
 
   const type = blockOfPlaceableItem(item)
   const id = blockIdOf(type)
-  return Option.isSome(id) ? { id: id.value, type } : undefined
+  return Option.isSome(id)
+    ? Result.succeed({ id: id.value, type })
+    : Result.fail({
+        _tag: 'BlockRegistryFailure',
+        reason: 'missing-block-row',
+        message: `No block registry row is registered for block type "${type}"`,
+      })
 }

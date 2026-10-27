@@ -86,7 +86,10 @@ describe('placeBlock', () => {
 
 describe('placeableBlockFromItem', () => {
   it('derives the placeable block from the kernel item/block intersection', () => {
-    expect(placeableBlockFromItem('stone')).toStrictEqual({ id: id('stone'), type: 'stone' })
-    expect(placeableBlockFromItem('stick')).toBeUndefined()
+    expect(Result.getOrThrow(placeableBlockFromItem('stone'))).toStrictEqual({
+      id: id('stone'),
+      type: 'stone',
+    })
+    expect(Result.getOrThrow(placeableBlockFromItem('stick'))).toBeUndefined()
   })
 })

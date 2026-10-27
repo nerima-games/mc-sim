@@ -141,17 +141,27 @@ const withBottle = (
 }
 
 describe('domain migration coverage', () => {
-  it('returns no placeable block when the registry has no id for the mapped type', () => {
+  it('propagates a missing block registry id for the mapped type', () => {
     dependencyFailures.missingBlockType = 'stone'
-    expect(placeableBlockFromItem('stone')).toBeUndefined()
+    expect(failureOf(placeableBlockFromItem('stone'))).toStrictEqual({
+      _tag: 'BlockRegistryFailure',
+      reason: 'missing-block-row',
+      message: 'No block registry row is registered for block type "stone"',
+    })
   })
 
   it('maps all registered placeable items and rejects every non-placeable item', () => {
     expect(new Set(PLACEABLE_ITEM_TYPES).size).toBe(PLACEABLE_ITEM_TYPES.length)
-    expect(PLACEABLE_ITEM_TYPES.map(placeableBlockFromItem).every((block) => block !== undefined)).toBe(true)
-    expect(NON_PLACEABLE_ITEM_TYPES.map(placeableBlockFromItem)).toStrictEqual(
-      NON_PLACEABLE_ITEM_TYPES.map(() => undefined),
-    )
+    expect(
+      PLACEABLE_ITEM_TYPES.map(placeableBlockFromItem).every(
+        (result) => Result.isSuccess(result) && result.success !== undefined,
+      ),
+    ).toBe(true)
+    expect(
+      NON_PLACEABLE_ITEM_TYPES.map(placeableBlockFromItem).every(
+        (result) => Result.isSuccess(result) && result.success === undefined,
+      ),
+    ).toBe(true)
     expect(ITEM_TYPES).toHaveLength(PLACEABLE_ITEM_TYPES.length + NON_PLACEABLE_ITEM_TYPES.length)
   })
 
