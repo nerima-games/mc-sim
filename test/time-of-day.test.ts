@@ -222,6 +222,16 @@ describe('advance', () => {
       if (Result.isFailure(outcome)) expect(outcome.failure._tag).toBe('BrandError')
     }),
   )
+
+  it.effect('returns a typed failure when advancing a state with non-finite current ticks', () =>
+    Effect.sync(() => {
+      const malformed = { ticks: Number.NaN, dayLengthTicks: INITIAL_TIME_STATE.dayLengthTicks } as unknown as TimeState
+      const outcome = advance(malformed, DeltaTimeSecs(1))
+
+      expect(Result.isFailure(outcome)).toBe(true)
+      if (Result.isFailure(outcome)) expect(outcome.failure._tag).toBe('BrandError')
+    }),
+  )
 })
 
 describe('isNight', () => {
