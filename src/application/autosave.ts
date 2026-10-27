@@ -106,12 +106,22 @@ export const AUTO_SAVE_INTERVAL: Duration.Duration = Duration.seconds(5)
 const report = (
   reporter: AutoSaveStatusReporter | undefined,
   status: AutoSaveStatus,
-): Effect.Effect<void> =>
-  reporter === undefined
-    ? Effect.void
-    : reporter(status).pipe(
-        Effect.catchCause((cause) => Effect.logError(`Auto-save status error: ${Cause.pretty(cause)}`)),
-      )
+): Effect.Effect<void> => {
+  if (reporter === undefined) return Effect.void
+  if (typeof reporter !== 'function') return Effect.logError('Auto-save status reporter is not a function')
+
+  return Effect.try({
+    try: () => reporter(status),
+    catch: (cause) => cause,
+  }).pipe(
+    Effect.flatMap((effect) =>
+      Effect.isEffect(effect)
+        ? effect
+        : Effect.logError('Auto-save status reporter did not return an Effect'),
+    ),
+    Effect.catchCause((cause) => Effect.logError(`Auto-save status error: ${Cause.pretty(cause)}`)),
+  )
+}
 
 /**
  * One autosave tick. Total by construction: `Effect<void, never>`.
@@ -127,7 +137,12 @@ export const performAutoSaveTick = <E>(
 ): Effect.Effect<void> =>
   Effect.andThen(
     report(reporter, 'saving'),
-    Effect.andThen(persist, report(reporter, 'saved')),
+    Effect.suspend(() => {
+      if (!Effect.isEffect(persist)) {
+        return Effect.die(new TypeError('Auto-save persistence must be an Effect'))
+      }
+      return Effect.andThen(persist, report(reporter, 'saved'))
+    }),
   ).pipe(
     Effect.catchCause((cause) =>
       Effect.logError(`Auto-save error: ${Cause.pretty(cause)}`).pipe(
@@ -140,9 +155,45 @@ export const performAutoSaveTick = <E>(
  * The schedule, exported so a test can assert on it directly rather than on a
  * comment claiming it is `spaced`.
  */
-export const autoSaveSchedule = (
-  interval: Duration.Duration = AUTO_SAVE_INTERVAL,
-): Schedule.Schedule<number> => Schedule.spaced(interval)
+export type InvalidAutoSaveInterval = Readonly<{
+  readonly _tag: 'InvalidAutoSaveInterval'
+  readonly message: 'Auto-save interval must be a finite Duration between 1 and Number.MAX_SAFE_INTEGER milliseconds'
+}>
+
+const invalidAutoSaveInterval = (): InvalidAutoSaveInterval => ({
+  _tag: 'InvalidAutoSaveInterval',
+  message: 'Auto-save interval must be a finite Duration between 1 and Number.MAX_SAFE_INTEGER milliseconds',
+})
+
+const makeAutoSaveSchedule = (
+  interval: unknown,
+): Effect.Effect<Schedule.Schedule<number>, InvalidAutoSaveInterval> =>
+  Effect.suspend(() => {
+    try {
+      if (!Duration.isDuration(interval)) return Effect.fail(invalidAutoSaveInterval())
+      const intervalMillis = Duration.toMillis(interval)
+      if (
+        !Number.isFinite(intervalMillis) ||
+        intervalMillis < 1 ||
+        intervalMillis > Number.MAX_SAFE_INTEGER
+      ) {
+        return Effect.fail(invalidAutoSaveInterval())
+      }
+      return Effect.succeed(Schedule.spaced(interval))
+    } catch {
+      return Effect.fail(invalidAutoSaveInterval())
+    }
+  })
+
+export function autoSaveSchedule(): Effect.Effect<Schedule.Schedule<number>, InvalidAutoSaveInterval>
+export function autoSaveSchedule(
+  interval: Duration.Duration,
+): Effect.Effect<Schedule.Schedule<number>, InvalidAutoSaveInterval>
+export function autoSaveSchedule(
+  interval?: Duration.Duration,
+): Effect.Effect<Schedule.Schedule<number>, InvalidAutoSaveInterval> {
+  return makeAutoSaveSchedule(arguments.length === 0 ? AUTO_SAVE_INTERVAL : interval)
+}
 
 /**
  * Start the autosave daemon.
@@ -156,11 +207,23 @@ export const autoSaveSchedule = (
  * `Effect.repeat`: see the module header. The daemon is forked during world
  * load, and a save on the fork writes over the save that was just read.
  */
-export const startAutoSaveDaemon = <E>(
+export function startAutoSaveDaemon<E>(
   persist: Effect.Effect<void, E>,
-  interval: Duration.Duration = AUTO_SAVE_INTERVAL,
+): Effect.Effect<Fiber.Fiber<number, never>, InvalidAutoSaveInterval>
+export function startAutoSaveDaemon<E>(
+  persist: Effect.Effect<void, E>,
+  interval: Duration.Duration,
   reporter?: AutoSaveStatusReporter,
-): Effect.Effect<Fiber.Fiber<number, never>> =>
-  Effect.forkDetach(
-    Effect.schedule(performAutoSaveTick(persist, reporter), autoSaveSchedule(interval)),
+): Effect.Effect<Fiber.Fiber<number, never>, InvalidAutoSaveInterval>
+export function startAutoSaveDaemon<E>(
+  persist: Effect.Effect<void, E>,
+  interval?: Duration.Duration,
+  reporter?: AutoSaveStatusReporter,
+): Effect.Effect<Fiber.Fiber<number, never>, InvalidAutoSaveInterval> {
+  const schedule = makeAutoSaveSchedule(arguments.length < 2 ? AUTO_SAVE_INTERVAL : interval)
+  return Effect.flatMap(schedule, (autoSaveScheduleValue) =>
+    Effect.forkDetach(
+      Effect.schedule(performAutoSaveTick(persist, reporter), autoSaveScheduleValue),
+    ),
   )
+}

@@ -22,7 +22,11 @@
  */
 import { Duration, Effect, Fiber, Ref, Result, Schedule } from 'effect'
 import { TestClock } from 'effect/testing'
-import { autoSaveSchedule, startAutoSaveDaemon } from '../../src/application/autosave'
+import {
+  autoSaveSchedule,
+  startAutoSaveDaemon,
+  type InvalidAutoSaveInterval,
+} from '../../src/application/autosave'
 import { makeGameLoop } from '../../src/application/game-loop'
 import { makeInventoryService } from '../../src/application/inventory-service'
 import { makeTimeService } from '../../src/application/time-service'
@@ -370,9 +374,8 @@ const autoSaveProbe = Effect.gen(function* () {
   const spacedTick = Effect.sleep(Duration.millis(40)).pipe(
     Effect.andThen(Ref.update(spacedRuns, (count) => count + 1)),
   )
-  const spacedFiber = yield* Effect.forkChild(
-    Effect.repeat(spacedTick, autoSaveSchedule(Duration.millis(100))),
-  )
+  const spacedSchedule = yield* autoSaveSchedule(Duration.millis(100))
+  const spacedFiber = yield* Effect.forkChild(Effect.repeat(spacedTick, spacedSchedule))
   yield* TestClock.adjust(Duration.millis(1000))
   yield* Fiber.interrupt(spacedFiber)
 
@@ -431,7 +434,7 @@ const autoSaveProbe = Effect.gen(function* () {
       'Which clock does the autosave schedule read?',
     ),
     '   PlayerService.cameraPose   Effect<CameraPoseSnapshot, never, ClockPort>     <- Port in the type',
-    '   startAutoSaveDaemon        Effect<Fiber.RuntimeFiber<number, never>>        <- Effect Clock',
+    '   startAutoSaveDaemon        Effect<Fiber.RuntimeFiber<number, never>, InvalidAutoSaveInterval> <- Effect Clock',
     '',
     '   SIM-6 DECIDED — NOT MOVED, and the reasoning is now in application/autosave.ts rather',
     '   than only here. The complaint was fair: domain/time-of-day.ts says "Time enters the',
@@ -560,12 +563,13 @@ const FOOTER: ReadonlyArray<string> = [
  * (`Effect.provide` supplies `TestClock.layer()` and `Effect.scoped` closes the
  * child-fiber scope). Inventory operations can fail with `ItemStackFailure` or
  * `PlayerStorageFailure`, and starter recipe construction can fail with
- * `RecipeFailure`, so all channels are preserved for the caller instead of
- * becoming a report line.
+ * `RecipeFailure`, and autosave schedule construction can fail with
+ * `InvalidAutoSaveInterval`, so all channels are preserved for the caller
+ * instead of becoming a report line.
  */
 const statsReportEffect: Effect.Effect<
   ReadonlyArray<string>,
-  ItemStackFailure | PlayerStorageFailure | RecipeFailure,
+  ItemStackFailure | PlayerStorageFailure | RecipeFailure | InvalidAutoSaveInterval,
   never
 > = Effect.gen(function* () {
   const parts = [
@@ -583,6 +587,6 @@ const statsReportEffect: Effect.Effect<
 
 export const statsReport: Effect.Effect<
   ReadonlyArray<string>,
-  ItemStackFailure | PlayerStorageFailure | RecipeFailure,
+  ItemStackFailure | PlayerStorageFailure | RecipeFailure | InvalidAutoSaveInterval,
   never
 > = statsReportEffect

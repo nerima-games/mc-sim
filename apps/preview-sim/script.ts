@@ -442,7 +442,7 @@ const CORRUPT_SAVE: Scenario = {
  * and application/player-service.ts:29-33 says the visible requirement is the
  * point — it is what stops someone simplifying the call into a wall-clock read.
  *
- * `startAutoSaveDaemon` is `Effect<Fiber.RuntimeFiber<number, never>>`. No
+ * `startAutoSaveDaemon` is `Effect<Fiber.RuntimeFiber<number, never>, InvalidAutoSaveInterval>`. No
  * `ClockPort`. Its schedule sleeps on Effect's ambient `Clock`, and NOTHING
  * connects the two — which is what this scenario shows by pulling them apart.
  *

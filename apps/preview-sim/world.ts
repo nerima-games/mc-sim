@@ -14,7 +14,7 @@
  *    read. This app backs it with a `Ref<number>` the operator advances.
  *
  * 2. Effect's own `Clock` — what `Schedule.spaced` sleeps on.
- *    `startAutoSaveDaemon` is typed `Effect<Fiber.Fiber<number, never>>`
+ *    `startAutoSaveDaemon` is typed `Effect<Fiber.Fiber<number, never>, InvalidAutoSaveInterval>`
  *    with NO `ClockPort` requirement, because it does not use one. This app
  *    backs it with `TestClock.layer()`, so a five-second autosave
  *    interval costs zero real seconds and the schedule is as reproducible as

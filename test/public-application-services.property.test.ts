@@ -152,12 +152,20 @@ const validInventory = (value: unknown): boolean => {
 const validDomainEvent = (value: unknown): boolean =>
   Result.isSuccess(Schema.decodeUnknownResult(DomainEventSchema)(value))
 
-it('autoSaveSchedule accepts hostile Duration magnitudes without throwing or returning a non-schedule', () => {
+it('autoSaveSchedule returns typed failures for invalid or overflowing Duration magnitudes', () => {
   fc.assert(
     fc.property(hostileScalar, (millis) => {
       if (typeof millis !== 'number') return
-      const schedule = App.autoSaveSchedule(Duration.millis(millis))
-      expect(Schedule.isSchedule(schedule)).toBe(true)
+      const outcome = Effect.runSync(Effect.result(App.autoSaveSchedule(Duration.millis(millis))))
+      if (Number.isFinite(millis) && millis >= 1 && millis <= Number.MAX_SAFE_INTEGER) {
+        expect(Result.isSuccess(outcome)).toBe(true)
+        if (Result.isSuccess(outcome)) expect(Schedule.isSchedule(outcome.success)).toBe(true)
+      } else {
+        expect(Result.isFailure(outcome)).toBe(true)
+        if (Result.isFailure(outcome)) {
+          expect(outcome.failure).toMatchObject({ _tag: 'InvalidAutoSaveInterval' })
+        }
+      }
     }),
     checks,
   )

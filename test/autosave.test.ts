@@ -97,9 +97,8 @@ describe('REGRESSION: Schedule.spaced, not Schedule.fixed', () => {
         Effect.andThen(Ref.update(runs, (count) => count + 1)),
       )
 
-      const fiber = yield* Effect.forkChild(
-        Effect.repeat(tick, autoSaveSchedule(Duration.millis(100))),
-      )
+      const schedule = yield* autoSaveSchedule(Duration.millis(100))
+      const fiber = yield* Effect.forkChild(Effect.repeat(tick, schedule))
 
       yield* TestClock.adjust(Duration.millis(1000))
       yield* Fiber.interrupt(fiber)
