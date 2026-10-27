@@ -1,5 +1,5 @@
 import { SimulationTick, type SimulationTick as SimulationTickValue } from '@nerima-games/mc-kernel'
-import { Brand, Effect, Ref, Result, Semaphore } from 'effect'
+import { Brand, Cause, Effect, Ref, Result, Semaphore } from 'effect'
 import type { DomainEvent, DomainEventBusApi } from './domain-event-bus.js'
 import type { QueuedIntent } from './intent-queue.js'
 import type {
@@ -71,10 +71,24 @@ export type CoreTickInputError =
       actual: SimulationTickValue
     }>
 
+export type CoreTickPostCommitFailure<StageError = never> = Readonly<{
+  _tag: 'CoreTickPostCommitFailure'
+  committedTick: SimulationTickValue
+  cause: Cause.Cause<StageError>
+}>
+
+export type CoreTickTerminated<StageError = never> = Readonly<{
+  _tag: 'CoreTickTerminated'
+  committedTick: SimulationTickValue
+  failure: CoreTickPostCommitFailure<StageError>
+}>
+
 export type CoreTickError<StageError> =
   | CoreTickInputError
   | StageError
   | WorldCommitCoordinatorError
+  | CoreTickPostCommitFailure<StageError>
+  | CoreTickTerminated<StageError>
 
 export type CoreTickApi<StageError = never> = Readonly<{
   runTick: (
@@ -165,11 +179,22 @@ export const makeCoreTick = <StageError = never>(
   return Effect.gen(function* () {
     const currentTick = yield* Ref.make(validInitialTick.success)
     const pendingTick = yield* Ref.make<PendingTick | undefined>(undefined)
+    const terminal = yield* Ref.make<CoreTickPostCommitFailure<StageError> | undefined>(undefined)
     const semaphore = yield* Semaphore.make(1)
 
     const runTick: CoreTickApi<StageError>['runTick'] = (tick, ready) =>
       Effect.uninterruptibleMask((restore) =>
         semaphore.withPermit(Effect.gen(function* () {
+          const terminalFailure = yield* Ref.get(terminal)
+          if (terminalFailure !== undefined) {
+            const failure: CoreTickTerminated<StageError> = {
+              _tag: 'CoreTickTerminated',
+              committedTick: terminalFailure.committedTick,
+              failure: terminalFailure,
+            }
+            return yield* Effect.fail(failure)
+          }
+
           const current = yield* Ref.get(currentTick)
           const validation = validateTick(current, tick)
           if (validation._tag !== 'Valid') return yield* Effect.fail(validation)
@@ -199,12 +224,26 @@ export const makeCoreTick = <StageError = never>(
               changes,
             })
 
-            for (const { candidate } of previous) {
-              if (candidate.restore !== undefined) yield* candidate.restore(delta)
-            }
+            const postCommit = yield* Effect.exit(Effect.gen(function* () {
+              for (const { candidate } of previous) {
+                if (candidate.restore !== undefined) yield* candidate.restore(delta)
+              }
 
-            for (const { candidate } of previous) {
-              for (const event of candidate.events) yield* options.publish(event)
+              for (const { candidate } of previous) {
+                for (const event of candidate.events) yield* options.publish(event)
+              }
+            }))
+
+            if (postCommit._tag === 'Failure') {
+              const failure: CoreTickPostCommitFailure<StageError> = {
+                _tag: 'CoreTickPostCommitFailure',
+                committedTick: validation.tick,
+                cause: postCommit.cause,
+              }
+              yield* Ref.set(terminal, failure)
+              yield* Ref.set(currentTick, validation.tick)
+              yield* Ref.set(pendingTick, undefined)
+              return yield* Effect.fail(failure)
             }
           }
 

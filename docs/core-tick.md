@@ -13,7 +13,7 @@ Each stage receives:
 - `expectedRevision`: the coordinator revision read once before the stages run.
 - `previous`: the completed stage records in stage order, including each prior candidate.
 
-A stage returns candidate `changes`, `expectedDimensions`, and `events`, with an optional `value` for later stages. An optional `restore(delta)` callback receives the exact successful commit delta after replicated state commits. Stages should derive candidates from their input and committed snapshots; they must not mutate committed state or publish events before the commit.
+A stage returns candidate `changes`, `expectedDimensions`, and `events`, with an optional `value` for later stages. An optional `restore(delta)` callback receives the exact successful commit delta after replicated state commits. A stage reads other committed state through its captured service dependencies; `previous` supplies earlier candidates from the same tick. Stages must not mutate committed state or publish events before the commit.
 
 Inside an `Effect.gen` program, an integration wires its dependencies and calls the returned API once for each ready simulation tick:
 
@@ -32,11 +32,11 @@ const core = yield* makeCoreTick({
 yield* core.runTick(nextTick, ready)
 ```
 
-This is an illustrative wiring fragment. `HeadlessHarness` obtains `ready` with `takeReady(nextTick)` and passes it to the session's `runTick` for each fixed simulation step.
+This is an illustrative wiring fragment. `HeadlessHarness` obtains `ready` with `takeReady(nextTick)` and passes it to the session's `runTick` for each fixed simulation step. The queue assigns an admission `sequence` when it accepts an intent; `takeReady(tick)` removes intents whose `targetTick` is at or before `tick` and orders them by target tick, then sequence.
 
 ## Tick order
 
-Before processing a tick, the runner validates that the current tick can be incremented. This prevents overflow from consuming intents or committing state.
+Before accepting the supplied ready batch, the runner validates that its last committed tick can be incremented. It rejects overflow before retaining that batch or committing state. A caller that has already removed intents from its queue must decide how to handle them if this validation fails.
 
 For a valid current tick, the runner performs these stages in order:
 
@@ -49,15 +49,13 @@ For a valid current tick, the runner performs these stages in order:
 7. Publish the staged domain events in stage order.
 8. Advance the logical tick by one.
 
-Stages return candidate state and events. They do not mutate committed state or publish events before the commit, so failures before commit are safe to retry.
-
 ## Failure and retry
 
 If a stage or the commit fails before the commit succeeds, the runner does not publish events or advance the tick. It retains the intents taken for that tick. The caller retries by making another call for the same logical tick; the runner reruns the stages against the latest committed snapshots and current coordinator revision.
 
 The coordinator commits all changed owners atomically. A tick with no owner changes skips the coordinator call, restore callbacks, and event publication.
 
-After a successful commit, the runner calls candidate `restore` callbacks in stage order, publishes staged events in stage order, then advances the tick. These actions run in one uninterruptible section, and a backpressured event subscriber can delay completion. A failing `restore` callback occurs after replicated state has committed and does not roll it back; treat that as a post-commit failure rather than retrying as though the tick made no changes.
+After a successful commit, the runner calls candidate `restore` callbacks in stage order, then publishes staged events in stage order. These actions run in one uninterruptible section, and a backpressured event subscriber can delay completion. If a restore callback or event publication fails, the runner records the tick as committed, clears its retained intents, and enters a terminal state. The call fails with `CoreTickPostCommitFailure`, which includes the committed tick and failure cause. A restore failure prevents event publication; a publication failure may occur after earlier events were delivered. Later calls fail with `CoreTickTerminated` before running any stage, including a retry for the same tick. The core exposes no recovery operation; callers must reconcile local state and delivered events with the committed world before constructing a new core.
 
 ## Frame boundary
 

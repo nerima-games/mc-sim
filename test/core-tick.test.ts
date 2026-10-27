@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@effect/vitest'
 import { DomainEventSchema, SimulationTick, WorldIdSchema } from '@nerima-games/mc-kernel'
-import { Brand, Deferred, Effect, Fiber, Ref, Result, Schema } from 'effect'
+import { Brand, Cause, Deferred, Effect, Fiber, Ref, Result, Schema } from 'effect'
 import type { DomainEvent } from '../src/application/domain-event-bus.js'
 import {
   makeCoreTick,
@@ -273,6 +273,70 @@ describe('CoreTick', () => {
 
       expect(requests).toHaveLength(2)
       expect(operations).toStrictEqual(['commit:2', 'commit:8', 'restore', 'publish'])
+    }),
+  )
+
+  it.effect('terminates after a restore failure following commit without rerunning stages or publishing events', () =>
+    Effect.gen(function* () {
+      const operations: Array<string> = []
+      const stageCalls: Array<string> = []
+      let commitCalls = 0
+      const restoreFailure = { _tag: 'CoreTickRestoreFailure' as const }
+      const candidate: CoreTickStageCandidate<typeof restoreFailure> = {
+        changes: [{ ownerId: makeOwnerId('restore-failure-owner'), state: { value: 1 } }],
+        expectedDimensions: [],
+        events: [levelUp('restore-failure', 1)],
+        restore: () => { operations.push('restore'); return Effect.fail(restoreFailure) },
+      }
+      const core = yield* makeCoreTick<typeof restoreFailure>({
+        coordinator: coordinatorAt(makeRevision(0), (request) => Effect.sync(() => {
+          commitCalls += 1
+          operations.push('commit')
+          return commitDeltaFor(request)
+        })),
+        stages: {
+          intentsAndRules: () => Effect.sync(() => { stageCalls.push('intentsAndRules'); return candidate }),
+          stations: () => Effect.sync(() => { stageCalls.push('stations'); return emptyCandidate() }),
+          environment: () => Effect.sync(() => { stageCalls.push('environment'); return emptyCandidate() }),
+          entities: () => Effect.sync(() => { stageCalls.push('entities'); return emptyCandidate() }),
+        },
+        publish: () => Effect.sync(() => { operations.push('publish') }),
+      })
+
+      const first = yield* Effect.result(core.runTick(SimulationTick(1), [readyIntent('committed-intent', 0)]))
+      const sameTick = yield* Effect.result(core.runTick(SimulationTick(1), []))
+      const nextTick = yield* Effect.result(core.runTick(SimulationTick(2), [readyIntent('later-intent', 1, 2)]))
+
+      expect(Result.isFailure(first)).toBe(true)
+      if (Result.isFailure(first)) {
+        expect(first.failure._tag).toBe('CoreTickPostCommitFailure')
+        if (first.failure._tag === 'CoreTickPostCommitFailure') {
+          expect(Number(first.failure.committedTick)).toBe(1)
+          expect(Cause.hasFails(first.failure.cause)).toBe(true)
+          const preservedFailure = Cause.findError(first.failure.cause)
+          expect(Result.isSuccess(preservedFailure)).toBe(true)
+          if (Result.isSuccess(preservedFailure)) {
+            expect(preservedFailure.success).toBe(restoreFailure)
+          }
+        }
+      }
+      expect(Result.isFailure(sameTick)).toBe(true)
+      if (Result.isFailure(sameTick)) {
+        expect(sameTick.failure._tag).toBe('CoreTickTerminated')
+        if (sameTick.failure._tag === 'CoreTickTerminated') {
+          expect(Number(sameTick.failure.committedTick)).toBe(1)
+        }
+      }
+      expect(Result.isFailure(nextTick)).toBe(true)
+      if (Result.isFailure(nextTick)) {
+        expect(nextTick.failure._tag).toBe('CoreTickTerminated')
+        if (nextTick.failure._tag === 'CoreTickTerminated') {
+          expect(Number(nextTick.failure.committedTick)).toBe(1)
+        }
+      }
+      expect(stageCalls).toStrictEqual(['intentsAndRules', 'stations', 'environment', 'entities'])
+      expect(commitCalls).toBe(1)
+      expect(operations).toStrictEqual(['commit', 'restore'])
     }),
   )
 
