@@ -87,6 +87,13 @@ describe('wither lifecycle', () => {
     expect(step(active, 1, active.feetPosition).state.velocity).toEqual({ x: 0, y: 0, z: 0 })
   })
 
+  it('preserves velocity below the speed cap when acceleration stays within it', () => {
+    const active = step(createWither(position(0, 0, 0)), 10).state
+    const state = { ...active, velocity: position(1, 0, 0) }
+
+    expect(step(state, 1, state.feetPosition).state.velocity).toEqual(position(1, 0, 0))
+  })
+
   it('enters permanent armour at half health and ignores ranged damage', () => {
     const active = step(createWither(position(0, 0, 0)), 10).state
     const armoured = damageWither(active, WITHER_ARMOUR_THRESHOLD, 'melee').state

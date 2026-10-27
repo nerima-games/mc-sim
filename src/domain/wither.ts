@@ -119,17 +119,12 @@ const accelerateAndClamp = (velocity: Position, acceleration: Position, delta: n
     return clampVelocity(x, y, z)
   }
 
-  // Scale by delta before multiplying so a large finite timestep cannot overflow
-  // the velocity that is immediately capped to WITHER_MAX_SPEED.
+  // Dividing the updated velocity by delta preserves its direction while avoiding
+  // the overflowed magnitude that clampVelocity immediately reduces.
   const scaledX = acceleration.x + velocity.x / delta
   const scaledY = acceleration.y + velocity.y / delta
   const scaledZ = acceleration.z + velocity.z / delta
-  const scaledSpeed = Math.hypot(scaledX, scaledY, scaledZ)
-  if (scaledSpeed === 0) return positionOf(0, 0, 0)
-  if (scaledSpeed > WITHER_MAX_SPEED / delta) {
-    return clampVelocity(scaledX, scaledY, scaledZ)
-  }
-  return clampVelocity(scaledX * delta, scaledY * delta, scaledZ * delta)
+  return clampVelocity(scaledX, scaledY, scaledZ)
 }
 
 export const stepWither = (
