@@ -1,3 +1,4 @@
+import * as Inventory from './inventory.js'
 import type { ItemStack } from './inventory.js'
 import { Brand, Result, Schema } from 'effect'
 import type {
@@ -137,6 +138,17 @@ export type DamageEquipmentResult =
       readonly applied: number
     }
 
+export const EquipmentValidationErrorSchema: Schema.Codec<EquipmentValidationError, unknown> =
+  Schema.TaggedStruct('EquipmentValidationError', {
+    path: Schema.String,
+    reason: Schema.String,
+  })
+
+export const EquipmentItemFailureSchema: Schema.Codec<EquipmentItemFailure, unknown> = Schema.Union([
+  Inventory.BrandErrorSchema,
+  EquipmentValidationErrorSchema,
+])
+
 const PositiveSafeIntegerSchema = Schema.Int.check(
   Schema.makeFilter((value) => Number.isSafeInteger(value) && value > 0),
 )
@@ -173,6 +185,21 @@ export const EquipmentSlotsSchema: Schema.Codec<EquipmentSlots, unknown> = Schem
 export const EquipmentSchema: Schema.Codec<Equipment, unknown> = Schema.Struct({
   slots: EquipmentSlotsSchema,
 })
+
+export const DamageEquipmentResultSchema: Schema.Codec<DamageEquipmentResult, unknown> = Schema.Union([
+  Schema.TaggedStruct('InvalidAmount', { amount: Schema.Number }),
+  Schema.TaggedStruct('Empty', {}),
+  Schema.TaggedStruct('NotDamageable', { item: EquipmentItemSchema }),
+  Schema.TaggedStruct('EquipmentFailure', { error: EquipmentItemFailureSchema }),
+  Schema.TaggedStruct('Damaged', {
+    item: EquipmentItemSchema,
+    applied: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER })),
+  }),
+  Schema.TaggedStruct('Broken', {
+    item: EquipmentItemSchema,
+    applied: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER })),
+  }),
+])
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)

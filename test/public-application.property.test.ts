@@ -1010,8 +1010,66 @@ it('crop, equipment, and vehicle services keep hostile requests and snapshots sa
     return outcome
   }
 
+  const captureEquipmentOutcome = async (
+    propertyName: string,
+    effect: Effect.Effect<unknown, unknown, never>,
+    successSchema: Schema.ConstraintDecoder<unknown>,
+    failureSchema: Schema.ConstraintDecoder<unknown>,
+  ): Promise<Result.Result<unknown, unknown>> => {
+    const outcome = await Effect.runPromise(Effect.result(effect))
+    const decoded = Result.isFailure(outcome)
+      ? Schema.decodeUnknownResult(failureSchema, { onExcessProperty: 'error' })(outcome.failure)
+      : Schema.decodeUnknownResult(successSchema, { onExcessProperty: 'error' })(outcome.success)
+    expect(decoded._tag, propertyName).toBe('Success')
+    return outcome
+  }
+
+  const assertEquipmentOperation = async (
+    propertyName: string,
+    effect: Effect.Effect<unknown, unknown, never>,
+    successSchema: Schema.ConstraintDecoder<unknown>,
+    failureSchema: Schema.ConstraintDecoder<unknown>,
+  ): Promise<Result.Result<unknown, unknown>> => {
+    const before = await captureEquipmentOutcome(
+      propertyName + ' snapshot before',
+      equipment.snapshot,
+      PublicApplication.EquipmentServiceSnapshotSuccessSchema,
+      PublicApplication.EquipmentServiceNoFailureSchema,
+    )
+    const outcome = await captureEquipmentOutcome(propertyName, effect, successSchema, failureSchema)
+    const after = await captureEquipmentOutcome(
+      propertyName + ' snapshot after',
+      equipment.snapshot,
+      PublicApplication.EquipmentServiceSnapshotSuccessSchema,
+      PublicApplication.EquipmentServiceNoFailureSchema,
+    )
+    if (Result.isFailure(outcome) && Result.isSuccess(before) && Result.isSuccess(after)) {
+      expect(after.success).toEqual(before.success)
+    }
+    return outcome
+  }
+
   await fc.assert(
     fc.asyncProperty(fc.tuple(hostileValue, hostileNumber), async ([value, amount]) => {
+      const resetEquipment = await assertEquipmentOperation(
+        'EquipmentService.reset',
+        equipment.reset,
+        PublicApplication.EquipmentServiceResetSuccessSchema,
+        PublicApplication.EquipmentServiceNoFailureSchema,
+      )
+      expect(Result.isSuccess(resetEquipment)).toBe(true)
+      const initialEquipment = await captureEquipmentOutcome(
+        'EquipmentService.snapshot initial',
+        equipment.snapshot,
+        PublicApplication.EquipmentServiceSnapshotSuccessSchema,
+        PublicApplication.EquipmentServiceNoFailureSchema,
+      )
+      expect(Result.isSuccess(initialEquipment)).toBe(true)
+      if (Result.isSuccess(initialEquipment)) {
+        expect(initialEquipment.success).toEqual({
+          slots: { head: null, chest: null, legs: null, feet: null, offhand: null },
+        })
+      }
       const reset = await assertCropOperation(
         'CropService.reset',
         crops.reset,
@@ -1074,12 +1132,43 @@ it('crop, equipment, and vehicle services keep hostile requests and snapshots sa
       )
       expect(Result.isSuccess(snapshot)).toBe(true)
 
-      await runEffectResult(equipment.equip, [value, value])
-      await runEffectResult(equipment.unequip, [value])
-      await runEffectResult(equipment.swap, [value, value])
-      await runEffectResult(equipment.damage, [value, amount])
-      await runEffectResult(equipment.restore, [value])
-      await Effect.runPromise(equipment.snapshot)
+      await assertEquipmentOperation(
+        'EquipmentService.equip',
+        invokeEffect(equipment.equip, [value, value]),
+        PublicApplication.EquipmentServiceEquipSuccessSchema,
+        PublicApplication.EquipmentServiceValidationErrorSchema,
+      )
+      await assertEquipmentOperation(
+        'EquipmentService.unequip',
+        invokeEffect(equipment.unequip, [value]),
+        PublicApplication.EquipmentServiceUnequipSuccessSchema,
+        PublicApplication.EquipmentServiceValidationErrorSchema,
+      )
+      await assertEquipmentOperation(
+        'EquipmentService.swap',
+        invokeEffect(equipment.swap, [value, value]),
+        PublicApplication.EquipmentServiceSwapSuccessSchema,
+        PublicApplication.EquipmentServiceValidationErrorSchema,
+      )
+      await assertEquipmentOperation(
+        'EquipmentService.damage',
+        invokeEffect(equipment.damage, [value, amount]),
+        PublicApplication.EquipmentServiceDamageSuccessSchema,
+        PublicApplication.EquipmentServiceValidationErrorSchema,
+      )
+      await assertEquipmentOperation(
+        'EquipmentService.restore',
+        invokeEffect(equipment.restore, [value]),
+        PublicApplication.EquipmentServiceRestoreSuccessSchema,
+        PublicApplication.EquipmentServiceValidationErrorSchema,
+      )
+      const equipmentSnapshot = await captureEquipmentOutcome(
+        'EquipmentService.snapshot after hostile requests',
+        equipment.snapshot,
+        PublicApplication.EquipmentServiceSnapshotSuccessSchema,
+        PublicApplication.EquipmentServiceNoFailureSchema,
+      )
+      expect(Result.isSuccess(equipmentSnapshot)).toBe(true)
 
       const vector = { x: amount, y: value, z: amount }
       await runEffectResult(vehicles.spawn, [value, value, vector, amount])
@@ -1243,6 +1332,193 @@ it('crop, equipment, and vehicle services keep hostile requests and snapshots sa
   )
   expect(Result.isSuccess(resetSnapshot)).toBe(true)
   if (Result.isSuccess(resetSnapshot)) expect(resetSnapshot.success).toMatchObject({ crops: [] })
+
+  const requireValue = <A, E>(result: Result.Result<A, E>): A => {
+    if (Result.isFailure(result)) throw result.failure
+    return result.success
+  }
+  const helmet = requireValue(PublicApplication.equipmentItem(
+    requireValue(PublicApplication.itemStack('iron_helmet', 1)),
+    requireValue(PublicApplication.durability(165, 165)),
+  ))
+  const flint = requireValue(PublicApplication.equipmentItem(
+    requireValue(PublicApplication.itemStack('flint_and_steel', 1)),
+    requireValue(PublicApplication.durability(64, 64)),
+  ))
+
+  const clearEquipment = await assertEquipmentOperation(
+    'EquipmentService.reset before lifecycle',
+    equipment.reset,
+    PublicApplication.EquipmentServiceResetSuccessSchema,
+    PublicApplication.EquipmentServiceNoFailureSchema,
+  )
+  expect(Result.isSuccess(clearEquipment)).toBe(true)
+  const emptyEquipment = await captureEquipmentOutcome(
+    'EquipmentService.snapshot after reset',
+    equipment.snapshot,
+    PublicApplication.EquipmentServiceSnapshotSuccessSchema,
+    PublicApplication.EquipmentServiceNoFailureSchema,
+  )
+  expect(Result.isSuccess(emptyEquipment)).toBe(true)
+  if (Result.isSuccess(emptyEquipment)) {
+    expect(emptyEquipment.success).toEqual({
+      slots: { head: null, chest: null, legs: null, feet: null, offhand: null },
+    })
+  }
+
+  const equippedHelmet = await assertEquipmentOperation(
+    'EquipmentService.equip helmet',
+    equipment.equip('head', helmet),
+    PublicApplication.EquipmentServiceEquipSuccessSchema,
+    PublicApplication.EquipmentServiceValidationErrorSchema,
+  )
+  expect(Result.isSuccess(equippedHelmet)).toBe(true)
+  if (Result.isSuccess(equippedHelmet)) expect(equippedHelmet.success).toBeNull()
+  const equippedFlint = await assertEquipmentOperation(
+    'EquipmentService.equip flint',
+    equipment.equip('offhand', flint),
+    PublicApplication.EquipmentServiceEquipSuccessSchema,
+    PublicApplication.EquipmentServiceValidationErrorSchema,
+  )
+  expect(Result.isSuccess(equippedFlint)).toBe(true)
+  if (Result.isSuccess(equippedFlint)) expect(equippedFlint.success).toBeNull()
+
+  const savedEquipment = await captureEquipmentOutcome(
+    'EquipmentService.snapshot before damage',
+    equipment.snapshot,
+    PublicApplication.EquipmentServiceSnapshotSuccessSchema,
+    PublicApplication.EquipmentServiceNoFailureSchema,
+  )
+  expect(Result.isSuccess(savedEquipment)).toBe(true)
+  if (Result.isSuccess(savedEquipment)) {
+    expect(savedEquipment.success).toMatchObject({
+      slots: { head: { item: 'iron_helmet' }, offhand: { item: 'flint_and_steel' } },
+    })
+  }
+
+  const swap = await assertEquipmentOperation(
+    'EquipmentService.swap incompatible slots',
+    equipment.swap('head', 'offhand'),
+    PublicApplication.EquipmentServiceSwapSuccessSchema,
+    PublicApplication.EquipmentServiceValidationErrorSchema,
+  )
+  expect(Result.isSuccess(swap)).toBe(true)
+  const afterSwap = await captureEquipmentOutcome(
+    'EquipmentService.snapshot after incompatible swap',
+    equipment.snapshot,
+    PublicApplication.EquipmentServiceSnapshotSuccessSchema,
+    PublicApplication.EquipmentServiceNoFailureSchema,
+  )
+  if (Result.isSuccess(savedEquipment) && Result.isSuccess(afterSwap)) {
+    expect(afterSwap.success).toEqual(savedEquipment.success)
+  }
+
+  const damaged = await assertEquipmentOperation(
+    'EquipmentService.damage',
+    equipment.damage('head', 10),
+    PublicApplication.EquipmentServiceDamageSuccessSchema,
+    PublicApplication.EquipmentServiceValidationErrorSchema,
+  )
+  expect(Result.isSuccess(damaged)).toBe(true)
+  if (Result.isSuccess(damaged)) {
+    expect(damaged.success).toMatchObject({
+      _tag: 'Damaged',
+      item: { item: 'iron_helmet', durability: { current: 155, max: 165 } },
+      applied: 10,
+    })
+  }
+
+  const broken = await assertEquipmentOperation(
+    'EquipmentService.damage to break',
+    equipment.damage('head', 155),
+    PublicApplication.EquipmentServiceDamageSuccessSchema,
+    PublicApplication.EquipmentServiceValidationErrorSchema,
+  )
+  expect(Result.isSuccess(broken)).toBe(true)
+  if (Result.isSuccess(broken)) expect(broken.success).toMatchObject({ _tag: 'Broken', applied: 155 })
+  const afterBreak = await captureEquipmentOutcome(
+    'EquipmentService.snapshot after break',
+    equipment.snapshot,
+    PublicApplication.EquipmentServiceSnapshotSuccessSchema,
+    PublicApplication.EquipmentServiceNoFailureSchema,
+  )
+  expect(Result.isSuccess(afterBreak)).toBe(true)
+  if (Result.isSuccess(afterBreak)) {
+    expect(afterBreak.success).toMatchObject({
+      slots: { head: null, offhand: { item: 'flint_and_steel' } },
+    })
+  }
+
+  const restored = await assertEquipmentOperation(
+    'EquipmentService.restore valid snapshot',
+    equipment.restore(Result.isSuccess(savedEquipment) ? savedEquipment.success : undefined),
+    PublicApplication.EquipmentServiceRestoreSuccessSchema,
+    PublicApplication.EquipmentServiceValidationErrorSchema,
+  )
+  expect(Result.isSuccess(restored)).toBe(true)
+  const malformedRestore = await assertEquipmentOperation(
+    'EquipmentService.restore malformed snapshot',
+    equipment.restore({ slots: {} }),
+    PublicApplication.EquipmentServiceRestoreSuccessSchema,
+    PublicApplication.EquipmentServiceValidationErrorSchema,
+  )
+  expect(Result.isFailure(malformedRestore)).toBe(true)
+
+  const unequippedHelmet = await assertEquipmentOperation(
+    'EquipmentService.unequip helmet',
+    equipment.unequip('head'),
+    PublicApplication.EquipmentServiceUnequipSuccessSchema,
+    PublicApplication.EquipmentServiceValidationErrorSchema,
+  )
+  expect(Result.isSuccess(unequippedHelmet)).toBe(true)
+  if (Result.isSuccess(unequippedHelmet)) {
+    expect(unequippedHelmet.success).toMatchObject({ item: 'iron_helmet' })
+  }
+  const stateBeforeInvalidDamage = await captureEquipmentOutcome(
+    'EquipmentService.snapshot before invalid damage',
+    equipment.snapshot,
+    PublicApplication.EquipmentServiceSnapshotSuccessSchema,
+    PublicApplication.EquipmentServiceNoFailureSchema,
+  )
+  const invalidDamage = await assertEquipmentOperation(
+    'EquipmentService.damage invalid amount',
+    equipment.damage('head', Number.POSITIVE_INFINITY),
+    PublicApplication.EquipmentServiceDamageSuccessSchema,
+    PublicApplication.EquipmentServiceValidationErrorSchema,
+  )
+  expect(Result.isSuccess(invalidDamage)).toBe(true)
+  if (Result.isSuccess(invalidDamage)) {
+    expect(invalidDamage.success).toMatchObject({ _tag: 'InvalidAmount', amount: Number.POSITIVE_INFINITY })
+  }
+  const stateAfterInvalidDamage = await captureEquipmentOutcome(
+    'EquipmentService.snapshot after invalid damage',
+    equipment.snapshot,
+    PublicApplication.EquipmentServiceSnapshotSuccessSchema,
+    PublicApplication.EquipmentServiceNoFailureSchema,
+  )
+  if (Result.isSuccess(stateBeforeInvalidDamage) && Result.isSuccess(stateAfterInvalidDamage)) {
+    expect(stateAfterInvalidDamage.success).toEqual(stateBeforeInvalidDamage.success)
+  }
+
+  const finalReset = await assertEquipmentOperation(
+    'EquipmentService.reset after lifecycle',
+    equipment.reset,
+    PublicApplication.EquipmentServiceResetSuccessSchema,
+    PublicApplication.EquipmentServiceNoFailureSchema,
+  )
+  expect(Result.isSuccess(finalReset)).toBe(true)
+  const finalEquipment = await captureEquipmentOutcome(
+    'EquipmentService.snapshot after lifecycle reset',
+    equipment.snapshot,
+    PublicApplication.EquipmentServiceSnapshotSuccessSchema,
+    PublicApplication.EquipmentServiceNoFailureSchema,
+  )
+  expect(Result.isSuccess(finalEquipment)).toBe(true)
+  if (Result.isSuccess(finalEquipment)) {
+    expect(finalEquipment.success).toEqual({
+      slots: { head: null, chest: null, legs: null, feet: null, offhand: null },
+    })
+  }
 })
 
 it('fishing, projectile, and TNT coordinators return typed outcomes for hostile request fields', async () => {
