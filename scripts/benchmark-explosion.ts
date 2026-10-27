@@ -14,7 +14,7 @@
 import { DeltaTimeSecs, PositionAxis, position, type DeltaTimeSecs as DeltaTimeSecsValue } from '@nerima-games/mc-kernel'
 import { loadavg } from 'node:os'
 import { Result } from 'effect'
-import { planExplosion, type ExplosionBlockReader, type ExplosionRequest } from '../src/domain/explosion'
+import { planExplosion as planExplosionResult, type ExplosionBlockReader, type ExplosionRequest } from '../src/domain/explosion'
 import { advanceFixedStep, initialFixedStepAccumulator } from '../src/domain/fixed-step'
 import {
   checkGuards,
@@ -41,6 +41,12 @@ const BLOCKS_PER_RADIUS = (radius: number): number => (radius * 2 + 1) ** 3
 const EXPLOSION_ITERATIONS: Readonly<Record<number, number>> = { 4: 32, 8: 4, 16: 1 }
 const FIXED_STEP_FRAMES = 8192
 const FIXED_STEP_ITERATIONS = 4
+
+const planExplosion = (request: ExplosionRequest) => {
+  const result = planExplosionResult(request)
+  if (Result.isFailure(result)) throw result.failure
+  return result.success
+}
 
 const blocks: ExplosionBlockReader = () => ({ resistance: 0, destructible: true })
 

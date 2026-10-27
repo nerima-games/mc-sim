@@ -1,11 +1,20 @@
 import { describe, expect, it, vi } from '@effect/vitest'
 import { PositionAxis, position as coordinatePosition } from '@nerima-games/mc-kernel'
+import { Result } from 'effect'
 import {
   applyPrimedTntPlan,
   MAX_TNT_FUSE_ADVANCE_SECS,
-  planPrimedTnt,
-  primeTnt,
+  planPrimedTnt as planPrimedTntResult,
+  primeTnt as primeTntResult,
 } from '../src/domain/primed-tnt'
+
+const unwrap = <A, E>(result: Result.Result<A, E>): A => {
+  if (Result.isFailure(result)) throw result.failure
+  return result.success
+}
+const primeTnt = (fuseSecs = 4) => unwrap(primeTntResult(fuseSecs))
+const planPrimedTnt = (input: Parameters<typeof planPrimedTntResult>[0]) =>
+  unwrap(planPrimedTntResult(input))
 
 const air = () => ({ resistance: 0, destructible: false })
 const position = (x: number, y: number, z: number) =>
@@ -66,8 +75,17 @@ describe('primed TNT', () => {
     expect(plan.explosion?.destroyedBlocks).not.toContainEqual({ x: 2, y: 0, z: 0 })
   })
 
-  it('clamps a non-finite fuse duration to zero', () => {
-    expect(primeTnt(NaN)).toStrictEqual({ kind: 'primed', remainingFuseSecs: 0 })
+  it('rejects invalid fuse state and frame durations', () => {
+    for (const fuseSecs of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(Result.isFailure(primeTntResult(fuseSecs))).toBe(true)
+    }
+    for (const deltaTimeSecs of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(Result.isFailure(planPrimedTntResult(request(primeTnt(4), deltaTimeSecs)))).toBe(true)
+    }
+    expect(Result.isFailure(planPrimedTntResult(request({
+      kind: 'primed',
+      remainingFuseSecs: -1,
+    })))).toBe(true)
   })
 
   it('caps oversized frame work and reports time that must be retried', () => {

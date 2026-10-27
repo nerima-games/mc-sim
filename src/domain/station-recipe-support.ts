@@ -6,6 +6,7 @@ import {
   StackCount,
   TagLocation,
   itemStackWithCount,
+  RecipeStationTag,
   type CraftingIngredient,
   type ItemStack,
   type ItemStackFailure,
@@ -32,6 +33,9 @@ export const stationRecipeFailure = (path: string, reason: string): StationRecip
 export const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
+const isRecipeStationTag = (value: unknown): boolean =>
+  typeof value === 'string' && Result.isSuccess(RecipeStationTag.result(value))
+
 const isItemTagMemberships = (value: unknown): value is ItemTagMemberships =>
   value instanceof Map &&
   [...value.entries()].every(([tag, items]) =>
@@ -41,7 +45,7 @@ const isItemTagMemberships = (value: unknown): value is ItemTagMemberships =>
 
 export const isRecipeMatchContext = (value: unknown): value is RecipeMatchContext =>
   isRecord(value) &&
-  (value['station'] === undefined || typeof value['station'] === 'string' && value['station'].trim().length > 0) &&
+  (value['station'] === undefined || isRecipeStationTag(value['station'])) &&
   (value['itemTags'] === undefined || isItemTagMemberships(value['itemTags']))
 
 export const validateContext = (

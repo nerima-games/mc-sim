@@ -247,7 +247,11 @@ describe('brewing domain', () => {
     expect(Result.isFailure(advanceBrewing(state, 1, null as never))).toBe(true)
     expect(Result.isFailure(advanceBrewing(invalidState, 1))).toBe(true)
     expect(Result.isFailure(advanceBrewing(state, -1))).toBe(true)
-    expect(Result.isSuccess(advanceBrewing({ ...state, brewProgressSecs: BREWING_TIME_SECS }, 1))).toBe(true)
+    expect(Result.isFailure(advanceBrewing({ ...state, brewProgressSecs: BREWING_TIME_SECS }, 1))).toBe(true)
+    expect(Result.isFailure(brewingState({ fuelCharges: null }))).toBe(true)
+    expect(Result.isFailure(brewingState({ brewProgressSecs: null }))).toBe(true)
+    expect(validateBrewingSnapshot({ ...validSnapshot, fuelCharges: null })).toMatchObject({ _tag: 'Invalid' })
+    expect(validateBrewingSnapshot({ ...validSnapshot, brewProgressSecs: BREWING_TIME_SECS })).toMatchObject({ _tag: 'Invalid' })
   })
 
   it('validates custom starter and kernel recipe tables', () => {

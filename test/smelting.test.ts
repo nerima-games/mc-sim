@@ -737,7 +737,7 @@ describe('furnace boundary validation', () => {
     }),
   )
 
-  it.effect('invalid timers return failures and completed progress stalls safely', () =>
+  it.effect('invalid timers return failures and completed progress is rejected safely', () =>
     Effect.sync(() => {
       expect(Result.isFailure(furnaceState({ cookProgressSecs: Number.NaN }))).toBe(true)
       expect(Result.isFailure(furnaceState({ fuelTimeRemainingSecs: -1 }))).toBe(true)
@@ -745,9 +745,7 @@ describe('furnace boundary validation', () => {
         toFurnaceState(furnaceWith({ input: itemStack('raw_iron', 1), cookElapsedSecs: 10 })),
         1,
       )
-      expect(Result.isSuccess(completed)).toBe(true)
-      if (Result.isFailure(completed)) throw completed.failure
-      expect(completed.success.state.input?.item).toBe('raw_iron')
+      expect(Result.isFailure(completed)).toBe(true)
     }),
   )
 
@@ -865,15 +863,12 @@ describe('furnace boundary validation', () => {
       const state = requireSuccess(furnaceState({
         input: itemStack('raw_iron', 1),
         fuel: itemStack('coal', 1),
-        fuelTimeRemainingSecs: 80,
-        fuelTimeTotalSecs: 80,
         cookProgressSecs: 10,
       }))
       const outcome = advanceFurnaceResult(state, 1, STARTER_SMELTING_RECIPES, STARTER_FUEL_RULES)
-      expect(Result.isSuccess(outcome)).toBe(true)
-      if (Result.isFailure(outcome)) throw outcome.failure
-      expect(outcome.success.state.cookProgressSecs).toBe(10)
-      expect(outcome.success.smeltedCount).toBe(0)
+      expect(Result.isFailure(outcome)).toBe(true)
+      expect(state.input?.count).toBe(1)
+      expect(state.fuel?.count).toBe(1)
     }),
   )
 

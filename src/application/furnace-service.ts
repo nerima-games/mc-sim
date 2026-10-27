@@ -1,5 +1,5 @@
 import { Context, Effect, Layer, Result, Schema } from 'effect'
-import { RecipeExperience, type ItemStack, type RecipeExperience as RecipeExperienceValue } from '@nerima-games/mc-kernel'
+import { RecipeExperience, type ItemStack, type RecipeExperience as RecipeExperienceValue, type WorldRevision } from '@nerima-games/mc-kernel'
 import type { Inventory } from '../domain/inventory.js'
 import {
   advanceFurnace,
@@ -14,6 +14,7 @@ import {
 } from '../domain/smelting.js'
 import type { ReplicatedOwnerId } from './replicated-state.js'
 import {
+  type ReplicatedOwnerCandidate,
   type ReplicatedOwnerRegistration,
   WorldCommitCoordinator,
   type WorldCommitCoordinatorError,
@@ -43,6 +44,18 @@ export type FurnaceServiceError =
   | Schema.SchemaError
   | WorldCommitCoordinatorError
 
+export type FurnaceCollectionCandidate = Readonly<{
+  outcome: FurnaceCollectionOutcome
+  expectedRevision: WorldRevision
+  ownerCandidate: ReplicatedOwnerCandidate | undefined
+}>
+
+export type FurnaceExperienceCandidate = Readonly<{
+  experience: RecipeExperienceValue
+  expectedRevision: WorldRevision
+  ownerCandidate: ReplicatedOwnerCandidate | undefined
+}>
+
 export type FurnaceServiceApi = {
   readonly snapshot: Effect.Effect<
     FurnaceState,
@@ -58,11 +71,11 @@ export type FurnaceServiceApi = {
   readonly advance: (
     elapsedSecs: number,
   ) => Effect.Effect<FurnaceOutcome, FurnaceServiceError, WorldCommitCoordinator>
-  readonly collectOutput: (
+  readonly prepareCollectOutput: (
     inventory: Inventory,
-  ) => Effect.Effect<FurnaceCollectionOutcome, FurnaceServiceError, WorldCommitCoordinator>
-  readonly collectExperience: Effect.Effect<
-    RecipeExperienceValue,
+  ) => Effect.Effect<FurnaceCollectionCandidate, FurnaceServiceError, WorldCommitCoordinator>
+  readonly prepareCollectExperience: Effect.Effect<
+    FurnaceExperienceCandidate,
     FurnaceServiceError,
     WorldCommitCoordinator
   >
@@ -124,6 +137,37 @@ const updateFurnaceState = <A>(
     ),
   )
 
+const prepareFurnaceOutputCollection = (
+  ownerId: ReplicatedOwnerId,
+  inventory: Inventory,
+): Effect.Effect<FurnaceCollectionCandidate, FurnaceServiceError, WorldCommitCoordinator> =>
+  Effect.flatMap(WorldCommitCoordinator, (coordinator) =>
+    Effect.map(coordinator.snapshot(ownerId, FurnaceServiceStateSchema), (snapshot) => {
+      const outcome = collectFurnaceOutput(inventory, snapshot.state.furnace)
+      const ownerCandidate = outcome.result._tag === 'Collected'
+        ? { ownerId, state: { ...snapshot.state, furnace: outcome.furnace } }
+        : undefined
+      return { outcome, expectedRevision: snapshot.revision, ownerCandidate }
+    }),
+  )
+
+const prepareFurnaceExperienceCollection = (
+  ownerId: ReplicatedOwnerId,
+): Effect.Effect<FurnaceExperienceCandidate, FurnaceServiceError, WorldCommitCoordinator> =>
+  Effect.flatMap(WorldCommitCoordinator, (coordinator) =>
+    Effect.flatMap(coordinator.snapshot(ownerId, FurnaceServiceStateSchema), (snapshot) =>
+      Effect.flatMap(fromResult(RecipeExperience.result(snapshot.state.experience)), (experience) =>
+        Effect.map(fromResult(RecipeExperience.result(0)), (remaining) => ({
+          experience,
+          expectedRevision: snapshot.revision,
+          ownerCandidate: experience > 0
+            ? { ownerId, state: { ...snapshot.state, experience: remaining } }
+            : undefined,
+        })),
+      ),
+    ),
+  )
+
 export const makeFurnaceService = (
   ownerId: ReplicatedOwnerId,
 ): Effect.Effect<FurnaceServiceApi> =>
@@ -157,24 +201,8 @@ export const makeFurnaceService = (
         })),
       ),
     ),
-    collectOutput: (inventory) => updateFurnaceState(ownerId, (current) => {
-      const outcome = collectFurnaceOutput(inventory, current.furnace)
-      const collected = outcome.result._tag === 'Collected'
-      return Result.succeed({
-        value: outcome,
-        state: collected ? { ...current, furnace: outcome.furnace } : current,
-        commit: collected,
-      })
-    }),
-    collectExperience: updateFurnaceState(ownerId, (current) =>
-      Result.flatMap(RecipeExperience.result(current.experience), (experience) =>
-        Result.map(RecipeExperience.result(0), (remaining) => ({
-          value: experience,
-          state: { ...current, experience: remaining },
-          commit: experience > 0,
-        })),
-      ),
-    ),
+    prepareCollectOutput: (inventory) => prepareFurnaceOutputCollection(ownerId, inventory),
+    prepareCollectExperience: prepareFurnaceExperienceCollection(ownerId),
     restore: (snapshot) => {
       const validated = validateFurnaceSnapshot(snapshot)
       if (validated._tag !== 'Valid') return Effect.fail(validated.error)
