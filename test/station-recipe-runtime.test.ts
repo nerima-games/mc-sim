@@ -223,6 +223,7 @@ describe('smithing recipe runtime', () => {
     expect(smithingInput(null)).toMatchObject({ _tag: 'Failure' })
     expect(smithingInput({ base: null })).toMatchObject({ _tag: 'Failure' })
     expect(matchSmithingRecipe(input, { station: ' ' }, [untagged])).toMatchObject({ _tag: 'Failure' })
+    expect(matchSmithingRecipe(input, { station: 'bad station' }, [untagged])).toMatchObject({ _tag: 'Failure' })
     expect(matchSmithingRecipe(input, {}, [{}])).toMatchObject({ _tag: 'Failure' })
     expect(matchesSmithingRecipe({}, input)).toMatchObject({ _tag: 'Failure' })
     expect(matchesSmithingRecipe(smithingRecipe({ tags: ['bad tag' as never] }), input)).toMatchObject({ _tag: 'Failure' })

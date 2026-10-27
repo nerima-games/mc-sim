@@ -3,6 +3,7 @@ import {
   ingredientMatches,
   isItemStack,
   isItemType,
+  RecipeStationTag,
   StackCount,
   TagLocation,
   itemStackWithCount,
@@ -41,7 +42,8 @@ const isItemTagMemberships = (value: unknown): value is ItemTagMemberships =>
 
 export const isRecipeMatchContext = (value: unknown): value is RecipeMatchContext =>
   isRecord(value) &&
-  (value['station'] === undefined || typeof value['station'] === 'string' && value['station'].trim().length > 0) &&
+  (value['station'] === undefined ||
+    typeof value['station'] === 'string' && Result.isSuccess(RecipeStationTag.result(value['station']))) &&
   (value['itemTags'] === undefined || isItemTagMemberships(value['itemTags']))
 
 export const validateContext = (
