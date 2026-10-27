@@ -1,4 +1,4 @@
-import { Effect, Result } from 'effect'
+import { Effect, Result, Schema } from 'effect'
 import fc from 'fast-check'
 import { expect } from 'vitest'
 
@@ -85,32 +85,29 @@ export const hostileItemStack: fc.Arbitrary<unknown> = fc.oneof(
   fc.record({ item: hostileValue, count: hostileNumber, components: hostileValue }),
 )
 
+const schemaPredicates = new WeakMap<Schema.Schema<unknown>, (value: unknown) => boolean>()
+
+const schemaIs = (schema: Schema.Schema<unknown>, value: unknown): boolean => {
+  let predicate = schemaPredicates.get(schema)
+  if (predicate === undefined) {
+    predicate = Schema.is(schema)
+    schemaPredicates.set(schema, predicate)
+  }
+  return predicate(value)
+}
+
 export const assertResultContract = (
-  value: unknown,
-  validSuccess: (success: unknown) => boolean = finiteTree,
+  propertyName: string,
+  call: () => Result.Result<unknown, unknown>,
+  successSchema: Schema.Schema<unknown>,
+  failureSchema: Schema.Schema<unknown>,
 ): void => {
-  expect(isRecord(value)).toBe(true)
-  if (!isRecord(value)) return
-
-  if (value['_tag'] === 'Failure') {
-    expect(value['failure'] ?? value['error']).toBeDefined()
-    return
-  }
-
-  expect(value['_tag']).toBe('Success')
-  const success = value['success']
-  expect(finiteTree(success)).toBe(true)
-  expect(validSuccess(success)).toBe(true)
-}
-
-export const assertEffectOutcome = <A>(
-  outcome: Result.Result<A, unknown>,
-  validSuccess: (success: A) => boolean = finiteTree,
-): void => {
+  const outcome = call()
   if (Result.isFailure(outcome)) {
-    expect(isRecord(outcome.failure) && typeof outcome.failure['_tag'] === 'string').toBe(true)
+    expect(schemaIs(failureSchema, outcome.failure), `${propertyName}: failure schema`).toBe(true)
     return
   }
-  expect(finiteTree(outcome.success)).toBe(true)
-  expect(validSuccess(outcome.success)).toBe(true)
+  expect(schemaIs(successSchema, outcome.success), `${propertyName}: success schema`).toBe(true)
 }
+
+export const assertEffectOutcome: typeof assertResultContract = assertResultContract

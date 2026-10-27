@@ -1,7 +1,10 @@
 import { Context, Effect, Layer, Schema } from 'effect'
-import type { BlockAddress, Dimension, WorldRevision } from '@nerima-games/mc-kernel'
+import { ITEM_TYPES, type BlockAddress, type Dimension, type WorldRevision } from '@nerima-games/mc-kernel'
 import * as Container from '../domain/container-storage.js'
 import * as PlayerStorage from '../domain/player-storage.js'
+import * as Inv from '../domain/inventory.js'
+import { SchemaErrorSchema } from '../schema-errors.js'
+import { ContainerStoredStackSchema } from './inventory-service.js'
 import {
   makeReplicatedOwnerId,
   type ReplicatedOwnerId,
@@ -9,6 +12,7 @@ import {
 import {
   WorldCommitCoordinator,
   WorldRevisionConflict,
+  WorldCommitCoordinatorErrorSchema,
   type ReplicatedOwnerCandidate,
   type ReplicatedOwnerRegistration,
   type WorldCommitCoordinatorError,
@@ -38,6 +42,92 @@ const ContainerKindSchema = Schema.Literals([
   'dispenser',
   'dropper',
   'hopper',
+])
+
+type AnySchema = Schema.Schema<unknown>
+
+const ContainerSchema: AnySchema = Schema.declare<Container.Container>((value): value is Container.Container =>
+  Container.validateContainerStorageSnapshot({
+    version: Container.CONTAINER_STORAGE_SNAPSHOT_VERSION,
+    containers: [value],
+  })._tag === 'Valid',
+)
+
+const SafeIntegerSchema = Schema.Int.check(Schema.makeFilter(Number.isSafeInteger))
+const PositiveSafeIntegerSchema = Schema.Int.check(Schema.makeFilter((value) => Number.isSafeInteger(value) && value > 0))
+
+export const CreateContainerResultSchema: AnySchema = Schema.Union([
+  Schema.Struct({ _tag: Schema.Literal('Created'), container: ContainerSchema }),
+  Schema.Struct({ _tag: Schema.Literal('AlreadyExists'), container: ContainerSchema }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidContainerId') }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidContainerKind') }),
+])
+
+export const ContainerTransferResultSchema: AnySchema = Schema.Union([
+  Schema.Struct({
+    _tag: Schema.Literal('Transferred'),
+    item: Schema.Literals(ITEM_TYPES),
+    count: PositiveSafeIntegerSchema,
+    direction: Schema.Literals(['PlayerToContainer', 'ContainerToPlayer']),
+  }),
+  Schema.Struct({ _tag: Schema.Literal('ContainerNotFound') }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidPlayerSlot') }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidContainerSlot') }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidCount') }),
+  Schema.Struct({ _tag: Schema.Literal('EmptySource') }),
+  Schema.Struct({ _tag: Schema.Literal('InsufficientSource'), available: SafeIntegerSchema }),
+  Schema.Struct({ _tag: Schema.Literal('DestinationMismatch') }),
+  Schema.Struct({ _tag: Schema.Literal('DestinationFull') }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidDirection') }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidSourceStack') }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidDestinationStack') }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidSourceDurability') }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidRequest') }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidPlayerStorage') }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidContainerStorage') }),
+  Schema.Struct({ _tag: Schema.Literal('ItemStackFailure'), error: Inv.ItemStackFailureSchema }),
+])
+
+export const ContainerExtractResultSchema: AnySchema = Schema.Union([
+  Schema.Struct({ _tag: Schema.Literal('Extracted'), stack: ContainerStoredStackSchema }),
+  Schema.Struct({ _tag: Schema.Literal('ContainerNotFound') }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidContainerSlot') }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidCount') }),
+  Schema.Struct({ _tag: Schema.Literal('EmptySource') }),
+  Schema.Struct({ _tag: Schema.Literal('InsufficientSource'), available: SafeIntegerSchema }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidSourceStack') }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidSourceDurability') }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidRequest') }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidContainerStorage') }),
+  Schema.Struct({ _tag: Schema.Literal('ItemStackFailure'), error: Inv.ItemStackFailureSchema }),
+])
+
+export const ContainerMoveResultSchema: AnySchema = Schema.Union([
+  Schema.Struct({
+    _tag: Schema.Literal('Moved'),
+    item: Schema.Literals(ITEM_TYPES),
+    count: PositiveSafeIntegerSchema,
+  }),
+  Schema.Struct({ _tag: Schema.Literal('SourceContainerNotFound') }),
+  Schema.Struct({ _tag: Schema.Literal('DestinationContainerNotFound') }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidSourceSlot') }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidDestinationSlot') }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidCount') }),
+  Schema.Struct({ _tag: Schema.Literal('EmptySource') }),
+  Schema.Struct({ _tag: Schema.Literal('InsufficientSource'), available: SafeIntegerSchema }),
+  Schema.Struct({ _tag: Schema.Literal('DestinationMismatch') }),
+  Schema.Struct({ _tag: Schema.Literal('DestinationFull') }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidSourceStack') }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidDestinationStack') }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidSourceDurability') }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidRequest') }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidContainerStorage') }),
+  Schema.Struct({ _tag: Schema.Literal('ItemStackFailure'), error: Inv.ItemStackFailureSchema }),
+])
+
+export const ContainerStorageServiceErrorSchema: AnySchema = Schema.Union([
+  SchemaErrorSchema,
+  WorldCommitCoordinatorErrorSchema,
 ])
 
 const decodeContainerKind = (kind: unknown) => kind === undefined

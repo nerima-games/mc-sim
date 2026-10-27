@@ -167,9 +167,13 @@ describe('physics configuration validation', () => {
       const jumpFailure: SimPhysicsConfigError = yield* Effect.flip(
         makeSimStagesWithPhysics({ ...AirPhysicsConfig, jumpSpeed: Number.POSITIVE_INFINITY }),
       )
+      const resolveFailure: SimPhysicsConfigError = yield* Effect.flip(
+        makeSimStagesWithPhysics({ ...AirPhysicsConfig, resolve: null as never }),
+      )
 
       expect(walkFailure).toStrictEqual({ _tag: 'SimPhysicsConfigError', field: 'walkSpeed' })
       expect(jumpFailure).toStrictEqual({ _tag: 'SimPhysicsConfigError', field: 'jumpSpeed' })
+      expect(resolveFailure).toStrictEqual({ _tag: 'SimPhysicsConfigError', field: 'resolve' })
     }).pipe(Effect.provide(SimulationLayer)),
   )
 })

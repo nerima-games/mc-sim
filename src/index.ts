@@ -56,6 +56,7 @@ export * from './domain/vitals.js'
 export * from './domain/vehicle.js'
 export * from './domain/weather.js'
 export * from './domain/wither.js'
+export * from './schema-errors.js'
 
 // --- Application: Effect services -------------------------------------------
 export * from './application/autosave.js'

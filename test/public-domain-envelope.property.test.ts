@@ -1,5 +1,6 @@
 import fc from 'fast-check'
-import { Result } from 'effect'
+import { Option, Result, Schema } from 'effect'
+import { PositionAxis } from '@nerima-games/mc-kernel'
 import { expect, it } from 'vitest'
 import * as Sim from '../src/index.js'
 import {
@@ -11,6 +12,19 @@ import {
 } from './public-property-helpers.js'
 
 const checks = { numRuns: 30 }
+
+it('BrandErrorSchema accepts brand-constructor failures and rejects other values', () => {
+  const invalidAxis = PositionAxis.result(Number.NaN)
+  expect(Result.isFailure(invalidAxis)).toBe(true)
+  if (Result.isFailure(invalidAxis)) {
+    const failure = Result.getFailure(invalidAxis)
+    expect(Option.isSome(failure)).toBe(true)
+    if (Option.isSome(failure)) {
+      expect(Schema.is(Sim.BrandErrorSchema)(failure.value)).toBe(true)
+    }
+  }
+  expect(Schema.is(Sim.BrandErrorSchema)(null)).toBe(false)
+})
 
 it('time-state outer envelopes normalize safely, keep getters finite, and make advance fail typed', () => {
   const state = fc.oneof(
@@ -49,8 +63,11 @@ it('time-state outer envelopes normalize safely, keep getters finite, and make a
       expect(finiteTree(candidate)).toBe(true)
     }
 
-    assertResult(Sim.advance(value.state as never, value.delta as never), (success) =>
-      isRecord(success) && Sim.isValidTimeState(success as never),
+    assertResult(
+      'advance',
+      () => Sim.advance(value.state as never, value.delta as never),
+      Sim.TimeStateSchema,
+      Sim.BrandErrorSchema,
     )
   }), checks)
 })
@@ -68,7 +85,12 @@ it('crop snapshot envelopes reject malformed records and keep accepted crop stat
         expect(Number.isSafeInteger(crop.position.y)).toBe(true)
         expect(Number.isSafeInteger(crop.position.z)).toBe(true)
         expect(typeof Sim.isMatureCrop(crop)).toBe('boolean')
-        assertResult(Sim.matureYieldsFor(crop), (success) => success === null || Array.isArray(success))
+        assertResult(
+          'matureYieldsFor',
+          () => Sim.matureYieldsFor(crop),
+          Sim.MatureYieldsSchema,
+          Sim.ItemStackFailureSchema,
+        )
         const advanced = Sim.advanceCropByBoneMeal(crop)
         expect(finiteTree(advanced)).toBe(true)
         expect(advanced.growthSecs).toBeGreaterThanOrEqual(0)

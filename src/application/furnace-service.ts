@@ -1,5 +1,5 @@
 import { Context, Effect, Layer, Result, Schema } from 'effect'
-import { isItemStack, RecipeExperience, type ItemStack, type RecipeExperience as RecipeExperienceValue, type WorldRevision } from '@nerima-games/mc-kernel'
+import { isItemStack, RecipeExperience, WorldRevisionSchema, type ItemStack, type RecipeExperience as RecipeExperienceValue, type WorldRevision } from '@nerima-games/mc-kernel'
 import type { Inventory } from '../domain/inventory.js'
 import { INVENTORY_SLOT_COUNT } from '../domain/inventory.js'
 import {
@@ -8,18 +8,22 @@ import {
   emptyFurnaceState,
   furnaceState,
   validateFurnaceSnapshot,
+  FurnaceFailureSchema,
+  FurnaceCollectionOutcomeSchema,
   type FurnaceCollectionOutcome,
   type FurnaceFailure,
   type FurnaceOutcome,
   type FurnaceState,
 } from '../domain/smelting.js'
-import type { ReplicatedOwnerId } from './replicated-state.js'
+import { ReplicatedOwnerIdSchema, type ReplicatedOwnerId } from './replicated-state.js'
 import {
   type ReplicatedOwnerCandidate,
   type ReplicatedOwnerRegistration,
+  WorldCommitCoordinatorErrorSchema,
   WorldCommitCoordinator,
   type WorldCommitCoordinatorError,
 } from './world-commit-coordinator.js'
+import { SchemaErrorSchema } from '../schema-errors.js'
 
 export type FurnaceServiceState = Readonly<{
   readonly furnace: FurnaceState
@@ -51,11 +55,26 @@ export type FurnaceServiceError =
   | Schema.SchemaError
   | WorldCommitCoordinatorError
 
+export const FurnaceServiceErrorSchema: Schema.Schema<FurnaceServiceError> = Schema.Union([
+  FurnaceFailureSchema,
+  SchemaErrorSchema,
+  WorldCommitCoordinatorErrorSchema,
+])
+
 export type FurnaceCollectionCandidate = Readonly<{
   outcome: FurnaceCollectionOutcome
   expectedRevision: WorldRevision
   ownerCandidate: ReplicatedOwnerCandidate | undefined
 }>
+
+export const FurnaceCollectionCandidateSchema: Schema.Schema<FurnaceCollectionCandidate> = Schema.Struct({
+  outcome: FurnaceCollectionOutcomeSchema,
+  expectedRevision: WorldRevisionSchema,
+  ownerCandidate: Schema.Union([
+    Schema.Struct({ ownerId: ReplicatedOwnerIdSchema, state: FurnaceServiceStateSchema }),
+    Schema.Undefined,
+  ]),
+})
 
 export type FurnaceExperienceCandidate = Readonly<{
   experience: RecipeExperienceValue

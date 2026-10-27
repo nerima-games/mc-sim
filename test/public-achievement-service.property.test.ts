@@ -18,7 +18,6 @@ import { DomainEventBus, DomainEventBusLayer, EventSubscriberCapacitySchema } fr
 import { StatisticsService, StatisticsServiceLayer } from '../src/application/statistics-service'
 import { WorldCommitCoordinator, WorldCommitCoordinatorLayer } from '../src/application/world-commit-coordinator'
 import {
-  assertEffectOutcome,
   hostileValue,
   invokeEffect,
 } from './public-property-helpers'
@@ -95,7 +94,6 @@ describe('public AchievementService finalization properties', () => {
 
         const outcome = await Effect.runPromise(Effect.result(operation))
         expect(Result.isFailure(outcome)).toBe(true)
-        assertEffectOutcome(outcome, () => false)
         if (expectedErrorTag !== undefined && Result.isFailure(outcome)) {
           expect((outcome.failure as { _tag?: unknown })._tag).toBe(expectedErrorTag)
         }

@@ -8,6 +8,7 @@ import * as Ref from 'effect/Ref'
 import * as Schema from 'effect/Schema'
 import * as Stream from 'effect/Stream'
 import type * as Brand from 'effect/Brand'
+import { SchemaErrorSchema } from '../schema-errors.js'
 
 interface GateTicket {
   readonly signal: Deferred.Deferred<void>
@@ -32,6 +33,8 @@ export type DomainEventBusApi = {
   readonly publish: (event: DomainEvent) => Effect.Effect<void, Schema.SchemaError>
   readonly events: Stream.Stream<DomainEvent>
 }
+
+export const DomainEventBusErrorSchema: Schema.Schema<unknown> = SchemaErrorSchema
 
 const DomainEventBusBase: Context.ServiceClass<
   DomainEventBus,

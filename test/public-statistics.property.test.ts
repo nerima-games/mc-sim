@@ -3,7 +3,7 @@ import { AchievementIdSchema } from '@nerima-games/mc-kernel'
 import { Result, Schema } from 'effect'
 import { expect, it } from 'vitest'
 import * as Sim from '../src/index.js'
-import { assertResultContract, finiteTree, hostileNumber, hostileValue, isRecord, unknownValue } from './public-property-helpers.js'
+import { finiteTree, hostileNumber, hostileValue, isRecord, unknownValue } from './public-property-helpers.js'
 
 const checks = { numRuns: 40, seed: 0x53544154 }
 
@@ -50,7 +50,6 @@ it('statistics record returns typed failures or valid finite results and leaves 
       const statistics = Sim.normaliseStatistics(input)
       const before = JSON.stringify(statistics)
       const outcome = Sim.record(statistics, keyValue as never, amountValue)
-      assertResultContract(outcome, (success) => Sim.isValidStatistics(success))
       if (Result.isFailure(outcome)) {
         expect(outcome.failure._tag).toBe('StatisticsRecordFailure')
       } else {

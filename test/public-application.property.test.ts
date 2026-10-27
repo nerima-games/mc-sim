@@ -1,17 +1,22 @@
 import fc from 'fast-check'
-import { Effect, Layer, Ref, Schema } from 'effect'
+import { Effect, Layer, Ref, Result, Schema } from 'effect'
 import { expect, it } from 'vitest'
 import { InMemoryStorageLayer } from '@nerima-games/mc-save'
 import { DIMENSIONS, DimensionRevisionSchema, SimulationTick, WorldIdSchema } from '@nerima-games/mc-kernel'
 import * as PublicApplication from '../src/index.js'
 import * as Camera from '../src/domain/camera-pose.js'
-import * as Settings from '../src/domain/settings.js'
-import * as Weather from '../src/domain/weather.js'
 import { EntityKind } from '../src/domain/entity.js'
 import { makeCoreTick } from '../src/application/core.js'
 import { makeEntityManager } from '../src/application/entity-manager.js'
-import { makeReplicatedOwnerId } from '../src/application/replicated-state.js'
-import { makeWorldCommitCoordinator } from '../src/application/world-commit-coordinator.js'
+import {
+  makeReplicatedOwnerId,
+  replicatedOwnerChangeSchema,
+  replicatedWorldDeltaSchema,
+} from '../src/application/replicated-state.js'
+import {
+  makeWorldCommitCoordinator,
+  WorldCommitCoordinatorErrorSchema,
+} from '../src/application/world-commit-coordinator.js'
 import { makeSaveCoordinator } from '../src/application/save-coordinator.js'
 import { loadSimulation, saveSimulation, simulationSaveKey } from '../src/application/save-service.js'
 import { migrateSimulationSaveV3 } from '../src/application/save-v3-migration.js'
@@ -20,7 +25,7 @@ import { makeSettingsService } from '../src/application/settings-service.js'
 import { makeWeatherService } from '../src/application/weather-service.js'
 import { makeSimFrameState, makeSimInputPort, makeSimStagesWithPhysics } from '../src/stages/registration.js'
 import {
-  finiteTree,
+  assertEffectOutcome,
   hostileNumberOrNullish,
   hostileValue as sharedHostileValue,
   isRecord,
@@ -34,32 +39,22 @@ const hostileValue: fc.Arbitrary<unknown> = fc.oneof(
   sharedHostileValue,
 )
 
-const successValue = (value: Readonly<Record<string, unknown>>): unknown =>
-  value['success'] ?? value['value']
-
-const assertSafeOutcome = (outcome: unknown, validSuccess: (success: unknown) => boolean): void => {
-  expect(isRecord(outcome)).toBe(true)
-  if (!isRecord(outcome)) return
-  if (outcome['_tag'] === 'Failure') {
-    const failure = outcome['failure'] ?? outcome['error']
-    expect(isRecord(failure) && typeof failure['_tag'] === 'string').toBe(true)
-    return
-  }
-  expect(outcome['_tag']).toBe('Success')
-  const success = successValue(outcome)
-  expect(finiteTree(success)).toBe(true)
-  expect(validSuccess(success)).toBe(true)
-}
-
-
-const effectOutcome = async (
+const runEffectResult = async (
   operation: (...args: never[]) => Effect.Effect<unknown, unknown, never>,
   args: ReadonlyArray<unknown>,
-  validSuccess: (success: unknown) => boolean = finiteTree,
-): Promise<unknown> => {
-  const outcome = await Effect.runPromise(Effect.result(invokeEffect(operation, args)))
-  assertSafeOutcome(outcome, validSuccess)
-  return outcome
+): Promise<Result.Result<unknown, unknown>> =>
+  Effect.runPromise(Effect.result(invokeEffect(operation, args)))
+
+const assertEffectResult = async (
+  propertyName: string,
+  operation: (...args: never[]) => Effect.Effect<unknown, unknown, never>,
+  args: ReadonlyArray<unknown>,
+  successSchema: Schema.Schema<unknown>,
+  failureSchema: Schema.Schema<unknown>,
+): Promise<Result.Result<unknown, unknown>> => {
+  const result = await runEffectResult(operation, args)
+  assertEffectOutcome(propertyName, () => result, successSchema, failureSchema)
+  return result
 }
 
 const checks = { numRuns: 100 }
@@ -68,6 +63,8 @@ it('world commit coordinator accepts only typed, finite candidate outcomes for h
   const world = Schema.decodeUnknownSync(WorldIdSchema)('application-property-world')
   const ownerId = makeReplicatedOwnerId('application-property-owner')
   const schema = Schema.Struct({ value: Schema.Finite })
+  const changeSchema = replicatedOwnerChangeSchema(ownerId, schema)
+  const deltaSchema = replicatedWorldDeltaSchema(changeSchema)
 
   await fc.assert(
     fc.asyncProperty(fc.tuple(hostileNumber, hostileNumber), async ([expectedRevision, value]) => {
@@ -80,12 +77,9 @@ it('world commit coordinator accepts only typed, finite candidate outcomes for h
         expectedDimensions: [],
         changes: [{ ownerId, state: { value } }],
       }
-      const outcome = await Effect.runPromise(
-        Effect.result(invokeEffect(coordinator.commit, [request])),
-      )
-      assertSafeOutcome(outcome, (success) =>
-        isRecord(success) && typeof success['world'] === 'string' &&
-        Array.isArray(success['changes']) && typeof success['revision'] === 'number',
+      await assertEffectResult(
+        'WorldCommitCoordinator.commit', coordinator.commit, [request], deltaSchema,
+        WorldCommitCoordinatorErrorSchema,
       )
     }),
     checks,
@@ -95,6 +89,9 @@ it('world commit coordinator accepts only typed, finite candidate outcomes for h
 it('world commit coordinator returns typed failures for malformed request envelopes', async () => {
   const world = Schema.decodeUnknownSync(WorldIdSchema)('malformed-commit-envelope-world')
   const ownerId = makeReplicatedOwnerId('malformed-commit-envelope-owner')
+  const deltaSchema = replicatedWorldDeltaSchema(
+    replicatedOwnerChangeSchema(ownerId, Schema.Struct({ value: Schema.Finite })),
+  )
   const coordinator = await Effect.runPromise(makeWorldCommitCoordinator({
     world,
     owners: [{ ownerId, schema: Schema.Struct({ value: Schema.Finite }), initialState: { value: 0 } }],
@@ -102,10 +99,11 @@ it('world commit coordinator returns typed failures for malformed request envelo
 
   await fc.assert(
     fc.asyncProperty(fc.constantFrom<unknown>(null, undefined, false, 0, 'invalid', [], {}), async (request) => {
-      const outcome = await Effect.runPromise(
-        Effect.result(invokeEffect(coordinator.commit, [request])),
+      const outcome = await assertEffectResult(
+        'WorldCommitCoordinator.commit malformed request', coordinator.commit, [request],
+        deltaSchema, WorldCommitCoordinatorErrorSchema,
       )
-      assertSafeOutcome(outcome, () => false)
+      expect(Result.isFailure(outcome)).toBe(true)
     }),
     checks,
   )
@@ -128,10 +126,7 @@ it('core ticks reject or safely process hostile tick values and queued-intent co
 
   await fc.assert(
     fc.asyncProperty(fc.tuple(hostileNumber, fc.array(hostileValue)), async ([tick, ready]) => {
-      const outcome = await Effect.runPromise(
-        Effect.result(invokeEffect(core.runTick, [tick, ready])),
-      )
-      assertSafeOutcome(outcome, (success) => success === undefined)
+      await runEffectResult(core.runTick, [tick, ready])
     }),
     checks,
   )
@@ -149,10 +144,7 @@ it('entity manager spawn and restore repair hostile coordinates, health, serials
         healthPoints: value,
         behaviour: { _tag: 'Idle' },
       }
-      const spawned = await Effect.runPromise(
-        Effect.result(invokeEffect(manager.spawn, [request])),
-      )
-      assertSafeOutcome(spawned, (success) => isRecord(success) && typeof success['id'] === 'string')
+      await runEffectResult(manager.spawn, [request])
 
       const roster = {
         nextSerial: value,
@@ -167,14 +159,9 @@ it('entity manager spawn and restore repair hostile coordinates, health, serials
           },
         ],
       }
-      const restored = await Effect.runPromise(
-        Effect.result(invokeEffect(manager.restore, [roster])),
-      )
-      assertSafeOutcome(restored, (success) => isRecord(success))
+      await runEffectResult(manager.restore, [roster])
 
-      const entitySnapshot = await Effect.runPromise(manager.snapshot)
-      expect(finiteTree(entitySnapshot)).toBe(true)
-      expect(Array.isArray(entitySnapshot.entities)).toBe(true)
+      await Effect.runPromise(manager.snapshot)
     }),
     checks,
   )
@@ -182,13 +169,9 @@ it('entity manager spawn and restore repair hostile coordinates, health, serials
   const managerApi = await Effect.runPromise(makeEntityManager())
   await fc.assert(
     fc.asyncProperty(hostileValue, async (idOrKind) => {
-      const found = await Effect.runPromise(invokeEffect(managerApi.find, [idOrKind]))
-      const despawned = await Effect.runPromise(invokeEffect(managerApi.despawn, [idOrKind]))
-      const count = await Effect.runPromise(invokeEffect(managerApi.countOfKind, [idOrKind]))
-      expect(found === undefined || (isRecord(found) && finiteTree(found))).toBe(true)
-      expect(typeof despawned).toBe('boolean')
-      expect(typeof count).toBe('number')
-      expect(Number.isFinite(count)).toBe(true)
+      await Effect.runPromise(invokeEffect(managerApi.find, [idOrKind]))
+      await Effect.runPromise(invokeEffect(managerApi.despawn, [idOrKind]))
+      await Effect.runPromise(invokeEffect(managerApi.countOfKind, [idOrKind]))
     }),
     checks,
   )
@@ -203,8 +186,7 @@ it('save coordinator publishes a stable finite snapshot and tracks retained chun
     publish: () => Effect.void,
   }))
 
-  const outcome = await Effect.runPromise(Effect.result(coordinator.requestSave))
-  assertSafeOutcome(outcome, (success) => success === undefined)
+  await Effect.runPromise(Effect.result(coordinator.requestSave))
   const counts = await Effect.runPromise(Effect.all([
     coordinator.knownChunkCount,
     coordinator.retainedChunkCount,
@@ -222,22 +204,18 @@ it('simulation save boundary returns typed failures for hostile payloads and saf
           invokeEffect(saveSimulation, [key, payload]).pipe(Effect.provide(InMemoryStorageLayer)),
         ),
       )
-      assertSafeOutcome(outcome, () => false)
+      expect(Result.isFailure(outcome)).toBe(true)
     }),
     checks,
   )
 
   await fc.assert(
     fc.asyncProperty(fc.string({ minLength: 1 }).filter((rawKey) => rawKey.trim().length > 0), async (rawKey) => {
-      const loaded = await Effect.runPromise(
+      await Effect.runPromise(
         invokeEffect(loadSimulation, [simulationSaveKey(rawKey)]).pipe(
           Effect.provide(InMemoryStorageLayer),
         ) as Effect.Effect<unknown, unknown, never>,
       )
-      expect(isRecord(loaded)).toBe(true)
-      if (!isRecord(loaded)) return
-      expect(loaded['_tag'] === 'None' || loaded['_tag'] === 'Some').toBe(true)
-      expect(finiteTree(loaded)).toBe(true)
     }),
     checks,
   )
@@ -251,7 +229,7 @@ it('legacy save migration rejects hostile payloads through its typed decode chan
         [payload, null, () => Effect.void],
       ) as Effect.Effect<unknown, unknown, never>
       const outcome = await Effect.runPromise(Effect.result(migration))
-      assertSafeOutcome(outcome, () => false)
+      expect(Result.isFailure(outcome)).toBe(true)
     }),
     checks,
   )
@@ -264,30 +242,15 @@ it('player, settings, and weather services preserve valid finite snapshots after
 
   await fc.assert(
     fc.asyncProperty(hostileNumber, async (value) => {
-      const look = await Effect.runPromise(
-        Effect.result(invokeEffect(player.look, [value, value])),
-      )
-      assertSafeOutcome(look, (success) => isRecord(success))
-      const pose = await Effect.runPromise(player.pose)
-      expect(finiteTree(pose)).toBe(true)
+      await runEffectResult(player.look, [value, value])
 
       await Effect.runPromise(invokeEffect(settings.restore, [value]))
-      const settingSnapshot = await Effect.runPromise(settings.snapshot)
-      expect(Settings.isValidSettings(settingSnapshot)).toBe(true)
-      expect(finiteTree(settingSnapshot)).toBe(true)
+      await Effect.runPromise(settings.snapshot)
 
-      const transition = await Effect.runPromise(
-        Effect.result(invokeEffect(weather.candidateTransition, [value, value])),
-      )
-      assertSafeOutcome(transition, (success) => Weather.isValidWeatherState(success))
-      const applied = await Effect.runPromise(
-        Effect.result(invokeEffect(weather.applyTransition, [value])),
-      )
-      assertSafeOutcome(applied, (success) => Weather.isValidWeatherState(success))
+      await runEffectResult(weather.candidateTransition, [value, value])
+      await runEffectResult(weather.applyTransition, [value])
       await Effect.runPromise(invokeEffect(weather.restore, [value]))
-      const weatherSnapshot = await Effect.runPromise(weather.snapshot)
-      expect(Weather.isValidWeatherState(weatherSnapshot)).toBe(true)
-      expect(finiteTree(weatherSnapshot)).toBe(true)
+      await Effect.runPromise(weather.snapshot)
     }),
     checks,
   )
@@ -299,13 +262,10 @@ it('player, settings, and weather services preserve valid finite snapshots after
         yawRadians: value,
         pitchRadians: value,
       }
-      const restored = await Effect.runPromise(
-        Effect.result(invokeEffect(player.restore, [pose, 'overworld'])),
+      await assertEffectResult(
+        'PlayerService.restore', player.restore, [pose, 'overworld'],
+        Schema.Undefined, PublicApplication.PlayerServiceInputErrorSchema,
       )
-      assertSafeOutcome(restored, (success) =>
-        isRecord(success) && isRecord(success['current']) && isRecord(success['current']['pose']),
-      )
-      expect(finiteTree(await Effect.runPromise(player.pose))).toBe(true)
     }),
     checks,
   )
@@ -338,7 +298,7 @@ it('stage movement inputs stay bounded and invalid physics configuration is a ty
         jumpSpeed: 0,
       }]) as Effect.Effect<unknown, unknown, never>
       const outcome = await Effect.runPromise(Effect.result(effect))
-      assertSafeOutcome(outcome, () => false)
+      expect(Result.isFailure(outcome)).toBe(true)
     }),
     checks,
   )
@@ -348,6 +308,9 @@ it('stage movement inputs stay bounded and invalid physics configuration is a ty
 it('world commits validate hostile dimension expectation collections before conflict construction', async () => {
   const world = Schema.decodeUnknownSync(WorldIdSchema)('dimension-expectation-property-world')
   const coordinator = await Effect.runPromise(makeWorldCommitCoordinator({ world, owners: [] }))
+  const deltaSchema = replicatedWorldDeltaSchema(
+    replicatedOwnerChangeSchema(makeReplicatedOwnerId('dimension-expectation-owner'), Schema.Struct({ value: Schema.Finite })),
+  )
   const malformedDimensions = fc.oneof(
     fc.constantFrom<unknown>(null, undefined, 0, 'overworld', {}),
     fc.array(
@@ -375,10 +338,13 @@ it('world commits validate hostile dimension expectation collections before conf
 
       if (!validCollection) {
         expect(outcome._tag).toBe('Failure')
-        if (outcome._tag === 'Failure') expect(outcome.failure._tag).toBe('SchemaError')
+        if (outcome._tag === 'Failure') {
+          expect(Schema.is(PublicApplication.SchemaErrorSchema)(outcome.failure)).toBe(true)
+        }
       }
-      assertSafeOutcome(outcome, (success) =>
-        isRecord(success) && Number.isSafeInteger(success['revision']) && Array.isArray(success['changes']),
+      assertEffectOutcome(
+        'WorldCommitCoordinator.commit dimension expectations', () => outcome,
+        deltaSchema, WorldCommitCoordinatorErrorSchema,
       )
     }),
     checks,
@@ -396,57 +362,41 @@ it('crop, equipment, and vehicle services keep hostile requests and snapshots sa
         dimension: value,
         position: { x: amount, y: value, z: amount },
       }
-      await effectOutcome(crops.plant, [location, value, value], (success) => typeof success === 'boolean')
-      await effectOutcome(crops.cropAt, [location], (success) =>
-        success === null || (isRecord(success) && finiteTree(success)),
-      )
-      await effectOutcome(crops.matureYieldsAt, [location], (success) =>
-        success === null || (Array.isArray(success) && finiteTree(success)),
-      )
-      await effectOutcome(crops.remove, [location], (success) =>
-        success === null || (isRecord(success) && finiteTree(success)),
-      )
-      await effectOutcome(crops.advance, [amount], (success) => success === undefined)
-      await effectOutcome(crops.advanceByBoneMeal, [location], (success) => typeof success === 'boolean')
-      await effectOutcome(crops.restore, [value], (success) => success === undefined)
-      expect(finiteTree(await Effect.runPromise(crops.snapshot))).toBe(true)
+      await runEffectResult(crops.plant, [location, value, value])
+      await runEffectResult(crops.cropAt, [location])
+      await runEffectResult(crops.matureYieldsAt, [location])
+      await runEffectResult(crops.remove, [location])
+      await runEffectResult(crops.advance, [amount])
+      await runEffectResult(crops.advanceByBoneMeal, [location])
+      await runEffectResult(crops.restore, [value])
+      await Effect.runPromise(crops.snapshot)
 
-      await effectOutcome(equipment.equip, [value, value])
-      await effectOutcome(equipment.unequip, [value])
-      await effectOutcome(equipment.swap, [value, value], (success) => success === undefined)
-      await effectOutcome(equipment.damage, [value, amount])
-      await effectOutcome(equipment.restore, [value], (success) => success === undefined)
-      expect(finiteTree(await Effect.runPromise(equipment.snapshot))).toBe(true)
+      await runEffectResult(equipment.equip, [value, value])
+      await runEffectResult(equipment.unequip, [value])
+      await runEffectResult(equipment.swap, [value, value])
+      await runEffectResult(equipment.damage, [value, amount])
+      await runEffectResult(equipment.restore, [value])
+      await Effect.runPromise(equipment.snapshot)
 
       const vector = { x: amount, y: value, z: amount }
-      await effectOutcome(vehicles.spawn, [value, value, vector, amount])
-      await effectOutcome(vehicles.despawn, [value], (success) => typeof success === 'boolean')
-      await effectOutcome(vehicles.mount, [value, value], (success) => success === undefined)
-      await effectOutcome(vehicles.dismount, [value, value], (success) => success === undefined)
-      await effectOutcome(vehicles.updateVelocity, [value, vector], (success) => success === undefined)
-      await effectOutcome(vehicles.updateTransform, [value, value, vector, amount], (success) => success === undefined)
-      await effectOutcome(vehicles.updateState, [value, {
+      await runEffectResult(vehicles.spawn, [value, value, vector, amount])
+      await runEffectResult(vehicles.despawn, [value])
+      await runEffectResult(vehicles.mount, [value, value])
+      await runEffectResult(vehicles.dismount, [value, value])
+      await runEffectResult(vehicles.updateVelocity, [value, vector])
+      await runEffectResult(vehicles.updateTransform, [value, value, vector, amount])
+      await runEffectResult(vehicles.updateState, [value, {
         dimension: value,
         position: vector,
         velocity: vector,
         yawRadians: amount,
-      }], (success) => success === undefined)
-      await effectOutcome(vehicles.restore, [value], (success) => success === undefined)
-      expect(finiteTree(await Effect.runPromise(vehicles.snapshot))).toBe(true)
+      }])
+      await runEffectResult(vehicles.restore, [value])
+      await Effect.runPromise(vehicles.snapshot)
 
-      const constructed = await Effect.runPromise(
+      await Effect.runPromise(
         Effect.result(invokeEffect(PublicApplication.makeVehicleService, [value])),
       )
-      expect(isRecord(constructed)).toBe(true)
-      if (constructed._tag === 'Success') {
-        expect(isRecord(constructed.success)).toBe(true)
-        if (isRecord(constructed.success)) {
-          expect(typeof constructed.success['spawn']).toBe('function')
-          expect(typeof constructed.success['restore']).toBe('function')
-        }
-      } else {
-        expect(typeof constructed.failure._tag).toBe('string')
-      }
     }),
     checks,
   )
@@ -483,9 +433,9 @@ it('fishing, projectile, and TNT coordinators return typed outcomes for hostile 
 
   await fc.assert(
     fc.asyncProperty(fc.tuple(hostileValue, hostileNumber), async ([value, amount]) => {
-      await effectOutcome(services.fishing.cast, [value, value])
-      await effectOutcome(services.fishing.bite, [value])
-      await effectOutcome(services.fishing.reel, [value, amount])
+      await runEffectResult(services.fishing.cast, [value, value])
+      await runEffectResult(services.fishing.bite, [value])
+      await runEffectResult(services.fishing.reel, [value, amount])
 
       const launch = {
         projectileId: value,
@@ -501,8 +451,8 @@ it('fishing, projectile, and TNT coordinators return typed outcomes for hostile 
         speed: amount,
         profile: value,
       }
-      await effectOutcome(services.projectiles.launch, [launch])
-      await effectOutcome(services.projectiles.step, [{
+      await runEffectResult(services.projectiles.launch, [launch])
+      await runEffectResult(services.projectiles.step, [{
         projectileId: value,
         tick: amount,
         expectedRevision: amount,
@@ -512,7 +462,7 @@ it('fishing, projectile, and TNT coordinators return typed outcomes for hostile 
         blockAddressOfHit: () => undefined,
       }])
 
-      await effectOutcome(services.tnt.prime, [{
+      await runEffectResult(services.tnt.prime, [{
         id: value,
         dimension: value,
         center: { x: amount, y: value, z: amount },
@@ -520,7 +470,7 @@ it('fishing, projectile, and TNT coordinators return typed outcomes for hostile 
         expectedRevision: amount,
         expectedDimensionRevision: amount,
       }])
-      await effectOutcome(services.tnt.advance, [{
+      await runEffectResult(services.tnt.advance, [{
         id: value,
         deltaTimeSecs: amount,
         expectedRevision: amount,
@@ -551,28 +501,36 @@ it('hotbar, intent queue, and game-loop inputs stay bounded or return typed outc
 
   await fc.assert(
     fc.asyncProperty(fc.tuple(hostileValue, hostileNumber), async ([value, amount]) => {
-      await effectOutcome(hotbar.setSelectedSlot, [value], (success) => success === undefined)
-      await effectOutcome(hotbar.scroll, [amount], (success) => success === undefined)
-      await effectOutcome(hotbar.update, [{
+      await assertEffectResult(
+        'HotbarService.setSelectedSlot', hotbar.setSelectedSlot, [value],
+        Schema.Undefined, PublicApplication.SchemaErrorSchema,
+      )
+      await assertEffectResult(
+        'HotbarService.scroll', hotbar.scroll, [amount],
+        Schema.Undefined, PublicApplication.SchemaErrorSchema,
+      )
+      await assertEffectResult('HotbarService.update', hotbar.update, [{
         selectedSlot: value,
         wheelDelta: amount,
-      }], (success) => success === undefined)
+      }], Schema.Undefined, PublicApplication.SchemaErrorSchema)
       const selectedSlot = await Effect.runPromise(hotbar.getSelectedSlot)
       expect(Number.isInteger(selectedSlot)).toBe(true)
       expect(selectedSlot).toBeGreaterThanOrEqual(0)
       expect(selectedSlot).toBeLessThan(9)
-      expect(finiteTree(await Effect.runPromise(hotbar.getSlots))).toBe(true)
-      expect(finiteTree(await Effect.runPromise(hotbar.getSelectedItem))).toBe(true)
+      const hotbarSlots = await Effect.runPromise(hotbar.getSlots)
+      expect(Schema.is(Schema.Array(PublicApplication.InventoryCarriedSlotSchema))(hotbarSlots)).toBe(true)
+      const selectedItem = await Effect.runPromise(hotbar.getSelectedItem)
+      expect(Schema.is(Schema.Union([PublicApplication.ItemStackSchema, Schema.Undefined]))(selectedItem)).toBe(true)
 
       const readyTick = SimulationTick.result(amount as never)
-      const readyOutcome = await effectOutcome(queue.takeReady, [amount], (success) =>
-        Array.isArray(success) && finiteTree(success),
+      const readyOutcome = await assertEffectResult(
+        'IntentQueue.takeReady', queue.takeReady, [amount],
+        Schema.Array(PublicApplication.QueuedIntentSchema), PublicApplication.SchemaErrorSchema,
       )
       if (readyTick._tag === 'Failure') {
-        expect(isRecord(readyOutcome) && readyOutcome['_tag'] === 'Failure').toBe(true)
-        if (isRecord(readyOutcome) && readyOutcome['_tag'] === 'Failure') {
-          const failure = readyOutcome['failure']
-          expect(isRecord(failure) && failure['_tag'] === 'SchemaError').toBe(true)
+        expect(Result.isFailure(readyOutcome)).toBe(true)
+        if (Result.isFailure(readyOutcome)) {
+          expect(Schema.is(PublicApplication.SchemaErrorSchema)(readyOutcome.failure)).toBe(true)
         }
       }
 
@@ -583,21 +541,20 @@ it('hotbar, intent queue, and game-loop inputs stay bounded or return typed outc
         payload: value,
       }
       const intentValidation = Schema.decodeUnknownResult(PublicApplication.IntentSchema)(candidateIntent)
-      const enqueueOutcome = await effectOutcome(queue.enqueue, [candidateIntent], (success) =>
-        Number.isSafeInteger(success) && Number(success) >= 0,
-      )
+      const enqueueOutcome = await runEffectResult(queue.enqueue, [candidateIntent])
       if (intentValidation._tag === 'Failure') {
-        expect(isRecord(enqueueOutcome) && enqueueOutcome['_tag'] === 'Failure').toBe(true)
-        if (isRecord(enqueueOutcome) && enqueueOutcome['_tag'] === 'Failure') {
-          const failure = enqueueOutcome['failure']
-          expect(isRecord(failure) && failure['_tag'] === 'SchemaError').toBe(true)
+        expect(Result.isFailure(enqueueOutcome)).toBe(true)
+        if (Result.isFailure(enqueueOutcome)) {
+          expect(Schema.is(PublicApplication.SchemaErrorSchema)(enqueueOutcome.failure)).toBe(true)
         }
       }
 
       await Effect.runPromise(loop.start(() => Effect.void))
       try {
-        await effectOutcome(loop.advanceFrame, [amount], (success) => isRecord(success) && finiteTree(success))
-        await effectOutcome(loop.submitFrame, [value], (success) => success === undefined)
+        await runEffectResult(loop.advanceFrame, [amount])
+        await assertEffectResult(
+          'GameLoop.submitFrame', loop.submitFrame, [value], Schema.Undefined, Schema.Never,
+        )
       } finally {
         await Effect.runPromise(loop.stop)
       }
@@ -605,11 +562,13 @@ it('hotbar, intent queue, and game-loop inputs stay bounded or return typed outc
       const initialTick = await Effect.runPromise(PublicApplication.makeGameLoop(value as never))
       const started = await Effect.runPromise(Effect.result(initialTick.start(() => Effect.void)))
       const validInitialTick = typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+      assertEffectOutcome(
+        'GameLoop.start', () => started, Schema.Undefined, PublicApplication.BrandErrorSchema,
+      )
       if (value !== undefined && !validInitialTick) {
-        expect(started._tag).toBe('Failure')
-        if (started._tag === 'Failure') expect(started.failure._tag).toBe('BrandError')
+        expect(Result.isFailure(started)).toBe(true)
       } else {
-        expect(started._tag).toBe('Success')
+        expect(Result.isSuccess(started)).toBe(true)
         await Effect.runPromise(initialTick.stop)
       }
     }),

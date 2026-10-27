@@ -200,13 +200,17 @@ const clampFraction = (fraction: number): number =>
  * Exported so that a persistence layer (mc-save) can tell a save it must repair
  * from one it may load verbatim, WITHOUT having to know the clamp bounds.
  */
-export const isValidTimeState = (state: TimeState): boolean => {
+export const isValidTimeState = (state: unknown): boolean => {
   if (!isRecord(state)) return false
   const dayLengthTicks = state['dayLengthTicks']
   return Number.isFinite(state['ticks']) &&
     Number(state['ticks']) >= 0 &&
     typeof dayLengthTicks === 'number' && Result.isSuccess(ValidTimeDayLengthTicks.result(dayLengthTicks))
 }
+
+export const TimeStateSchema: Schema.Schema<TimeState> = Schema.declare(
+  (value): value is TimeState => isValidTimeState(value),
+)
 
 /**
  * Repair a state read from persistence into one every reader can answer for.

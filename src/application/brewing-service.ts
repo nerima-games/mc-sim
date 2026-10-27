@@ -8,13 +8,16 @@ import {
   setBrewingBottle,
   setBrewingIngredient,
   validateBrewingSnapshot,
+  BrewingFailureSchema,
   type BrewingFailure,
   type BrewingOutcome,
   type BrewingState,
 } from '../domain/brewing.js'
+import { SchemaErrorSchema } from '../schema-errors.js'
 import type { ReplicatedOwnerId } from './replicated-state.js'
 import {
   type ReplicatedOwnerRegistration,
+  WorldCommitCoordinatorErrorSchema,
   WorldCommitCoordinator,
   type WorldCommitCoordinatorError,
 } from './world-commit-coordinator.js'
@@ -38,6 +41,12 @@ export type BrewingServiceError =
   | BrewingFailure
   | Schema.SchemaError
   | WorldCommitCoordinatorError
+
+export const BrewingServiceErrorSchema: Schema.Schema<BrewingServiceError> = Schema.Union([
+  BrewingFailureSchema,
+  SchemaErrorSchema,
+  WorldCommitCoordinatorErrorSchema,
+])
 
 export type BrewingServiceApi = {
   readonly snapshot: Effect.Effect<

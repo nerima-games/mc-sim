@@ -1,5 +1,5 @@
-import { PositionAxis, position, type Position } from '@nerima-games/mc-kernel'
-import { Result } from 'effect'
+import { EntityIdSchema, PositionAxis, position, type Position } from '@nerima-games/mc-kernel'
+import { Result, Schema } from 'effect'
 import { isEntityId, type EntityId } from './entity-types.js'
 
 export type ExplosionBlockPosition = {
@@ -69,6 +69,45 @@ export type ExplosionPlan = {
   readonly limits: ExplosionLimits
   readonly truncated: boolean
 }
+
+const PositionSchema: Schema.Schema<Position> = Schema.Struct({
+  x: Schema.Finite.pipe(Schema.brand('PositionAxis')),
+  y: Schema.Finite.pipe(Schema.brand('PositionAxis')),
+  z: Schema.Finite.pipe(Schema.brand('PositionAxis')),
+})
+const SafeIntegerSchema = Schema.Int.check(Schema.makeFilter((value) => Number.isSafeInteger(value)))
+const NonNegativeSafeIntegerSchema = Schema.Int.check(
+  Schema.makeFilter((value) => Number.isSafeInteger(value) && value >= 0),
+)
+export const ExplosionBlockPositionSchema: Schema.Schema<ExplosionBlockPosition> = Schema.Struct({
+  x: SafeIntegerSchema,
+  y: SafeIntegerSchema,
+  z: SafeIntegerSchema,
+})
+export const ExplosionLimitsSchema: Schema.Schema<ExplosionLimits> = Schema.Struct({
+  maxVisitedBlocks: NonNegativeSafeIntegerSchema,
+  maxRaySteps: NonNegativeSafeIntegerSchema,
+  maxAffectedEntities: NonNegativeSafeIntegerSchema,
+})
+const NonNegativeFiniteSchema = Schema.Finite.check(Schema.makeFilter((value) => value >= 0))
+const ExplosionEntityEffectSchema: Schema.Schema<ExplosionEntityEffect> = Schema.Struct({
+  id: EntityIdSchema,
+  damage: NonNegativeFiniteSchema,
+  knockback: PositionSchema,
+  exposure: Schema.Finite.check(Schema.makeFilter((value) => value >= 0 && value <= 1)),
+})
+export const ExplosionValidationFailureSchema: Schema.Schema<ExplosionValidationFailure> =
+  Schema.TaggedStruct('ExplosionValidationFailure', { path: Schema.String, reason: Schema.String })
+export const ExplosionPlanSchema: Schema.Schema<ExplosionPlan> = Schema.Struct({
+  center: PositionSchema,
+  radius: Schema.Finite.check(Schema.makeFilter((value) => value >= 0 && value <= MAX_EXPLOSION_RADIUS)),
+  seed: Schema.Finite.check(Schema.makeFilter((value) => Math.abs(value) <= Number.MAX_SAFE_INTEGER)),
+  destroyedBlocks: Schema.Array(ExplosionBlockPositionSchema),
+  entityEffects: Schema.Array(ExplosionEntityEffectSchema),
+  visitedBlocks: NonNegativeSafeIntegerSchema,
+  limits: ExplosionLimitsSchema,
+  truncated: Schema.Boolean,
+})
 
 export type ExplosionMutation = Pick<ExplosionPlan, 'destroyedBlocks' | 'entityEffects'>
 

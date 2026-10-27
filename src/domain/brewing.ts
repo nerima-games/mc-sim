@@ -7,6 +7,7 @@ import {
   BrewingFuelCharges,
   FixedDurationSecs,
   RecipeCompletionCount,
+  RecipeId,
   brewingOutput as kernelBrewingOutput,
   isItemStack,
   isItemType,
@@ -26,7 +27,7 @@ import {
   VANILLA_BREWING_RECIPES,
   type BrewingRecipeInput,
 } from './brewing-data.js'
-import { itemStack } from './inventory.js'
+import { BrandErrorSchema, ItemStackFailureSchema, KernelItemStackFailureSchema, itemStack } from './inventory.js'
 import type { ItemStackFailure } from './inventory.js'
 import { itemStackWithCount } from './item-stack.js'
 
@@ -62,6 +63,39 @@ export type BrewingSnapshotValidationResult =
 
 type RecordValue = Readonly<Record<string, unknown>>
 type SlotValue = ItemStack | undefined
+
+const RecipeFailureSchema = Schema.Union([
+  Schema.TaggedStruct('RecipeTypeFailure', {
+    name: Schema.Literal('TypeError'),
+    message: Schema.String,
+  }),
+  Schema.TaggedStruct('RecipeRangeFailure', {
+    name: Schema.Literal('RangeError'),
+    message: Schema.String,
+  }),
+  Schema.TaggedStruct('RecipeExternalFailure', {
+    name: Schema.String,
+    message: Schema.String,
+    componentKey: Schema.optionalKey(Schema.String),
+  }),
+  Schema.TaggedStruct('RecipeItemFailure', { failure: KernelItemStackFailureSchema }),
+])
+
+export const BrewingValidationFailureSchema: Schema.Schema<BrewingValidationFailure> = Schema.TaggedStruct(
+  'BrewingValidationFailure',
+  { path: Schema.String, reason: Schema.String },
+)
+export const BrewingFailureSchema: Schema.Schema<BrewingFailure> = Schema.Union([
+  BrandErrorSchema,
+  ItemStackFailureSchema,
+  RecipeFailureSchema,
+  BrewingValidationFailureSchema,
+])
+const BrewingSnapshotErrorSchema = Schema.Union([
+  BrandErrorSchema,
+  ItemStackFailureSchema,
+  RecipeFailureSchema,
+])
 
 const invalid = (path: string, reason: string): BrewingValidationFailure => ({
   _tag: 'BrewingValidationFailure',
@@ -125,6 +159,18 @@ export const brewingState = (
   )
 }
 
+export const BrewingStateSchema: Schema.Schema<BrewingState> = Schema.declare(
+  (value: unknown): value is BrewingState => Result.isSuccess(brewingState(value)),
+)
+export const BrewingSnapshotValidationResultSchema: Schema.Schema<BrewingSnapshotValidationResult> = Schema.Union([
+  Schema.TaggedStruct('Valid', { state: BrewingStateSchema }),
+  Schema.TaggedStruct('Invalid', { error: BrewingValidationFailureSchema }),
+  Schema.TaggedStruct('Failure', { error: BrewingSnapshotErrorSchema }),
+])
+export const BrewingItemSlotSchema: Schema.Schema<SlotValue> = Schema.declare(
+  (value: unknown): value is SlotValue => value === undefined || isItemStack(value),
+)
+
 export const emptyBrewingState = (): Result.Result<BrewingState, BrewingFailure> => brewingState()
 
 export const validateBrewingSnapshot = (value: unknown): BrewingSnapshotValidationResult => {
@@ -159,10 +205,16 @@ const validRecipe = (value: unknown): value is BrewingRecipeInput =>
   isRecord(value) &&
   typeof value['id'] === 'string' &&
   value['id'].length > 0 &&
+  (value['_tag'] !== 'Brewing' || Result.isSuccess(RecipeId.result(value['id']))) &&
   isItemType(value['input']) &&
   isItemType(value['ingredient']) &&
   isItemType(value['output']) &&
   (value['_tag'] === undefined || value['_tag'] === 'Brewing')
+
+export const BrewingRecipeInputSchema: Schema.Schema<BrewingRecipeInput> = Schema.declare(validRecipe)
+export const BrewingRecipeOptionSchema: Schema.Schema<BrewingRecipeInput | undefined> = Schema.declare(
+  (value: unknown): value is BrewingRecipeInput | undefined => value === undefined || validRecipe(value),
+)
 
 const validateRecipe = (
   value: unknown,
@@ -386,3 +438,13 @@ export const advanceBrewing = (
     brewed: count,
   }))
 }
+
+const isRecipeCompletionCount = (value: unknown): value is RecipeCompletionCount =>
+  typeof value === 'number' && Result.isSuccess(RecipeCompletionCount.result(value))
+const RecipeCompletionCountSchema: Schema.Schema<RecipeCompletionCount> = Schema.declare(isRecipeCompletionCount)
+
+export const BrewingOutcomeSchema: Schema.Schema<BrewingOutcome> = Schema.Struct({
+  state: BrewingStateSchema,
+  brewedCount: RecipeCompletionCountSchema,
+  brewed: RecipeCompletionCountSchema,
+})

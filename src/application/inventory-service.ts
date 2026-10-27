@@ -8,13 +8,14 @@
  * functions return `{ inventory, leftover }` rather than mutating: the tuple is
  * exactly what `Ref.modify` wants.
  */
-import { Context, Effect, Layer, Ref, Result } from 'effect'
+import { Context, Effect, Layer, Ref, Result, Schema } from 'effect'
 import * as Container from '../domain/container-storage.js'
 import * as Craft from '../domain/crafting.js'
 import * as Eq from '../domain/equipment.js'
 import * as Hotbar from '../domain/hotbar.js'
 import * as Inv from '../domain/inventory.js'
-import { itemValidationFailure, type ItemType } from '@nerima-games/mc-kernel'
+import { ITEM_TYPES, RecipeGroup, itemValidationFailure, type ItemType, type RecipeGroup as RecipeGroupValue } from '@nerima-games/mc-kernel'
+import { TagLocation } from '@nerima-games/mc-kernel'
 import * as Storage from '../domain/player-storage.js'
 import * as Recipe from '../domain/recipe.js'
 import { STARTER_RECIPES } from '../domain/recipe-data.js'
@@ -76,6 +77,59 @@ export type InventorySortResult =
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const ItemTypeSchema: AnySchema = Schema.Literals(ITEM_TYPES)
+const ResourceLocationSchema: AnySchema = Schema.declare<Recipe.RecipeId>(
+  (value): value is Recipe.RecipeId =>
+    typeof value === 'string' && Result.isSuccess(Recipe.RecipeId.result(value)),
+)
+
+const EquipmentValidationErrorSchema: AnySchema = Schema.Struct({
+  _tag: Schema.Literal('EquipmentValidationError'),
+  path: Schema.String,
+  reason: Schema.String,
+})
+
+const InvalidInventoryDurabilitySchema: AnySchema = Schema.Struct({
+  _tag: Schema.Literal('InvalidInventoryDurability'),
+  slotIndex: Schema.Int,
+  item: ItemTypeSchema,
+})
+
+export const PlayerStorageFailureSchema: AnySchema = Schema.Union([
+  Inv.BrandErrorSchema,
+  EquipmentValidationErrorSchema,
+  InvalidInventoryDurabilitySchema,
+])
+
+export const PlayerStorageValidationErrorSchema: AnySchema = Schema.Struct({
+  _tag: Schema.Literal('PlayerStorageValidationError'),
+  path: Schema.String,
+  reason: Schema.String,
+})
+
+export const RecipeFailureSchema: AnySchema = Schema.Union([
+  Schema.Struct({
+    _tag: Schema.Literal('RecipeTypeFailure'),
+    name: Schema.Literal('TypeError'),
+    message: Schema.String,
+  }),
+  Schema.Struct({
+    _tag: Schema.Literal('RecipeRangeFailure'),
+    name: Schema.Literal('RangeError'),
+    message: Schema.String,
+  }),
+  Schema.Struct({
+    _tag: Schema.Literal('RecipeExternalFailure'),
+    name: Schema.String,
+    message: Schema.String,
+    componentKey: Schema.optional(Schema.String),
+  }),
+  Schema.Struct({
+    _tag: Schema.Literal('RecipeItemFailure'),
+    failure: Inv.ItemStackFailureSchema,
+  }),
+])
 
 const invalidInventoryInput = (field: string): Inv.ItemStackFailure =>
   itemValidationFailure(field, 'expected a valid inventory input', 'invalid-type')
@@ -305,6 +359,287 @@ export type InventoryServiceApi = {
    */
   readonly craft: (grid: Recipe.CraftGrid) => Effect.Effect<Craft.CraftResult, Craft.CraftFailure | Storage.PlayerStorageFailure>
 }
+
+type AnySchema = Schema.Schema<unknown>
+
+const NonNegativeIntegerSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
+export const InventoryCountSchema: AnySchema = NonNegativeIntegerSchema
+export const InventoryAddLeftoverSchema: AnySchema = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))
+const PositiveIntegerSchema = Schema.Int.check(Schema.isGreaterThan(0))
+
+export const InventorySnapshotSchema: AnySchema = Schema.declare<Inv.Inventory>(
+  (value): value is Inv.Inventory =>
+    isRecord(value) &&
+    Object.keys(value).length === 1 &&
+    Array.isArray(value['slots']) &&
+    value['slots'].length === Inv.INVENTORY_SLOT_COUNT &&
+    value['slots'].every((slot) => slot === undefined || Schema.is(Inv.ItemStackSchema)(slot)),
+)
+
+const isContainerStoredStack = (value: unknown): value is Container.ContainerStoredStack => {
+  if (value === null) return false
+  const emptyContainer = Container.emptyContainer('schema-probe')
+  return Container.validateContainerStorageSnapshot({
+    version: Container.CONTAINER_STORAGE_SNAPSHOT_VERSION,
+    containers: [{
+      ...emptyContainer,
+      slots: [value, ...emptyContainer.slots.slice(1)],
+    }],
+  })._tag === 'Valid'
+}
+
+export const ContainerStoredStackSchema: AnySchema = Schema.declare(isContainerStoredStack)
+
+const InventoryCarriedStackSchema: AnySchema = Schema.declare<InventoryCarriedStack>(
+  (value): value is InventoryCarriedStack => value !== undefined && validCarried(value),
+)
+
+export const InventoryCarriedSlotSchema: AnySchema = Schema.Union([
+  InventoryCarriedStackSchema,
+  Schema.Undefined,
+])
+
+const isEquipmentItemShape = (value: unknown): value is Eq.EquipmentItem => {
+  if (
+    !isRecord(value) ||
+    Object.keys(value).length !== 4 ||
+    !Object.hasOwn(value, 'durability')
+  ) return false
+  const itemStack = {
+    item: value['item'],
+    count: value['count'],
+    components: value['components'],
+  }
+  return Schema.is(Inv.ItemStackSchema)(itemStack) &&
+    (value['durability'] === null || Eq.isDurability(value['durability']))
+}
+
+const EquipmentItemSchema: AnySchema = Schema.declare(isEquipmentItemShape)
+
+const EquipmentItemFailureSchema: AnySchema = Schema.Union([
+  Inv.BrandErrorSchema,
+  EquipmentValidationErrorSchema,
+])
+
+const DamageRejectedSchema: AnySchema = Schema.Union([
+  Schema.Struct({ _tag: Schema.Literal('InvalidAmount'), amount: Schema.Finite }),
+  Schema.Struct({ _tag: Schema.Literal('Empty') }),
+  Schema.Struct({ _tag: Schema.Literal('NotDamageable'), item: EquipmentItemSchema }),
+  Schema.Struct({ _tag: Schema.Literal('EquipmentFailure'), error: EquipmentItemFailureSchema }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidLocation') }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidDurability'), item: Inv.ItemStackSchema }),
+])
+
+export const ConsumeAndDamageAtResultSchema: AnySchema = Schema.Union([
+  Schema.Struct({
+    _tag: Schema.Literal('Applied'),
+    consumed: NonNegativeIntegerSchema,
+    damage: Schema.Union([
+      Schema.Struct({
+        _tag: Schema.Literal('Damaged'),
+        item: EquipmentItemSchema,
+        applied: PositiveIntegerSchema,
+      }),
+      Schema.Struct({
+        _tag: Schema.Literal('Broken'),
+        item: EquipmentItemSchema,
+        applied: PositiveIntegerSchema,
+      }),
+    ]),
+  }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidConsumableCount'), count: Schema.Finite }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidDamageAmount'), amount: Schema.Finite }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidLocation') }),
+  Schema.Struct({
+    _tag: Schema.Literal('DamageTargetMismatch'),
+    actualItem: Schema.Union([ItemTypeSchema, Schema.Null]),
+  }),
+  Schema.Struct({ _tag: Schema.Literal('NotDamageable'), item: Inv.ItemStackSchema }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidDurability'), item: Inv.ItemStackSchema }),
+  Schema.Struct({ _tag: Schema.Literal('EquipmentFailure'), error: EquipmentItemFailureSchema }),
+  Schema.Struct({ _tag: Schema.Literal('StorageFailure'), error: PlayerStorageFailureSchema }),
+  Schema.Struct({ _tag: Schema.Literal('DamageRejected'), damage: DamageRejectedSchema }),
+  Schema.Struct({ _tag: Schema.Literal('InsufficientConsumable'), available: NonNegativeIntegerSchema }),
+  Schema.Struct({ _tag: Schema.Literal('ItemStackFailure'), error: Inv.ItemStackFailureSchema }),
+])
+
+export const InventoryRemoveAtResultSchema: AnySchema = Schema.Union([
+  Schema.Struct({ _tag: Schema.Literal('Removed'), removed: NonNegativeIntegerSchema }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidSlot') }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidCount') }),
+  Schema.Struct({ _tag: Schema.Literal('EmptySlot') }),
+  Schema.Struct({ _tag: Schema.Literal('ItemMismatch'), actualItem: ItemTypeSchema }),
+  Schema.Struct({ _tag: Schema.Literal('Insufficient'), available: NonNegativeIntegerSchema }),
+])
+
+export const AddStoredStackResultSchema: AnySchema = Schema.Union([
+  Schema.Struct({
+    _tag: Schema.Literal('Added'),
+    added: NonNegativeIntegerSchema,
+    leftover: Schema.Union([ContainerStoredStackSchema, Schema.Null]),
+  }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidStack') }),
+  Schema.Struct({ _tag: Schema.Literal('ItemStackFailure'), error: Inv.ItemStackFailureSchema }),
+])
+
+export const InventoryClickResultSchema: AnySchema = Schema.Union([
+  Schema.Struct({ _tag: Schema.Literal('PickedUp'), carried: InventoryCarriedStackSchema }),
+  Schema.Struct({ _tag: Schema.Literal('Placed'), carried: InventoryCarriedSlotSchema }),
+  Schema.Struct({ _tag: Schema.Literal('Merged'), carried: InventoryCarriedSlotSchema }),
+  Schema.Struct({ _tag: Schema.Literal('Swapped'), carried: InventoryCarriedStackSchema }),
+  Schema.Struct({ _tag: Schema.Literal('NoChange'), carried: InventoryCarriedSlotSchema }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidSlot'), carried: InventoryCarriedSlotSchema }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidCount'), carried: InventoryCarriedSlotSchema }),
+])
+
+export const InventorySetSlotResultSchema: AnySchema = Schema.Union([
+  Schema.Struct({ _tag: Schema.Literal('Updated'), slot: InventoryCarriedSlotSchema }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidSlot') }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidStack') }),
+])
+
+export const InventoryMoveResultSchema: AnySchema = Schema.Union([
+  Schema.Struct({
+    _tag: Schema.Literals(['Moved', 'Merged', 'Swapped']),
+    moved: PositiveIntegerSchema,
+    source: InventoryCarriedSlotSchema,
+    target: InventoryCarriedSlotSchema,
+  }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidSlot') }),
+  Schema.Struct({ _tag: Schema.Literal('EmptySlot') }),
+  Schema.Struct({ _tag: Schema.Literal('NoChange') }),
+])
+
+export const InventoryQuickMoveResultSchema: AnySchema = Schema.Union([
+  Schema.Struct({
+    _tag: Schema.Literal('Moved'),
+    moved: PositiveIntegerSchema,
+    source: InventoryCarriedSlotSchema,
+  }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidSlot') }),
+  Schema.Struct({ _tag: Schema.Literal('EmptySlot') }),
+  Schema.Struct({ _tag: Schema.Literal('NoChange') }),
+])
+
+const RecipeIngredientCountSchema: AnySchema = Schema.declare<Recipe.RecipeIngredientCount>(
+  (value): value is Recipe.RecipeIngredientCount =>
+    typeof value === 'number' && Result.isSuccess(Recipe.RecipeIngredientCount.result(value)),
+)
+const RecipePrioritySchema: AnySchema = Schema.declare<Recipe.RecipePriority>(
+  (value): value is Recipe.RecipePriority =>
+    typeof value === 'number' && Result.isSuccess(Recipe.RecipePriority.result(value)),
+)
+const RecipeGridDimensionSchema: AnySchema = Schema.declare<Recipe.RecipeGridDimension>(
+  (value): value is Recipe.RecipeGridDimension =>
+    typeof value === 'number' && Result.isSuccess(Recipe.RecipeGridDimension.result(value)),
+)
+const RecipeGroupSchema: AnySchema = Schema.declare<RecipeGroupValue>(
+  (value): value is RecipeGroupValue =>
+    typeof value === 'string' && Result.isSuccess(RecipeGroup.result(value)),
+)
+const RecipeTagSchema: AnySchema = Schema.declare<Recipe.RecipeStationTag>(
+  (value): value is Recipe.RecipeStationTag =>
+    typeof value === 'string' && Result.isSuccess(Recipe.RecipeStationTag.result(value)),
+)
+const RecipeItemTagSchema: AnySchema = Schema.declare<Recipe.RecipeItemTag>(
+  (value): value is Recipe.RecipeItemTag =>
+    typeof value === 'string' && Result.isSuccess(TagLocation.result(value)),
+)
+
+const ExactIngredientSchema = Schema.Struct({
+  _tag: Schema.Literal('Exact'),
+  item: ItemTypeSchema,
+  count: RecipeIngredientCountSchema,
+})
+
+const ItemTagIngredientSchema = Schema.Struct({
+  _tag: Schema.Literal('ItemTag'),
+  tag: RecipeItemTagSchema,
+  count: RecipeIngredientCountSchema,
+})
+
+const IngredientSchema = Schema.Union([ExactIngredientSchema, ItemTagIngredientSchema])
+
+const AnyOfIngredientSchema = Schema.Struct({
+  _tag: Schema.Literal('AnyOf'),
+  options: Schema.Array(IngredientSchema),
+  count: RecipeIngredientCountSchema,
+})
+
+const CraftingIngredientSchema = Schema.Union([IngredientSchema, AnyOfIngredientSchema])
+
+const RecipeCategorySchema = Schema.Literals(['building', 'equipment', 'misc', 'redstone'])
+
+const RecipeSchema: AnySchema = Schema.Union([
+  Schema.Struct({
+    _tag: Schema.Literal('Shaped'),
+    id: ResourceLocationSchema,
+    pattern: Schema.Struct({
+      width: RecipeGridDimensionSchema,
+      height: RecipeGridDimensionSchema,
+      cells: Schema.Array(Schema.Union([CraftingIngredientSchema, Schema.Undefined])),
+    }),
+    output: Inv.ItemStackSchema,
+    assumeSymmetry: Schema.Boolean,
+    category: Schema.optional(RecipeCategorySchema),
+    group: Schema.optional(RecipeGroupSchema),
+    priority: RecipePrioritySchema,
+    showNotification: Schema.optional(Schema.Boolean),
+    tags: Schema.Array(RecipeTagSchema),
+  }),
+  Schema.Struct({
+    _tag: Schema.Literal('Shapeless'),
+    id: ResourceLocationSchema,
+    ingredients: Schema.Array(CraftingIngredientSchema),
+    output: Inv.ItemStackSchema,
+    category: Schema.optional(RecipeCategorySchema),
+    group: Schema.optional(RecipeGroupSchema),
+    priority: RecipePrioritySchema,
+    showNotification: Schema.optional(Schema.Boolean),
+    tags: Schema.Array(RecipeTagSchema),
+  }),
+])
+
+export const RecipeMatchSchema: AnySchema = Schema.Union([
+  Schema.Struct({ _tag: Schema.Literal('Match'), recipe: RecipeSchema, output: Inv.ItemStackSchema }),
+  Schema.Struct({ _tag: Schema.Literal('NoMatch') }),
+])
+
+export const CraftResultSchema: AnySchema = Schema.Union([
+  Schema.Struct({
+    _tag: Schema.Literal('Crafted'),
+    recipeId: ResourceLocationSchema,
+    output: Inv.ItemStackSchema,
+  }),
+  Schema.Struct({ _tag: Schema.Literal('NoMatch') }),
+  Schema.Struct({
+    _tag: Schema.Literal('MissingIngredients'),
+    missing: Schema.Array(Schema.Struct({ item: ItemTypeSchema, short: PositiveIntegerSchema })),
+  }),
+  Schema.Struct({ _tag: Schema.Literal('NoRoom') }),
+])
+
+export const InventoryMutationErrorSchema: AnySchema = Schema.Union([
+  Inv.ItemStackFailureSchema,
+  PlayerStorageFailureSchema,
+])
+
+export const InventoryServiceConstructorErrorSchema: AnySchema = Schema.Union([
+  InventoryMutationErrorSchema,
+  RecipeFailureSchema,
+])
+
+export const InventoryRestoreStorageErrorSchema: AnySchema = Schema.Union([
+  PlayerStorageValidationErrorSchema,
+  Inv.ItemStackFailureSchema,
+])
+
+export const InventoryConsumeAndDamageErrorSchema: AnySchema = Inv.ItemStackFailureSchema
+
+export const InventoryCraftErrorSchema: AnySchema = Schema.Union([
+  Inv.ItemStackFailureSchema,
+  PlayerStorageFailureSchema,
+])
 
 const InventoryServiceBase: Context.ServiceClass<
   InventoryService,

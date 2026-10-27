@@ -1,7 +1,7 @@
-import { Result } from 'effect'
+import { Result, Schema } from 'effect'
 import { BlockAxis, type BlockPosition } from '@nerima-games/mc-kernel/domain/coordinates'
 import { DIMENSIONS, isDimension, type BlockType, type Dimension, type ItemType } from '@nerima-games/mc-kernel'
-import { itemStack, type ItemStack, type ItemStackFailure } from './inventory.js'
+import { ItemStackSchema, itemStack, type ItemStack, type ItemStackFailure } from './inventory.js'
 
 export const CROP_TYPES = ['wheat_crop', 'potato_crop', 'nether_wart_crop'] as const
 
@@ -63,6 +63,11 @@ export type CropState = CropLocation & {
 export type CropSnapshot = {
   readonly crops: ReadonlyArray<CropState>
 }
+
+export const MatureYieldsSchema: Schema.Schema<ReadonlyArray<ItemStack> | null> = Schema.Union([
+  Schema.Array(ItemStackSchema),
+  Schema.Null,
+])
 
 export type CropValidationError = {
   readonly _tag: 'CropValidationError'

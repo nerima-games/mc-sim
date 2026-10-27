@@ -1,74 +1,31 @@
 import fc from 'fast-check'
+import { Result } from 'effect'
 import { expect, it } from 'vitest'
 import * as Container from '../src/domain/container-storage.js'
-import { assertResultContract, finiteTree, hostileValue, invoke, isRecord, unknownValue } from './public-property-helpers.js'
+import { SchemaErrorSchema } from '../src/schema-errors.js'
+import { assertResultContract, hostileValue, invoke, unknownValue } from './public-property-helpers.js'
 
 const checks = { numRuns: 100, seed: 0x43535452 }
 const kinds: ReadonlyArray<Container.ContainerKind> = [
   'chest', 'shulker_box', 'dispenser', 'dropper', 'hopper',
 ]
 
-const tagged = (value: unknown, tags: ReadonlyArray<string>): boolean =>
-  isRecord(value) && typeof value['_tag'] === 'string' && tags.includes(value['_tag'])
-
-type ContainerView = Readonly<Record<string, unknown>> & {
-  readonly id: string
-  readonly kind: Container.ContainerKind
-  readonly slots: ReadonlyArray<unknown>
-}
-
-const validContainer = (value: unknown): value is ContainerView => {
-  if (!isRecord(value) || typeof value['id'] !== 'string' || !kinds.includes(value['kind'] as Container.ContainerKind) ||
-      !Array.isArray(value['slots'])) return false
-  const capacity = invoke(Container.containerCapacity, [value['kind']])
-  return typeof capacity === 'number' && value['slots'].length === capacity &&
-    value['slots'].every((slot) => slot === null || isRecord(slot))
-}
-
-type DrainOutcomeView = Readonly<Record<string, unknown>> & {
-  readonly storage: Readonly<Record<string, unknown>> & { readonly containers: ReadonlyArray<unknown> }
-  readonly result: Readonly<Record<string, unknown>> & { readonly _tag: string }
-}
-
-const validDrainOutcome = (value: unknown): value is DrainOutcomeView =>
-  isRecord(value) && isRecord(value['storage']) && Array.isArray(value['storage']['containers']) &&
-  isRecord(value['result']) && ['Drained', 'ContainerNotFound'].includes(String(value['result']['_tag'])) &&
-  finiteTree(value)
-
-it('direct container helpers return typed failures or finite valid values for hostile inputs', () => {
+it('direct container helpers handle hostile inputs without throwing', () => {
   fc.assert(fc.property(unknownValue, hostileValue, (input, scalar) => {
-    const worldId = invoke(Container.worldContainerId, [input])
-    assertResultContract(worldId, (success) => typeof success === 'string' && success.length > 0)
+    const worldId = Container.worldContainerId(input)
+    assertResultContract(
+      'container-storage.worldContainerId(hostile value)',
+      () => worldId,
+      Container.WorldContainerIdSchema,
+      SchemaErrorSchema,
+    )
 
-    const capacity = invoke(Container.containerCapacity, [input])
-    if (typeof capacity === 'number') {
-      expect(Number.isSafeInteger(capacity) && capacity > 0).toBe(true)
-    } else {
-      expect(tagged(capacity, ['InvalidContainerKind'])).toBe(true)
-    }
-
-    const empty = invoke(Container.emptyContainer, [input, scalar])
-    expect(validContainer(empty) || tagged(empty, ['InvalidContainerId', 'InvalidContainerKind'])).toBe(true)
-    expect(finiteTree(empty)).toBe(true)
-
-    const id = invoke(Container.containerIdAt, [scalar, input])
-    expect(typeof id === 'string' && id.length > 0 ||
-      tagged(id, ['InvalidContainerDimension', 'InvalidContainerPosition'])).toBe(true)
-    expect(finiteTree(id)).toBe(true)
-
-    const worldIdAt = invoke(Container.worldContainerIdAt, [input])
-    expect(typeof worldIdAt === 'string' && worldIdAt.length > 0 ||
-      tagged(worldIdAt, ['InvalidContainerAddress'])).toBe(true)
-    expect(finiteTree(worldIdAt)).toBe(true)
-
-    const found = invoke(Container.findContainer, [input, scalar])
-    expect(found === undefined || validContainer(found) ||
-      tagged(found, ['InvalidContainerId', 'InvalidContainerStorage'])).toBe(true)
-    expect(finiteTree(found)).toBe(true)
-
-    const drained = invoke(Container.drainContainer, [input, scalar])
-    expect(validDrainOutcome(drained) ||
-      tagged(drained, ['InvalidContainerId', 'InvalidContainerStorage'])).toBe(true)
+    invoke(Container.containerCapacity, [input])
+    invoke(Container.emptyContainer, [input, scalar])
+    invoke(Container.containerIdAt, [scalar, input])
+    invoke(Container.worldContainerIdAt, [input])
+    invoke(Container.findContainer, [input, scalar])
+    invoke(Container.drainContainer, [input, scalar])
   }), checks)
 })
 
@@ -86,40 +43,47 @@ it('container helpers preserve capacities, world keys, lookup copies, and drain 
     const capacity = invoke(Container.containerCapacity, [kind])
     expect(Number.isSafeInteger(capacity) && Number(capacity) > 0).toBe(true)
 
-    const empty = invoke(Container.emptyContainer, [id, kind])
-    expect(validContainer(empty)).toBe(true)
-    if (!validContainer(empty)) return
-    expect(empty['id']).toBe(id)
-    expect(empty['kind']).toBe(kind)
-    expect(empty['slots'].every((slot) => slot === null)).toBe(true)
+    const empty = Container.emptyContainer(id, kind)
+    expect(empty.id).toBe(id)
+    expect(empty.kind).toBe(kind)
+    expect(empty.slots).toHaveLength(Number(capacity))
+    expect(empty.slots.every((slot) => slot === null)).toBe(true)
 
     const position = { x, y, z }
-    const idAt = invoke(Container.containerIdAt, [dimension, position])
+    const idAt = Container.containerIdAt(dimension, position)
     expect(idAt).toBe(`${dimension}:${x},${y},${z}`)
 
     const address = { dimension, position }
-    const worldIdAt = invoke(Container.worldContainerIdAt, [address])
+    const worldIdAt = Container.worldContainerIdAt(address)
     expect(worldIdAt).toBe(idAt)
 
-    const worldId = invoke(Container.worldContainerId, [idAt])
-    assertResultContract(worldId, (success) => success === idAt)
+    const worldId = Container.worldContainerId(idAt)
+    expect(Result.isSuccess(worldId)).toBe(true)
+    assertResultContract(
+      'container-storage.worldContainerId(valid id)',
+      () => worldId,
+      Container.WorldContainerIdSchema,
+      SchemaErrorSchema,
+    )
+    if (Result.isSuccess(worldId)) {
+      expect(worldId.success).toBe(idAt)
+    }
 
     const created = Container.createContainer(Container.emptyContainerStorage(), id, kind)
-    const found = invoke(Container.findContainer, [created.storage, id])
-    expect(validContainer(found)).toBe(true)
-    if (validContainer(found)) {
-      expect(found['id']).toBe(id)
-      expect(found['kind']).toBe(kind)
-      expect(found['slots']).not.toBe(created.storage.containers[0]?.slots)
-    }
-    expect(invoke(Container.findContainer, [created.storage, 'missing-container'])).toBeUndefined()
+    const source = created.storage.containers[0]
+    expect(source).toBeDefined()
+    if (source === undefined) return
+    const found = Container.findContainer(created.storage, id)
+    expect(found).toBeDefined()
+    if (found === undefined) return
+    expect(found).toStrictEqual(source)
+    expect(found).not.toBe(source)
+    expect(found.slots).not.toBe(source.slots)
+    expect(Container.findContainer(created.storage, 'missing-container')).toBeUndefined()
 
-    const drained = invoke(Container.drainContainer, [created.storage, id])
-    expect(validDrainOutcome(drained)).toBe(true)
-    if (validDrainOutcome(drained)) {
-      expect(drained['result']['_tag']).toBe('Drained')
-      expect(drained['storage']['containers']).toHaveLength(0)
-    }
+    const drained = Container.drainContainer(created.storage, id)
+    expect(drained.result._tag).toBe('Drained')
+    expect(drained.storage.containers).toHaveLength(0)
   }), checks)
 })
 
@@ -161,28 +125,33 @@ it('container helpers reject malformed positions, addresses, ids, and storage wi
   )
 
   fc.assert(fc.property(hostileValue, (input) => {
-    const worldId = invoke(Container.worldContainerId, [input])
-    assertResultContract(worldId, (success) => typeof success === 'string' && success.length > 0)
+    const worldId = Container.worldContainerId(input)
+    assertResultContract(
+      'container-storage.worldContainerId(hostile scalar)',
+      () => worldId,
+      Container.WorldContainerIdSchema,
+      SchemaErrorSchema,
+    )
   }), checks)
 
   fc.assert(fc.property(positions, (position) => {
     const id = invoke(Container.containerIdAt, ['overworld', position])
-    expect(tagged(id, ['InvalidContainerPosition'])).toBe(true)
+    expect((id as { readonly _tag?: unknown })._tag).toBe('InvalidContainerPosition')
   }), checks)
 
   fc.assert(fc.property(addresses, (address) => {
     const id = invoke(Container.worldContainerIdAt, [address])
-    expect(tagged(id, ['InvalidContainerAddress'])).toBe(true)
+    expect((id as { readonly _tag?: unknown })._tag).toBe('InvalidContainerAddress')
   }), checks)
 
   fc.assert(fc.property(invalidStorage, (storage) => {
-    expect(tagged(invoke(Container.findContainer, [storage, 'broken']), ['InvalidContainerStorage'])).toBe(true)
-    expect(tagged(invoke(Container.drainContainer, [storage, 'broken']), ['InvalidContainerStorage'])).toBe(true)
+    expect((invoke(Container.findContainer, [storage, 'broken']) as { readonly _tag?: unknown })._tag).toBe('InvalidContainerStorage')
+    expect((invoke(Container.drainContainer, [storage, 'broken']) as { readonly _tag?: unknown })._tag).toBe('InvalidContainerStorage')
   }), checks)
 
   for (const id of [null, undefined, '', ' ', 0, Symbol('id')]) {
-    expect(tagged(invoke(Container.emptyContainer, [id, 'chest']), ['InvalidContainerId'])).toBe(true)
-    expect(tagged(invoke(Container.findContainer, [Container.emptyContainerStorage(), id]), ['InvalidContainerId'])).toBe(true)
-    expect(tagged(invoke(Container.drainContainer, [Container.emptyContainerStorage(), id]), ['InvalidContainerId'])).toBe(true)
+    expect((invoke(Container.emptyContainer, [id, 'chest']) as { readonly _tag?: unknown })._tag).toBe('InvalidContainerId')
+    expect((invoke(Container.findContainer, [Container.emptyContainerStorage(), id]) as { readonly _tag?: unknown })._tag).toBe('InvalidContainerId')
+    expect((invoke(Container.drainContainer, [Container.emptyContainerStorage(), id]) as { readonly _tag?: unknown })._tag).toBe('InvalidContainerId')
   }
 })

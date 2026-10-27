@@ -16,6 +16,7 @@ import type {
 import { Context, Effect, Layer, Ref, Schema } from 'effect'
 import type { YieldableError } from 'effect/Cause'
 import * as Statistics from '../domain/statistics.js'
+import { SchemaErrorSchema } from '../schema-errors.js'
 import { DomainEventBus } from './domain-event-bus.js'
 import {
   makeReplicatedOwnerId,
@@ -27,6 +28,7 @@ import {
 import { StatisticsService } from './statistics-service.js'
 import {
   WorldCommitCoordinator,
+  WorldCommitCoordinatorErrorSchema,
   type ReplicatedOwnerCandidate,
   type ReplicatedOwnerRegistration,
   type WorldCommitCoordinatorError,
@@ -194,7 +196,7 @@ const AchievementUnlockEventSchema = Schema.Struct({
   achievement: AchievementIdSchema,
 })
 
-const PendingAchievementUnlockSchema = Schema.Struct({
+export const PendingAchievementUnlockSchema: Schema.Codec<PendingAchievementUnlock, unknown> = Schema.Struct({
   _tag: Schema.Literal('PendingAchievementUnlock'),
   world: WorldIdSchema,
   expectedRevision: WorldRevisionSchema,
@@ -204,6 +206,26 @@ const PendingAchievementUnlockSchema = Schema.Struct({
   }),
   event: AchievementUnlockEventSchema,
 })
+
+export const AchievementAlreadyUnlockedSchema: Schema.Schema<Extract<AchievementUnlockStage, { readonly _tag: 'AchievementAlreadyUnlocked' }>> = Schema.Struct({
+  _tag: Schema.Literal('AchievementAlreadyUnlocked'),
+  achievement: AchievementIdSchema,
+})
+
+export const AchievementUnlockStageSchema: Schema.Schema<AchievementUnlockStage> = Schema.Union([
+  PendingAchievementUnlockSchema,
+  AchievementAlreadyUnlockedSchema,
+])
+
+export const AchievementUnlockStageErrorSchema: Schema.Schema<Schema.SchemaError | WorldCommitCoordinatorError> = Schema.Union([
+  SchemaErrorSchema,
+  WorldCommitCoordinatorErrorSchema,
+])
+
+export const AchievementServiceErrorSchema: Schema.Schema<AchievementServiceError> = Schema.Union([
+  AchievementUnlockStageErrorSchema,
+  Schema.instanceOf(AchievementCommitMismatch),
+])
 
 const ReplicatedWorldDeltaEnvelopeSchema = Schema.Struct({
   world: WorldIdSchema,

@@ -1,13 +1,11 @@
 import fc from 'fast-check'
 import { Duration, Effect, Layer, Result, Schedule, Schema } from 'effect'
 import { expect, it } from 'vitest'
-import { BlockAddressSchema, DomainEventSchema, isItemStack, WorldIdSchema } from '@nerima-games/mc-kernel'
+import { BlockAddressSchema, DomainEventSchema, RecipeGroup, WorldIdSchema } from '@nerima-games/mc-kernel'
 import * as App from '../src/index.js'
 import {
   assertEffectOutcome,
-  finiteTree,
   hostileScalarInput,
-  isRecord,
   invokeEffect,
   structuredInput,
 } from './public-property-helpers.js'
@@ -31,9 +29,6 @@ const hostileScalar = hostileScalarInput({
 })
 
 const hostileValue = structuredInput(hostileScalar)
-
-const hasAllowedTag = (value: unknown, tags: ReadonlyArray<string>): boolean =>
-  isRecord(value) && typeof value['_tag'] === 'string' && tags.includes(value['_tag']) && finiteTree(value)
 
 const checks = { numRuns: 100 }
 
@@ -91,6 +86,110 @@ const makeContainerFixture = Effect.gen(function* () {
 
 const makeInventory = () => Effect.runPromise(App.makeInventoryService())
 
+it('public result schemas validate branded recipes, stored stacks, and container counts', () => {
+  const outputResult = App.itemStack('stick', 1)
+  const output = Result.getOrThrow(outputResult)
+  const exact = Result.getOrThrow(App.exactly('oak_log', 2))
+  const shaped = Result.getOrThrow(App.shapedRecipe(
+    'coverage:grouped-recipe',
+    ['LL'],
+    { L: exact },
+    outputResult,
+    {
+      group: RecipeGroup('coverage-planks'),
+      priority: App.RecipePriority(1),
+      tags: [App.RecipeStationTag('minecraft:crafting_table')],
+    },
+  ))
+  const itemTag = Result.getOrThrow(App.tagged('#coverage:items', 2))
+  const tagged = Result.getOrThrow(App.shapelessRecipe('coverage:tagged-recipe', [itemTag], outputResult))
+  const matched = (recipe: unknown) => ({ _tag: 'Match', recipe, output })
+
+  expect(Schema.is(App.RecipeMatchSchema)(matched(shaped))).toBe(true)
+  expect(Schema.is(App.RecipeMatchSchema)(matched(tagged))).toBe(true)
+  const malformedRecipes = [
+    { ...shaped, id: 7 },
+    { ...shaped, id: '' },
+    { ...shaped, pattern: { ...shaped.pattern, width: 4 } },
+    {
+      ...shaped,
+      pattern: {
+        ...shaped.pattern,
+        cells: [{ ...shaped.pattern.cells[0], count: 0 }, shaped.pattern.cells[1]],
+      },
+    },
+    { ...shaped, priority: Number.NaN },
+    { ...shaped, group: null },
+    { ...shaped, tags: [''] },
+    {
+      ...tagged,
+      ingredients: [{ ...tagged.ingredients[0], tag: 'missing-hash-prefix' }],
+    },
+  ]
+  for (const [index, recipe] of malformedRecipes.entries()) {
+    expect(Schema.is(App.RecipeMatchSchema)(matched(recipe)), `malformed recipe ${index}`).toBe(false)
+  }
+
+  const emptyInventory = App.emptyInventory()
+  expect(Schema.is(App.InventorySnapshotSchema)(emptyInventory)).toBe(true)
+  expect(Schema.is(App.InventorySnapshotSchema)({
+    slots: [null, ...emptyInventory.slots.slice(1)],
+  })).toBe(false)
+  expect(Schema.is(App.ItemStackFailureSchema)({
+    _tag: 'ItemComponentPatchConflictError',
+    componentKey: 'minecraft:custom_name',
+  })).toBe(true)
+  expect(Schema.is(App.ItemStackFailureSchema)({
+    _tag: 'ItemComponentPatchConflictError',
+    componentKey: '',
+  })).toBe(false)
+
+  const stack = Result.getOrThrow(App.itemStack('stone', 1))
+  const storedStack = { ...stack, durability: null }
+  expect(Schema.is(App.ContainerStoredStackSchema)(storedStack)).toBe(true)
+  expect(Schema.is(App.ContainerStoredStackSchema)(null)).toBe(false)
+  expect(Schema.is(App.InventoryCarriedSlotSchema)(stack)).toBe(true)
+  expect(Schema.is(App.InventoryCarriedSlotSchema)({ ...stack, durability: { current: 1, max: 1 } })).toBe(false)
+
+  const container = App.emptyContainer('schema-result-test', 'chest')
+  expect(Schema.is(App.CreateContainerResultSchema)({ _tag: 'Created', container })).toBe(true)
+  expect(Schema.is(App.CreateContainerResultSchema)({
+    _tag: 'Created',
+    container: { ...container, slots: [] },
+  })).toBe(false)
+  expect(Schema.is(App.ContainerTransferResultSchema)({
+    _tag: 'Transferred', item: 'stone', count: 1, direction: 'PlayerToContainer',
+  })).toBe(true)
+  expect(Schema.is(App.ContainerTransferResultSchema)({
+    _tag: 'Transferred', item: 'stone', count: 0, direction: 'PlayerToContainer',
+  })).toBe(false)
+  expect(Schema.is(App.ContainerTransferResultSchema)({
+    _tag: 'Transferred', item: 'stone', count: Number.MAX_SAFE_INTEGER + 1,
+    direction: 'PlayerToContainer',
+  })).toBe(false)
+  expect(Schema.is(App.ContainerTransferResultSchema)({
+    _tag: 'InsufficientSource', available: -1,
+  })).toBe(true)
+
+  const helmet = {
+    ...Result.getOrThrow(App.itemStack('iron_helmet', 1)),
+    durability: App.durabilityForItem('iron_helmet'),
+  }
+  const damageResult = (item: unknown) => ({
+    _tag: 'Applied',
+    consumed: 0,
+    damage: { _tag: 'Damaged', item, applied: 1 },
+  })
+  expect(Schema.is(App.ConsumeAndDamageAtResultSchema)(damageResult(helmet))).toBe(true)
+  expect(Schema.is(App.ConsumeAndDamageAtResultSchema)(damageResult(null))).toBe(false)
+  expect(Schema.is(App.ConsumeAndDamageAtResultSchema)(damageResult({ ...helmet, extra: true }))).toBe(false)
+  expect(Schema.is(App.ConsumeAndDamageAtResultSchema)(damageResult({ ...helmet, item: 'unknown' }))).toBe(false)
+  expect(Schema.is(App.ConsumeAndDamageAtResultSchema)(damageResult({
+    ...helmet,
+    durability: { current: 0, max: helmet.durability?.max },
+  }))).toBe(false)
+})
+
 it('WorldCommitCoordinator.snapshot returns a typed unknown-owner failure for hostile IDs', async () => {
   const snapshotSchema = Schema.Struct({ count: Schema.Int })
   const registeredOwnerId = Schema.decodeUnknownSync(App.ReplicatedOwnerIdSchema)('snapshot-property-owner')
@@ -135,19 +234,14 @@ it('makeInventoryService returns its typed failure for a null constructor envelo
   await fc.assert(
     fc.asyncProperty(fc.constant(null), async (initial) => {
       const outcome = await Effect.runPromise(Effect.result(invokeEffect(App.makeInventoryService, [initial])))
-      assertEffectOutcome(outcome)
       expect(Result.isFailure(outcome)).toBe(true)
+      if (Result.isFailure(outcome)) {
+        expect(Schema.is(App.InventoryServiceConstructorErrorSchema)(outcome.failure)).toBe(true)
+      }
     }),
     checks,
   )
 })
-
-const validInventory = (value: unknown): boolean => {
-  if (!isRecord(value) || !Array.isArray(value['slots']) || value['slots'].length !== App.INVENTORY_SLOT_COUNT) return false
-  if (!value['slots'].every((slot) => slot === undefined || isItemStack(slot))) return false
-  const normalized = App.normaliseInventory(value as App.Inventory)
-  return Result.isSuccess(normalized)
-}
 
 const validDomainEvent = (value: unknown): boolean =>
   Result.isSuccess(Schema.decodeUnknownResult(DomainEventSchema)(value))
@@ -183,7 +277,12 @@ it('DomainEventBus.publish rejects malformed fields or publishes schema-valid ev
     fc.asyncProperty(fc.tuple(hostileScalar, hostileScalar, hostileScalar), async ([tick, player, achievement]) => {
       const event = { _tag: 'AchievementUnlocked', tick, player, achievement }
       const outcome = await Effect.runPromise(Effect.result(invokeEffect(bus.publish, [event])))
-      assertEffectOutcome(outcome)
+      assertEffectOutcome(
+        'DomainEventBus.publish',
+        () => outcome,
+        Schema.Undefined,
+        App.DomainEventBusErrorSchema,
+      )
       if (validDomainEvent(event)) {
         expect(Result.isSuccess(outcome)).toBe(true)
         if (Result.isSuccess(outcome)) expect(outcome.success).toBeUndefined()
@@ -205,9 +304,18 @@ it('DomainEventBusLayer rejects invalid capacities or provides a usable bus', as
       const outcome = await Effect.runPromise(Effect.result(
         Effect.gen(function* () { return yield* App.DomainEventBus }).pipe(Effect.provide(layer)),
       ))
-      assertEffectOutcome(outcome, (bus) =>
-        isRecord(bus) && typeof bus['publish'] === 'function' && bus['events'] !== undefined,
-      )
+      if (Schema.is(App.EventSubscriberCapacitySchema)(rawCapacity)) {
+        expect(Result.isSuccess(outcome)).toBe(true)
+        if (Result.isSuccess(outcome)) {
+          expect(typeof outcome.success.publish).toBe('function')
+          expect(outcome.success.events).toBeDefined()
+        }
+      } else {
+        expect(Result.isFailure(outcome)).toBe(true)
+        if (Result.isFailure(outcome)) {
+          expect(Schema.is(App.DomainEventBusErrorSchema)(outcome.failure)).toBe(true)
+        }
+      }
     }),
     checks,
   )
@@ -229,17 +337,20 @@ it('AchievementService stageUnlock and unlock reject malformed requests as typed
     fc.asyncProperty(fc.tuple(hostileScalar, hostileScalar), async ([player, tick]) => {
       const request = { achievement: null, player, tick }
       const staged = await Effect.runPromise(Effect.result(invokeEffect(service.stageUnlock, [request])))
-      assertEffectOutcome(staged, (value) =>
-        isRecord(value) && (
-          value['_tag'] === 'AchievementAlreadyUnlocked' ||
-          (value['_tag'] === 'PendingAchievementUnlock' &&
-            validDomainEvent(value['event']) &&
-            Result.isSuccess(Schema.decodeUnknownResult(App.AchievementStatisticsSchema)(value['candidate']?.state)))
-        ),
+      assertEffectOutcome(
+        'AchievementService.stageUnlock',
+        () => staged,
+        App.AchievementUnlockStageSchema,
+        App.AchievementUnlockStageErrorSchema,
       )
 
       const unlocked = await Effect.runPromise(Effect.result(invokeEffect(service.unlock, [request])))
-      assertEffectOutcome(unlocked, (value) => value === undefined)
+      assertEffectOutcome(
+        'AchievementService.unlock',
+        () => unlocked,
+        Schema.Undefined,
+        App.AchievementServiceErrorSchema,
+      )
     }),
     checks,
   )
@@ -253,7 +364,12 @@ it('ContainerStorageService validates hostile create kinds and revision expectat
         fixture.service.createContainerAt,
         [containerAddress(40), kind, { expectedRevision }],
       )))
-      assertEffectOutcome(outcome, (value) => hasAllowedTag(value, ['Created', 'AlreadyExists', 'InvalidContainerId']))
+      assertEffectOutcome(
+        'ContainerStorageService.createContainerAt',
+        () => outcome,
+        App.CreateContainerResultSchema,
+        App.ContainerStorageServiceErrorSchema,
+      )
       const snapshot = await Effect.runPromise(fixture.service.snapshot)
       expect(App.validateContainerStorageSnapshot(snapshot)._tag).toBe('Valid')
     }),
@@ -278,21 +394,24 @@ it('ContainerStorageService transfer, extract and move return tagged outcomes an
         containerSlot: slot,
         count,
       }])))
-      assertEffectOutcome(transfer, (value) => hasAllowedTag(value, [
-        'Transferred', 'ContainerNotFound', 'InvalidPlayerSlot', 'InvalidContainerSlot', 'InvalidCount',
-        'EmptySource', 'InsufficientSource', 'DestinationMismatch', 'DestinationFull', 'InvalidDirection',
-        'InvalidSourceStack', 'InvalidDestinationStack', 'InvalidSourceDurability', 'ItemStackFailure',
-      ]))
+      assertEffectOutcome(
+        'ContainerStorageService.transferContainerItem',
+        () => transfer,
+        App.ContainerTransferResultSchema,
+        App.ContainerStorageServiceErrorSchema,
+      )
 
       const extracted = await Effect.runPromise(Effect.result(invokeEffect(fixture.service.extractContainerItem, [{
         address: source,
         containerSlot: slot,
         count,
       }])))
-      assertEffectOutcome(extracted, (value) => hasAllowedTag(value, [
-        'Extracted', 'ContainerNotFound', 'InvalidContainerSlot', 'InvalidCount', 'EmptySource',
-        'InsufficientSource', 'InvalidSourceStack', 'InvalidSourceDurability', 'ItemStackFailure',
-      ]))
+      assertEffectOutcome(
+        'ContainerStorageService.extractContainerItem',
+        () => extracted,
+        App.ContainerExtractResultSchema,
+        App.ContainerStorageServiceErrorSchema,
+      )
 
       const moved = await Effect.runPromise(Effect.result(invokeEffect(fixture.service.moveContainerItem, [{
         sourceAddress: source,
@@ -301,12 +420,12 @@ it('ContainerStorageService transfer, extract and move return tagged outcomes an
         destinationSlot,
         count,
       }])))
-      assertEffectOutcome(moved, (value) => hasAllowedTag(value, [
-        'Moved', 'SourceContainerNotFound', 'DestinationContainerNotFound', 'InvalidSourceSlot',
-        'InvalidDestinationSlot', 'InvalidCount', 'EmptySource', 'InsufficientSource', 'DestinationMismatch',
-        'DestinationFull', 'InvalidSourceStack', 'InvalidDestinationStack', 'InvalidSourceDurability',
-        'ItemStackFailure',
-      ]))
+      assertEffectOutcome(
+        'ContainerStorageService.moveContainerItem',
+        () => moved,
+        App.ContainerMoveResultSchema,
+        App.ContainerStorageServiceErrorSchema,
+      )
 
       expect(App.validateContainerStorageSnapshot(await Effect.runPromise(fixture.service.snapshot))._tag).toBe('Valid')
       expect(App.validatePlayerStorageSnapshot(await Effect.runPromise(
@@ -323,16 +442,36 @@ it('BrewingService setters and restore reject hostile bottle indices, stacks, an
   await fc.assert(
     fc.asyncProperty(fc.tuple(hostileScalar, hostileValue, hostileValue), async ([index, stackValue, snapshot]) => {
       const bottle = await runBrewing(fixture, Effect.result(invokeEffect(fixture.brewing.setBottle, [index, validBottle])))
-      assertEffectOutcome(bottle, (value) => Result.isSuccess(Schema.decodeUnknownResult(App.BrewingServiceStateSchema)(value)))
+      assertEffectOutcome(
+        'BrewingService.setBottle',
+        () => bottle,
+        App.BrewingServiceStateSchema,
+        App.BrewingServiceErrorSchema,
+      )
 
       const ingredient = await runBrewing(fixture, Effect.result(invokeEffect(fixture.brewing.setIngredient, [stackValue])))
-      assertEffectOutcome(ingredient, (value) => Result.isSuccess(Schema.decodeUnknownResult(App.BrewingServiceStateSchema)(value)))
+      assertEffectOutcome(
+        'BrewingService.setIngredient',
+        () => ingredient,
+        App.BrewingServiceStateSchema,
+        App.BrewingServiceErrorSchema,
+      )
 
       const fuel = await runBrewing(fixture, Effect.result(invokeEffect(fixture.brewing.setFuel, [stackValue])))
-      assertEffectOutcome(fuel, (value) => Result.isSuccess(Schema.decodeUnknownResult(App.BrewingServiceStateSchema)(value)))
+      assertEffectOutcome(
+        'BrewingService.setFuel',
+        () => fuel,
+        App.BrewingServiceStateSchema,
+        App.BrewingServiceErrorSchema,
+      )
 
       const restored = await runBrewing(fixture, Effect.result(invokeEffect(fixture.brewing.restore, [snapshot])))
-      assertEffectOutcome(restored, (value) => value === undefined)
+      assertEffectOutcome(
+        'BrewingService.restore',
+        () => restored,
+        Schema.Undefined,
+        App.BrewingServiceErrorSchema,
+      )
       expect(Schema.decodeUnknownResult(App.BrewingServiceStateSchema)(await runBrewing(fixture, fixture.brewing.snapshot))._tag).toBe('Success')
     }),
     checks,
@@ -344,20 +483,35 @@ it('FurnaceService setters, restore, and output collection reject invalid values
   await fc.assert(
     fc.asyncProperty(fc.tuple(hostileValue, hostileValue, hostileValue), async ([stackValue, snapshot, inventory]) => {
       const input = await runFurnace(fixture, Effect.result(invokeEffect(fixture.furnace.setInput, [stackValue])))
-      assertEffectOutcome(input, (value) => value === undefined)
+      assertEffectOutcome(
+        'FurnaceService.setInput',
+        () => input,
+        Schema.Undefined,
+        App.FurnaceServiceErrorSchema,
+      )
 
       const fuel = await runFurnace(fixture, Effect.result(invokeEffect(fixture.furnace.setFuel, [stackValue])))
-      assertEffectOutcome(fuel, (value) => value === undefined)
+      assertEffectOutcome(
+        'FurnaceService.setFuel',
+        () => fuel,
+        Schema.Undefined,
+        App.FurnaceServiceErrorSchema,
+      )
 
       const restored = await runFurnace(fixture, Effect.result(invokeEffect(fixture.furnace.restore, [snapshot])))
-      assertEffectOutcome(restored, (value) => value === undefined)
+      assertEffectOutcome(
+        'FurnaceService.restore',
+        () => restored,
+        Schema.Undefined,
+        App.FurnaceServiceErrorSchema,
+      )
 
       const collected = await runFurnace(fixture, Effect.result(invokeEffect(fixture.furnace.prepareCollectOutput, [inventory])))
-      assertEffectOutcome(collected, (value) =>
-        isRecord(value) && isRecord(value['outcome']) &&
-        typeof value['outcome']['result'] === 'object' && value['outcome']['result'] !== null &&
-        validInventory(value['outcome']['inventory']) &&
-        App.validateFurnaceSnapshot(value['outcome']['furnace'])._tag === 'Valid',
+      assertEffectOutcome(
+        'FurnaceService.prepareCollectOutput',
+        () => collected,
+        App.FurnaceCollectionCandidateSchema,
+        App.FurnaceServiceErrorSchema,
       )
       expect(App.validateFurnaceSnapshot(await runFurnace(fixture, fixture.furnace.snapshot))._tag).toBe('Valid')
     }),
@@ -370,21 +524,39 @@ it('InventoryService add, remove, removeAt, and stored-stack insertion remain ty
   await fc.assert(
     fc.asyncProperty(fc.tuple(hostileScalar, hostileScalar, hostileScalar), async ([item, count, slot]) => {
       const add = await Effect.runPromise(Effect.result(invokeEffect(service.add, [item, count])))
-      assertEffectOutcome(add, (value) => typeof value === 'number' && Number.isFinite(value))
+      assertEffectOutcome(
+        'InventoryService.add',
+        () => add,
+        App.InventoryAddLeftoverSchema,
+        App.InventoryMutationErrorSchema,
+      )
 
       const remove = await Effect.runPromise(Effect.result(invokeEffect(service.remove, [item, count])))
-      assertEffectOutcome(remove, (value) => typeof value === 'number' && Number.isFinite(value))
+      assertEffectOutcome(
+        'InventoryService.remove',
+        () => remove,
+        App.InventoryCountSchema,
+        App.InventoryMutationErrorSchema,
+      )
 
       const removeAt = await Effect.runPromise(Effect.result(invokeEffect(service.removeAt, [slot, item, count])))
-      assertEffectOutcome(removeAt, (value) => hasAllowedTag(value, [
-        'Removed', 'InvalidSlot', 'InvalidCount', 'EmptySlot', 'ItemMismatch', 'Insufficient',
-      ]))
+      assertEffectOutcome(
+        'InventoryService.removeAt',
+        () => removeAt,
+        App.InventoryRemoveAtResultSchema,
+        App.InventoryMutationErrorSchema,
+      )
 
       const stack = { ...Result.getOrThrow(App.itemStack('stone', 1)), count, durability: null }
       const inserted = await Effect.runPromise(Effect.result(invokeEffect(service.addStoredStack, [stack])))
-      assertEffectOutcome(inserted, (value) => hasAllowedTag(value, ['Added', 'InvalidStack', 'ItemStackFailure']))
+      assertEffectOutcome(
+        'InventoryService.addStoredStack',
+        () => inserted,
+        App.AddStoredStackResultSchema,
+        Schema.Never,
+      )
 
-      expect(validInventory(await Effect.runPromise(service.snapshot))).toBe(true)
+      expect(Schema.is(App.InventorySnapshotSchema)(await Effect.runPromise(service.snapshot))).toBe(true)
     }),
     checks,
   )
@@ -399,24 +571,48 @@ it('InventoryService click, setSlot, moveStack, and quickMove return valid tagge
         slotIndex: index,
         carried: stackValue,
       }])))
-      assertEffectOutcome(click, (value) => hasAllowedTag(value, [
-        'PickedUp', 'Placed', 'Merged', 'Swapped', 'NoChange', 'InvalidSlot', 'InvalidCount',
-      ]))
+      assertEffectOutcome(
+        'InventoryService.click',
+        () => click,
+        App.InventoryClickResultSchema,
+        App.InventoryMutationErrorSchema,
+      )
 
       const slot = await Effect.runPromise(Effect.result(invokeEffect(service.setSlot, [index, stackValue])))
-      assertEffectOutcome(slot, (value) => isRecord(value) && ['Updated', 'InvalidSlot', 'InvalidStack'].includes(String(value['_tag'])))
+      assertEffectOutcome(
+        'InventoryService.setSlot',
+        () => slot,
+        App.InventorySetSlotResultSchema,
+        App.InventoryMutationErrorSchema,
+      )
 
       const moved = await Effect.runPromise(Effect.result(invokeEffect(service.moveStack, [index, otherIndex])))
-      assertEffectOutcome(moved, (value) => hasAllowedTag(value, [
-        'Moved', 'Merged', 'Swapped', 'InvalidSlot', 'EmptySlot', 'NoChange',
-      ]))
+      assertEffectOutcome(
+        'InventoryService.moveStack',
+        () => moved,
+        App.InventoryMoveResultSchema,
+        App.InventoryMutationErrorSchema,
+      )
 
       const quickMoved = await Effect.runPromise(Effect.result(invokeEffect(service.quickMove, [index])))
-      assertEffectOutcome(quickMoved, (value) => hasAllowedTag(value, ['Moved', 'InvalidSlot', 'EmptySlot', 'NoChange']))
-      expect(validInventory(await Effect.runPromise(service.snapshot))).toBe(true)
+      assertEffectOutcome(
+        'InventoryService.quickMove',
+        () => quickMoved,
+        App.InventoryQuickMoveResultSchema,
+        App.InventoryMutationErrorSchema,
+      )
+      expect(Schema.is(App.InventorySnapshotSchema)(await Effect.runPromise(service.snapshot))).toBe(true)
     }),
     checks,
   )
+})
+
+it('InventoryService.setSlot rejects a non-record stack without changing state', async () => {
+  const service = await makeInventory()
+  const outcome = await Effect.runPromise(service.setSlot(0, 'not-a-stack' as never))
+
+  expect(outcome).toStrictEqual({ _tag: 'InvalidStack' })
+  expect(Schema.is(App.InventorySnapshotSchema)(await Effect.runPromise(service.snapshot))).toBe(true)
 })
 
 it('InventoryService restore and restoreStorage reject malformed snapshots or leave valid normalized storage', async () => {
@@ -424,11 +620,21 @@ it('InventoryService restore and restoreStorage reject malformed snapshots or le
     fc.asyncProperty(hostileValue, async (snapshot) => {
       const service = await makeInventory()
       const restoredInventory = await Effect.runPromise(Effect.result(invokeEffect(service.restore, [snapshot])))
-      assertEffectOutcome(restoredInventory, (value) => typeof value === 'number' && Number.isFinite(value))
-      expect(validInventory(await Effect.runPromise(service.snapshot))).toBe(true)
+      assertEffectOutcome(
+        'InventoryService.restore',
+        () => restoredInventory,
+        App.InventoryCountSchema,
+        App.InventoryMutationErrorSchema,
+      )
+      expect(Schema.is(App.InventorySnapshotSchema)(await Effect.runPromise(service.snapshot))).toBe(true)
 
       const restoredStorage = await Effect.runPromise(Effect.result(invokeEffect(service.restoreStorage, [snapshot])))
-      assertEffectOutcome(restoredStorage, (value) => value === undefined)
+      assertEffectOutcome(
+        'InventoryService.restoreStorage',
+        () => restoredStorage,
+        Schema.Undefined,
+        App.InventoryRestoreStorageErrorSchema,
+      )
       expect(App.validatePlayerStorageSnapshot(await Effect.runPromise(service.storageSnapshot))._tag).toBe('Valid')
     }),
     checks,
@@ -447,25 +653,30 @@ it('InventoryService consume, previewCraft, and craft handle hostile request fie
           amount,
         },
       }])))
-      assertEffectOutcome(consumeAndDamage, (value) => hasAllowedTag(value, [
-        'Applied', 'InvalidConsumableCount', 'InvalidDamageAmount', 'InvalidLocation', 'DamageTargetMismatch',
-        'NotDamageable', 'InvalidDurability', 'EquipmentFailure', 'StorageFailure', 'DamageRejected',
-        'InsufficientConsumable', 'ItemStackFailure',
-      ]))
+      assertEffectOutcome(
+        'InventoryService.consumeAndDamageAt',
+        () => consumeAndDamage,
+        App.ConsumeAndDamageAtResultSchema,
+        App.InventoryConsumeAndDamageErrorSchema,
+      )
 
       const grid = { width: dimension, height: 1, cells: [] }
       const preview = await Effect.runPromise(Effect.result(invokeEffect(service.previewCraft, [grid])))
-      assertEffectOutcome(preview, (value) =>
-        isRecord(value) && (value['_tag'] === 'NoMatch' ||
-          (value['_tag'] === 'Match' && isItemStack(value['output']))),
+      assertEffectOutcome(
+        'InventoryService.previewCraft',
+        () => preview,
+        App.RecipeMatchSchema,
+        Schema.Never,
       )
 
       const crafted = await Effect.runPromise(Effect.result(invokeEffect(service.craft, [grid])))
-      assertEffectOutcome(crafted, (value) =>
-        isRecord(value) &&
-        ['Crafted', 'NoMatch', 'MissingIngredients', 'NoRoom'].includes(String(value['_tag'])),
+      assertEffectOutcome(
+        'InventoryService.craft',
+        () => crafted,
+        App.CraftResultSchema,
+        App.InventoryCraftErrorSchema,
       )
-      expect(validInventory(await Effect.runPromise(service.snapshot))).toBe(true)
+      expect(Schema.is(App.InventorySnapshotSchema)(await Effect.runPromise(service.snapshot))).toBe(true)
     }),
     checks,
   )

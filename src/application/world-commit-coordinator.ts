@@ -7,6 +7,7 @@ import {
 import type { Dimension, DimensionRevision, WorldId, WorldRevision } from '@nerima-games/mc-kernel'
 import { Brand, Context, Effect, Layer, Ref, Schema } from 'effect'
 import type { YieldableError } from 'effect/Cause'
+import { SchemaErrorSchema } from '../schema-errors.js'
 import {
   ReplicatedOwnerIdSchema,
   type ReplicatedOwnerChange,
@@ -108,6 +109,18 @@ export type WorldCommitCoordinatorError =
   | DimensionRevisionConflict
   | ReplicatedOwnerUnknown
   | ReplicatedOwnerDuplicate
+
+export const WorldCommitCoordinatorErrorSchema: Schema.Schema<WorldCommitCoordinatorError> = Schema.Union([
+  Schema.Struct({
+    _tag: Schema.Literal('WorldCommitCoordinatorInvalidOptions'),
+    value: Schema.Unknown,
+  }),
+  SchemaErrorSchema,
+  Schema.instanceOf(WorldRevisionConflict),
+  Schema.instanceOf(DimensionRevisionConflict),
+  Schema.instanceOf(ReplicatedOwnerUnknown),
+  Schema.instanceOf(ReplicatedOwnerDuplicate),
+])
 
 type PreparedOwnerChange = ReplicatedOwnerChange
 

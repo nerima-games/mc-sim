@@ -33,6 +33,8 @@
 import { Brand, Result, Schema, SchemaIssue } from 'effect'
 import {
   StackCount,
+  NamespacedResourceLocation,
+  isItemStack,
   isItemType,
   itemValidationFailure,
   itemStack as kernelItemStack,
@@ -50,6 +52,40 @@ export type { ItemStack }
 
 export type ItemStackFailure = StackConstructionFailure
 export type ItemStackResult = Result.Result<ItemStack, ItemStackFailure>
+
+export const BrandErrorSchema: Schema.Schema<Brand.BrandError> = Schema.declare(
+  (value: unknown): value is Brand.BrandError => value instanceof Brand.BrandError,
+)
+const isNamespacedResourceLocation = (value: unknown): value is NamespacedResourceLocation =>
+  typeof value === 'string' && Result.isSuccess(NamespacedResourceLocation.result(value))
+const NamespacedResourceLocationSchema: Schema.Schema<NamespacedResourceLocation> =
+  Schema.declare(isNamespacedResourceLocation)
+const ItemValidationFailureSchema = Schema.TaggedStruct('ItemValidationFailure', {
+  kind: Schema.Literals(['TypeError', 'RangeError', 'InputError']),
+  reason: Schema.Literals(['invalid-type', 'out-of-range', 'invalid-value', 'hostile-input']),
+  field: Schema.String,
+  message: Schema.String,
+  value: Schema.optionalKey(Schema.Unknown),
+})
+const ItemComponentPatchConflictSchema = Schema.TaggedStruct('ItemComponentPatchConflictError', {
+  componentKey: NamespacedResourceLocationSchema,
+})
+const TextComponentFailureSchema = Schema.TaggedStruct('TextComponentFailure', {
+  kind: Schema.Literal('TypeError'),
+  reason: Schema.Literals(['invalid-value', 'hostile-input']),
+  message: Schema.String,
+  value: Schema.optionalKey(Schema.Unknown),
+})
+export const ItemStackSchema: Schema.Schema<ItemStack> = Schema.declare(isItemStack)
+export const KernelItemStackFailureSchema: Schema.Schema<Exclude<ItemStackFailure, Brand.BrandError>> = Schema.Union([
+  ItemValidationFailureSchema,
+  ItemComponentPatchConflictSchema,
+  TextComponentFailureSchema,
+])
+export const ItemStackFailureSchema: Schema.Schema<ItemStackFailure> = Schema.Union([
+  BrandErrorSchema,
+  KernelItemStackFailureSchema,
+])
 
 export const itemStack = (
   item: ItemType,

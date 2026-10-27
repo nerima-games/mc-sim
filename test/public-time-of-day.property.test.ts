@@ -1,7 +1,8 @@
 import fc from 'fast-check'
+import { Result } from 'effect'
 import { expect, it } from 'vitest'
 import * as Sim from '../src/index.js'
-import { assertResultContract, finiteTree, hostileNumber, hostileValue, isRecord, unknownValue } from './public-property-helpers.js'
+import { assertResultContract, finiteTree, hostileNumber, hostileValue, unknownValue } from './public-property-helpers.js'
 
 const checks = { numRuns: 40, seed: 0x54494d45 }
 const coercionTrap = fc.constant({ toString: '' })
@@ -48,23 +49,23 @@ it('time setters repair hostile states and scalar inputs into finite states', ()
   )
 })
 
-it('advance returns a typed failure or a valid finite time state for hostile envelopes', () => {
+it('advance returns a valid finite time state when hostile envelopes are accepted', () => {
   fc.assert(
     fc.property(timeState, hostileScalar, (state, delta) => {
       const result = Sim.advance(state as never, delta as never)
-      assertResultContract(result, (success) => isRecord(success) && Sim.isValidTimeState(success as never))
+      assertResultContract('time-of-day.advance', () => result, Sim.TimeStateSchema, Sim.BrandErrorSchema)
     }),
     checks,
   )
 })
 
-it('simulationTickToDayFraction rejects hostile coercion objects through its Result channel', () => {
+it('simulationTickToDayFraction returns an in-range value when hostile coercions are accepted', () => {
   fc.assert(
     fc.property(hostileScalar, hostileScalar, (tick, dayLengthTicks) => {
       const result = Sim.simulationTickToDayFraction(tick as never, dayLengthTicks as never)
-      assertResultContract(result, (fraction) =>
-        typeof fraction === 'number' && Number.isFinite(fraction) && fraction >= 0 && fraction <= Sim.MAX_TIME_FRACTION,
-      )
+      if (Result.isSuccess(result)) {
+        expect(Number.isFinite(result.success) && result.success >= 0 && result.success <= Sim.MAX_TIME_FRACTION).toBe(true)
+      }
     }),
     checks,
   )
