@@ -254,6 +254,11 @@ describe('WorldCommitCoordinator', () => {
       })
       const candidate = { ownerId: ownerA, state: { count: 1 } }
 
+      const invalidRevision = yield* Effect.result(coordinator.commit({
+        expectedRevision: Brand.nominal<typeof revisionZero>()(0.5),
+        expectedDimensions: [],
+        changes: [candidate],
+      }))
       const worldConflict = yield* Effect.result(coordinator.commit({
         expectedRevision: revisionOne,
         expectedDimensions: [],
@@ -270,6 +275,8 @@ describe('WorldCommitCoordinator', () => {
         changes: [{ ownerId: unknownOwner, state: { count: 1 } }],
       }))
 
+      expect(invalidRevision._tag).toBe('Failure')
+      if (invalidRevision._tag === 'Failure') expect(invalidRevision.failure._tag).toBe('SchemaError')
       expect(worldConflict._tag).toBe('Failure')
       if (worldConflict._tag === 'Failure') expect(worldConflict.failure).toBeInstanceOf(WorldRevisionConflict)
       expect(dimensionConflict._tag).toBe('Failure')

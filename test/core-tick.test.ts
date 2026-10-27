@@ -364,6 +364,44 @@ describe('CoreTick', () => {
     }),
   )
 
+  it.effect('rejects malformed ready intents before running stages, committing, or publishing', () =>
+    Effect.gen(function* () {
+      let stageCalls = 0
+      let commitCalls = 0
+      let publishCalls = 0
+      const stages = noOpStages()
+      stages.intentsAndRules = () => Effect.sync(() => {
+        stageCalls += 1
+        return {
+          changes: [{ ownerId: makeOwnerId('ready-owner'), state: { value: 1 } }],
+          expectedDimensions: [],
+          events: [levelUp('ready-entity', 1)],
+        }
+      })
+      const core = yield* makeCoreTick({
+        coordinator: coordinatorAt(makeRevision(0), (request) => Effect.sync(() => {
+          commitCalls += 1
+          return commitDeltaFor(request)
+        })),
+        stages,
+        publish: () => Effect.sync(() => { publishCalls += 1 }),
+      })
+
+      const malformed = yield* Effect.result(core.runTick(makeTick(1), [null] as never))
+      expect(malformed._tag).toBe('Failure')
+      if (malformed._tag === 'Failure') expect(malformed.failure._tag).toBe('CoreTickInvalidReadyIntents')
+      expect(stageCalls).toBe(0)
+      expect(commitCalls).toBe(0)
+      expect(publishCalls).toBe(0)
+
+      const valid = yield* Effect.result(core.runTick(makeTick(1), [readyIntent('valid-after-invalid', 0)]))
+      expect(valid._tag).toBe('Success')
+      expect(stageCalls).toBe(1)
+      expect(commitCalls).toBe(1)
+      expect(publishCalls).toBe(1)
+    }),
+  )
+
   it.effect('rejects tick overflow before running stages or accepting ready intents', () =>
     Effect.gen(function* () {
       let stageCalls = 0

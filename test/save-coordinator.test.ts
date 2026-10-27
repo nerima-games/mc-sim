@@ -47,6 +47,15 @@ const chunkKeys = (chunks: ReadonlyArray<DimensionChunk>): ReadonlyArray<string>
   [...chunks.map(({ dimension, chunk }) => `${dimension}:${String(chunk.coord.cx)},${String(chunk.coord.cz)}`)].sort()
 
 describe('SaveCoordinator', () => {
+  it.effect('a null constructor envelope returns the declared typed failure', () =>
+    Effect.gen(function* () {
+      const outcome = yield* Effect.result(makeSaveCoordinator(null as never))
+
+      expect(Result.isFailure(outcome)).toBe(true)
+      if (Result.isFailure(outcome)) expect(outcome.failure._tag).toBe('BrandError')
+    }),
+  )
+
   it.effect('requestSave publishes the merge of known, retained, and resident chunks', () =>
     Effect.gen(function* () {
       const publications = yield* Ref.make<ReadonlyArray<SaveCoordinatorPublication<{ readonly tick: number }>>>([])

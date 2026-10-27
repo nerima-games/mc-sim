@@ -1,7 +1,7 @@
 import { SimulationTick, type SimulationTick as SimulationTickValue } from '@nerima-games/mc-kernel'
-import { Brand, Cause, Effect, Ref, Result, Semaphore } from 'effect'
+import { Brand, Cause, Effect, Ref, Result, Schema, Semaphore } from 'effect'
 import type { DomainEvent, DomainEventBusApi } from './domain-event-bus.js'
-import type { QueuedIntent } from './intent-queue.js'
+import { QueuedIntentSchema, type QueuedIntent } from './intent-queue.js'
 import type {
   DimensionRevisionExpectation,
   ReplicatedOwnerCandidate,
@@ -56,6 +56,10 @@ export type CoreTickOptions<StageError = never> = Readonly<{
 
 export type CoreTickInputError =
   | Readonly<{
+      _tag: 'CoreTickInvalidOptions'
+      value: unknown
+    }>
+  | Readonly<{
       _tag: 'CoreTickInvalidTick'
       value: unknown
       reason: Brand.BrandError
@@ -70,11 +74,16 @@ export type CoreTickInputError =
       expected: SimulationTickValue
       actual: SimulationTickValue
     }>
+  | Readonly<{
+      _tag: 'CoreTickInvalidReadyIntents'
+      value: unknown
+      reason: Schema.SchemaError
+    }>
 
 export type CoreTickPostCommitFailure<StageError = never> = Readonly<{
   _tag: 'CoreTickPostCommitFailure'
   committedTick: SimulationTickValue
-  cause: Cause.Cause<StageError>
+  cause: Cause.Cause<StageError | Schema.SchemaError>
 }>
 
 export type CoreTickTerminated<StageError = never> = Readonly<{
@@ -111,6 +120,20 @@ const stageOrder: ReadonlyArray<CoreTickStageName> = [
   'environment',
   'entities',
 ]
+
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const isCoreTickOptions = (value: unknown): boolean => {
+  if (!isRecord(value)) return false
+  const coordinator = value['coordinator']
+  const stages = value['stages']
+  if (!isRecord(coordinator) || !isRecord(stages)) return false
+  return Effect.isEffect(coordinator['revision']) &&
+    typeof coordinator['commit'] === 'function' &&
+    typeof value['publish'] === 'function' &&
+    stageOrder.every((name) => typeof stages[name] === 'function')
+}
 
 const validateTick = (
   current: SimulationTickValue,
@@ -166,6 +189,9 @@ const hasChanges = (
 export const makeCoreTick = <StageError = never>(
   options: CoreTickOptions<StageError>,
 ): Effect.Effect<CoreTickApi<StageError>, CoreTickInputError> => {
+  if (!isCoreTickOptions(options)) {
+    return Effect.fail({ _tag: 'CoreTickInvalidOptions', value: options })
+  }
   const initialTick = options.initialTick ?? SimulationTick(0)
   const validInitialTick = SimulationTick.result(initialTick)
   if (Result.isFailure(validInitialTick)) {
@@ -199,9 +225,18 @@ export const makeCoreTick = <StageError = never>(
           const validation = validateTick(current, tick)
           if (validation._tag !== 'Valid') return yield* Effect.fail(validation)
 
+          const readyResult = Schema.decodeUnknownResult(Schema.Array(QueuedIntentSchema))(ready)
+          if (Result.isFailure(readyResult)) {
+            return yield* Effect.fail({
+              _tag: 'CoreTickInvalidReadyIntents' as const,
+              value: ready,
+              reason: readyResult.failure,
+            })
+          }
+
           const pending = yield* Ref.get(pendingTick)
           const retainedReady = pending === undefined ? [] : pending.ready
-          const acceptedReady = mergeReady(retainedReady, ready)
+          const acceptedReady = mergeReady(retainedReady, readyResult.success)
           yield* Ref.set(pendingTick, { ready: acceptedReady })
 
           const expectedRevision = yield* options.coordinator.revision

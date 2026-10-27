@@ -17,6 +17,8 @@ import {
 
 type AnyCodec = Schema.Codec<any, any>
 
+const isAnyCodec = (value: unknown): value is AnyCodec => Schema.isSchema(value)
+
 type WorldRevisionConflictFields = Readonly<{ expected: WorldRevision; actual: WorldRevision }>
 const WorldRevisionConflictBase: new (args: WorldRevisionConflictFields) =>
   YieldableError & { readonly _tag: 'WorldRevisionConflict' } & WorldRevisionConflictFields =
@@ -77,7 +79,30 @@ export type WorldCommitRequest = Readonly<{
   changes: readonly [ReplicatedOwnerCandidate, ...ReadonlyArray<ReplicatedOwnerCandidate>]
 }>
 
+const WorldCommitRequestSchema = Schema.Struct({
+  expectedRevision: WorldRevisionSchema,
+  expectedDimensions: Schema.Array(Schema.Struct({
+    dimension: Schema.Literals(DIMENSIONS),
+    expectedRevision: DimensionRevisionSchema,
+  })),
+  changes: Schema.NonEmptyArray(Schema.Struct({
+    ownerId: ReplicatedOwnerIdSchema,
+    state: Schema.Unknown,
+  })),
+})
+
+const WorldCommitCoordinatorOptionsSchema = Schema.Struct({
+  world: WorldIdSchema,
+  owners: Schema.Array(Schema.Struct({
+    ownerId: ReplicatedOwnerIdSchema,
+    schema: Schema.Unknown,
+    initialState: Schema.Unknown,
+  })),
+  dimensions: Schema.optional(Schema.Array(Schema.Literals(DIMENSIONS))),
+})
+
 export type WorldCommitCoordinatorError =
+  | Readonly<{ _tag: 'WorldCommitCoordinatorInvalidOptions'; value: unknown }>
   | Schema.SchemaError
   | WorldRevisionConflict
   | DimensionRevisionConflict
@@ -164,22 +189,35 @@ export const makeWorldCommitCoordinator = (
   options: WorldCommitCoordinatorOptions,
 ): Effect.Effect<WorldCommitCoordinatorApi, WorldCommitCoordinatorError> =>
   Effect.gen(function* () {
-    const world = yield* Schema.decodeUnknownEffect(WorldIdSchema)(options.world)
+    const decodedOptions = yield* Schema.decodeUnknownEffect(WorldCommitCoordinatorOptionsSchema)(options)
+    const registrations: Array<ReplicatedOwnerRegistration> = []
+    for (const registration of decodedOptions.owners) {
+      if (!isAnyCodec(registration.schema)) {
+        return yield* Effect.fail({ _tag: 'WorldCommitCoordinatorInvalidOptions' as const, value: options })
+      }
+      registrations.push({
+        ownerId: registration.ownerId,
+        schema: registration.schema,
+        initialState: registration.initialState,
+      })
+    }
+
+    const world = decodedOptions.world
     const initialRevision = yield* Schema.decodeUnknownEffect(WorldRevisionSchema)(0)
     const initialDimensionRevision = yield* Schema.decodeUnknownEffect(DimensionRevisionSchema)(0)
     const ownerIds = new Set<ReplicatedOwnerId>()
-    for (const registration of options.owners) {
+    for (const registration of registrations) {
       if (ownerIds.has(registration.ownerId)) {
         return yield* Effect.fail(new ReplicatedOwnerDuplicate({ ownerId: registration.ownerId }))
       }
       ownerIds.add(registration.ownerId)
     }
 
-    const preparedOwners = yield* Effect.forEach(options.owners, prepareInitialOwner)
+    const preparedOwners = yield* Effect.forEach(registrations, prepareInitialOwner)
     const registry = new Map<ReplicatedOwnerId, AnyCodec>()
-    for (const registration of options.owners) registry.set(registration.ownerId, registration.schema)
+    for (const registration of registrations) registry.set(registration.ownerId, registration.schema)
 
-    const dimensions = options.dimensions ?? defaultDimensions
+    const dimensions = decodedOptions.dimensions ?? defaultDimensions
     const dimensionRevisions = new Map<Dimension, DimensionRevision>()
     for (const dimension of dimensions) dimensionRevisions.set(dimension, initialDimensionRevision)
 
@@ -206,77 +244,84 @@ export const makeWorldCommitCoordinator = (
         }))
       })
 
-    const commit: WorldCommitCoordinatorApi['commit'] = (request) => {
-      const duplicate = repeatedOwnerId(request.changes)
-      if (duplicate !== undefined) return Effect.fail(new ReplicatedOwnerDuplicate({ ownerId: duplicate }))
+    const commit: WorldCommitCoordinatorApi['commit'] = (request) =>
+      Effect.flatMap(
+        Schema.decodeUnknownEffect(WorldCommitRequestSchema)(request),
+        ({ expectedRevision, expectedDimensions, changes }): Effect.Effect<
+          ReplicatedWorldDelta<PreparedOwnerChange>,
+          WorldCommitCoordinatorError
+        > => {
+          const duplicate = repeatedOwnerId(changes)
+          if (duplicate !== undefined) return Effect.fail(new ReplicatedOwnerDuplicate({ ownerId: duplicate }))
 
-      return Effect.flatMap(
-        Effect.forEach(request.changes, (candidate) => prepareCandidate(candidate, registry)),
-        (preparedChanges) =>
-          Effect.uninterruptible(
-            Effect.flatMap(
-              Ref.modify(committed, (current): readonly [CommitDecision, CoordinatorState] => {
-                if (current.revision !== request.expectedRevision) {
-                  return [
-                    {
-                      _tag: 'Rejected',
-                      error: new WorldRevisionConflict({
-                        expected: request.expectedRevision,
-                        actual: current.revision,
-                      }),
-                    },
-                    current,
-                  ]
-                }
+          return Effect.flatMap(
+            Effect.forEach(changes, (candidate) => prepareCandidate(candidate, registry)),
+            (preparedChanges) =>
+              Effect.uninterruptible(
+                Effect.flatMap(
+                  Ref.modify(committed, (current): readonly [CommitDecision, CoordinatorState] => {
+                    if (current.revision !== expectedRevision) {
+                      return [
+                        {
+                          _tag: 'Rejected',
+                          error: new WorldRevisionConflict({
+                            expected: expectedRevision,
+                            actual: current.revision,
+                          }),
+                        },
+                        current,
+                      ]
+                    }
 
-                for (const expectation of request.expectedDimensions) {
-                  const actual = current.dimensionRevisions.get(expectation.dimension) ?? makeDimensionRevision(0)
-                  if (actual !== expectation.expectedRevision) {
+                    for (const expectation of expectedDimensions) {
+                      const actual = current.dimensionRevisions.get(expectation.dimension) ?? makeDimensionRevision(0)
+                      if (actual !== expectation.expectedRevision) {
+                        return [
+                          {
+                            _tag: 'Rejected',
+                            error: new DimensionRevisionConflict({
+                              dimension: expectation.dimension,
+                              expected: expectation.expectedRevision,
+                              actual,
+                            }),
+                          },
+                          current,
+                        ]
+                      }
+                    }
+
+                    const revision = makeWorldRevision(current.revision + 1)
+                    const nextDimensionRevisions = new Map(current.dimensionRevisions)
+                    const dimensionsToIncrement = new Set(expectedDimensions.map(({ dimension }) => dimension))
+                    for (const dimension of dimensionsToIncrement) {
+                      const actual = nextDimensionRevisions.get(dimension) ?? makeDimensionRevision(0)
+                      nextDimensionRevisions.set(dimension, makeDimensionRevision(actual + 1))
+                    }
+                    const nextOwners = new Map(current.owners)
+                    for (const change of preparedChanges) nextOwners.set(change.owner, change.state)
+                    const delta: ReplicatedWorldDelta<PreparedOwnerChange> = {
+                      world: current.world,
+                      revision,
+                      changes: preparedChanges,
+                    }
                     return [
+                      { _tag: 'Committed', delta },
                       {
-                        _tag: 'Rejected',
-                        error: new DimensionRevisionConflict({
-                          dimension: expectation.dimension,
-                          expected: expectation.expectedRevision,
-                          actual,
-                        }),
+                        world: current.world,
+                        revision,
+                        dimensionRevisions: nextDimensionRevisions,
+                        owners: nextOwners,
                       },
-                      current,
                     ]
-                  }
-                }
-
-                const revision = makeWorldRevision(current.revision + 1)
-                const nextDimensionRevisions = new Map(current.dimensionRevisions)
-                const dimensionsToIncrement = new Set(request.expectedDimensions.map(({ dimension }) => dimension))
-                for (const dimension of dimensionsToIncrement) {
-                  const actual = nextDimensionRevisions.get(dimension) ?? makeDimensionRevision(0)
-                  nextDimensionRevisions.set(dimension, makeDimensionRevision(actual + 1))
-                }
-                const nextOwners = new Map(current.owners)
-                for (const change of preparedChanges) nextOwners.set(change.owner, change.state)
-                const delta: ReplicatedWorldDelta<PreparedOwnerChange> = {
-                  world: current.world,
-                  revision,
-                  changes: preparedChanges,
-                }
-                return [
-                  { _tag: 'Committed', delta },
-                  {
-                    world: current.world,
-                    revision,
-                    dimensionRevisions: nextDimensionRevisions,
-                    owners: nextOwners,
-                  },
-                ]
-              }),
-              (decision) => decision._tag === 'Committed'
-                ? Effect.succeed(decision.delta)
-                : Effect.fail(decision.error),
-            ),
-          ),
+                  }),
+                  (decision) => decision._tag === 'Committed'
+                    ? Effect.succeed(decision.delta)
+                    : Effect.fail(decision.error),
+                ),
+              ),
+          )
+        },
       )
-    }
 
     return {
       snapshot,
