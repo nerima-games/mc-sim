@@ -1,4 +1,7 @@
 import {
+  EntityIdSchema,
+  ProjectileIdSchema,
+  SimulationTickSchema,
   StackCount,
   itemIdOf,
 } from '@nerima-games/mc-kernel'
@@ -100,19 +103,28 @@ export const makeFishingService = (
       coordinator.snapshot(ownerId, FishingStateSchema),
       (snapshot) => snapshot.state,
     ),
-    cast: (actor, bobber) => transition(
-      coordinator,
-      ownerId,
-      (state) => castFishingRod(state, actor, bobber),
-    ),
-    bite: (actor) => transition(
-      coordinator,
-      ownerId,
-      (state) => registerFishingBite(state, actor),
-    ),
+    cast: (actor, bobber) => Effect.gen(function* () {
+      const validActor = yield* Schema.decodeUnknownEffect(EntityIdSchema)(actor)
+      const validBobber = yield* Schema.decodeUnknownEffect(ProjectileIdSchema)(bobber)
+      yield* transition(
+        coordinator,
+        ownerId,
+        (state) => castFishingRod(state, validActor, validBobber),
+      )
+    }),
+    bite: (actor) => Effect.gen(function* () {
+      const validActor = yield* Schema.decodeUnknownEffect(EntityIdSchema)(actor)
+      yield* transition(
+        coordinator,
+        ownerId,
+        (state) => registerFishingBite(state, validActor),
+      )
+    }),
     reel: (actor, tick) => Effect.gen(function* () {
+      const validActor = yield* Schema.decodeUnknownEffect(EntityIdSchema)(actor)
+      const validTick = yield* Schema.decodeUnknownEffect(SimulationTickSchema)(tick)
       const snapshot = yield* coordinator.snapshot(ownerId, FishingStateSchema)
-      const plan = yield* fromResult(reelFishingRod(snapshot.state, actor))
+      const plan = yield* fromResult(reelFishingRod(snapshot.state, validActor))
       if (plan.outcome._tag === 'NoBite') {
         yield* commitState(coordinator, ownerId, snapshot, plan.state)
         return { _tag: 'NoBite' } as const
@@ -125,8 +137,8 @@ export const makeFishingService = (
 
       const event: DomainEvent = {
         _tag: 'ItemPickedUp',
-        tick,
-        actor,
+        tick: validTick,
+        actor: validActor,
         source: { _tag: 'Projectile', id: plan.outcome.bobber },
         item: itemIdOf(item),
         count,

@@ -67,6 +67,17 @@ describe('crop service', () => {
     }).pipe(Effect.provide(CropServiceLayer)),
   )
 
+  it.effect('returns a typed validation failure for an invalid crop before choosing its default soil', () =>
+    Effect.gen(function* () {
+      const crops = yield* CropService
+      const invalid = yield* Effect.result(crops.plant(location(0, 64, 0), null as never))
+
+      expect(invalid._tag).toBe('Failure')
+      if (invalid._tag === 'Failure') expect(invalid.failure._tag).toBe('CropValidationError')
+      expect((yield* crops.snapshot).crops).toEqual([])
+    }).pipe(Effect.provide(CropServiceLayer)),
+  )
+
   it.effect('plants, grows, and harvests every registered crop through simulation ticks', () =>
     Effect.gen(function* () {
       const crops = yield* CropService

@@ -87,6 +87,17 @@ describe('HotbarService', () => {
     }).pipe(Effect.provide(serviceLayer())),
   )
 
+  it.effect('returns a typed failure for a non-number selection without changing the slot', () =>
+    Effect.gen(function* () {
+      const hotbar = yield* HotbarService
+      const invalid = yield* Effect.result(hotbar.setSelectedSlot([] as never))
+
+      expect(Result.isFailure(invalid)).toBe(true)
+      if (Result.isFailure(invalid)) expect(invalid.failure._tag).toBe('SchemaError')
+      expect(yield* hotbar.getSelectedSlot).toBe(0)
+    }).pipe(Effect.provide(serviceLayer())),
+  )
+
   it.effect('reads the selected item and all hotbar slots from InventoryService', () =>
     Effect.gen(function* () {
       const hotbar = yield* HotbarService

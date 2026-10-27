@@ -94,6 +94,18 @@ describe('FishingService', () => {
       expect(Result.isFailure(invalidBite)).toBe(true)
       if (Result.isFailure(invalidBite)) expect(invalidBite.failure._tag).toBe('FishingInvalidState')
 
+      const malformedCast = yield* Effect.result(fishing.cast([] as never, bobber))
+      const malformedBite = yield* Effect.result(fishing.bite([] as never))
+      const malformedReel = yield* Effect.result(fishing.reel([] as never, [] as never))
+      for (const outcome of [malformedCast, malformedBite]) {
+        expect(Result.isFailure(outcome)).toBe(true)
+        if (Result.isFailure(outcome)) expect(outcome.failure._tag).toBe('SchemaError')
+      }
+      expect(Result.isFailure(malformedReel)).toBe(true)
+      if (Result.isFailure(malformedReel)) expect(malformedReel.failure._tag).toBe('SchemaError')
+      expect(yield* fishing.snapshot).toEqual(emptyFishingState())
+      expect(published).toEqual([])
+
       yield* fishing.cast(actor, bobber)
       const castState = yield* fishing.snapshot
       expect(castState.rods).toEqual([{ actor, bobber, phase: 'cast' }])
