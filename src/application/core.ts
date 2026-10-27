@@ -1,13 +1,20 @@
-import { SimulationTick, type SimulationTick as SimulationTickValue } from '@nerima-games/mc-kernel'
+import {
+  SimulationTick,
+  SimulationTickSchema,
+  type SimulationTick as SimulationTickValue,
+} from '@nerima-games/mc-kernel'
 import { Brand, Cause, Effect, Ref, Result, Schema, Semaphore } from 'effect'
+import { BrandErrorSchema } from '../domain/inventory.js'
+import { SchemaErrorSchema } from '../schema-errors.js'
 import type { DomainEvent, DomainEventBusApi } from './domain-event-bus.js'
 import { QueuedIntentSchema, type QueuedIntent } from './intent-queue.js'
-import type {
-  DimensionRevisionExpectation,
-  ReplicatedOwnerCandidate,
-  WorldCommitCoordinatorApi,
-  WorldCommitCoordinatorError,
-  WorldCommitRequest,
+import {
+  WorldCommitCoordinatorErrorSchema,
+  type WorldCommitCoordinatorError,
+  type DimensionRevisionExpectation,
+  type ReplicatedOwnerCandidate,
+  type WorldCommitCoordinatorApi,
+  type WorldCommitRequest,
 } from './world-commit-coordinator.js'
 import type { ReplicatedOwnerChange, ReplicatedWorldDelta } from './replicated-state.js'
 
@@ -105,6 +112,58 @@ export type CoreTickApi<StageError = never> = Readonly<{
     ready: ReadonlyArray<QueuedIntent>,
   ) => Effect.Effect<void, CoreTickError<StageError>>
 }>
+
+export const CoreTickRunTickSuccessSchema: Schema.Schema<undefined> = Schema.Undefined
+
+const CoreTickInputErrorSchema: Schema.Schema<CoreTickInputError> = Schema.Union([
+  Schema.Struct({
+    _tag: Schema.Literal('CoreTickInvalidOptions'),
+    value: Schema.Unknown,
+  }),
+  Schema.Struct({
+    _tag: Schema.Literal('CoreTickInvalidTick'),
+    value: Schema.Unknown,
+    reason: BrandErrorSchema,
+  }),
+  Schema.Struct({
+    _tag: Schema.Literal('CoreTickTickOverflow'),
+    current: SimulationTickSchema,
+    reason: BrandErrorSchema,
+  }),
+  Schema.Struct({
+    _tag: Schema.Literal('CoreTickOutOfOrder'),
+    expected: SimulationTickSchema,
+    actual: SimulationTickSchema,
+  }),
+  Schema.Struct({
+    _tag: Schema.Literal('CoreTickInvalidReadyIntents'),
+    value: Schema.Unknown,
+    reason: SchemaErrorSchema,
+  }),
+])
+
+export const makeCoreTickErrorSchema = <StageError>(
+  stageErrorSchema: Schema.Schema<StageError>,
+): Schema.Schema<CoreTickError<StageError>> => {
+  const postCommitFailureSchema: Schema.Schema<CoreTickPostCommitFailure<StageError>> = Schema.Struct({
+    _tag: Schema.Literal('CoreTickPostCommitFailure'),
+    committedTick: SimulationTickSchema,
+    cause: Schema.Cause(Schema.Union([stageErrorSchema, SchemaErrorSchema]), Schema.Unknown),
+  })
+  const terminatedSchema: Schema.Schema<CoreTickTerminated<StageError>> = Schema.Struct({
+    _tag: Schema.Literal('CoreTickTerminated'),
+    committedTick: SimulationTickSchema,
+    failure: postCommitFailureSchema,
+  })
+
+  return Schema.Union([
+    CoreTickInputErrorSchema,
+    stageErrorSchema,
+    WorldCommitCoordinatorErrorSchema,
+    postCommitFailureSchema,
+    terminatedSchema,
+  ])
+}
 
 type PendingTick = Readonly<{
   ready: ReadonlyArray<QueuedIntent>

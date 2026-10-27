@@ -113,7 +113,7 @@ it('core ticks reject or safely process hostile tick values and queued-intent co
   const world = Schema.decodeUnknownSync(WorldIdSchema)('core-property-world')
   const coordinator = await Effect.runPromise(makeWorldCommitCoordinator({ world, owners: [] }))
   const noChanges = () => Effect.succeed({ changes: [], expectedDimensions: [], events: [] })
-  const core = await Effect.runPromise(makeCoreTick({
+  const makeCore = () => makeCoreTick({
     coordinator,
     publish: () => Effect.void,
     stages: {
@@ -122,11 +122,33 @@ it('core ticks reject or safely process hostile tick values and queued-intent co
       environment: noChanges,
       entities: noChanges,
     },
-  }))
+  })
+  const successSchema = PublicApplication.CoreTickRunTickSuccessSchema
+  const failureSchema = PublicApplication.makeCoreTickErrorSchema(Schema.Never)
+  const validIntent = Schema.decodeUnknownSync(PublicApplication.QueuedIntentSchema)({
+    sequence: 0,
+    intent: {
+      id: 'core-property-valid-intent',
+      targetTick: 2,
+      source: 'local',
+      payload: { _tag: 'MeleeAttack', actor: 'core-property-player' },
+    },
+  })
+
+  const validCore = await Effect.runPromise(makeCore())
+  const firstTick = await assertEffectResult(
+    'CoreTick.runTick valid empty input', validCore.runTick, [1, []], successSchema, failureSchema,
+  )
+  expect(Result.isSuccess(firstTick)).toBe(true)
+  const secondTick = await assertEffectResult(
+    'CoreTick.runTick valid queued intent', validCore.runTick, [2, [validIntent]], successSchema, failureSchema,
+  )
+  expect(Result.isSuccess(secondTick)).toBe(true)
 
   await fc.assert(
     fc.asyncProperty(fc.tuple(hostileNumber, fc.array(hostileValue)), async ([tick, ready]) => {
-      await runEffectResult(core.runTick, [tick, ready])
+      const core = await Effect.runPromise(makeCore())
+      await assertEffectResult('CoreTick.runTick hostile input', core.runTick, [tick, ready], successSchema, failureSchema)
     }),
     checks,
   )
