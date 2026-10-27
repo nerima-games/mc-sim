@@ -1,4 +1,4 @@
-import { Brand, Result } from 'effect'
+import { Brand, Result, Schema, SchemaIssue } from 'effect'
 import {
   BREWING_BOTTLE_SLOTS,
   BREWING_FUEL_ITEM,
@@ -258,9 +258,11 @@ export const setBrewingIngredient = (
 }
 
 export const consumeIngredient = (ingredient: ItemStack): Result.Result<Slot, ItemStackFailure> =>
-  ingredient.count === 1
-    ? Result.succeed(undefined)
-    : itemStackWithCount(ingredient, ingredient.count - 1)
+  isItemStack(ingredient)
+    ? ingredient.count === 1
+      ? Result.succeed(undefined)
+      : itemStackWithCount(ingredient, ingredient.count - 1)
+    : Result.fail(new Brand.BrandError(new SchemaIssue.InvalidType(Schema.Unknown.ast, ingredient)))
 
 const outputFor = (recipe: BrewingRecipeInput): Result.Result<ItemStack, BrewingFailure> =>
   '_tag' in recipe && recipe._tag === 'Brewing'
@@ -272,23 +274,41 @@ export const brewOnce = (
   ingredient: ItemStack,
   recipe: BrewingRecipeInput,
 ): Result.Result<BrewingState, BrewingFailure> => {
-  const output = outputFor(recipe)
+  if (!isRecord(state) || !['bottles', 'fuelCharges', 'brewProgressSecs'].every((field) => Object.hasOwn(state, field))) {
+    return Result.fail(invalid('state', 'expected a complete brewing state'))
+  }
+  if (!isFiniteNonNegative(state['brewProgressSecs']) || state['brewProgressSecs'] > BREWING_TIME_SECS) {
+    return Result.fail(invalid('brewProgressSecs', 'must be finite and no greater than the brew duration'))
+  }
+  const validatedState = brewingState({ ...state, brewProgressSecs: 0 })
+  if (Result.isFailure(validatedState)) return Result.fail(validatedState.failure)
+  const validatedIngredient = validateSlot(ingredient, 'ingredient')
+  if (Result.isFailure(validatedIngredient)) return Result.fail(validatedIngredient.failure)
+  if (validatedIngredient.success === undefined) {
+    return Result.fail(invalid('ingredient', 'expected an ItemStack'))
+  }
+  const validatedRecipe = validateRecipe(recipe)
+  if (Result.isFailure(validatedRecipe)) return Result.fail(validatedRecipe.failure)
+  const validState = validatedState.success
+  const validIngredient = validatedIngredient.success
+  const validRecipe = validatedRecipe.success
+  const output = outputFor(validRecipe)
   if (Result.isFailure(output)) return Result.fail(output.failure)
   const updateBottle = (bottle: SlotValue) =>
-    bottle?.item === recipe.input ? output.success : bottle
+    bottle?.item === validRecipe.input ? output.success : bottle
   const updatedBottles = [
-    updateBottle(state.bottles[0]),
-    updateBottle(state.bottles[1]),
-    updateBottle(state.bottles[2]),
+    updateBottle(validState.bottles[0]),
+    updateBottle(validState.bottles[1]),
+    updateBottle(validState.bottles[2]),
   ] as const
-  const remainingIngredient = consumeIngredient(ingredient)
+  const remainingIngredient = consumeIngredient(validIngredient)
   if (Result.isFailure(remainingIngredient)) return Result.fail(remainingIngredient.failure)
-  const fuelCharges = BrewingFuelCharges.result(state.fuelCharges - 1)
+  const fuelCharges = BrewingFuelCharges.result(validState.fuelCharges - 1)
   if (Result.isFailure(fuelCharges)) return Result.fail(fuelCharges.failure)
   const progress = FixedDurationSecs.result(0)
   if (Result.isFailure(progress)) return Result.fail(progress.failure)
   return Result.succeed({
-    ...state,
+    ...validState,
     ingredient: remainingIngredient.success,
     fuelCharges: fuelCharges.success,
     brewProgressSecs: progress.success,
