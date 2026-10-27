@@ -119,7 +119,11 @@ const serializeArray = (
   ancestors: ReadonlySet<object>,
   serialize: JsonSerializer,
 ): JsonSerialization => {
-  if (Object.getPrototypeOf(value) !== Array.prototype) return invalidJson(path)
+  try {
+    if (Object.getPrototypeOf(value) !== Array.prototype) return invalidJson(path)
+  } catch {
+    return invalidJson(path)
+  }
 
   const invalidKey = validateArrayKeys(value, path)
   if (invalidKey !== undefined) return invalidKey
@@ -144,7 +148,12 @@ const serializeObject = (
   ancestors: ReadonlySet<object>,
   serialize: JsonSerializer,
 ): JsonSerialization => {
-  const prototype = Object.getPrototypeOf(value)
+  let prototype: object | null
+  try {
+    prototype = Object.getPrototypeOf(value)
+  } catch {
+    return invalidJson(path)
+  }
   if (prototype !== Object.prototype && prototype !== null) return invalidJson(path)
 
   const ownKeys = Reflect.ownKeys(value)

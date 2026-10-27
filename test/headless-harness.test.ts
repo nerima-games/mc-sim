@@ -393,6 +393,27 @@ describe('HeadlessHarness stateHash', () => {
     }).pipe(Effect.provide(harnessLayer(runtime.service)))
   })
 
+  it.effect('returns a typed failure when stateHash cannot inspect a proxy prototype', () => {
+    const proxy = new Proxy({}, {
+      getPrototypeOf: () => { throw new Error('prototype inspection failed') },
+    })
+    const runtime = makeRuntime(() => [makeSlice('proxy', 1, proxy)])
+    return Effect.gen(function* () {
+      const harness = yield* HeadlessHarness
+      yield* harness.reset(resetInput(2, 3))
+
+      const result = yield* Effect.result(harness.stateHash)
+      expect(Result.isFailure(result)).toBe(true)
+      if (Result.isFailure(result)) {
+        expect(result.failure).toBeInstanceOf(StateHashNonJsonValue)
+        if (result.failure instanceof StateHashNonJsonValue) {
+          expect(result.failure.sliceId).toBe(makeSaveSliceId('proxy'))
+          expect(result.failure.path).toBe('$')
+        }
+      }
+    }).pipe(Effect.provide(harnessLayer(runtime.service)))
+  })
+
   it.effect('propagates slice codec errors and does not return a partial hash', () => {
     const runtime = makeRuntime(() => [
       makeSlice('good', 1, { ok: true }),
