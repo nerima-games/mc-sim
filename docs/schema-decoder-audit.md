@@ -13,6 +13,6 @@ The source-wide audit searched `src/` with `rg -n 'Schema\.(filter|declare|refin
 | `ContainerStorageSnapshotSchema` and private `ContainerSchema` | `validateContainerStorageSnapshot` validates and copies persisted values into owned state | Strict schemas for stored stack, container, and snapshot shapes | `validateContainerStorageSnapshot` at persistence ingress | Pending |
 | `PlayerStorageSnapshotSchema` | `validatePlayerStorageSnapshot` validates and copies persisted values into owned state | Strict schema composed from inventory, equipment, and durability schemas | `validatePlayerStorageSnapshot` at persistence ingress | Pending |
 | `ContainerStoredStackSchema` | `isContainerStoredStack` probes `validateContainerStorageSnapshot` | Strict stored-stack schema | None; this predicate is replaced by the schema | Pending |
-| `TimeStateSchema` | `isValidTimeState` checks state values but allows unknown keys | Required-field `Schema.Struct` with the day-length brand | `normaliseTimeState` remains the recovery entry point | Pending |
+| `TimeStateSchema` | `isValidTimeState` checks state values but allows unknown keys | Required-field `Schema.Struct` with finite tick and day-length brands | `normaliseTimeState` remains the recovery entry point | Complete |
 
 The audit also found direct brand predicates and other `Schema.declare` uses. Those do not call a normalizing constructor or a validation-result function, so they are not in this finding list. The strict-decoder gate will separately test schemas with introspectable required fields.

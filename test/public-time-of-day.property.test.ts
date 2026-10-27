@@ -1,5 +1,5 @@
 import fc from 'fast-check'
-import { Result } from 'effect'
+import { Result, Schema } from 'effect'
 import { expect, it } from 'vitest'
 import * as Sim from '../src/index.js'
 import { assertResultContract, finiteTree, hostileNumber, hostileValue, unknownValue } from './public-property-helpers.js'
@@ -18,6 +18,34 @@ const assertValidTimeState = (value: unknown): void => {
   expect(finiteTree(value)).toBe(true)
   expect(Sim.isValidTimeState(value as never)).toBe(true)
 }
+
+it('TimeStateSchema requires finite ticks and a branded in-range day length', () => {
+  const decode = Schema.decodeUnknownResult(Sim.TimeStateSchema)
+
+  expect(Result.isSuccess(decode(Sim.INITIAL_TIME_STATE))).toBe(true)
+
+  for (const field of ['ticks', 'dayLengthTicks'] as const) {
+    const missing: Record<string, unknown> = { ...Sim.INITIAL_TIME_STATE }
+    delete missing[field]
+    expect(Result.isFailure(decode(missing))).toBe(true)
+    expect(Result.isFailure(decode({ ...Sim.INITIAL_TIME_STATE, [field]: null }))).toBe(true)
+  }
+
+  expect(Result.isFailure(decode({ ...Sim.INITIAL_TIME_STATE, ticks: -1 }))).toBe(true)
+  expect(Result.isFailure(decode({ ...Sim.INITIAL_TIME_STATE, ticks: Number.POSITIVE_INFINITY }))).toBe(true)
+  expect(Result.isSuccess(decode({ ...Sim.INITIAL_TIME_STATE, dayLengthTicks: Sim.MIN_DAY_LENGTH_SECS * Sim.TICKS_PER_SECOND }))).toBe(true)
+  expect(Result.isSuccess(decode({ ...Sim.INITIAL_TIME_STATE, dayLengthTicks: Sim.MAX_DAY_LENGTH_SECS * Sim.TICKS_PER_SECOND }))).toBe(true)
+  expect(
+    Result.isFailure(
+      decode({ ...Sim.INITIAL_TIME_STATE, dayLengthTicks: Sim.MIN_DAY_LENGTH_SECS * Sim.TICKS_PER_SECOND - 1 }),
+    ),
+  ).toBe(true)
+  expect(
+    Result.isFailure(
+      decode({ ...Sim.INITIAL_TIME_STATE, dayLengthTicks: Sim.MAX_DAY_LENGTH_SECS * Sim.TICKS_PER_SECOND + 1 }),
+    ),
+  ).toBe(true)
+})
 
 it('time-state normalization and readers remain total with hostile state envelopes', () => {
   fc.assert(

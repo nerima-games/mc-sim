@@ -208,9 +208,17 @@ export const isValidTimeState = (state: unknown): boolean => {
     typeof dayLengthTicks === 'number' && Result.isSuccess(ValidTimeDayLengthTicks.result(dayLengthTicks))
 }
 
-export const TimeStateSchema: Schema.Schema<TimeState> = Schema.declare(
-  (value): value is TimeState => isValidTimeState(value),
-)
+const FiniteTimeTicksSchema: Schema.Codec<FiniteTimeTicks, number> = Schema.Finite.check(
+  Schema.makeFilter((value) => FiniteTimeTicks.is(value)),
+).pipe(Schema.brand('FiniteTimeTicks'))
+const ValidTimeDayLengthTicksSchema: Schema.Codec<ValidTimeDayLengthTicks, number> = Schema.Finite.check(
+  Schema.makeFilter((value) => ValidTimeDayLengthTicks.is(value)),
+).pipe(Schema.brand('ValidTimeDayLengthTicks'))
+
+export const TimeStateSchema: Schema.Codec<TimeState, unknown> = Schema.Struct({
+  ticks: FiniteTimeTicksSchema,
+  dayLengthTicks: ValidTimeDayLengthTicksSchema,
+})
 
 /**
  * Repair a state read from persistence into one every reader can answer for.
