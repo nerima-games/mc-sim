@@ -190,14 +190,24 @@ it('public result schemas validate branded recipes, stored stacks, and container
   }))).toBe(false)
 })
 
-it('WorldCommitCoordinator.snapshot returns a typed unknown-owner failure for hostile IDs', async () => {
+it('WorldCommitCoordinator.snapshot returns schema-valid snapshots and typed failures for hostile IDs', async () => {
   const snapshotSchema = Schema.Struct({ count: Schema.Int })
+  const resultSchema = App.replicatedSnapshotSchema(snapshotSchema)
+  const errorSchema = App.WorldCommitCoordinatorSnapshotErrorSchema
   const registeredOwnerId = Schema.decodeUnknownSync(App.ReplicatedOwnerIdSchema)('snapshot-property-owner')
   const coordinator = await Effect.runPromise(makeCoordinator([
     { ownerId: registeredOwnerId, schema: snapshotSchema, initialState: { count: 1 } },
   ]))
-  const validSnapshot = await Effect.runPromise(coordinator.snapshot(registeredOwnerId, snapshotSchema))
-  expect(validSnapshot).toStrictEqual({ world: worldId, revision: 0, state: { count: 1 } })
+
+  const validOutcome = await Effect.runPromise(Effect.result(
+    coordinator.snapshot(registeredOwnerId, snapshotSchema),
+  ))
+  assertEffectOutcome('WorldCommitCoordinator.snapshot success', () => validOutcome, resultSchema, errorSchema)
+  expect(Result.isSuccess(validOutcome)).toBe(true)
+  if (Result.isSuccess(validOutcome)) {
+    const decoded = Schema.decodeUnknownSync(resultSchema, { onExcessProperty: 'error' })(validOutcome.success)
+    expect(decoded).toStrictEqual({ world: worldId, revision: 0, state: { count: 1 } })
+  }
 
   const hostileOwnerIds = fc.tuple(
     fc.constant<unknown>(null),
@@ -216,12 +226,14 @@ it('WorldCommitCoordinator.snapshot returns a typed unknown-owner failure for ho
         expect(snapshot).not.toThrow()
 
         const outcome = await Effect.runPromise(Effect.result(snapshot()))
+        assertEffectOutcome('WorldCommitCoordinator.snapshot hostile owner', () => outcome, resultSchema, errorSchema)
         expect(Result.isFailure(outcome)).toBe(true)
         if (Result.isFailure(outcome)) {
+          const decodedFailure = Schema.decodeUnknownSync(errorSchema, { onExcessProperty: 'error' })(outcome.failure)
           if (typeof candidate === 'string' && candidate.length > 0) {
-            expect(outcome.failure).toBeInstanceOf(App.ReplicatedOwnerUnknown)
+            expect(decodedFailure).toBeInstanceOf(App.ReplicatedOwnerUnknown)
           } else {
-            expect(outcome.failure._tag).toBe('SchemaError')
+            expect(decodedFailure._tag).toBe('SchemaError')
           }
         }
       }))
@@ -434,9 +446,26 @@ it('ContainerStorageService transfer, extract and move return tagged outcomes an
       )
 
       expect(App.validateContainerStorageSnapshot(await Effect.runPromise(fixture.service.snapshot))._tag).toBe('Valid')
-      expect(App.validatePlayerStorageSnapshot(await Effect.runPromise(
+      const playerSnapshotSchema = App.replicatedSnapshotSchema(App.PlayerStorageSnapshotSchema)
+      const playerSnapshotOutcome = await Effect.runPromise(Effect.result(
         fixture.coordinator.snapshot(fixture.playerOwnerId, App.PlayerStorageSnapshotSchema),
-      ).then((snapshot) => snapshot.state))._tag).toBe('Valid')
+      ))
+      assertEffectOutcome(
+        'WorldCommitCoordinator.snapshot after container transfer',
+        () => playerSnapshotOutcome,
+        playerSnapshotSchema,
+        App.WorldCommitCoordinatorSnapshotErrorSchema,
+      )
+      expect(Result.isSuccess(playerSnapshotOutcome)).toBe(true)
+      if (Result.isSuccess(playerSnapshotOutcome)) {
+        const playerSnapshot = Schema.decodeUnknownSync(
+          playerSnapshotSchema,
+          { onExcessProperty: 'error' },
+        )(playerSnapshotOutcome.success)
+        expect(playerSnapshot.world).toBe(worldId)
+        expect(playerSnapshot.revision).toBe(await Effect.runPromise(fixture.coordinator.revision))
+        expect(App.validatePlayerStorageSnapshot(playerSnapshot.state)._tag).toBe('Valid')
+      }
     }),
     checks,
   )
