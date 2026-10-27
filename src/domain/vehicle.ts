@@ -1,11 +1,19 @@
 import {
+  AngleRadians,
+  EntitySerial,
   isDimension,
   OccupantId,
+  PositionAxis,
+  position,
   VehicleId,
+  VehicleValidationPath,
+  VehicleValidationReason,
+  VehicleVelocityComponent,
   type Vehicle,
   type VehicleSnapshot,
   type VehicleValidationError,
   type VehicleValidationResult,
+  type VehicleVelocity,
   type Position,
 } from '@nerima-games/mc-kernel'
 
@@ -20,7 +28,9 @@ export type {
 } from '@nerima-games/mc-kernel'
 
 const invalidError = (path: string, reason: string): VehicleValidationError => ({
-  _tag: 'VehicleValidationError', path, reason,
+  _tag: 'VehicleValidationError',
+  path: VehicleValidationPath(path),
+  reason: VehicleValidationReason(reason),
 })
 const invalid = (path: string, reason: string): VehicleValidationResult => ({
   _tag: 'Invalid',
@@ -30,8 +40,18 @@ const invalid = (path: string, reason: string): VehicleValidationResult => ({
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value)
-const vector = (value: unknown): value is Position =>
-  isRecord(value) && finite(value['x']) && finite(value['y']) && finite(value['z'])
+const positionVector = (value: unknown): Position | undefined => {
+  if (!isRecord(value) || !finite(value['x']) || !finite(value['y']) || !finite(value['z'])) return undefined
+  return position(PositionAxis(value['x']), PositionAxis(value['y']), PositionAxis(value['z']))
+}
+const velocityVector = (value: unknown): VehicleVelocity | undefined => {
+  if (!isRecord(value) || !finite(value['x']) || !finite(value['y']) || !finite(value['z'])) return undefined
+  return {
+    x: VehicleVelocityComponent(value['x']),
+    y: VehicleVelocityComponent(value['y']),
+    z: VehicleVelocityComponent(value['z']),
+  }
+}
 type VehicleItemValidation =
   | { readonly _tag: 'Invalid'; readonly error: VehicleValidationError }
   | { readonly _tag: 'Valid'; readonly serial: number | undefined; readonly vehicle: Vehicle }
@@ -52,9 +72,11 @@ const validateVehicleItem = (
     return { _tag: 'Invalid', error: invalidError(`${path}.type`, 'must be boat or minecart') }
   if (!isDimension(item['dimension']))
     return { _tag: 'Invalid', error: invalidError(`${path}.dimension`, 'must be a supported dimension') }
-  if (!vector(item['position']))
+  const vehiclePosition = positionVector(item['position'])
+  if (vehiclePosition === undefined)
     return { _tag: 'Invalid', error: invalidError(`${path}.position`, 'must contain finite coordinates') }
-  if (!vector(item['velocity']))
+  const velocity = velocityVector(item['velocity'])
+  if (velocity === undefined)
     return { _tag: 'Invalid', error: invalidError(`${path}.velocity`, 'must contain finite coordinates') }
   if (!finite(item['yawRadians']))
     return { _tag: 'Invalid', error: invalidError(`${path}.yawRadians`, 'must be finite') }
@@ -73,9 +95,9 @@ const validateVehicleItem = (
       id: VehicleId(id),
       type: item['type'],
       dimension: item['dimension'],
-      position: item['position'],
-      velocity: item['velocity'],
-      yawRadians: item['yawRadians'],
+      position: vehiclePosition,
+      velocity,
+      yawRadians: AngleRadians(item['yawRadians']),
       ...(occupant === undefined ? {} : { occupant: OccupantId(occupant) }),
     },
   }
@@ -100,7 +122,7 @@ export const validateVehicleSnapshot = (value: unknown): VehicleValidationResult
   }
   if (nextSerial <= highestSerial)
     return invalid('snapshot.nextSerial', 'must be greater than every minted vehicle id')
-  return { _tag: 'Valid', snapshot: { vehicles: validatedVehicles, nextSerial } }
+  return { _tag: 'Valid', snapshot: { vehicles: validatedVehicles, nextSerial: EntitySerial(nextSerial) } }
 }
 
-export const emptyVehicleSnapshot = (): VehicleSnapshot => ({ vehicles: [], nextSerial: 0 })
+export const emptyVehicleSnapshot = (): VehicleSnapshot => ({ vehicles: [], nextSerial: EntitySerial(0) })

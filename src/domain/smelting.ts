@@ -2,14 +2,16 @@ import {
   addItemStack,
   countOf,
   itemStack,
+  type ItemStackFailure,
   type Inventory,
   type ItemStack,
 } from './inventory.js'
+import { itemStackWithCount } from './item-stack.js'
+import { Result } from 'effect'
 import {
   isItemComponents,
   isItemStack,
   isItemType,
-  itemStackWithCount,
   itemStacksCanMerge,
   maxStackCountForStack,
   type ItemType,
@@ -50,6 +52,7 @@ export type FurnaceTransferResult =
   | { readonly _tag: 'InsufficientItems'; readonly available: number }
   | { readonly _tag: 'WrongItem'; readonly expected: ItemType }
   | { readonly _tag: 'NoRoom'; readonly available: number }
+  | { readonly _tag: 'ItemStackFailure'; readonly error: ItemStackFailure }
 
 export type FurnaceTransferOutcome = {
   readonly inventory: Inventory
@@ -61,6 +64,7 @@ export type FurnaceCollectionResult =
   | { readonly _tag: 'Collected'; readonly output: ItemStack }
   | { readonly _tag: 'Empty' }
   | { readonly _tag: 'NoRoom' }
+  | { readonly _tag: 'ItemStackFailure'; readonly error: ItemStackFailure }
 
 export type FurnaceCollectionOutcome = {
   readonly inventory: Inventory
@@ -77,6 +81,7 @@ export type FurnaceSnapshotValidationError = {
 export type FurnaceSnapshotValidationResult =
   | { readonly _tag: 'Valid'; readonly state: FurnaceState }
   | { readonly _tag: 'Invalid'; readonly error: FurnaceSnapshotValidationError }
+  | { readonly _tag: 'ItemStackFailure'; readonly error: ItemStackFailure }
 
 export const emptyFurnaceState = (): FurnaceState => ({
   input: null,
@@ -87,6 +92,45 @@ export const emptyFurnaceState = (): FurnaceState => ({
 })
 
 /** Atomically move player-owned items into one furnace slot. */
+type FurnaceTransferRejection = Extract<
+  FurnaceTransferResult,
+  { readonly _tag: 'InvalidCount' | 'InsufficientItems' | 'WrongItem' | 'NoRoom' }
+>
+
+type FurnaceTransferSelection =
+  | { readonly _tag: 'Rejected'; readonly result: FurnaceTransferRejection }
+  | { readonly _tag: 'Ready'; readonly current: ItemStack | null; readonly selected: ItemStack }
+
+const selectFurnaceTransfer = (
+  inventory: Inventory,
+  furnace: FurnaceState,
+  slot: FurnaceTransferSlot,
+  item: ItemType,
+  count: number,
+): FurnaceTransferSelection => {
+  if (!Number.isSafeInteger(count) || count <= 0)
+    return { _tag: 'Rejected', result: { _tag: 'InvalidCount', count } }
+  const totalAvailable = countOf(inventory, item)
+  if (totalAvailable < count)
+    return { _tag: 'Rejected', result: { _tag: 'InsufficientItems', available: totalAvailable } }
+  const current = furnace[slot]
+  if (current !== null && current.item !== item)
+    return { _tag: 'Rejected', result: { _tag: 'WrongItem', expected: current.item } }
+  const selected = current ?? inventory.slots.findLast((held) => held?.item === item && isItemStack(held))
+  if (selected === undefined)
+    return { _tag: 'Rejected', result: { _tag: 'InsufficientItems', available: 0 } }
+  const available = inventory.slots.reduce(
+    (total, held) => total + (held !== undefined && itemStacksCanMerge(held, selected) ? held.count : 0),
+    0,
+  )
+  if (available < count)
+    return { _tag: 'Rejected', result: { _tag: 'InsufficientItems', available } }
+  const capacity = maxStackCountForStack(selected) - (current?.count ?? 0)
+  if (capacity < count)
+    return { _tag: 'Rejected', result: { _tag: 'NoRoom', available: capacity } }
+  return { _tag: 'Ready', current, selected }
+}
+
 export const transferToFurnace = (
   inventory: Inventory,
   furnace: FurnaceState,
@@ -94,46 +138,36 @@ export const transferToFurnace = (
   item: ItemType,
   count: number,
 ): FurnaceTransferOutcome => {
-  if (!Number.isSafeInteger(count) || count <= 0) {
-    return { inventory, furnace, result: { _tag: 'InvalidCount', count } }
-  }
-  const totalAvailable = countOf(inventory, item)
-  if (totalAvailable < count) {
-    return { inventory, furnace, result: { _tag: 'InsufficientItems', available: totalAvailable } }
-  }
-  const current = furnace[slot]
-  if (current !== null && current.item !== item) {
-    return { inventory, furnace, result: { _tag: 'WrongItem', expected: current.item } }
-  }
-  const selected = current ?? inventory.slots.findLast((held) => held?.item === item && isItemStack(held))
-  if (selected === undefined) {
-    return { inventory, furnace, result: { _tag: 'InsufficientItems', available: 0 } }
-  }
-  const available = inventory.slots.reduce(
-    (total, held) => total + (held !== undefined && itemStacksCanMerge(held, selected) ? held.count : 0),
-    0,
-  )
-  if (available < count) {
-    return { inventory, furnace, result: { _tag: 'InsufficientItems', available } }
-  }
-  const capacity = maxStackCountForStack(selected) - (current?.count ?? 0)
-  if (capacity < count) {
-    return { inventory, furnace, result: { _tag: 'NoRoom', available: capacity } }
-  }
+  const selection = selectFurnaceTransfer(inventory, furnace, slot, item, count)
+  if (selection._tag === 'Rejected')
+    return { inventory, furnace, result: selection.result }
+  const { current, selected } = selection
   const slots = [...inventory.slots]
   let remaining = count
   for (let index = slots.length - 1; index >= 0 && remaining > 0; index -= 1) {
     const held = slots[index]
     if (held === undefined || !itemStacksCanMerge(held, selected)) continue
     const taken = Math.min(held.count, remaining)
-    slots[index] = held.count === taken ? undefined : itemStackWithCount(held, held.count - taken)
+    if (held.count !== taken) {
+      const reduced = itemStackWithCount(held, held.count - taken)
+      if (Result.isFailure(reduced)) {
+        return { inventory, furnace, result: { _tag: 'ItemStackFailure', error: reduced.failure } }
+      }
+      slots[index] = reduced.success
+    } else {
+      slots[index] = undefined
+    }
     remaining -= taken
+  }
+  const destination = itemStackWithCount(selected, (current?.count ?? 0) + count)
+  if (Result.isFailure(destination)) {
+    return { inventory, furnace, result: { _tag: 'ItemStackFailure', error: destination.failure } }
   }
   return {
     inventory: { slots },
     furnace: {
       ...furnace,
-      [slot]: itemStackWithCount(selected, (current?.count ?? 0) + count),
+      [slot]: destination.success,
     },
     result: { _tag: 'Transferred', item, count },
   }
@@ -148,11 +182,14 @@ export const collectFurnaceOutput = (
     return { inventory, furnace, result: { _tag: 'Empty' } }
   }
   const inserted = addItemStack(inventory, furnace.output)
-  if (inserted.leftover > 0) {
+  if (Result.isFailure(inserted)) {
+    return { inventory, furnace, result: { _tag: 'ItemStackFailure', error: inserted.failure } }
+  }
+  if (inserted.success.leftover > 0) {
     return { inventory, furnace, result: { _tag: 'NoRoom' } }
   }
   return {
-    inventory: inserted.inventory,
+    inventory: inserted.success.inventory,
     furnace: { ...furnace, output: null },
     result: { _tag: 'Collected', output: furnace.output },
   }
@@ -183,6 +220,11 @@ const invalidSnapshot = (path: string, reason: string): FurnaceSnapshotValidatio
   error: { _tag: 'FurnaceSnapshotValidationError', path, reason },
 })
 
+const itemStackFailure = (error: ItemStackFailure): FurnaceSnapshotValidationResult => ({
+  _tag: 'ItemStackFailure',
+  error,
+})
+
 const isValidDuration = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0
 
@@ -205,7 +247,9 @@ const validateFurnaceSlot = (
       !Object.hasOwn(savedComponents, 'rarity')) {
     return invalidSnapshot(`${name}.components`, 'expected valid resolved item components')
   }
-  const components = { ...itemStack(slot['item'], 1).components, ...savedComponents }
+  const defaultStack = itemStack(slot['item'], 1)
+  if (Result.isFailure(defaultStack)) return itemStackFailure(defaultStack.failure)
+  const components = { ...defaultStack.success.components, ...savedComponents }
   if (!isItemComponents(components)) {
     return invalidSnapshot(`${name}.components`, 'expected valid resolved item components')
   }
@@ -213,7 +257,8 @@ const validateFurnaceSlot = (
   if (!isItemStack(restored)) {
     return invalidSnapshot(`${name}.count`, 'expected a valid positive stack count')
   }
-  return itemStack(restored.item, restored.count, { components: restored.components })
+  const stack = itemStack(restored.item, restored.count, { components: restored.components })
+  return Result.isFailure(stack) ? itemStackFailure(stack.failure) : stack.success
 }
 
 const validateFurnaceDurations = (
@@ -274,17 +319,17 @@ const assertFuelRule = (rule: FuelRule): void => {
   assertPositiveFinite(rule.burnDurationSecs, `Burn duration for fuel ${rule.item}`)
 }
 
-const decrementSlot = (slot: ItemStack): ItemStack | null =>
-  slot.count === 1 ? null : itemStackWithCount(slot, slot.count - 1)
+const decrementSlot = (slot: ItemStack): Result.Result<ItemStack | null, ItemStackFailure> =>
+  slot.count === 1 ? Result.succeed(null) : itemStackWithCount(slot, slot.count - 1)
 
 const outputAccepts = (output: ItemStack | null, produced: ItemStack): boolean =>
   output === null ||
   (itemStacksCanMerge(output, produced) &&
     output.count + produced.count <= maxStackCountForStack(output))
 
-const addOutput = (output: ItemStack | null, produced: ItemStack): ItemStack =>
+const addOutput = (output: ItemStack | null, produced: ItemStack): Result.Result<ItemStack, ItemStackFailure> =>
   output === null
-    ? produced
+    ? Result.succeed(produced)
     : itemStackWithCount(output, output.count + produced.count)
 
 export const matchSmeltingRecipe = (
@@ -300,19 +345,23 @@ export const matchSmeltingRecipe = (
 export const advanceFurnace = (
   state: FurnaceState,
   deltaTimeSecs: number,
-  recipes: ReadonlyArray<SmeltingRecipe> = STARTER_SMELTING_RECIPES,
+  recipes?: ReadonlyArray<SmeltingRecipe>,
   fuelRules: ReadonlyArray<FuelRule> = STARTER_FUEL_RULES,
-): FurnaceOutcome => {
+): Result.Result<FurnaceOutcome, ItemStackFailure> => {
   if (!Number.isFinite(deltaTimeSecs) || deltaTimeSecs <= 0) {
-    return { state, smelted: 0, fuelConsumed: 0 }
+    return Result.succeed({ state, smelted: 0, fuelConsumed: 0 })
   }
+
+  const recipeTable = recipes === undefined ? STARTER_SMELTING_RECIPES : Result.succeed(recipes)
+  if (Result.isFailure(recipeTable)) return Result.fail(recipeTable.failure)
+  const activeRecipes = recipeTable.success
 
   assertSlot(state.input, 'furnace input')
   assertSlot(state.fuel, 'furnace fuel')
   assertSlot(state.output, 'furnace output')
   assertNonNegativeFinite(state.cookElapsedSecs, 'Cook elapsed time')
   assertNonNegativeFinite(state.burnRemainingSecs, 'Burn remaining time')
-  for (const recipe of recipes) assertRecipe(recipe)
+  for (const recipe of activeRecipes) assertRecipe(recipe)
   for (const rule of fuelRules) assertFuelRule(rule)
 
   let input = state.input
@@ -325,7 +374,7 @@ export const advanceFurnace = (
   let fuelConsumed = 0
 
   while (remainingSecs > 0) {
-    const recipe = matchSmeltingRecipe(recipes, input)
+    const recipe = matchSmeltingRecipe(activeRecipes, input)
     if (recipe === null || input === null) {
       cookElapsedSecs = 0
       break
@@ -343,7 +392,9 @@ export const advanceFurnace = (
       const fuelItem = fuel.item
       const fuelRule = fuelRules.find((rule) => rule.item === fuelItem)
       if (fuelRule === undefined) break
-      fuel = decrementSlot(fuel)
+      const reducedFuel = decrementSlot(fuel)
+      if (Result.isFailure(reducedFuel)) return Result.fail(reducedFuel.failure)
+      fuel = reducedFuel.success
       burnRemainingSecs = fuelRule.burnDurationSecs
       fuelConsumed += 1
     }
@@ -356,16 +407,20 @@ export const advanceFurnace = (
     cookElapsedSecs += activeSecs
 
     if (completedRecipe) {
-      input = decrementSlot(input)
-      output = addOutput(output, recipe.output)
+      const reducedInput = decrementSlot(input)
+      if (Result.isFailure(reducedInput)) return Result.fail(reducedInput.failure)
+      const updatedOutput = addOutput(output, recipe.output)
+      if (Result.isFailure(updatedOutput)) return Result.fail(updatedOutput.failure)
+      input = reducedInput.success
+      output = updatedOutput.success
       cookElapsedSecs = 0
       smelted += 1
     }
   }
 
-  return {
+  return Result.succeed({
     state: { input, fuel, output, cookElapsedSecs, burnRemainingSecs },
     smelted,
     fuelConsumed,
-  }
+  })
 }

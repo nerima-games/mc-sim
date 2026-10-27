@@ -1,5 +1,7 @@
-import { blockPosition, DIMENSIONS, isDimension, type BlockPosition, type BlockType, type Dimension, type ItemType } from '@nerima-games/mc-kernel'
-import { itemStack, type ItemStack } from './inventory.js'
+import { Result } from 'effect'
+import { BlockAxis, type BlockPosition } from '@nerima-games/mc-kernel/domain/coordinates'
+import { DIMENSIONS, isDimension, type BlockType, type Dimension, type ItemType } from '@nerima-games/mc-kernel'
+import { itemStack, type ItemStack, type ItemStackFailure } from './inventory.js'
 
 export const CROP_TYPES = ['wheat_crop', 'potato_crop', 'nether_wart_crop'] as const
 
@@ -16,7 +18,7 @@ export type CropDefinition = {
   readonly seed: ItemType
   readonly soil: BlockType
   readonly dimensions: ReadonlyArray<Dimension>
-  readonly guaranteedMatureYield: ReadonlyArray<ItemStack>
+  readonly guaranteedMatureYield: Result.Result<ReadonlyArray<ItemStack>, ItemStackFailure>
 }
 
 const ALL_DIMENSIONS = DIMENSIONS
@@ -28,7 +30,7 @@ export const CROP_REGISTRY: Record<CropType, CropDefinition> = {
     seed: 'wheat_seeds',
     soil: 'farmland',
     dimensions: ALL_DIMENSIONS,
-    guaranteedMatureYield: [itemStack('wheat', 1), itemStack('wheat_seeds', 1)],
+    guaranteedMatureYield: Result.all([itemStack('wheat', 1), itemStack('wheat_seeds', 1)]),
   },
   potato_crop: {
     crop: 'potato_crop',
@@ -36,7 +38,7 @@ export const CROP_REGISTRY: Record<CropType, CropDefinition> = {
     seed: 'potato',
     soil: 'farmland',
     dimensions: ALL_DIMENSIONS,
-    guaranteedMatureYield: [itemStack('potato', 2)],
+    guaranteedMatureYield: Result.all([itemStack('potato', 2)]),
   },
   nether_wart_crop: {
     crop: 'nether_wart_crop',
@@ -44,7 +46,7 @@ export const CROP_REGISTRY: Record<CropType, CropDefinition> = {
     seed: 'nether_wart',
     soil: 'soul_sand',
     dimensions: ALL_DIMENSIONS,
-    guaranteedMatureYield: [itemStack('nether_wart', 2)],
+    guaranteedMatureYield: Result.all([itemStack('nether_wart', 2)]),
   },
 } as const
 
@@ -92,10 +94,13 @@ export const isMatureCrop = (crop: CropState): boolean =>
   crop.growthSecs >= maturitySecsFor(crop.crop)
 
 /** Guaranteed mature drops. mx-gameplay may add randomized bonus drops separately. */
-export const matureYieldsFor = (crop: CropState): ReadonlyArray<ItemStack> | null =>
+export const matureYieldsFor = (
+  crop: CropState,
+): Result.Result<ReadonlyArray<ItemStack> | null, ItemStackFailure> =>
   isMatureCrop(crop)
-    ? cropDefinitionFor(crop.crop).guaranteedMatureYield.map((stack) => ({ ...stack }))
-    : null
+    ? Result.map(cropDefinitionFor(crop.crop).guaranteedMatureYield, (stacks) =>
+        stacks.map((stack) => ({ ...stack })))
+    : Result.succeed(null)
 
 const nonNegativeFinite = (value: number): number =>
   Number.isFinite(value) ? Math.max(0, value) : 0
@@ -158,7 +163,18 @@ export const validateCropSnapshot = (value: unknown): CropValidationResult => {
       return invalid(`${path}.growthSecs`, 'growth must be finite and within the crop maturity range')
     }
 
-    const position = blockPosition(Number(x), Number(y), Number(z))
+    const normalizedAxis = (axisValue: unknown) => {
+      const numeric = Number(axisValue)
+      return BlockAxis.result(Object.is(numeric, -0) ? 0 : numeric)
+    }
+    const axes = Result.all([
+      normalizedAxis(x),
+      normalizedAxis(y),
+      normalizedAxis(z),
+    ])
+    if (Result.isFailure(axes)) return invalid(`${path}.position`, 'coordinates must be safe integers')
+    const [blockX, blockY, blockZ] = axes.success
+    const position: BlockPosition = { x: blockX, y: blockY, z: blockZ }
     const crop: CropState = {
       dimension: candidate['dimension'],
       position,

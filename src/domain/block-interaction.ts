@@ -1,20 +1,37 @@
 import {
   BARE_HANDED,
+  BlockId,
   blockIdOf,
   blockOfPlaceableItem,
   canBlockStaySupported,
   dropOfBlockId,
   isPlaceableItem,
   resolvedBlockOfId,
+  type BlockDrop,
+  type BlockRegistryFailure,
+  type BlockRegistryResolutionFailure,
+  type BlockType,
   type HarvestContext,
   type ItemType,
-  type BlockBreakDecision,
-  type BlockPlacementDecision,
-  type PlaceableBlock,
   type ResolvedBlock,
 } from '@nerima-games/mc-kernel'
+import { Option, Result, type Brand } from 'effect'
 
-export type { BlockBreakDecision, BlockPlacementDecision, PlaceableBlock } from '@nerima-games/mc-kernel'
+export type BlockBreakDecision =
+  | { readonly kind: 'blocked'; readonly reason: 'unknown' | 'air' | 'unbreakable' }
+  | {
+      readonly kind: 'broken'
+      readonly id: BlockId
+      readonly type: BlockType
+      readonly drop?: BlockDrop
+      readonly experience: number
+    }
+
+export type BlockPlacementDecision =
+  | { readonly kind: 'rejected'; readonly reason: 'unknown-block' | 'air' | 'unsupported' }
+  | { readonly kind: 'placed'; readonly id: BlockId; readonly type: BlockType }
+
+export type PlaceableBlock = { readonly id: BlockId; readonly type: BlockType }
 
 // mc-kernel exposes hardness and piston capability, but not a semantic
 // "unbreakable" flag; keep the vanilla sentinel policy at this boundary.
@@ -25,49 +42,67 @@ const isUnbreakable = (block: ResolvedBlock): boolean =>
   block.properties.hardness >= UNBREAKABLE_HARDNESS ||
   (block.capabilities.pistonImmovable && block.properties.hardness >= BEDROCK_HARDNESS)
 
-const brokenDecision = (block: ResolvedBlock, context: HarvestContext): BlockBreakDecision => {
-  const drop = dropOfBlockId(blockIdOf(block.type), context)
-  const base = {
-    kind: 'broken' as const,
-    id: blockIdOf(block.type),
-    type: block.type,
-    experience: block.properties.xpOnBreak,
-  }
+const brokenDecision = (
+  id: BlockId,
+  block: ResolvedBlock,
+  context: HarvestContext,
+): Result.Result<BlockBreakDecision, BlockRegistryResolutionFailure> =>
+  Result.map(dropOfBlockId(id, context), (drop) => {
+    const base = {
+      kind: 'broken' as const,
+      id,
+      type: block.type,
+      experience: block.properties.xpOnBreak,
+    }
 
-  return drop === undefined ? base : { ...base, drop }
-}
+    return drop === undefined ? base : { ...base, drop }
+  })
 
-export const breakBlock = (id: number, context: HarvestContext = BARE_HANDED): BlockBreakDecision => {
-  const block = resolvedBlockOfId(id)
+export const breakBlock = (
+  id: number,
+  context: HarvestContext = BARE_HANDED,
+): Result.Result<BlockBreakDecision, Brand.BrandError | BlockRegistryResolutionFailure> =>
+  Result.gen(function* () {
+    const blockId = yield* BlockId.result(id)
+    const block = yield* resolvedBlockOfId(blockId)
 
-  if (block === undefined) {
-    return { kind: 'blocked', reason: 'unknown' }
-  }
-  if (block.type === 'air') {
-    return { kind: 'blocked', reason: 'air' }
-  }
-  if (isUnbreakable(block)) {
-    return { kind: 'blocked', reason: 'unbreakable' }
-  }
+    if (block === undefined) {
+      return { kind: 'blocked', reason: 'unknown' }
+    }
+    if (block.type === 'air') {
+      return { kind: 'blocked', reason: 'air' }
+    }
+    if (isUnbreakable(block)) {
+      return { kind: 'blocked', reason: 'unbreakable' }
+    }
 
-  return brokenDecision(block, context)
-}
+    return yield* brokenDecision(blockId, block, context)
+  })
 
-export const placeBlock = (id: number, supportBelow: number): BlockPlacementDecision => {
-  const block = resolvedBlockOfId(id)
+export const placeBlock = (
+  id: number,
+  supportBelow: number,
+): Result.Result<
+  BlockPlacementDecision,
+  Brand.BrandError | BlockRegistryResolutionFailure | BlockRegistryFailure
+> =>
+  Result.gen(function* () {
+    const blockId = yield* BlockId.result(id)
+    const block = yield* resolvedBlockOfId(blockId)
 
-  if (block === undefined) {
-    return { kind: 'rejected', reason: 'unknown-block' }
-  }
-  if (block.type === 'air') {
-    return { kind: 'rejected', reason: 'air' }
-  }
-  if (!canBlockStaySupported(id, supportBelow)) {
-    return { kind: 'rejected', reason: 'unsupported' }
-  }
+    if (block === undefined) {
+      return { kind: 'rejected', reason: 'unknown-block' }
+    }
+    if (block.type === 'air') {
+      return { kind: 'rejected', reason: 'air' }
+    }
 
-  return { kind: 'placed', id: blockIdOf(block.type), type: block.type }
-}
+    const supportId = yield* BlockId.result(supportBelow)
+    const isSupported = yield* canBlockStaySupported(blockId, supportId)
+    return isSupported
+      ? { kind: 'placed', id: blockId, type: block.type }
+      : { kind: 'rejected', reason: 'unsupported' }
+  })
 
 export const placeableBlockFromItem = (item: ItemType): PlaceableBlock | undefined => {
   if (!isPlaceableItem(item)) {
@@ -75,5 +110,6 @@ export const placeableBlockFromItem = (item: ItemType): PlaceableBlock | undefin
   }
 
   const type = blockOfPlaceableItem(item)
-  return { id: blockIdOf(type), type }
+  const id = blockIdOf(type)
+  return Option.isSome(id) ? { id: id.value, type } : undefined
 }

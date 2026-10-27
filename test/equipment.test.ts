@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Effect } from 'effect'
+import { Effect, Result } from 'effect'
 import {
   damageEquipment,
   durability,
@@ -17,7 +17,13 @@ import {
   validateEquipmentSnapshot,
   type EquipmentItem,
 } from '../src/domain/equipment'
-import { itemStack } from '../src/domain/inventory'
+import { itemStack as itemStackResult, type ItemStack } from '../src/domain/inventory'
+
+const itemStack = (...args: Parameters<typeof itemStackResult>): ItemStack => {
+  const result = itemStackResult(...args)
+  if (Result.isFailure(result)) throw result.failure
+  return result.success
+}
 
 const helmet = (current = 165): EquipmentItem =>
   equipmentItem(itemStack('iron_helmet', 1), durability(current, 165))

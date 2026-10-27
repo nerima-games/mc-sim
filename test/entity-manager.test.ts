@@ -16,7 +16,7 @@ import {
   type EntityId,
   type EntityRoster,
 } from '../src/domain/entity'
-import { position } from '@nerima-games/mc-kernel'
+import { PositionAxis, position as coordinatePosition } from '@nerima-games/mc-kernel'
 
 /**
  * Stands in for mx-gameplay's `CreeperFuse`. Transcribed rather than imported —
@@ -33,7 +33,7 @@ const DORMANT: Fuse = { _tag: 'Dormant' }
 
 const creeper = (x: number, fuse: Fuse = DORMANT) => ({
   kind: EntityKind('creeper'),
-  feetPosition: position(x, 64, 0),
+  feetPosition: coordinatePosition(PositionAxis(x), PositionAxis(64), PositionAxis(0)),
   healthPoints: 20,
   behaviour: fuse,
 })

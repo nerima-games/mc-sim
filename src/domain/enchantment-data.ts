@@ -1,8 +1,8 @@
 import {
   AnvilEnchantmentId,
   type AnvilEnchantmentRule,
-  type ItemType,
-} from '@nerima-games/mc-kernel'
+} from './anvil.js'
+import type { ItemType } from '@nerima-games/mc-kernel'
 
 export const SUPPORTED_VANILLA_ENCHANTMENT_IDS = [
   'aqua_affinity',

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from '@effect/vitest'
-import { position } from '@nerima-games/mc-kernel'
+import { PositionAxis, position as coordinatePosition } from '@nerima-games/mc-kernel'
 import {
   applyPrimedTntPlan,
   MAX_TNT_FUSE_ADVANCE_SECS,
@@ -8,6 +8,8 @@ import {
 } from '../src/domain/primed-tnt'
 
 const air = () => ({ resistance: 0, destructible: false })
+const position = (x: number, y: number, z: number) =>
+  coordinatePosition(PositionAxis(x), PositionAxis(y), PositionAxis(z))
 const request = (state = primeTnt(4), deltaTimeSecs = 4) => ({
   state,
   deltaTimeSecs,

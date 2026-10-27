@@ -25,9 +25,11 @@ import {
   snapshotAgeSecs,
   withFeetPosition,
 } from '../src/domain/camera-pose'
-import { MonotonicTimeSecs, position } from '@nerima-games/mc-kernel'
+import { MonotonicTimeSecs, PositionAxis, position as coordinatePosition } from '@nerima-games/mc-kernel'
 
 const AT = MonotonicTimeSecs(500)
+const position = (x: number, y: number, z: number) =>
+  coordinatePosition(PositionAxis(x), PositionAxis(y), PositionAxis(z))
 
 describe('pitch clamping', () => {
   it.effect('stops just short of vertical, so yaw never becomes unrecoverable', () =>

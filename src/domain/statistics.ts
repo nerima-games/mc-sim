@@ -1,6 +1,9 @@
-import type { AchievementId, StatisticKey, Statistics } from '@nerima-games/mc-kernel'
-
-export type { AchievementId, StatisticKey, Statistics } from '@nerima-games/mc-kernel'
+export type StatisticKey = string
+export type AchievementId = string
+export type Statistics = Readonly<{
+  counters: Readonly<Record<StatisticKey, number>>
+  unlocked: ReadonlyArray<AchievementId>
+}>
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)

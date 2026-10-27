@@ -6,7 +6,10 @@ import {
   type ExplosionBlockPosition,
 } from '../src/domain/explosion'
 import { EntityId, EntityKind, type Entity } from '../src/domain/entity'
-import { position } from '@nerima-games/mc-kernel'
+import { PositionAxis, position as coordinatePosition } from '@nerima-games/mc-kernel'
+
+const position = (x: number, y: number, z: number) =>
+  coordinatePosition(PositionAxis(x), PositionAxis(y), PositionAxis(z))
 
 const key = ({ x, y, z }: ExplosionBlockPosition): string => `${x},${y},${z}`
 const air = () => ({ resistance: 0, destructible: false })
@@ -157,8 +160,10 @@ describe('planExplosion', () => {
   })
 
   it('treats a non-finite center, radius, or seed as zero instead of propagating NaN', () => {
+    const center = JSON.parse('{"x":0.5,"y":0.5,"z":0.5}')
+    center.x = Number.NaN
     const plan = planExplosion({
-      center: { x: Number.NaN, y: 0.5, z: 0.5 }, radius: Number.NaN, seed: Number.NaN,
+      center, radius: Number.NaN, seed: Number.NaN,
       blocks: world([]), entities: [],
     })
     expect(plan.center).toStrictEqual({ x: 0, y: 0.5, z: 0.5 })

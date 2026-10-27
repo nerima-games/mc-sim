@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Effect } from 'effect'
+import { Effect, Result } from 'effect'
 import { type ItemType } from '@nerima-games/mc-kernel'
 import { type Recipe } from '../src/domain/recipe'
 import { STARTER_RECIPES } from '../src/domain/recipe-data'
@@ -16,11 +16,15 @@ const ingredientsOf = (recipe: Recipe): ReadonlyArray<ItemType> =>
  */
 const reachableFrom = (startingItems: ReadonlySet<ItemType>): ReadonlySet<ItemType> => {
   const reachable = new Set(startingItems)
+  if (Result.isFailure(STARTER_RECIPES)) throw STARTER_RECIPES.failure
+  if (Result.isFailure(STARTER_SMELTING_RECIPES)) throw STARTER_SMELTING_RECIPES.failure
+  const recipes = STARTER_RECIPES.success
+  const smeltingRecipes = STARTER_SMELTING_RECIPES.success
   let changed = true
 
   while (changed) {
     changed = false
-    for (const recipe of STARTER_RECIPES) {
+    for (const recipe of recipes) {
       if (!ingredientsOf(recipe).every((item) => reachable.has(item))) continue
       if (reachable.has(recipe.output.item)) continue
       reachable.add(recipe.output.item)
@@ -30,7 +34,7 @@ const reachableFrom = (startingItems: ReadonlySet<ItemType>): ReadonlySet<ItemTy
     const hasFurnace = reachable.has('furnace')
     const hasFuel = STARTER_FUEL_RULES.some((rule) => reachable.has(rule.item))
     if (!hasFurnace || !hasFuel) continue
-    for (const recipe of STARTER_SMELTING_RECIPES) {
+    for (const recipe of smeltingRecipes) {
       if (!reachable.has(recipe.input) || reachable.has(recipe.output.item)) continue
       reachable.add(recipe.output.item)
       changed = true

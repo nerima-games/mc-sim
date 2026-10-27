@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { PositionAxis, position as coordinatePosition } from '@nerima-games/mc-kernel'
 import {
   WITHER_ARMOUR_THRESHOLD,
   createWither,
@@ -9,6 +10,9 @@ import {
   stepWither,
   witherSkullProjectile,
 } from '../src/domain/wither'
+
+const position = (x: number, y: number, z: number) =>
+  coordinatePosition(PositionAxis(x), PositionAxis(y), PositionAxis(z))
 
 describe('wither summon', () => {
   it.each(['soul_sand', 'soul_soil'] as const)('matches a complete T made from %s', (material) => {
@@ -36,7 +40,7 @@ describe('wither summon', () => {
 })
 describe('wither lifecycle', () => {
   it('charges invulnerably, then emits its spawn blast exactly once', () => {
-    const spawned = createWither({ x: 0, y: 10, z: 0 })
+    const spawned = createWither(position(0, 10, 0))
     expect(damageWither(spawned, 100, 'melee')).toMatchObject({ state: spawned, ignored: true })
 
     const charging = stepWither(spawned, 9)
@@ -48,19 +52,19 @@ describe('wither lifecycle', () => {
   })
 
   it('tracks a target in three dimensions, caps speed, and regenerates', () => {
-    const active = stepWither(createWither({ x: 0, y: 0, z: 0 }), 10).state
+    const active = stepWither(createWither(position(0, 0, 0)), 10).state
     const hurt = damageWither(active, 10, 'melee').state
-    const moved = stepWither(hurt, 1, { x: 100, y: 100, z: 0 }).state
+    const moved = stepWither(hurt, 1, position(100, 100, 0)).state
     expect(moved.healthPoints).toBe(291)
     expect(Math.hypot(moved.velocity.x, moved.velocity.y, moved.velocity.z)).toBeCloseTo(5)
     expect(moved.feetPosition.y).toBeGreaterThan(0)
 
-    expect(stepWither(active, 0, { x: 100, y: 100, z: 0 }).state).toEqual(active)
+    expect(stepWither(active, 0, position(100, 100, 0)).state).toEqual(active)
     expect(stepWither(active, 1, active.feetPosition).state.velocity).toEqual({ x: 0, y: 0, z: 0 })
   })
 
   it('enters permanent armour at half health and ignores ranged damage', () => {
-    const active = stepWither(createWither({ x: 0, y: 0, z: 0 }), 10).state
+    const active = stepWither(createWither(position(0, 0, 0)), 10).state
     const armoured = damageWither(active, WITHER_ARMOUR_THRESHOLD, 'melee').state
     expect(armoured.phase).toBe('armoured')
     expect(damageWither(armoured, 20, 'ranged')).toMatchObject({ state: armoured, ignored: true, appliedDamage: 0 })
@@ -69,7 +73,7 @@ describe('wither lifecycle', () => {
   })
 
   it('dies once with a nether star drop and a despawn descriptor', () => {
-    const active = stepWither(createWither({ x: 2, y: 3, z: 4 }), 10).state
+    const active = stepWither(createWither(position(2, 3, 4)), 10).state
     const killed = damageWither(active, 500, 'void')
     expect(killed.death).toEqual({
       despawn: { kind: 'wither', reason: 'killed' },
@@ -83,14 +87,16 @@ describe('wither lifecycle', () => {
   })
 
   it('round-trips a versioned snapshot and repairs invalid restored magnitudes', () => {
-    const state = damageWither(stepWither(createWither({ x: 1, y: 2, z: 3 }), 10).state, 160, 'melee').state
+    const state = damageWither(stepWither(createWither(position(1, 2, 3)), 10).state, 160, 'melee').state
     expect(restoreWither(serializeWither(state))).toEqual(state)
+    const invalidFeetPosition = JSON.parse('{"x":0,"y":2,"z":3}')
+    invalidFeetPosition.x = Number.NaN
     expect(restoreWither({
       kind: 'wither', version: 1,
-      state: { ...state, healthPoints: Number.NaN, feetPosition: { x: Number.NaN, y: 2, z: 3 } },
+      state: { ...state, healthPoints: Number.NaN, feetPosition: invalidFeetPosition },
     })).toMatchObject({ phase: 'dead', healthPoints: 0, feetPosition: { x: 0, y: 2, z: 3 } })
 
-    const airborne = stepWither(createWither({ x: 1, y: 2, z: 3 }), 10).state
+    const airborne = stepWither(createWither(position(1, 2, 3)), 10).state
     expect(restoreWither({ ...serializeWither(airborne), state: { ...airborne, phase: 'airborne' } })).toEqual(airborne)
     expect(restoreWither({
       ...serializeWither(airborne),
@@ -105,8 +111,8 @@ describe('wither lifecycle', () => {
 
 describe('wither skull descriptors', () => {
   it('distinguishes ordinary and blue skull block behaviour', () => {
-    const normal = witherSkullProjectile({ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 4 }, 'normal')
-    const blue = witherSkullProjectile({ x: 0, y: 0, z: 0 }, { x: 0, y: 3, z: 4 }, 'blue')
+    const normal = witherSkullProjectile(position(0, 0, 0), position(0, 0, 4), 'normal')
+    const blue = witherSkullProjectile(position(0, 0, 0), position(0, 3, 4), 'blue')
     expect(normal).toMatchObject({ variant: 'normal', direction: { x: 0, y: 0, z: 1 }, destroysResistantBlocks: false })
     expect(blue).toMatchObject({ variant: 'blue', direction: { x: 0, y: 0.6, z: 0.8 }, destroysResistantBlocks: true })
   })

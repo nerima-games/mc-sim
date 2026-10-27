@@ -1,4 +1,4 @@
-import type { Position } from '@nerima-games/mc-kernel'
+import { PositionAxis, position, type Position } from '@nerima-games/mc-kernel'
 
 export const WITHER_MAX_HEALTH = 300
 export const WITHER_SPAWN_CHARGE_SECS = 10
@@ -60,12 +60,13 @@ export type WitherSummonMatch = {
 }
 
 const finite = (value: number, fallback = 0): number => (Number.isFinite(value) ? value : fallback)
+
+
+const positionOf = (x: number, y: number, z: number): Position =>
+  position(PositionAxis(x), PositionAxis(y), PositionAxis(z))
 const nonNegative = (value: number): number => Math.max(0, finite(value))
-const repairPosition = (value: Position): Position => ({
-  x: finite(value?.x),
-  y: finite(value?.y),
-  z: finite(value?.z),
-})
+const repairPosition = (value: Position): Position =>
+  positionOf(finite(value?.x), finite(value?.y), finite(value?.z))
 
 const phaseForHealth = (healthPoints: number): Exclude<WitherPhase, 'charging'> =>
   healthPoints <= 0 ? 'dead' : healthPoints <= WITHER_ARMOUR_THRESHOLD ? 'armoured' : 'airborne'
@@ -75,7 +76,7 @@ export const createWither = (feetPosition: Position): WitherState => ({
   healthPoints: WITHER_MAX_HEALTH,
   chargeRemainingSecs: WITHER_SPAWN_CHARGE_SECS,
   feetPosition: repairPosition(feetPosition),
-  velocity: { x: 0, y: 0, z: 0 },
+  velocity: positionOf(0, 0, 0),
 })
 
 const scaledDirection = (from: Position, to: Position, magnitude: number): Position => {
@@ -84,15 +85,15 @@ const scaledDirection = (from: Position, to: Position, magnitude: number): Posit
   const dz = to.z - from.z
   const length = Math.hypot(dx, dy, dz)
   return length === 0
-    ? { x: 0, y: 0, z: 0 }
-    : { x: (dx / length) * magnitude, y: (dy / length) * magnitude, z: (dz / length) * magnitude }
+    ? positionOf(0, 0, 0)
+    : positionOf((dx / length) * magnitude, (dy / length) * magnitude, (dz / length) * magnitude)
 }
 
 const clampVelocity = (velocity: Position): Position => {
   const speed = Math.hypot(velocity.x, velocity.y, velocity.z)
   if (speed <= WITHER_MAX_SPEED) return velocity
   const scale = WITHER_MAX_SPEED / speed
-  return { x: velocity.x * scale, y: velocity.y * scale, z: velocity.z * scale }
+  return positionOf(velocity.x * scale, velocity.y * scale, velocity.z * scale)
 }
 
 export const stepWither = (
@@ -118,22 +119,22 @@ export const stepWither = (
     return { state: { ...state, healthPoints, phase }, spawnExplosion: undefined }
   }
   const acceleration = scaledDirection(state.feetPosition, repairPosition(targetPosition), WITHER_FOLLOW_ACCELERATION)
-  const velocity = clampVelocity({
-    x: state.velocity.x + acceleration.x * delta,
-    y: state.velocity.y + acceleration.y * delta,
-    z: state.velocity.z + acceleration.z * delta,
-  })
+  const velocity = clampVelocity(positionOf(
+    state.velocity.x + acceleration.x * delta,
+    state.velocity.y + acceleration.y * delta,
+    state.velocity.z + acceleration.z * delta,
+  ))
   return {
     state: {
       ...state,
       phase,
       healthPoints,
       velocity,
-      feetPosition: {
-        x: state.feetPosition.x + velocity.x * delta,
-        y: state.feetPosition.y + velocity.y * delta,
-        z: state.feetPosition.z + velocity.z * delta,
-      },
+      feetPosition: positionOf(
+        state.feetPosition.x + velocity.x * delta,
+        state.feetPosition.y + velocity.y * delta,
+        state.feetPosition.z + velocity.z * delta,
+      ),
     },
     spawnExplosion: undefined,
   }
@@ -194,7 +195,7 @@ export const matchWitherSummon = (
     ) {
       return {
         axis,
-        spawnPosition: { x: base.x + 0.5, y: base.y + 1, z: base.z + 0.5 },
+        spawnPosition: positionOf(base.x + 0.5, base.y + 1, base.z + 0.5),
         consumedBlocks: [...body, ...skulls],
       }
     }
