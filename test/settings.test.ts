@@ -395,6 +395,25 @@ describe('SettingsService', () => {
     }),
   )
 
+  it.effect('a layer repairs malformed runtime preferences before exposing its snapshot', () =>
+    Effect.gen(function* () {
+      const malformed = withSettings({
+        fovDegrees: FieldOfViewDegrees(75),
+        renderDistance: RenderDistanceChunks(16),
+      })
+      expect(Reflect.set(malformed, 'fovDegrees', Number.NaN)).toBe(true)
+      expect(Reflect.set(malformed, 'renderDistance', 400)).toBe(true)
+
+      const restored = yield* Effect.flatMap(SettingsService, (service) => service.snapshot).pipe(
+        Effect.provide(SettingsServiceLayer(malformed)),
+      )
+
+      expect(restored.fovDegrees).toBe(75)
+      expect(restored.renderDistance).toBe(16)
+      expect(normaliseSettings(restored)).toEqual(restored)
+    }),
+  )
+
   it.effect('restores and repairs malformed stored settings', () =>
     Effect.gen(function* () {
       const settings = yield* makeSettingsService()
