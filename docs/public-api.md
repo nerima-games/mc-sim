@@ -90,10 +90,12 @@ const snapshotAgeSecs: (snapshot: CameraPoseSnapshot, now: MonotonicTimeSecs) =>
 // application/player-service.ts
 type PlayerServiceApi = {
   readonly pose: Effect.Effect<PlayerPose>
+  readonly dimension: Effect.Effect<Dimension>
   readonly look: (deltaYaw: number, deltaPitch: number) => Effect.Effect<PlayerPose>
   readonly moveTo: (feetPosition: Position) => Effect.Effect<void>
+  readonly setDimension: (dimension: Dimension) => Effect.Effect<void>
   readonly cameraPose: Effect.Effect<CameraPoseSnapshot, never, ClockPort>   // 唯一の発行口
-  readonly restore: (pose: PlayerPose) => Effect.Effect<void>
+  readonly restore: (pose: PlayerPose, dimension: Dimension) => Effect.Effect<void>
   readonly reset: Effect.Effect<void>
 }
 ```
