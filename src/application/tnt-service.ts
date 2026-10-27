@@ -10,20 +10,19 @@ import {
   type DimensionRevision,
   type EntityId,
   type WorldRevision,
+  type Position,
   position,
 } from '@nerima-games/mc-kernel'
 import { Context, Effect, Layer, Result, Schema } from 'effect'
 import type { YieldableError } from 'effect/Cause'
 import { SchemaErrorSchema } from '../schema-errors.js'
-import {
-  ExplosionPlanSchema,
-} from '../domain/explosion.js'
 import type {
   ExplosionBlockReader,
   ExplosionEntity,
   ExplosionLimits,
   ExplosionPlan,
 } from '../domain/explosion.js'
+import { MAX_EXPLOSION_RADIUS } from '../domain/explosion.js'
 import {
   DEFAULT_TNT_FUSE_SECS,
   planPrimedTnt,
@@ -162,7 +161,45 @@ export type TntAdvanceRequest = Readonly<{
   limits?: Partial<ExplosionLimits>
 }>
 
-const TntExplosionPlanSchema = ExplosionPlanSchema
+const TntPositionAxisSchema: Schema.Codec<Position['x'], number> =
+  Schema.Finite.pipe(Schema.brand('PositionAxis'))
+const TntPositionSchema: Schema.Codec<Position, Readonly<{ x: number; y: number; z: number }>> = Schema.Struct({
+  x: TntPositionAxisSchema,
+  y: TntPositionAxisSchema,
+  z: TntPositionAxisSchema,
+})
+const TntSafeIntegerSchema: Schema.Codec<number, number> = Schema.Int.check(
+  Schema.isBetween({ minimum: Number.MIN_SAFE_INTEGER, maximum: Number.MAX_SAFE_INTEGER }),
+)
+const TntNonNegativeSafeIntegerSchema: Schema.Codec<number, number> = Schema.Int.check(
+  Schema.isBetween({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+)
+const TntExplosionPlanSchema: Schema.Codec<ExplosionPlan, unknown> = Schema.Struct({
+  center: TntPositionSchema,
+  radius: Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: MAX_EXPLOSION_RADIUS })),
+  seed: Schema.Finite.check(Schema.isBetween({
+    minimum: -Number.MAX_SAFE_INTEGER,
+    maximum: Number.MAX_SAFE_INTEGER,
+  })),
+  destroyedBlocks: Schema.Array(Schema.Struct({
+    x: TntSafeIntegerSchema,
+    y: TntSafeIntegerSchema,
+    z: TntSafeIntegerSchema,
+  })),
+  entityEffects: Schema.Array(Schema.Struct({
+    id: EntityIdSchema,
+    damage: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
+    knockback: TntPositionSchema,
+    exposure: Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 })),
+  })),
+  visitedBlocks: TntNonNegativeSafeIntegerSchema,
+  limits: Schema.Struct({
+    maxVisitedBlocks: TntNonNegativeSafeIntegerSchema,
+    maxRaySteps: TntNonNegativeSafeIntegerSchema,
+    maxAffectedEntities: TntNonNegativeSafeIntegerSchema,
+  }),
+  truncated: Schema.Boolean,
+})
 
 const PrimedTntPlanSchema: Schema.Codec<PrimedTntPlan, unknown> = Schema.Struct({
   before: PrimedTntStateSchema,

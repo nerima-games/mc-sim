@@ -1,5 +1,11 @@
 import { Context, Effect, Layer, Schema } from 'effect'
-import { ITEM_TYPES, type BlockAddress, type Dimension, type WorldRevision } from '@nerima-games/mc-kernel'
+import {
+  ITEM_TYPES,
+  type BlockAddress,
+  type Dimension,
+  type WorldRevision,
+  type WorldWriteBatch,
+} from '@nerima-games/mc-kernel'
 import * as Container from '../domain/container-storage.js'
 import * as PlayerStorage from '../domain/player-storage.js'
 import * as Inv from '../domain/inventory.js'
@@ -28,8 +34,6 @@ const ContainerKindSchema = Schema.Literals([
   'dropper',
   'hopper',
 ])
-
-type AnySchema = Schema.Schema<unknown>
 
 const ContainerIdSchema = Schema.String.check(
   Schema.makeFilter((id) => id.length > 0 && id.trim() === id),
@@ -77,16 +81,18 @@ export const PlayerStorageSnapshotSchema: Schema.Codec<PlayerStorage.PlayerStora
       : durability === null
   })))
 
-const PositiveSafeIntegerSchema = Schema.Int.check(Schema.makeFilter((value) => Number.isSafeInteger(value) && value > 0))
+const PositiveSafeIntegerSchema = Schema.Int.check(
+  Schema.isBetween({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+)
 
-export const CreateContainerResultSchema: AnySchema = Schema.Union([
+export const CreateContainerResultSchema: Schema.Codec<Container.CreateContainerResult, unknown> = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal('Created'), container: ContainerSchema }),
   Schema.Struct({ _tag: Schema.Literal('AlreadyExists'), container: ContainerSchema }),
   Schema.Struct({ _tag: Schema.Literal('InvalidContainerId') }),
   Schema.Struct({ _tag: Schema.Literal('InvalidContainerKind') }),
 ])
 
-export const ContainerTransferResultSchema: AnySchema = Schema.Union([
+export const ContainerTransferResultSchema: Schema.Codec<Container.ContainerTransferResult, unknown> = Schema.Union([
   Schema.Struct({
     _tag: Schema.Literal('Transferred'),
     item: Schema.Literals(ITEM_TYPES),
@@ -111,7 +117,7 @@ export const ContainerTransferResultSchema: AnySchema = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal('ItemStackFailure'), error: Inv.ItemStackFailureSchema }),
 ])
 
-export const ContainerExtractResultSchema: AnySchema = Schema.Union([
+export const ContainerExtractResultSchema: Schema.Codec<Container.ContainerExtractResult, unknown> = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal('Extracted'), stack: ContainerStoredStackSchema }),
   Schema.Struct({ _tag: Schema.Literal('ContainerNotFound') }),
   Schema.Struct({ _tag: Schema.Literal('InvalidContainerSlot') }),
@@ -125,7 +131,7 @@ export const ContainerExtractResultSchema: AnySchema = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal('ItemStackFailure'), error: Inv.ItemStackFailureSchema }),
 ])
 
-export const ContainerMoveResultSchema: AnySchema = Schema.Union([
+export const ContainerMoveResultSchema: Schema.Codec<Container.ContainerMoveResult, unknown> = Schema.Union([
   Schema.Struct({
     _tag: Schema.Literal('Moved'),
     item: Schema.Literals(ITEM_TYPES),
@@ -148,7 +154,7 @@ export const ContainerMoveResultSchema: AnySchema = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal('ItemStackFailure'), error: Inv.ItemStackFailureSchema }),
 ])
 
-export const ContainerStorageServiceErrorSchema: AnySchema = Schema.Union([
+export const ContainerStorageServiceErrorSchema: Schema.Codec<ContainerStorageServiceFailure, unknown> = Schema.Union([
   SchemaErrorSchema,
   WorldCommitCoordinatorErrorSchema,
 ])
@@ -180,6 +186,8 @@ export type ContainerStorageServiceFailure = Schema.SchemaError | WorldCommitCoo
 
 export type ContainerStorageCommitOptions = Readonly<{
   expectedRevision?: WorldRevision
+  blockWrite?: WorldWriteBatch
+  additionalChanges?: ReadonlyArray<ReplicatedOwnerCandidate>
 }>
 
 export type ContainerStorageTransferRequest = Readonly<{
@@ -268,21 +276,33 @@ export const makeContainerStorageService = (): Effect.Effect<
       additionalChanges: ReadonlyArray<ReplicatedOwnerCandidate> = [],
     ): Effect.Effect<void, ContainerStorageServiceFailure> =>
       Effect.gen(function* () {
+        const blockWriteDimension = options.blockWrite?.dimension
+        const commitDimensions = [...dimensionsOf(addresses)]
+        if (blockWriteDimension !== undefined && !commitDimensions.includes(blockWriteDimension)) {
+          commitDimensions.push(blockWriteDimension)
+        }
         const expectedDimensions = yield* Effect.forEach(
-          dimensionsOf(addresses),
-          (dimension) => Effect.map(coordinator.dimensionRevision(dimension), (expectedRevision) => ({
-            dimension,
-            expectedRevision,
-          })),
+          commitDimensions,
+          (dimension) => {
+            if (dimension === blockWriteDimension && options.blockWrite !== undefined) {
+              return Effect.succeed({ dimension, expectedRevision: options.blockWrite.expectedDimensionRevision })
+            }
+            return Effect.map(coordinator.dimensionRevision(dimension), (expectedRevision) => ({
+              dimension,
+              expectedRevision,
+            }))
+          },
         )
         const changes: [ReplicatedOwnerCandidate, ...ReadonlyArray<ReplicatedOwnerCandidate>] = [
           { ownerId: CONTAINER_STORAGE_REPLICATED_OWNER_ID, state },
+          ...(options.additionalChanges ?? []),
           ...additionalChanges,
         ]
         yield* coordinator.commit({
-          expectedRevision: options.expectedRevision ?? currentRevision,
+          expectedRevision: options.expectedRevision ?? options.blockWrite?.expectedWorldRevision ?? currentRevision,
           expectedDimensions,
           changes,
+          ...(options.blockWrite === undefined ? {} : { blockWrite: options.blockWrite }),
         })
       })
 
