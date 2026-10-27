@@ -1,8 +1,8 @@
-import { Context, Effect, Layer, Ref } from 'effect'
-import { Result } from 'effect'
+import { Context, Effect, Layer, Ref, Result, Schema } from 'effect'
 import { isBlockType, isDimension } from '@nerima-games/mc-kernel'
 import { BlockAxis } from '@nerima-games/mc-kernel/domain/coordinates'
 import type { BlockType } from '@nerima-games/mc-kernel'
+import * as Inventory from '../domain/inventory.js'
 import type { ItemStack, ItemStackFailure } from '../domain/inventory.js'
 import type { DeltaTimeSecs } from '@nerima-games/mc-kernel'
 import * as Crop from '../domain/crop.js'
@@ -30,6 +30,28 @@ export type CropServiceApi = {
   readonly restore: (snapshot: unknown) => Effect.Effect<void, Crop.CropValidationError>
   readonly reset: Effect.Effect<void>
 }
+
+export const CropServicePlantSuccessSchema: Schema.Codec<boolean, boolean> = Schema.Boolean
+export const CropServiceCropAtSuccessSchema: Schema.Codec<Crop.CropState | null, unknown> =
+  Schema.NullOr(Crop.CropStateSchema)
+export const CropServiceMatureYieldsSuccessSchema: Schema.Codec<ReadonlyArray<ItemStack> | null, unknown> =
+  Crop.MatureYieldsSchema
+export const CropServiceRemoveSuccessSchema: Schema.Codec<Crop.CropState | null, unknown> =
+  Schema.NullOr(Crop.CropStateSchema)
+export const CropServiceAdvanceSuccessSchema: Schema.Codec<void, undefined> = Schema.Undefined
+export const CropServiceAdvanceByBoneMealSuccessSchema: Schema.Codec<boolean, boolean> = Schema.Boolean
+export const CropServiceSnapshotSuccessSchema: Schema.Codec<Crop.CropSnapshot, unknown> =
+  Crop.CropSnapshotSchema
+export const CropServiceRestoreSuccessSchema: Schema.Codec<void, undefined> = Schema.Undefined
+export const CropServiceResetSuccessSchema: Schema.Codec<void, undefined> = Schema.Undefined
+
+export const CropServiceValidationErrorSchema: Schema.Codec<Crop.CropValidationError, unknown> =
+  Crop.CropValidationErrorSchema
+export const CropServiceMatureYieldsErrorSchema: Schema.Codec<
+  ItemStackFailure | Crop.CropValidationError,
+  unknown
+> = Schema.Union([Inventory.ItemStackFailureSchema, Crop.CropValidationErrorSchema])
+export const CropServiceNoFailureSchema: Schema.Codec<never, never> = Schema.Never
 
 const CropServiceBase: Context.ServiceClass<CropService, '@nerima-games/mc-sim/CropService', CropServiceApi> =
   Context.Service<CropService, CropServiceApi>()('@nerima-games/mc-sim/CropService')
@@ -143,9 +165,9 @@ export const makeCropService = (): Effect.Effect<CropServiceApi> =>
       }),
     ),
     advance: (delta) =>
-      Ref.update(state, (current) =>
+      Effect.map(Ref.update(state, (current) =>
         new Map(Array.from(current, ([key, crop]) => [key, Crop.advanceCrop(crop, delta)])),
-      ),
+      ), () => undefined),
     advanceByBoneMeal: (location) => Effect.flatMap(decodeCropLocation(location), (validLocation) =>
       Ref.modify(state, (current) => {
         const key = Crop.cropLocationKey(validLocation)
@@ -161,12 +183,12 @@ export const makeCropService = (): Effect.Effect<CropServiceApi> =>
       const validated = Crop.validateCropSnapshot(snapshot)
       return validated._tag === 'Invalid'
         ? Effect.fail(validated.error)
-        : Ref.set(
+        : Effect.map(Ref.set(
             state,
             new Map(validated.snapshot.crops.map((crop) => [Crop.cropLocationKey(crop), copyCrop(crop)])),
-          )
+          ), () => undefined)
     },
-    reset: Ref.set(state, new Map()),
+    reset: Effect.map(Ref.set(state, new Map()), () => undefined),
   }))
 
 export const CropServiceLayer: Layer.Layer<CropService> = Layer.effect(CropService, makeCropService())

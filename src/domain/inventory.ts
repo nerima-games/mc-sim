@@ -53,12 +53,12 @@ export type { ItemStack }
 export type ItemStackFailure = StackConstructionFailure
 export type ItemStackResult = Result.Result<ItemStack, ItemStackFailure>
 
-export const BrandErrorSchema: Schema.Schema<Brand.BrandError> = Schema.declare(
+export const BrandErrorSchema: Schema.Codec<Brand.BrandError, unknown> = Schema.declare(
   (value: unknown): value is Brand.BrandError => value instanceof Brand.BrandError,
 )
 const isNamespacedResourceLocation = (value: unknown): value is NamespacedResourceLocation =>
   typeof value === 'string' && Result.isSuccess(NamespacedResourceLocation.result(value))
-const NamespacedResourceLocationSchema: Schema.Schema<NamespacedResourceLocation> =
+const NamespacedResourceLocationSchema: Schema.Codec<NamespacedResourceLocation, unknown> =
   Schema.declare(isNamespacedResourceLocation)
 const ItemValidationFailureSchema = Schema.TaggedStruct('ItemValidationFailure', {
   kind: Schema.Literals(['TypeError', 'RangeError', 'InputError']),
@@ -76,13 +76,13 @@ const TextComponentFailureSchema = Schema.TaggedStruct('TextComponentFailure', {
   message: Schema.String,
   value: Schema.optionalKey(Schema.Unknown),
 })
-export const ItemStackSchema: Schema.Schema<ItemStack> = Schema.declare(isItemStack)
-export const KernelItemStackFailureSchema: Schema.Schema<Exclude<ItemStackFailure, Brand.BrandError>> = Schema.Union([
+export const ItemStackSchema: Schema.Codec<ItemStack, unknown> = Schema.declare(isItemStack)
+export const KernelItemStackFailureSchema: Schema.Codec<Exclude<ItemStackFailure, Brand.BrandError>, unknown> = Schema.Union([
   ItemValidationFailureSchema,
   ItemComponentPatchConflictSchema,
   TextComponentFailureSchema,
 ])
-export const ItemStackFailureSchema: Schema.Schema<ItemStackFailure> = Schema.Union([
+export const ItemStackFailureSchema: Schema.Codec<ItemStackFailure, unknown> = Schema.Union([
   BrandErrorSchema,
   KernelItemStackFailureSchema,
 ])

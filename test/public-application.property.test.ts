@@ -971,20 +971,108 @@ it('crop, equipment, and vehicle services keep hostile requests and snapshots sa
   const equipment = await Effect.runPromise(PublicApplication.makeEquipmentService())
   const vehicles = await Effect.runPromise(PublicApplication.makeVehicleService())
 
+  const captureCropOutcome = async (
+    propertyName: string,
+    effect: Effect.Effect<unknown, unknown, never>,
+    successSchema: Schema.ConstraintDecoder<unknown>,
+    failureSchema: Schema.ConstraintDecoder<unknown>,
+  ): Promise<Result.Result<unknown, unknown>> => {
+    const outcome = await Effect.runPromise(Effect.result(effect))
+    const decoded = Result.isFailure(outcome)
+      ? Schema.decodeUnknownResult(failureSchema, { onExcessProperty: 'error' })(outcome.failure)
+      : Schema.decodeUnknownResult(successSchema, { onExcessProperty: 'error' })(outcome.success)
+    expect(decoded._tag, propertyName).toBe('Success')
+    return outcome
+  }
+
+  const assertCropOperation = async (
+    propertyName: string,
+    effect: Effect.Effect<unknown, unknown, never>,
+    successSchema: Schema.ConstraintDecoder<unknown>,
+    failureSchema: Schema.ConstraintDecoder<unknown>,
+  ): Promise<Result.Result<unknown, unknown>> => {
+    const before = await captureCropOutcome(
+      propertyName + ' snapshot before',
+      crops.snapshot,
+      PublicApplication.CropServiceSnapshotSuccessSchema,
+      PublicApplication.CropServiceNoFailureSchema,
+    )
+    const outcome = await captureCropOutcome(propertyName, effect, successSchema, failureSchema)
+    const after = await captureCropOutcome(
+      propertyName + ' snapshot after',
+      crops.snapshot,
+      PublicApplication.CropServiceSnapshotSuccessSchema,
+      PublicApplication.CropServiceNoFailureSchema,
+    )
+    if (Result.isFailure(outcome) && Result.isSuccess(before) && Result.isSuccess(after)) {
+      expect(after.success).toEqual(before.success)
+    }
+    return outcome
+  }
+
   await fc.assert(
     fc.asyncProperty(fc.tuple(hostileValue, hostileNumber), async ([value, amount]) => {
+      const reset = await assertCropOperation(
+        'CropService.reset',
+        crops.reset,
+        PublicApplication.CropServiceResetSuccessSchema,
+        PublicApplication.CropServiceNoFailureSchema,
+      )
+      expect(Result.isSuccess(reset)).toBe(true)
+
       const location = {
         dimension: value,
         position: { x: amount, y: value, z: amount },
       }
-      await runEffectResult(crops.plant, [location, value, value])
-      await runEffectResult(crops.cropAt, [location])
-      await runEffectResult(crops.matureYieldsAt, [location])
-      await runEffectResult(crops.remove, [location])
-      await runEffectResult(crops.advance, [amount])
-      await runEffectResult(crops.advanceByBoneMeal, [location])
-      await runEffectResult(crops.restore, [value])
-      await Effect.runPromise(crops.snapshot)
+      await assertCropOperation(
+        'CropService.plant',
+        invokeEffect(crops.plant, [location, value, value]),
+        PublicApplication.CropServicePlantSuccessSchema,
+        PublicApplication.CropServiceValidationErrorSchema,
+      )
+      await assertCropOperation(
+        'CropService.cropAt',
+        invokeEffect(crops.cropAt, [location]),
+        PublicApplication.CropServiceCropAtSuccessSchema,
+        PublicApplication.CropServiceValidationErrorSchema,
+      )
+      await assertCropOperation(
+        'CropService.matureYieldsAt',
+        invokeEffect(crops.matureYieldsAt, [location]),
+        PublicApplication.CropServiceMatureYieldsSuccessSchema,
+        PublicApplication.CropServiceMatureYieldsErrorSchema,
+      )
+      await assertCropOperation(
+        'CropService.remove',
+        invokeEffect(crops.remove, [location]),
+        PublicApplication.CropServiceRemoveSuccessSchema,
+        PublicApplication.CropServiceValidationErrorSchema,
+      )
+      await assertCropOperation(
+        'CropService.advance',
+        invokeEffect(crops.advance, [amount]),
+        PublicApplication.CropServiceAdvanceSuccessSchema,
+        PublicApplication.CropServiceNoFailureSchema,
+      )
+      await assertCropOperation(
+        'CropService.advanceByBoneMeal',
+        invokeEffect(crops.advanceByBoneMeal, [location]),
+        PublicApplication.CropServiceAdvanceByBoneMealSuccessSchema,
+        PublicApplication.CropServiceValidationErrorSchema,
+      )
+      await assertCropOperation(
+        'CropService.restore',
+        invokeEffect(crops.restore, [value]),
+        PublicApplication.CropServiceRestoreSuccessSchema,
+        PublicApplication.CropServiceValidationErrorSchema,
+      )
+      const snapshot = await captureCropOutcome(
+        'CropService.snapshot',
+        crops.snapshot,
+        PublicApplication.CropServiceSnapshotSuccessSchema,
+        PublicApplication.CropServiceNoFailureSchema,
+      )
+      expect(Result.isSuccess(snapshot)).toBe(true)
 
       await runEffectResult(equipment.equip, [value, value])
       await runEffectResult(equipment.unequip, [value])
@@ -1015,6 +1103,146 @@ it('crop, equipment, and vehicle services keep hostile requests and snapshots sa
     }),
     checks,
   )
+
+  const location = Schema.decodeUnknownSync(PublicApplication.CropLocationSchema)({
+    dimension: DIMENSIONS[0],
+    position: { x: 7, y: 64, z: -3 },
+  })
+  const plant = await assertCropOperation(
+    'CropService.plant valid potato',
+    crops.plant(location, 'potato_crop'),
+    PublicApplication.CropServicePlantSuccessSchema,
+    PublicApplication.CropServiceValidationErrorSchema,
+  )
+  expect(Result.isSuccess(plant) && plant.success).toBe(true)
+
+  const plantedSnapshot = await captureCropOutcome(
+    'CropService.snapshot after plant',
+    crops.snapshot,
+    PublicApplication.CropServiceSnapshotSuccessSchema,
+    PublicApplication.CropServiceNoFailureSchema,
+  )
+  expect(Result.isSuccess(plantedSnapshot)).toBe(true)
+  if (Result.isSuccess(plantedSnapshot)) {
+    expect(plantedSnapshot.success).toMatchObject({
+      crops: [{ crop: 'potato_crop', growthSecs: 0 }],
+    })
+  }
+
+  const duplicatePlant = await assertCropOperation(
+    'CropService.plant duplicate location',
+    crops.plant(location, 'potato_crop'),
+    PublicApplication.CropServicePlantSuccessSchema,
+    PublicApplication.CropServiceValidationErrorSchema,
+  )
+  expect(Result.isSuccess(duplicatePlant)).toBe(true)
+  if (Result.isSuccess(duplicatePlant)) expect(duplicatePlant.success).toBe(false)
+
+  const immatureYields = await assertCropOperation(
+    'CropService.matureYieldsAt before maturity',
+    crops.matureYieldsAt(location),
+    PublicApplication.CropServiceMatureYieldsSuccessSchema,
+    PublicApplication.CropServiceMatureYieldsErrorSchema,
+  )
+  expect(Result.isSuccess(immatureYields) && immatureYields.success).toBeNull()
+
+  for (let growth = 0; growth < 16; growth += 1) {
+    const advanced = await assertCropOperation(
+      'CropService.advanceByBoneMeal',
+      crops.advanceByBoneMeal(location),
+      PublicApplication.CropServiceAdvanceByBoneMealSuccessSchema,
+      PublicApplication.CropServiceValidationErrorSchema,
+    )
+    expect(Result.isSuccess(advanced) && advanced.success).toBe(true)
+  }
+
+  const matureCrop = await assertCropOperation(
+    'CropService.cropAt after bone meal',
+    crops.cropAt(location),
+    PublicApplication.CropServiceCropAtSuccessSchema,
+    PublicApplication.CropServiceValidationErrorSchema,
+  )
+  expect(Result.isSuccess(matureCrop) && matureCrop.success).toMatchObject({
+    crop: 'potato_crop',
+    growthSecs: PublicApplication.POTATO_MATURITY_SECS,
+  })
+  const matureYields = await assertCropOperation(
+    'CropService.matureYieldsAt at maturity',
+    crops.matureYieldsAt(location),
+    PublicApplication.CropServiceMatureYieldsSuccessSchema,
+    PublicApplication.CropServiceMatureYieldsErrorSchema,
+  )
+  expect(Result.isSuccess(matureYields) && Array.isArray(matureYields.success)).toBe(true)
+  const matureBoneMeal = await assertCropOperation(
+    'CropService.advanceByBoneMeal at maturity',
+    crops.advanceByBoneMeal(location),
+    PublicApplication.CropServiceAdvanceByBoneMealSuccessSchema,
+    PublicApplication.CropServiceValidationErrorSchema,
+  )
+  expect(Result.isSuccess(matureBoneMeal)).toBe(true)
+  if (Result.isSuccess(matureBoneMeal)) expect(matureBoneMeal.success).toBe(false)
+
+  const validRestore = await assertCropOperation(
+    'CropService.restore valid snapshot',
+    crops.restore(Result.isSuccess(plantedSnapshot) ? plantedSnapshot.success : undefined),
+    PublicApplication.CropServiceRestoreSuccessSchema,
+    PublicApplication.CropServiceValidationErrorSchema,
+  )
+  expect(Result.isSuccess(validRestore)).toBe(true)
+
+  const invalidRestore = await assertCropOperation(
+    'CropService.restore malformed snapshot',
+    crops.restore({ crops: [{ dimension: 'moon' }] }),
+    PublicApplication.CropServiceRestoreSuccessSchema,
+    PublicApplication.CropServiceValidationErrorSchema,
+  )
+  expect(Result.isFailure(invalidRestore)).toBe(true)
+
+  const removed = await assertCropOperation(
+    'CropService.remove planted crop',
+    crops.remove(location),
+    PublicApplication.CropServiceRemoveSuccessSchema,
+    PublicApplication.CropServiceValidationErrorSchema,
+  )
+  expect(Result.isSuccess(removed)).toBe(true)
+  if (Result.isSuccess(removed)) expect(removed.success).not.toBeNull()
+  const emptyCropAt = await assertCropOperation(
+    'CropService.cropAt after remove',
+    crops.cropAt(location),
+    PublicApplication.CropServiceCropAtSuccessSchema,
+    PublicApplication.CropServiceValidationErrorSchema,
+  )
+  expect(Result.isSuccess(emptyCropAt) && emptyCropAt.success).toBeNull()
+  const missingYields = await assertCropOperation(
+    'CropService.matureYieldsAt after remove',
+    crops.matureYieldsAt(location),
+    PublicApplication.CropServiceMatureYieldsSuccessSchema,
+    PublicApplication.CropServiceMatureYieldsErrorSchema,
+  )
+  expect(Result.isSuccess(missingYields) && missingYields.success).toBeNull()
+  const removedSnapshot = await captureCropOutcome(
+    'CropService.snapshot after remove',
+    crops.snapshot,
+    PublicApplication.CropServiceSnapshotSuccessSchema,
+    PublicApplication.CropServiceNoFailureSchema,
+  )
+  expect(Result.isSuccess(removedSnapshot)).toBe(true)
+  if (Result.isSuccess(removedSnapshot)) expect(removedSnapshot.success).toMatchObject({ crops: [] })
+  const reset = await assertCropOperation(
+    'CropService.reset after lifecycle',
+    crops.reset,
+    PublicApplication.CropServiceResetSuccessSchema,
+    PublicApplication.CropServiceNoFailureSchema,
+  )
+  expect(Result.isSuccess(reset)).toBe(true)
+  const resetSnapshot = await captureCropOutcome(
+    'CropService.snapshot after reset',
+    crops.snapshot,
+    PublicApplication.CropServiceSnapshotSuccessSchema,
+    PublicApplication.CropServiceNoFailureSchema,
+  )
+  expect(Result.isSuccess(resetSnapshot)).toBe(true)
+  if (Result.isSuccess(resetSnapshot)) expect(resetSnapshot.success).toMatchObject({ crops: [] })
 })
 
 it('fishing, projectile, and TNT coordinators return typed outcomes for hostile request fields', async () => {
