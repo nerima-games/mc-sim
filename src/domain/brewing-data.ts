@@ -1,17 +1,44 @@
+import {
+  BREWING_BOTTLE_SLOTS,
+  BREWING_FUEL_ITEM,
+  BREWING_MAX_FUEL_CHARGES,
+  BREWING_TIME_SECS,
+  VANILLA_BREWING_RECIPES,
+  type BrewingBottles,
+  type BrewingFuelCharges,
+  type BrewingRecipe as KernelBrewingRecipe,
+  type BrewingRecipeTable,
+  type BrewingState,
+  type BrewingStateInput,
+} from '@nerima-games/mc-kernel'
 import type { ItemType } from '@nerima-games/mc-kernel'
 
-export const BREWING_TIME_SECS = 20
-export const BREWING_FUEL_ITEM: ItemType = 'blaze_powder'
-export const BREWING_FUEL_CHARGES = 20
-
-export type BrewingRecipe = {
+export {
+  BREWING_BOTTLE_SLOTS,
+  BREWING_FUEL_ITEM,
+  BREWING_MAX_FUEL_CHARGES,
+  BREWING_TIME_SECS,
+  VANILLA_BREWING_RECIPES,
+}
+export type {
+  BrewingBottles,
+  BrewingFuelCharges,
+  BrewingRecipeTable,
+  BrewingState,
+  BrewingStateInput,
+}
+export type VanillaBrewingRecipe = KernelBrewingRecipe
+export type StarterBrewingRecipe = Readonly<{
   readonly id: string
   readonly ingredient: ItemType
   readonly input: ItemType
   readonly output: ItemType
-}
+}>
+export type BrewingRecipeInput = VanillaBrewingRecipe | StarterBrewingRecipe
 
-export const STARTER_BREWING_RECIPES = [
+export const BREWING_FUEL_CHARGES: number = BREWING_MAX_FUEL_CHARGES
+
+export const STARTER_BREWING_RECIPES: ReadonlyArray<StarterBrewingRecipe> = [
   {
     id: 'mc-sim:awkward-potion',
     ingredient: 'nether_wart',
@@ -36,4 +63,4 @@ export const STARTER_BREWING_RECIPES = [
     input: 'awkward_potion',
     output: 'potion_of_regeneration',
   },
-] as const
+]

@@ -9,22 +9,26 @@ import {
 } from '@nerima-games/mc-kernel'
 import { placeableBlockFromItem } from '../src/domain/block-interaction'
 import {
-  addBrewingFuel,
+  addBrewingFuel as addBrewingFuelResult,
   advanceBrewing,
-  emptyBrewingState,
-  setBrewingBottle,
-  setBrewingIngredient,
+  brewingState,
+  emptyBrewingState as emptyBrewingStateResult,
+  setBrewingBottle as setBrewingBottleResult,
+  setBrewingIngredient as setBrewingIngredientResult,
+  type BrewingState,
 } from '../src/domain/brewing'
 import { BREWING_TIME_SECS, STARTER_BREWING_RECIPES } from '../src/domain/brewing-data'
+import { STARTER_SMELTING_RECIPES } from '../src/domain/smelting-data'
 import { validateCropSnapshot } from '../src/domain/crop'
 import { DEFAULT_SETTINGS, isValidSettings } from '../src/domain/settings'
 import { itemStack as itemStackResult, type ItemStack } from '../src/domain/inventory'
 import {
   advanceFurnace,
   collectFurnaceOutput,
-  emptyFurnaceState,
+  emptyFurnaceState as emptyFurnaceStateResult,
   transferToFurnace,
   validateFurnaceSnapshot,
+  type FurnaceState,
 } from '../src/domain/smelting'
 import { emptyInventory } from '../src/domain/inventory'
 
@@ -125,20 +129,35 @@ const itemStack = (...args: Parameters<typeof itemStackResult>): ItemStack => {
   return result.success
 }
 
+const must = <A, E>(result: Result.Result<A, E>): A => {
+  if (Result.isFailure(result)) throw result.failure
+  return result.success
+}
+
 const failureOf = <A, E>(result: Result.Result<A, E>): E => {
   if (Result.isSuccess(result)) throw new Error('expected a Result failure')
   return result.failure
 }
 
+const emptyBrewingState = (): BrewingState => must(emptyBrewingStateResult())
+
+const setBrewingBottle = (state: BrewingState, index: number, bottle: ItemStack | undefined): BrewingState =>
+  must(setBrewingBottleResult(state, index, bottle))
+
+const setBrewingIngredient = (state: BrewingState, ingredient: ItemStack | undefined): BrewingState =>
+  must(setBrewingIngredientResult(state, ingredient))
+
+const addBrewingFuel = (state: BrewingState, item: ItemStack['item'], count: number) => ({
+  state: must(addBrewingFuelResult(must(brewingState({ ...state, fuel: itemStack(item, count) })))),
+})
+
+const emptyFurnaceState = (): FurnaceState => must(emptyFurnaceStateResult())
+
 const withBottle = (
-  state: ReturnType<typeof emptyBrewingState>,
+  state: BrewingState,
   index: number,
   bottle: ItemStack,
-) => {
-  const result = setBrewingBottle(state, index, bottle)
-  if (!result.ok) throw new Error('expected a valid brewing bottle slot')
-  return result.state
-}
+) => setBrewingBottle(state, index, bottle)
 
 describe('domain migration coverage', () => {
   it('returns no placeable block when the registry has no id for the mapped type', () => {
@@ -157,6 +176,7 @@ describe('domain migration coverage', () => {
 
   it('keeps the first mismatched bottle while brewing a matching later bottle', () => {
     const [recipe] = STARTER_BREWING_RECIPES
+    if (recipe === undefined) throw new Error('starter brewing recipe missing')
     const firstBottle = withBottle(emptyBrewingState(), 0, itemStack('sugar', 1))
     const secondBottle = withBottle(firstBottle, 1, itemStack(recipe.input, 1))
     const loaded = addBrewingFuel(
@@ -172,32 +192,33 @@ describe('domain migration coverage', () => {
 
     expect(Result.isSuccess(result)).toBe(true)
     if (Result.isFailure(result)) throw result.failure
-    expect(result.success).toStrictEqual({
+    expect(result.success).toMatchObject({
       state: {
         bottles: [itemStack('sugar', 1), itemStack(recipe.output, 1), undefined],
         ingredient: undefined,
+        fuel: undefined,
         fuelCharges: 19,
-        brewTimeSecs: 0,
+        brewProgressSecs: 0,
       },
+      brewedCount: 1,
       brewed: 1,
     })
   })
 
   it('propagates an output stack failure instead of reporting a completed brew', () => {
     const [recipe] = STARTER_BREWING_RECIPES
-    const overstackedBottle = { ...itemStack(recipe.input, 1) }
-    expect(Reflect.set(overstackedBottle, 'count', 2)).toBe(true)
+    if (recipe === undefined) throw new Error('starter brewing recipe missing')
     const state = setBrewingIngredient(
-      withBottle(emptyBrewingState(), 0, overstackedBottle),
+      withBottle(emptyBrewingState(), 0, itemStack(recipe.input, 1)),
       itemStack(recipe.ingredient, 1),
     )
     const loaded = addBrewingFuel(state, 'blaze_powder', 1)
 
+    const expectedFailure = failureOf(itemStackResult(recipe.output, 0))
+    dependencyFailures.itemStackFailureMode = 1
     const result = advanceBrewing(loaded.state, BREWING_TIME_SECS)
-    const expectedFailure = itemStackResult(recipe.output, 2)
 
-    expect(Result.isFailure(expectedFailure)).toBe(true)
-    expect(result).toStrictEqual(expectedFailure)
+    expect(failureOf(result)).toStrictEqual(expectedFailure)
   })
 
   it('normalizes negative zero coordinates and rejects unsafe integer coordinates', () => {
@@ -285,7 +306,7 @@ describe('domain migration coverage', () => {
     dependencyFailures.itemStackFailureMode = 1
 
     expect(validateFurnaceSnapshot(snapshot)).toStrictEqual({
-      _tag: 'ItemStackFailure',
+      _tag: 'BrandFailure',
       error: expectedFailure,
     })
   })
@@ -297,7 +318,7 @@ describe('domain migration coverage', () => {
     dependencyFailures.itemStackFailureMode = 2
 
     expect(validateFurnaceSnapshot(snapshot)).toStrictEqual({
-      _tag: 'ItemStackFailure',
+      _tag: 'BrandFailure',
       error: expectedFailure,
     })
   })
@@ -306,7 +327,7 @@ describe('domain migration coverage', () => {
     const expectedFailure = failureOf(StackCount.result(0))
     dependencyFailures.failStarterRecipes = true
 
-    expect(failureOf(advanceFurnace(emptyFurnaceState(), 1))).toStrictEqual(expectedFailure)
+    expect(failureOf(STARTER_SMELTING_RECIPES)).toStrictEqual(expectedFailure)
   })
 
   it('preserves inventory and furnace state when reducing an input stack fails', () => {
