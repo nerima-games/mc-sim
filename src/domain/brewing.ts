@@ -347,7 +347,6 @@ export const advanceBrewing = (
     if (current.fuelCharges === 0) break
 
     const step = Math.min(remaining, BREWING_TIME_SECS - current.brewProgressSecs)
-    if (step <= 0) break
     const progress = FixedDurationSecs.result(current.brewProgressSecs + step)
     if (Result.isFailure(progress)) return Result.fail(progress.failure)
     current = { ...current, brewProgressSecs: progress.success }

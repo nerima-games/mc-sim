@@ -247,7 +247,10 @@ describe('brewing domain', () => {
     expect(Result.isFailure(advanceBrewing(state, 1, null as never))).toBe(true)
     expect(Result.isFailure(advanceBrewing(invalidState, 1))).toBe(true)
     expect(Result.isFailure(advanceBrewing(state, -1))).toBe(true)
-    expect(Result.isFailure(advanceBrewing({ ...state, brewProgressSecs: BREWING_TIME_SECS }, 1))).toBe(true)
+    expect(advanceBrewing({ ...state, brewProgressSecs: BREWING_TIME_SECS }, 1)).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'BrewingValidationFailure', path: 'brewProgressSecs' },
+    })
     expect(Result.isFailure(brewingState({ fuelCharges: null }))).toBe(true)
     expect(Result.isFailure(brewingState({ brewProgressSecs: null }))).toBe(true)
     expect(validateBrewingSnapshot({ ...validSnapshot, fuelCharges: null })).toMatchObject({ _tag: 'Invalid' })
