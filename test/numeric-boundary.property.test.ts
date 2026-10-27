@@ -1,12 +1,14 @@
 import fc from 'fast-check'
 import { expect, it } from 'vitest'
 import { Effect } from 'effect'
+import { PositionAxis, position } from '@nerima-games/mc-kernel'
 import * as StatisticsService from '../src/application/statistics-service.js'
 import * as TimeService from '../src/application/time-service.js'
 import * as Statistics from '../src/domain/statistics.js'
 import * as Time from '../src/domain/time-of-day.js'
 import * as Vitals from '../src/domain/vitals.js'
 import * as VitalsService from '../src/application/vitals-service.js'
+import * as Wither from '../src/domain/wither.js'
 
 const hostileValue: fc.Arbitrary<unknown> = fc.oneof(
   fc.double(),
@@ -80,6 +82,28 @@ const invokeEffect = <A, E>(
 const isValidTimeState = (value: unknown): boolean => invoke(Time.isValidTimeState, [value]) === true
 
 const checks = { numRuns: 100 }
+
+const isValidWitherState = (value: unknown): boolean => {
+  if (!isRecord(value)) return false
+  const isAxis = (candidate: unknown): boolean =>
+    typeof candidate === 'number' && PositionAxis.is(candidate)
+  const positionIsValid = (candidate: unknown): boolean =>
+    isRecord(candidate) &&
+    isAxis(candidate['x']) &&
+    isAxis(candidate['y']) &&
+    isAxis(candidate['z'])
+  const isHealth = (candidate: unknown): boolean =>
+    typeof candidate === 'number' && Wither.WitherHealthPoints.is(candidate)
+  const isCharge = (candidate: unknown): boolean =>
+    typeof candidate === 'number' && Wither.WitherChargeRemainingSecs.is(candidate)
+  return (
+    ['charging', 'airborne', 'armoured', 'dead'].includes(String(value['phase'])) &&
+    isHealth(value['healthPoints']) &&
+    isCharge(value['chargeRemainingSecs']) &&
+    positionIsValid(value['feetPosition']) &&
+    positionIsValid(value['velocity'])
+  )
+}
 
 it('time advance returns a typed failure or a valid finite clock for arbitrary ticks and deltas', () => {
   fc.assert(
@@ -196,6 +220,24 @@ it('vitals normalization, mutators, and restore never return invalid or non-fini
       expect(isSafeResult(serviceResults.experience, Vitals.isValidVitals)).toBe(true)
       expect(Vitals.isValidVitals(serviceResults.snapshot)).toBe(true)
       expect(containsOnlyFiniteNumbers(serviceResults.snapshot)).toBe(true)
+    }),
+    checks,
+  )
+})
+
+it('wither stepping and damage return typed failures or valid finite state for arbitrary scalar inputs', () => {
+  const initial = Wither.createWither(position(PositionAxis(0), PositionAxis(64), PositionAxis(0)))
+  fc.assert(
+    fc.property(hostileValue, (value) => {
+      const stepped = invoke(Wither.stepWither, [initial, value])
+      expect(isSafeResult(stepped, (success) =>
+        isRecord(success) && isValidWitherState(success['state']),
+      )).toBe(true)
+
+      const damaged = invoke(Wither.damageWither, [initial, value, 'melee'])
+      expect(isSafeResult(damaged, (success) =>
+        isRecord(success) && isValidWitherState(success['state']),
+      )).toBe(true)
     }),
     checks,
   )
