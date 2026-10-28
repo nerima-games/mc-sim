@@ -115,12 +115,13 @@ describe('HopperService', () => {
     Effect.flatMap(makeFixture(playerWithStone(2)), ({ coordinator, containerService, hopperService }) =>
       Effect.gen(function* () {
         const cadenceFixture = {
-          source: 'https://minecraft.wiki/w/Hopper',
+          source: 'https://mc-packet-reference.netlify.app/26.x/source/net/minecraft/world/level/block/entity/hopperblockentity/',
+          wiki: 'https://minecraft.wiki/w/Hopper',
           edition: 'Java Edition',
-          version: '1.21.4',
-          cooldownTicks: 8,
-          unpoweredElapsedTicks: 7,
-          poweredElapsedTicks: 20,
+          version: '26.3',
+          initialCooldownTicks: 3,
+          poweredElapsedTicks: 1,
+          transferCooldownTicks: 8,
         } as const
         const sourceAddress = addressAt(8)
         const hopperAddress = addressAt(9)
@@ -137,14 +138,6 @@ describe('HopperService', () => {
         const revision = yield* coordinator.revision
         const dimensionRevision = yield* coordinator.dimensionRevision('overworld')
         const blockWrite = batchFor(revision, dimensionRevision, hopperAddress)
-        expect(yield* hopperService.transfer({
-          hopperAddress,
-          source: { _tag: 'Container', address: sourceAddress, slot: 0 },
-          destination: { _tag: 'Container', address: hopperAddress, slot: 0 },
-          blockWrite,
-        })).toMatchObject({ _tag: 'Committed', hopper: { cooldownTicks: cadenceFixture.cooldownTicks } })
-
-        const hopperSnapshot = yield* coordinator.snapshot(HOPPER_REPLICATED_OWNER_ID, HopperServiceSnapshotSchema)
         const containerSnapshot = yield* coordinator.snapshot(CONTAINER_STORAGE_REPLICATED_OWNER_ID, ContainerStorageSnapshotSchema)
         const currentRevision = yield* coordinator.revision
         const currentDimensionRevision = yield* coordinator.dimensionRevision('overworld')
@@ -155,12 +148,17 @@ describe('HopperService', () => {
           destination: { _tag: 'Container' as const, address: hopperAddress, slot: 0 },
           blockEdits: { dimension: 'overworld' as const, edits: blockWrite.edits },
         }
-        const planSnapshot = {
+        const planSnapshot = Schema.decodeUnknownSync(HopperTransferTickSnapshotSchema)({
           world,
           expectedRevision: currentRevision,
           expectedDimensions,
           state: {
-            hoppers: hopperSnapshot.state,
+            hoppers: Schema.decodeUnknownSync(HopperServiceSnapshotSchema)({
+              hoppers: [{
+                address: hopperAddress,
+                cooldownTicks: cadenceFixture.initialCooldownTicks,
+              }],
+            }),
             containers: {
               world: containerSnapshot.world,
               expectedRevision: containerSnapshot.revision,
@@ -170,31 +168,84 @@ describe('HopperService', () => {
             player: { _tag: 'None' as const },
             intent,
           },
-        }
+        })
+        const planAtCooldown = (cooldownTicks: number) => Schema.decodeUnknownSync(HopperTransferTickSnapshotSchema)({
+          ...planSnapshot,
+          state: {
+            ...planSnapshot.state,
+            hoppers: Schema.decodeUnknownSync(HopperServiceSnapshotSchema)({
+              hoppers: [{ address: hopperAddress, cooldownTicks }],
+            }),
+          },
+        })
 
-        const unpowered = yield* hopperService.planTransferTick(
-          planSnapshot,
-          Schema.decodeUnknownSync(HopperElapsedTicksSchema)(cadenceFixture.unpoweredElapsedTicks),
+        const poweredElapsedTicks = Schema.decodeUnknownSync(HopperElapsedTicksSchema)(cadenceFixture.poweredElapsedTicks)
+        const poweredOne = yield* hopperService.planTransferTick(planSnapshot, poweredElapsedTicks, true)
+        expect(Schema.decodeUnknownSync(HopperTransferOutcomeSchema)(poweredOne.result))
+          .toStrictEqual({ _tag: 'Disabled' })
+        expect(poweredOne.changes.map(({ ownerId }) => ownerId)).toEqual([HOPPER_REPLICATED_OWNER_ID])
+        expect(Schema.decodeUnknownSync(HopperServiceSnapshotSchema)(poweredOne.changes[0]?.state).hoppers)
+          .toMatchObject([{ address: hopperAddress, cooldownTicks: 2 }])
+        expect(poweredOne.blockEdits).toBeUndefined()
+
+        const poweredTwo = yield* hopperService.planTransferTick(planAtCooldown(2), poweredElapsedTicks, true)
+        expect(Schema.decodeUnknownSync(HopperTransferOutcomeSchema)(poweredTwo.result))
+          .toStrictEqual({ _tag: 'Disabled' })
+        expect(poweredTwo.changes.map(({ ownerId }) => ownerId)).toEqual([HOPPER_REPLICATED_OWNER_ID])
+        expect(Schema.decodeUnknownSync(HopperServiceSnapshotSchema)(poweredTwo.changes[0]?.state).hoppers)
+          .toMatchObject([{ address: hopperAddress, cooldownTicks: 1 }])
+        expect(poweredTwo.blockEdits).toBeUndefined()
+
+        const poweredThree = yield* hopperService.planTransferTick(planAtCooldown(1), poweredElapsedTicks, true)
+        expect(Schema.decodeUnknownSync(HopperTransferOutcomeSchema)(poweredThree.result))
+          .toStrictEqual({ _tag: 'Disabled' })
+        expect(poweredThree.changes.map(({ ownerId }) => ownerId)).toEqual([HOPPER_REPLICATED_OWNER_ID])
+        expect(Schema.decodeUnknownSync(HopperServiceSnapshotSchema)(poweredThree.changes[0]?.state).hoppers)
+          .toMatchObject([{ address: hopperAddress, cooldownTicks: 0 }])
+        expect(poweredThree.blockEdits).toBeUndefined()
+
+        const poweredPastZero = yield* hopperService.planTransferTick(planAtCooldown(0), poweredElapsedTicks, true)
+        expect(Schema.decodeUnknownSync(HopperTransferOutcomeSchema)(poweredPastZero.result))
+          .toStrictEqual({ _tag: 'Disabled' })
+        expect(poweredPastZero.changes).toEqual([])
+        expect(poweredPastZero.blockEdits).toBeUndefined()
+
+        const poweredWithoutRuntime = yield* hopperService.planTransferTick({
+          ...planSnapshot,
+          state: {
+            ...planSnapshot.state,
+            hoppers: Schema.decodeUnknownSync(HopperServiceSnapshotSchema)({ hoppers: [] }),
+          },
+        }, poweredElapsedTicks, true)
+        expect(Schema.decodeUnknownSync(HopperTransferOutcomeSchema)(poweredWithoutRuntime.result))
+          .toStrictEqual({ _tag: 'Disabled' })
+        expect(poweredWithoutRuntime.changes).toEqual([])
+        expect(poweredWithoutRuntime.blockEdits).toBeUndefined()
+
+        const unpoweredAfterCooldown = yield* hopperService.planTransferTick(
+          planAtCooldown(0),
+          poweredElapsedTicks,
           false,
         )
-        expect(Schema.decodeUnknownSync(HopperTransferOutcomeSchema)(unpowered.result))
-          .toStrictEqual({ _tag: 'CoolingDown', ticks: 1 })
-        expect(unpowered.changes).toHaveLength(1)
-        expect(unpowered.blockEdits).toBeUndefined()
-
-        const powered = yield* hopperService.planTransferTick(
-          planSnapshot,
-          Schema.decodeUnknownSync(HopperElapsedTicksSchema)(cadenceFixture.poweredElapsedTicks),
-          true,
-        )
-        expect(Schema.decodeUnknownSync(HopperTransferOutcomeSchema)(powered.result)).toStrictEqual({ _tag: 'Disabled' })
-        expect(powered.changes).toEqual([])
+        expect(Schema.decodeUnknownSync(HopperTransferOutcomeSchema)(unpoweredAfterCooldown.result))
+          .toMatchObject({
+            _tag: 'Committed',
+            transfer: { _tag: 'Moved', count: 1 },
+            hopper: { cooldownTicks: cadenceFixture.transferCooldownTicks },
+          })
+        expect(unpoweredAfterCooldown.changes.map(({ ownerId }) => ownerId)).toEqual([
+          CONTAINER_STORAGE_REPLICATED_OWNER_ID,
+          HOPPER_REPLICATED_OWNER_ID,
+        ])
+        expect(unpoweredAfterCooldown.blockEdits).toStrictEqual(intent.blockEdits)
 
         const cooldownSnapshot = {
           world,
           expectedRevision: currentRevision,
           expectedDimensions,
-          state: hopperSnapshot.state,
+          state: Schema.decodeUnknownSync(HopperServiceSnapshotSchema)({
+            hoppers: [{ address: hopperAddress, cooldownTicks: cadenceFixture.initialCooldownTicks }],
+          }),
         }
         const cooldownRequest = Schema.decodeUnknownSync(HopperCooldownPlanRequestSchema)({
           address: hopperAddress,
@@ -356,7 +407,7 @@ describe('HopperService', () => {
         const rejectedWithCooldown = yield* hopperService.planTransferTick({
           ...planSnapshot,
           state: { ...planSnapshot.state, intent: emptySourceIntent },
-        }, Schema.decodeUnknownSync(HopperElapsedTicksSchema)(cadenceFixture.cooldownTicks), false)
+        }, Schema.decodeUnknownSync(HopperElapsedTicksSchema)(cadenceFixture.initialCooldownTicks), false)
         expect(rejectedWithoutCooldown.result).toMatchObject({ _tag: 'TransferRejected' })
         expect(rejectedWithoutCooldown.changes).toEqual([])
         expect(rejectedWithCooldown.result).toMatchObject({ _tag: 'TransferRejected' })
@@ -365,13 +416,13 @@ describe('HopperService', () => {
 
         const ready = yield* hopperService.planTransferTick(
           planSnapshot,
-          Schema.decodeUnknownSync(HopperElapsedTicksSchema)(cadenceFixture.cooldownTicks),
+          Schema.decodeUnknownSync(HopperElapsedTicksSchema)(cadenceFixture.initialCooldownTicks),
           false,
         )
         expect(Schema.decodeUnknownSync(HopperTransferOutcomeSchema)(ready.result)).toMatchObject({
           _tag: 'Committed',
           transfer: { _tag: 'Moved', count: 1 },
-          hopper: { cooldownTicks: cadenceFixture.cooldownTicks },
+          hopper: { cooldownTicks: cadenceFixture.transferCooldownTicks },
         })
         expect(ready.changes.map(({ ownerId }) => ownerId)).toEqual([
           CONTAINER_STORAGE_REPLICATED_OWNER_ID,
