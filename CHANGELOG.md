@@ -1,5 +1,11 @@
 # @nerima-games/mc-sim
 
+## 0.7.1
+
+### Patch Changes
+
+- Keep hopper cooldown advancing while powered without transferring items.
+
 ## 0.7.0
 
 ### Minor Changes
