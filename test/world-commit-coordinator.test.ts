@@ -266,6 +266,36 @@ describe('WorldCommitCoordinator', () => {
     }))),
   )
 
+  it.effect('rejects commitFromSnapshot for an unknown owner before building a request', () =>
+    Effect.gen(function* () {
+      const counterSchema = Schema.Struct({ count: Schema.Int })
+      const coordinator = yield* makeWorldCommitCoordinator({
+        world: transactionWorld,
+        owners: [{ ownerId: ownerA, schema: counterSchema, initialState: { count: 0 } }],
+      })
+      let buildRequestCalled = false
+
+      const result = decodeCoordinatorEffectResult(yield* Effect.result(coordinator.commitFromSnapshot(
+        unknownOwner,
+        counterSchema,
+        (current) => Effect.sync(() => {
+          buildRequestCalled = true
+          return {
+            expectedRevision: current.revision,
+            expectedDimensions: [],
+            changes: [{ ownerId: ownerA, state: { count: current.state.count + 1 } }],
+          }
+        }),
+      )))
+
+      expect(result._tag).toBe('Failure')
+      if (result._tag === 'Failure') expect(result.failure).toBeInstanceOf(ReplicatedOwnerUnknown)
+      expect(buildRequestCalled).toBe(false)
+      expect(yield* coordinator.revision).toBe(0)
+      expect((yield* coordinator.snapshot(ownerA, counterSchema)).state).toEqual({ count: 0 })
+    }),
+  )
+
   it.effect('publishes all owner candidates at one world revision and advances each dimension once', () =>
     Effect.gen(function* () {
       const world = yield* Schema.decodeUnknownEffect(WorldIdSchema)('world-a')

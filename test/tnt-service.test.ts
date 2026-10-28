@@ -27,6 +27,7 @@ import {
   WorldCommitCoordinatorLayer,
   DimensionRevisionConflict,
   WorldRevisionConflict,
+  type WorldCommitCoordinatorApi,
 } from '../src/application/world-commit-coordinator.js'
 import {
   INITIAL_TNT_SERVICE_SNAPSHOT,
@@ -41,7 +42,7 @@ import {
   tntOwnerRegistration,
 } from '../src/application/tnt-service.js'
 import type { TntAdvanceRequest, TntServiceSnapshot } from '../src/application/tnt-service.js'
-import { ReplicatedOwnerIdSchema } from '../src/application/replicated-state.js'
+import { ReplicatedOwnerIdSchema, replicatedSnapshotSchema } from '../src/application/replicated-state.js'
 
 const ownerId = Schema.decodeUnknownSync(ReplicatedOwnerIdSchema)('tnt-test')
 const world = Schema.decodeUnknownSync(WorldIdSchema)('tnt-test-world')
@@ -187,6 +188,134 @@ describe('TntService', () => {
       { numRuns: 12 },
     )
   })
+
+  it.effect('rejects a planned TNT when its coordinator snapshot no longer matches the plan', () =>
+    Effect.gen(function* () {
+      const { coordinator } = yield* transactionalFixture()
+      let snapshotOverride: TntServiceSnapshot | undefined
+      const alteredCoordinator: WorldCommitCoordinatorApi = {
+        ...coordinator,
+        commitFromSnapshot: (requestedOwnerId, schema, buildRequest) => Effect.gen(function* () {
+          if (snapshotOverride === undefined) {
+            return yield* coordinator.commitFromSnapshot(requestedOwnerId, schema, buildRequest)
+          }
+          const snapshot = Schema.decodeUnknownSync(replicatedSnapshotSchema(schema))({
+            world: coordinator.worldId,
+            revision: yield* coordinator.revision,
+            state: snapshotOverride,
+          })
+          const request = yield* buildRequest(snapshot)
+          return yield* coordinator.commit(request)
+        }),
+      }
+      const tnt = yield* makeTntService(ownerId).pipe(
+        Effect.provideService(WorldCommitCoordinator, alteredCoordinator),
+      )
+
+      yield* tnt.prime({
+        id: entity,
+        dimension: 'overworld',
+        center: { x: 8, y: 64, z: 8 },
+        fuseSecs: 1,
+        expectedRevision: revision(0),
+        expectedDimensionRevision: dimensionRevision(0),
+      })
+      const primed = yield* tnt.snapshot
+      const planned = yield* tnt.advance(advanceRequest(1, 1, 1))
+      expect(planned._tag).toBe('DetonationPlanned')
+      if (planned._tag !== 'DetonationPlanned') return
+      const target = primed.state.tnts.find(({ id }) => id === planned.id)
+      expect(target).toBeDefined()
+      if (target === undefined) return
+
+      const inconsistentSnapshots: ReadonlyArray<TntServiceSnapshot> = [
+        { tnts: primed.state.tnts.filter(({ id }) => id !== planned.id) },
+        {
+          tnts: primed.state.tnts.map((record) => record.id === planned.id
+            ? { ...record, dimension: 'nether' }
+            : record),
+        },
+        {
+          tnts: primed.state.tnts.map((record) => record.id === planned.id
+            ? { ...record, state: { kind: 'detonated' } }
+            : record),
+        },
+      ]
+      const commitReference = { id: planned.id, planRevision: planned.planRevision }
+
+      for (const inconsistentSnapshot of inconsistentSnapshots) {
+        snapshotOverride = inconsistentSnapshot
+        const rejected = yield* Effect.result(tnt.commitDetonation(commitReference))
+        const decoded = Schema.decodeUnknownSync(
+          Schema.Result(TntDetonationCommitOutcomeSchema, TntServiceErrorSchema),
+        )(rejected)
+        expect(Result.isFailure(decoded)).toBe(true)
+        if (Result.isFailure(decoded)) {
+          expect(decoded.failure).toMatchObject({ _tag: 'TntServiceFailure', reason: 'invalid-input' })
+        }
+      }
+
+      expect(yield* coordinator.revision).toBe(revision(1))
+      expect(yield* coordinator.dimensionRevision('overworld')).toBe(dimensionRevision(1))
+      expect(yield* tnt.snapshot).toEqual(primed)
+
+      snapshotOverride = primed.state
+      const committed = yield* Effect.result(tnt.commitDetonation(commitReference))
+      const decoded = Schema.decodeUnknownSync(
+        Schema.Result(TntDetonationCommitOutcomeSchema, TntServiceErrorSchema),
+      )(committed)
+      expect(decoded).toEqual(committed)
+      expect(Result.isSuccess(decoded)).toBe(true)
+      expect(yield* coordinator.revision).toBe(revision(2))
+      expect((yield* tnt.snapshot).state.tnts[0]?.state).toEqual({ kind: 'detonated' })
+    }),
+  )
+
+  it.effect('invalidates an older detonation plan when the same TNT is planned again', () =>
+    Effect.flatMap(transactionalFixture(), ({ coordinator, tnt }) =>
+      Effect.gen(function* () {
+        yield* tnt.prime({
+          id: entity,
+          dimension: 'overworld',
+          center: { x: 8, y: 64, z: 8 },
+          fuseSecs: 1,
+          expectedRevision: revision(0),
+          expectedDimensionRevision: dimensionRevision(0),
+        })
+        const previousPlan = yield* tnt.advance(advanceRequest(1, 1, 1))
+        const latestPlan = yield* tnt.advance(advanceRequest(1, 1, 1))
+        expect(previousPlan._tag).toBe('DetonationPlanned')
+        expect(latestPlan._tag).toBe('DetonationPlanned')
+        if (previousPlan._tag !== 'DetonationPlanned' || latestPlan._tag !== 'DetonationPlanned') return
+        expect(latestPlan.planRevision).toBeGreaterThan(previousPlan.planRevision)
+
+        const stale = yield* Effect.result(tnt.commitDetonation({
+          id: previousPlan.id,
+          planRevision: previousPlan.planRevision,
+        }))
+        const decodedStale = Schema.decodeUnknownSync(
+          Schema.Result(TntDetonationCommitOutcomeSchema, TntServiceErrorSchema),
+        )(stale)
+        expect(Result.isFailure(decodedStale)).toBe(true)
+        if (Result.isFailure(decodedStale)) {
+          expect(decodedStale.failure).toMatchObject({ _tag: 'TntServiceFailure', reason: 'invalid-input' })
+        }
+        expect(yield* coordinator.revision).toBe(revision(1))
+
+        const committed = yield* Effect.result(tnt.commitDetonation({
+          id: latestPlan.id,
+          planRevision: latestPlan.planRevision,
+        }))
+        const decodedCommitted = Schema.decodeUnknownSync(
+          Schema.Result(TntDetonationCommitOutcomeSchema, TntServiceErrorSchema),
+        )(committed)
+        expect(decodedCommitted).toEqual(committed)
+        expect(Result.isSuccess(decodedCommitted)).toBe(true)
+        expect(yield* coordinator.revision).toBe(revision(2))
+        expect((yield* tnt.snapshot).state.tnts[0]?.state).toEqual({ kind: 'detonated' })
+      }),
+    ),
+  )
 
   it.effect('advances the fuse and returns a detonation plan without committing terminal state', () =>
     Effect.gen(function* () {

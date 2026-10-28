@@ -530,9 +530,7 @@ export const makeTntService = (
             }),
           )
           pendingDetonations.delete(decoded.planRevision)
-          if (planRevisionByTnt.get(decoded.id) === decoded.planRevision) {
-            planRevisionByTnt.delete(decoded.id)
-          }
+          planRevisionByTnt.delete(decoded.id)
           return { _tag: 'Committed', revision: committed.revision } as const
         }))
 
