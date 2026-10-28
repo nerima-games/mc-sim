@@ -330,6 +330,24 @@ describe('HopperService', () => {
         }, zeroTicks, false)
         expect(invalidPlayerPair.result).toEqual({ _tag: 'InvalidRequest', reason: 'player-to-player' })
 
+        const missingHopperBlockEdit = yield* hopperService.planTransferTick({
+          ...planSnapshot,
+          state: {
+            ...planSnapshot.state,
+            intent: {
+              ...intent,
+              blockEdits: {
+                ...intent.blockEdits,
+                edits: [{ position: sourceAddress.position, block: hopperBlock }],
+              },
+            },
+          },
+        }, zeroTicks, false)
+        expect(missingHopperBlockEdit.result).toEqual({
+          _tag: 'InvalidRequest',
+          reason: 'missing-hopper-block-edit',
+        })
+
         const emptySourceIntent = { ...intent, source: { ...intent.source, slot: 4 } }
         const rejectedWithoutCooldown = yield* hopperService.planTransferTick({
           ...planSnapshot,

@@ -1,8 +1,12 @@
 import { describe, expect, it } from '@effect/vitest'
 import { enchantmentsComponent } from '@nerima-games/mc-kernel/domain/item-enchantments'
 import { Effect, Layer, Result, Schema } from 'effect'
-import { WorldIdSchema } from '@nerima-games/mc-kernel'
-import { EnchantmentTableService, EnchantmentTableServiceLayer } from '../src/application/enchantment-table-service.js'
+import { WorldIdSchema, WorldRevisionSchema } from '@nerima-games/mc-kernel'
+import {
+  EnchantmentTableService,
+  EnchantmentTableServiceLayer,
+  makeEnchantmentTableService,
+} from '../src/application/enchantment-table-service.js'
 import {
   PlayerStorageSnapshotSchema,
   playerStorageOwnerRegistration,
@@ -14,6 +18,7 @@ import {
 import {
   WorldCommitCoordinator,
   WorldCommitCoordinatorLayer,
+  type WorldCommitCoordinatorApi,
 } from '../src/application/world-commit-coordinator.js'
 import {
   EnchantmentTableApplyRequestSchema,
@@ -210,6 +215,117 @@ describe('EnchantmentTableService plan-first apply', () => {
     }).pipe(Effect.provide(makeServiceLayer(storageWith(mustStack('iron_sword', 1)), makeVitalsAt(30, 0.5))))
   )
 
+  it.effect('maps domain Result failures to typed apply errors after decoding', () =>
+    Effect.gen(function* () {
+      const service = yield* EnchantmentTableService
+      const coordinator = yield* WorldCommitCoordinator
+      const player = yield* coordinator.snapshot(playerOwnerId, PlayerStorageSnapshotSchema)
+      const vitals = yield* coordinator.snapshot(vitalsOwnerId, Vitals.VitalsSchema)
+      const snapshot = {
+        world: player.world,
+        expectedRevision: player.revision,
+        expectedDimensions: [],
+        state: { playerStorage: player.state, vitals: vitals.state },
+      }
+      const validRequest = request()
+      // ItemStackSchema narrows accessor-bearing stacks without cloning them, so each domain Result failure stays reachable.
+      const invalidComponents = (components: Inventory.ItemStack['components']): Inventory.ItemStack['components'] =>
+        new Proxy({ ...components }, {
+          get(target, property, receiver) {
+            return property === 'maxStackSize' ? 0 : Reflect.get(target, property, receiver)
+          },
+        })
+
+      const validSource = mustStack('iron_sword', 1)
+      let removalComponentReads = 0
+      const removalFailureSource: Inventory.ItemStack = {
+        item: validSource.item,
+        count: validSource.count,
+        get components() {
+          removalComponentReads += 1
+          return removalComponentReads === 5
+            ? invalidComponents(validSource.components)
+            : validSource.components
+        },
+      }
+      const removalFailure = yield* Effect.result(service.planApply({
+        ...snapshot,
+        state: { ...snapshot.state, playerStorage: storageWith(removalFailureSource) },
+      }, validRequest))
+
+      let lapisItemReads = 0
+      const lapis = mustStack('lapis_lazuli', 5)
+      const switchingLapis: Inventory.ItemStack = {
+        get item() {
+          lapisItemReads += 1
+          return lapisItemReads <= 2 ? 'lapis_lazuli' : 'iron_sword'
+        },
+        count: lapis.count,
+        components: lapis.components,
+      }
+      const slots = [...snapshot.state.playerStorage.inventory.slots]
+      slots[1] = switchingLapis
+      const inventory = { ...snapshot.state.playerStorage.inventory, slots }
+      const storageWithSwitchingLapis = { ...snapshot.state.playerStorage, inventory }
+      const storageFailure = yield* Effect.result(service.planApply({
+        ...snapshot,
+        state: { ...snapshot.state, playerStorage: storageWithSwitchingLapis },
+      }, validRequest))
+
+      let enchantmentIdReads = 0
+      const changingEnchantment = { ...validRequest.offer.enchantments[0]! }
+      Object.defineProperty(changingEnchantment, 'id', {
+        get() {
+          enchantmentIdReads += 1
+          return enchantmentIdReads <= 5 ? 'sharpness' : 'invalid id'
+        },
+      })
+      const changingOffer = {
+        ...validRequest.offer,
+        enchantments: [changingEnchantment],
+      }
+      const enchantmentFailure = yield* Effect.result(service.planApply(snapshot, {
+        ...validRequest,
+        offer: changingOffer,
+      }))
+
+      let namespacedIdReads = 0
+      const namespacedEnchantment = { ...validRequest.offer.enchantments[0]! }
+      Object.defineProperty(namespacedEnchantment, 'id', {
+        get() {
+          namespacedIdReads += 1
+          return namespacedIdReads <= 5 ? 'sharpness' : 'minecraft:sharpness'
+        },
+      })
+      const namespacedResult = yield* Effect.result(service.planApply(snapshot, {
+        ...validRequest,
+        offer: { ...validRequest.offer, enchantments: [namespacedEnchantment] },
+      }))
+
+      let outputComponentReads = 0
+      const outputFailureSource: Inventory.ItemStack = {
+        item: validSource.item,
+        count: validSource.count,
+        get components() {
+          outputComponentReads += 1
+          return outputComponentReads >= 7
+            ? invalidComponents(validSource.components)
+            : validSource.components
+        },
+      }
+      const outputFailure = yield* Effect.result(service.planApply({
+        ...snapshot,
+        state: { ...snapshot.state, playerStorage: storageWith(outputFailureSource) },
+      }, validRequest))
+
+      expect(removalFailure).toMatchObject({ _tag: 'Failure', failure: { reason: 'item-stack-failure' } })
+      expect(storageFailure).toMatchObject({ _tag: 'Failure', failure: { reason: 'invalid-storage' } })
+      expect(enchantmentFailure).toMatchObject({ _tag: 'Failure', failure: { reason: 'invalid-offer' } })
+      expect(Result.isSuccess(namespacedResult)).toBe(true)
+      expect(outputFailure).toMatchObject({ _tag: 'Failure', failure: { reason: 'item-stack-failure' } })
+    }).pipe(Effect.provide(makeServiceLayer(storageWith(mustStack('iron_sword', 1)), makeVitalsAt(30, 0.5))))
+  )
+
   it.effect('preserves book outputs and reports a full inventory without a partial candidate', () =>
     Effect.gen(function* () {
       const service = yield* EnchantmentTableService
@@ -252,6 +368,42 @@ describe('EnchantmentTableService plan-first apply', () => {
       expect(player.state.inventory.slots[1]?.count).toBe(4)
       expect(Number(Vitals.experienceLevel(vitals.state))).toBe(29)
     }).pipe(Effect.provide(makeServiceLayer(storageWith(mustStack('iron_sword', 1)), makeVitalsAt(30, 0))))
+  )
+
+  it.effect('rejects snapshots from different worlds or revisions before planning', () =>
+    Effect.gen(function* () {
+      const coordinator = yield* WorldCommitCoordinator
+      const currentRevision = yield* coordinator.revision
+      const mismatchedRevision = Schema.decodeUnknownSync(WorldRevisionSchema)(Number(currentRevision) + 1)
+      const mismatchedWorld = Schema.decodeUnknownSync(WorldIdSchema)(`${String(coordinator.worldId)}-other`)
+      const revisionSnapshot: WorldCommitCoordinatorApi['snapshot'] = (ownerId, schema) =>
+        Effect.map(coordinator.snapshot(ownerId, schema), (replicated) => ownerId === vitalsOwnerId
+          ? { ...replicated, revision: mismatchedRevision }
+          : replicated)
+      const revisionCoordinator: WorldCommitCoordinatorApi = { ...coordinator, snapshot: revisionSnapshot }
+      const revisionService = yield* makeEnchantmentTableService().pipe(
+        Effect.provide(Layer.succeed(WorldCommitCoordinator, revisionCoordinator)),
+      )
+      const revisionResult = yield* Effect.result(revisionService.apply(request()))
+      const worldSnapshot: WorldCommitCoordinatorApi['snapshot'] = (ownerId, schema) =>
+        Effect.map(coordinator.snapshot(ownerId, schema), (replicated) => ownerId === vitalsOwnerId
+          ? { ...replicated, world: mismatchedWorld }
+          : replicated)
+      const worldCoordinator: WorldCommitCoordinatorApi = { ...coordinator, snapshot: worldSnapshot }
+      const worldService = yield* makeEnchantmentTableService().pipe(
+        Effect.provide(Layer.succeed(WorldCommitCoordinator, worldCoordinator)),
+      )
+      const worldResult = yield* Effect.result(worldService.apply(request()))
+
+      expect(revisionResult).toMatchObject({
+        _tag: 'Failure',
+        failure: { _tag: 'WorldCommitPlanRevisionConflict' },
+      })
+      expect(worldResult).toMatchObject({
+        _tag: 'Failure',
+        failure: { _tag: 'WorldCommitPlanWorldConflict' },
+      })
+    }).pipe(Effect.provide(makeServiceLayer(storageWith(mustStack('iron_sword', 1)), makeVitalsAt(30, 0.5))))
   )
 
   it.effect('leaves both owners and the world revision unchanged when requirements fail', () =>
