@@ -542,47 +542,46 @@ const planTransferForIntent = (
   state: HopperTransferTickPlanState,
   intent: Exclude<HopperPlanTransferIntent, { readonly _tag: 'PlayerToPlayer' }>,
 ) => Effect.gen(function* () {
-  switch (intent._tag) {
-    case 'PlayerToContainer': {
-      if (state.player._tag === 'None') return undefined
-      return {
-        _tag: 'PlayerTransfer',
-        fragment: yield* storage.planTransferContainerItem(state.containers, state.player.snapshot, {
-          playerOwnerId: intent.source.ownerId,
-          address: intent.destination.address,
-          direction: 'PlayerToContainer',
-          playerSlot: intent.source.slot,
-          containerSlot: intent.destination.slot,
-          count: 1,
-        }),
-      } satisfies HopperTransferPlan
-    }
-    case 'ContainerToContainer':
-      return {
-        _tag: 'ContainerMove',
-        fragment: yield* storage.planMoveContainerItem(state.containers, {
-          sourceAddress: intent.source.address,
-          sourceSlot: intent.source.slot,
-          destinationAddress: intent.destination.address,
-          destinationSlot: intent.destination.slot,
-          count: 1,
-        }),
-      } satisfies HopperTransferPlan
-    case 'ContainerToPlayer': {
-      if (state.player._tag === 'None') return undefined
-      return {
-        _tag: 'PlayerTransfer',
-        fragment: yield* storage.planTransferContainerItem(state.containers, state.player.snapshot, {
-          playerOwnerId: intent.destination.ownerId,
-          address: intent.source.address,
-          direction: 'ContainerToPlayer',
-          playerSlot: intent.destination.slot,
-          containerSlot: intent.source.slot,
-          count: 1,
-        }),
-      } satisfies HopperTransferPlan
-    }
+  if (intent._tag === 'PlayerToContainer') {
+    if (state.player._tag === 'None') return undefined
+    return {
+      _tag: 'PlayerTransfer',
+      fragment: yield* storage.planTransferContainerItem(state.containers, state.player.snapshot, {
+        playerOwnerId: intent.source.ownerId,
+        address: intent.destination.address,
+        direction: 'PlayerToContainer',
+        playerSlot: intent.source.slot,
+        containerSlot: intent.destination.slot,
+        count: 1,
+      }),
+    } satisfies HopperTransferPlan
   }
+
+  if (intent._tag === 'ContainerToContainer') {
+    return {
+      _tag: 'ContainerMove',
+      fragment: yield* storage.planMoveContainerItem(state.containers, {
+        sourceAddress: intent.source.address,
+        sourceSlot: intent.source.slot,
+        destinationAddress: intent.destination.address,
+        destinationSlot: intent.destination.slot,
+        count: 1,
+      }),
+    } satisfies HopperTransferPlan
+  }
+
+  if (state.player._tag === 'None') return undefined
+  return {
+    _tag: 'PlayerTransfer',
+    fragment: yield* storage.planTransferContainerItem(state.containers, state.player.snapshot, {
+      playerOwnerId: intent.destination.ownerId,
+      address: intent.source.address,
+      direction: 'ContainerToPlayer',
+      playerSlot: intent.destination.slot,
+      containerSlot: intent.source.slot,
+      count: 1,
+    }),
+  } satisfies HopperTransferPlan
 })
 
 const rejectedTransferFragment = (
