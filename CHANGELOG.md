@@ -1,5 +1,25 @@
 # @nerima-games/mc-sim
 
+## 0.6.0
+
+### Minor Changes
+
+- Move to `effect` 4 and `@nerima-games/mc-kernel` 0.11.0. Inventory APIs now expose the kernel's branded `ItemType` and typed stack-construction `Result`s; player and container snapshot validators propagate `ItemStackFailure`. Callers must handle the returned failures. Identical inputs retain deterministic simulation behavior.
+
+- Integrate the Effect 4 and mc-kernel simulation contracts, item and station state, service ports, and deterministic core tick. Validate state transitions before persistence and make fixed-step interpolation use the configured step duration. Export Effect Schemas for public operation results, including statistics, vitals, and wither transitions, and add decoder checks for their success and declared error channels.
+
+  Align mc-sim's direct `@nerima-games/mc-kernel` dependency to 0.11.0 for consumers combining its public branded types with mc-worldgen 0.7.0. This pin does not change the kernel versions required by transitive dependencies.
+
+  Add `WorldCommitCoordinator.commitFromSnapshot` for atomic snapshot-derived commits. TNT detonation commits now identify a stored plan by TNT id and plan revision instead of accepting a caller-owned TNT snapshot candidate.
+
+  TNT block-reader exceptions return a typed `block-reader-failed` service failure without changing world state.
+
+- Add atomic world block writes to the coordinator and enable hopper, bucket, and TNT transactions.
+
+### Patch Changes
+
+- Calculate fixed-step interpolation fractions using the configured tick duration. This corrects fractions for custom durations; default-duration output is unchanged.
+
 ## 0.5.1
 
 ### Patch Changes
