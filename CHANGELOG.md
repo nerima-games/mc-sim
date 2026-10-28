@@ -4,17 +4,12 @@
 
 ### Minor Changes
 
-- Move to `effect` 4 and `@nerima-games/mc-kernel` 0.11.0. Inventory APIs now expose the kernel's branded `ItemType` and typed stack-construction `Result`s; player and container snapshot validators propagate `ItemStackFailure`. Callers must handle the returned failures. Identical inputs retain deterministic simulation behavior.
+- Use `effect` 4 and align mc-sim's direct `@nerima-games/mc-kernel` dependency to 0.11.0, so consumers using mc-sim with mc-worldgen 0.7.0 share the same branded kernel types. The public `itemStack` API uses the kernel's branded `ItemType` and returns a typed `Result`; player and container snapshot validation returns `ItemStackFailure` for invalid stacks. Simulation output remains deterministic for identical inputs.
 
-- Integrate the Effect 4 and mc-kernel simulation contracts, item and station state, service ports, and deterministic core tick. Validate state transitions before persistence and make fixed-step interpolation use the configured step duration. Export Effect Schemas for public operation results, including statistics, vitals, and wither transitions, and add decoder checks for their success and declared error channels.
+- Add item and station state services and a deterministic core tick. Validate state transitions before persistence. Export Effect Schemas for public operation results, including statistics, vitals, and wither transitions.
 
-  Align mc-sim's direct `@nerima-games/mc-kernel` dependency to 0.11.0 for consumers combining its public branded types with mc-worldgen 0.7.0. This pin does not change the kernel versions required by transitive dependencies.
+- Add `WorldCommitCoordinator.commitFromSnapshot` for snapshot-derived commits and atomic block writes for hopper, bucket, and TNT transactions. TNT detonation commits identify a stored plan by TNT id and plan revision. Block-reader exceptions return a typed failure without changing world state.
 
-  Add `WorldCommitCoordinator.commitFromSnapshot` for atomic snapshot-derived commits. TNT detonation commits now identify a stored plan by TNT id and plan revision instead of accepting a caller-owned TNT snapshot candidate.
-
-  TNT block-reader exceptions return a typed `block-reader-failed` service failure without changing world state.
-
-- Add atomic world block writes to the coordinator and enable hopper, bucket, and TNT transactions.
 
 ### Patch Changes
 
