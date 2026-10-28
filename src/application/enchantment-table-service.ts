@@ -42,20 +42,25 @@ import type { WorldCommitRequest } from './world-commit-coordinator.js'
 import type { ReplicatedWorldDelta } from './replicated-state.js'
 
 const PositiveIntegerSchema = Schema.Int.check(Schema.isGreaterThan(0))
+type SupportedEnchantmentId = Parameters<typeof enchantmentTableRuleFor>[0]
+type SupportedEnchantment = Omit<AnvilEnchantment, 'id'> & Readonly<{ id: SupportedEnchantmentId }>
+type SupportedEnchantmentTableOffer = Omit<EnchantmentTable.EnchantmentTableOffer, 'enchantments'> & Readonly<{
+  enchantments: ReadonlyArray<SupportedEnchantment>
+}>
 export type EnchantmentTableInventorySlot = number & Brand.Brand<'EnchantmentTableInventorySlot'>
 export const EnchantmentTableInventorySlotSchema: Schema.Codec<EnchantmentTableInventorySlot, number> = Schema.Int
   .check(Schema.isBetween({ minimum: 0, maximum: Inventory.INVENTORY_SLOT_COUNT - 1 }))
   .pipe(Schema.brand('EnchantmentTableInventorySlot'))
 const EnchantmentTableSlotSchema = Schema.Literals([0, 1, 2])
 
-const isAnvilEnchantment = (value: unknown): value is AnvilEnchantment =>
+const isAnvilEnchantment = (value: unknown): value is SupportedEnchantment =>
   typeof value === 'object' && value !== null && !Array.isArray(value) &&
   'id' in value && isSupportedVanillaEnchantmentId(value.id) &&
   'level' in value && typeof value.level === 'number' && Number.isSafeInteger(value.level) && value.level > 0
 
-const EnchantmentSchema: Schema.Codec<AnvilEnchantment, unknown> = Schema.declare(isAnvilEnchantment)
+const EnchantmentSchema: Schema.Codec<SupportedEnchantment, unknown> = Schema.declare(isAnvilEnchantment)
 
-export const EnchantmentTableOfferSchema: Schema.Codec<EnchantmentTable.EnchantmentTableOffer, unknown> = Schema.Struct({
+export const EnchantmentTableOfferSchema: Schema.Codec<SupportedEnchantmentTableOffer, unknown> = Schema.Struct({
   levelCost: PositiveIntegerSchema,
   lapisCost: Schema.Literals([1, 2, 3]),
   enchantments: Schema.Array(EnchantmentSchema),
@@ -77,7 +82,7 @@ export type EnchantmentTableApplyRequest = Readonly<{
   itemSlot: EnchantmentTableInventorySlot
   lapisSlot: EnchantmentTableInventorySlot
   tableSlot: EnchantmentTable.EnchantmentTableSlot
-  offer: EnchantmentTable.EnchantmentTableOffer
+  offer: SupportedEnchantmentTableOffer
 }>
 
 export const EnchantmentTableApplyRequestSchema: Schema.Codec<EnchantmentTableApplyRequest, unknown> = Schema.Struct({
@@ -91,7 +96,7 @@ export const EnchantmentTableApplyRequestSchema: Schema.Codec<EnchantmentTableAp
 
 export type EnchantmentTableApplyResult = Readonly<{
   item: Inventory.ItemStack
-  offer: EnchantmentTable.EnchantmentTableOffer
+  offer: SupportedEnchantmentTableOffer
 }>
 
 export const EnchantmentTableApplyResultSchema: Schema.Codec<EnchantmentTableApplyResult, unknown> = Schema.Struct({
@@ -148,13 +153,12 @@ const failure = (
   slotIndex: EnchantmentTableInventorySlot,
 ): EnchantmentTableApplyFailure => ({ _tag: 'EnchantmentTableApplyFailure', reason, slotIndex })
 
-const invalidOffer = (offer: EnchantmentTable.EnchantmentTableOffer): boolean => {
-  if (offer.enchantments.length === 0 || offer.lapisCost < 1 || offer.lapisCost > 3) return true
+const invalidOffer = (offer: SupportedEnchantmentTableOffer): boolean => {
+  if (offer.enchantments.length === 0) return true
   const seen = new Set<string>()
   for (const enchantment of offer.enchantments) {
-    if (!isSupportedVanillaEnchantmentId(enchantment.id)) return true
     const tableRule = enchantmentTableRuleFor(enchantment.id)
-    if (enchantment.level < 1 || enchantment.level > tableRule.maxLevel || seen.has(enchantment.id)) return true
+    if (enchantment.level > tableRule.maxLevel || seen.has(enchantment.id)) return true
     if ([...seen].some((previous) => enchantmentsConflict(previous, enchantment.id))) return true
     seen.add(enchantment.id)
   }
@@ -166,21 +170,19 @@ const updateInventory = (
   slotIndex: EnchantmentTableInventorySlot,
   expectedItem: Inventory.ItemStack['item'],
   count: number,
+  unmatchedReason: 'insufficient-lapis' | 'invalid-storage',
 ): Result.Result<PlayerStorage.PlayerStorage, EnchantmentTableServiceError> => {
-  const removed = Inventory.removeItemAt(storage.inventory, slotIndex, expectedItem, count)
-  if (Result.isFailure(removed)) return Result.fail(failure('item-stack-failure', slotIndex))
-  if (removed.success.result._tag !== 'Removed') {
-    return Result.fail(failure(
-      expectedItem === 'lapis_lazuli'
-        ? 'insufficient-lapis'
-        : 'invalid-storage',
-      slotIndex,
-    ))
-  }
-  const updated = PlayerStorage.withInventory(storage, removed.success.inventory)
-  return Result.isFailure(updated)
-    ? Result.fail(failure('invalid-storage', slotIndex))
-    : Result.succeed(updated.success)
+  const removed = Result.mapError(
+    Inventory.removeItemAt(storage.inventory, slotIndex, expectedItem, count),
+    () => failure('item-stack-failure', slotIndex),
+  )
+  return Result.flatMap(removed, ({ result, inventory }) => {
+    if (result._tag !== 'Removed') return Result.fail(failure(unmatchedReason, slotIndex))
+    return Result.mapError(
+      PlayerStorage.withInventory(storage, inventory),
+      () => failure('invalid-storage', slotIndex),
+    )
+  })
 }
 
 const validateApplyRequest = (
@@ -216,6 +218,67 @@ const validateEnchantableSource = (
   return Result.succeed(source)
 }
 
+const finishEnchantmentApply = (
+  snapshot: WorldCommitPlanSnapshot<EnchantmentTableApplyState>,
+  request: EnchantmentTableApplyRequest,
+  source: Inventory.ItemStack,
+  storage: PlayerStorage.PlayerStorage,
+  currentLevel: number,
+): Result.Result<WorldCommitPlanFragment<EnchantmentTableApplyResult>, EnchantmentTableServiceError> => {
+  const enchantmentValues = Object.fromEntries(request.offer.enchantments.map(({ id, level }) => [
+    id.includes(':') ? id : `minecraft:${id}`,
+    level,
+  ]))
+  const enchantments = source.item === 'book'
+    ? storedEnchantmentsComponent(enchantmentValues)
+    : enchantmentsComponent(enchantmentValues)
+  return Result.flatMap(
+    Result.mapError(enchantments, () => failure('invalid-offer', request.itemSlot)),
+    (enchantmentComponent) => {
+      const outputItem = EnchantmentTable.enchantmentTableOutputItemOf(source.item)
+      const outputStack = Result.mapError(Inventory.itemStack(outputItem, 1, {
+        components: {
+          ...source.components,
+          enchantments: source.item === 'book' ? undefined : enchantmentComponent,
+          storedEnchantments: source.item === 'book' ? enchantmentComponent : undefined,
+        },
+      }), () => failure('item-stack-failure', request.itemSlot))
+      return Result.flatMap(outputStack, (stack) => {
+        const output = PlayerStorage.addStoredStack(storage, {
+          item: outputItem,
+          count: stack.count,
+          components: stack.components,
+          durability: snapshot.state.playerStorage.inventoryDurability[request.itemSlot] ?? null,
+        })
+        const fullyAdded = output.result._tag === 'Added' && output.result.leftover === null
+        if (!fullyAdded) return Result.fail(failure('invalid-storage', request.itemSlot))
+
+        const progress = Number(Vitals.experienceProgress(snapshot.state.vitals))
+        const nextLevel = Vitals.ExperienceLevel(Math.max(0, currentLevel - request.offer.lapisCost))
+        const nextTotalExperience = Vitals.TotalExperience(
+          Number(Vitals.totalExperienceAtLevel(nextLevel)) +
+          progress * Number(Vitals.experienceCostOfLevel(nextLevel)),
+        )
+        const nextVitals: Vitals.Vitals = {
+          ...snapshot.state.vitals,
+          totalExperience: nextTotalExperience,
+        }
+        return Result.succeed({
+          world: snapshot.world,
+          expectedRevision: snapshot.expectedRevision,
+          expectedDimensions: snapshot.expectedDimensions,
+          changes: [
+            { ownerId: request.playerStorageOwnerId, state: output.storage },
+            { ownerId: request.vitalsOwnerId, state: nextVitals },
+          ],
+          result: { item: stack, offer: request.offer },
+          postCommitEvents: [],
+        })
+      })
+    },
+  )
+}
+
 const planApplyResult = (
   snapshot: WorldCommitPlanSnapshot<EnchantmentTableApplyState>,
   request: EnchantmentTableApplyRequest,
@@ -226,72 +289,19 @@ const planApplyResult = (
   const sourceResult = validateEnchantableSource(snapshot, request)
   if (Result.isFailure(sourceResult)) return Result.fail(sourceResult.failure)
 
-  const storage = snapshot.state.playerStorage
   const source = sourceResult.success
   const currentLevel = Number(Vitals.experienceLevel(snapshot.state.vitals))
   if (currentLevel < Math.max(request.offer.levelCost, request.offer.lapisCost)) {
     return Result.fail(failure('insufficient-level', request.itemSlot))
   }
 
-  const removedItem = updateInventory(storage, request.itemSlot, source.item, 1)
-  if (Result.isFailure(removedItem)) return Result.fail(removedItem.failure)
-  const removedLapis = updateInventory(removedItem.success, request.lapisSlot, 'lapis_lazuli', request.offer.lapisCost)
-  if (Result.isFailure(removedLapis)) return Result.fail(removedLapis.failure)
-
-  const enchantmentValues = Object.fromEntries(request.offer.enchantments.map(({ id, level }) => [
-    id.includes(':') ? id : `minecraft:${id}`,
-    level,
-  ]))
-  const enchantments = source.item === 'book'
-    ? storedEnchantmentsComponent(enchantmentValues)
-    : enchantmentsComponent(enchantmentValues)
-  if (Result.isFailure(enchantments)) return Result.fail(failure('invalid-offer', request.itemSlot))
-
-  const outputItem = EnchantmentTable.enchantmentTableOutputItemOf(source.item)
-  const outputStack = Inventory.itemStack(outputItem, 1, {
-    components: {
-      ...source.components,
-      enchantments: source.item === 'book' ? undefined : enchantments.success,
-      storedEnchantments: source.item === 'book' ? enchantments.success : undefined,
-    },
-  })
-  if (Result.isFailure(outputStack)) return Result.fail(failure('item-stack-failure', request.itemSlot))
-
-  const output = PlayerStorage.addStoredStack(removedLapis.success, {
-    item: outputItem,
-    count: outputStack.success.count,
-    components: outputStack.success.components,
-    durability: storage.inventoryDurability[request.itemSlot] ?? null,
-  })
-  if (output.result._tag === 'ItemStackFailure') return Result.fail(failure('item-stack-failure', request.itemSlot))
-  if (output.result._tag !== 'Added' || output.result.leftover !== null) {
-    return Result.fail(failure('invalid-storage', request.itemSlot))
-  }
-  const progress = Number(Vitals.experienceProgress(snapshot.state.vitals))
-  const nextLevel = Vitals.ExperienceLevel(Math.max(0, currentLevel - request.offer.lapisCost))
-  const nextTotalExperience = Vitals.TotalExperience(
-    Number(Vitals.totalExperienceAtLevel(nextLevel)) +
-    progress * Number(Vitals.experienceCostOfLevel(nextLevel)),
+  return Result.flatMap(
+    updateInventory(snapshot.state.playerStorage, request.itemSlot, source.item, 1, 'invalid-storage'),
+    (afterItemRemoval) => Result.flatMap(
+      updateInventory(afterItemRemoval, request.lapisSlot, 'lapis_lazuli', request.offer.lapisCost, 'insufficient-lapis'),
+      (afterLapisRemoval) => finishEnchantmentApply(snapshot, request, source, afterLapisRemoval, currentLevel),
+    ),
   )
-  const nextVitals: Vitals.Vitals = {
-    ...snapshot.state.vitals,
-    totalExperience: nextTotalExperience,
-  }
-
-  return Result.succeed({
-    world: snapshot.world,
-    expectedRevision: snapshot.expectedRevision,
-    expectedDimensions: snapshot.expectedDimensions,
-    changes: [
-      { ownerId: request.playerStorageOwnerId, state: output.storage },
-      { ownerId: request.vitalsOwnerId, state: nextVitals },
-    ],
-    result: {
-      item: outputStack.success,
-      offer: request.offer,
-    },
-    postCommitEvents: [],
-  })
 }
 
 export type EnchantmentTableServiceApi = Readonly<{
@@ -337,20 +347,24 @@ export const makeEnchantmentTableService = (): Effect.Effect<
         coordinator.snapshot(decodedRequest.playerStorageOwnerId, PlayerStorageSnapshotSchema),
         coordinator.snapshot(decodedRequest.vitalsOwnerId, Vitals.VitalsSchema),
       ])
-      if (playerSnapshot.world !== vitalsSnapshot.world) {
-        return yield* Effect.fail({
+      yield* Effect.filterOrFail(
+        Effect.succeed(undefined),
+        () => playerSnapshot.world === vitalsSnapshot.world,
+        () => ({
           _tag: 'WorldCommitPlanWorldConflict',
           expected: playerSnapshot.world,
           actual: vitalsSnapshot.world,
-        } as const)
-      }
-      if (playerSnapshot.revision !== vitalsSnapshot.revision) {
-        return yield* Effect.fail({
+        } as const),
+      )
+      yield* Effect.filterOrFail(
+        Effect.succeed(undefined),
+        () => playerSnapshot.revision === vitalsSnapshot.revision,
+        () => ({
           _tag: 'WorldCommitPlanRevisionConflict',
           expected: playerSnapshot.revision,
           actual: vitalsSnapshot.revision,
-        } as const)
-      }
+        } as const),
+      )
       const snapshot: WorldCommitPlanSnapshot<EnchantmentTableApplyState> = {
         world: playerSnapshot.world,
         expectedRevision: playerSnapshot.revision,

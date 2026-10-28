@@ -1,4 +1,5 @@
 import { describe, expect, it } from '@effect/vitest'
+import { enchantmentsComponent } from '@nerima-games/mc-kernel/domain/item-enchantments'
 import { Effect, Layer, Result, Schema } from 'effect'
 import { WorldIdSchema } from '@nerima-games/mc-kernel'
 import { EnchantmentTableService, EnchantmentTableServiceLayer } from '../src/application/enchantment-table-service.js'
@@ -35,8 +36,17 @@ const makeVitalsAt = (level: number, progress: number): Vitals.Vitals => {
   return { ...Vitals.SPAWN_VITALS, totalExperience: Vitals.TotalExperience(totalExperience) }
 }
 
-const mustStack = (item: Inventory.ItemStack['item'], count: number): Inventory.ItemStack => {
-  const result = Inventory.itemStack(item, count)
+const must = <A, E>(result: Result.Result<A, E>): A => {
+  if (Result.isFailure(result)) throw result.failure
+  return result.success
+}
+
+const mustStack = (
+  item: Inventory.ItemStack['item'],
+  count: number,
+  options?: Parameters<typeof Inventory.itemStack>[2],
+): Inventory.ItemStack => {
+  const result = Inventory.itemStack(item, count, options)
   if (Result.isFailure(result)) throw result.failure
   return result.success
 }
@@ -47,6 +57,19 @@ const storageWith = (item: Inventory.ItemStack, lapisCount = 5): PlayerStorage.P
   const lapis = Inventory.itemStack('lapis_lazuli', lapisCount)
   if (Result.isFailure(lapis)) throw lapis.failure
   slots[1] = lapis.success
+  return PlayerStorage.storageFromInventory({ slots })
+}
+
+const storageWithItemOnly = (item: Inventory.ItemStack): PlayerStorage.PlayerStorage => {
+  const slots: Array<Inventory.ItemStack | undefined> = Array.from({ length: Inventory.INVENTORY_SLOT_COUNT }, () => undefined)
+  slots[0] = item
+  return PlayerStorage.storageFromInventory({ slots })
+}
+
+const fullBookStorage = (): PlayerStorage.PlayerStorage => {
+  const slots = Array.from({ length: Inventory.INVENTORY_SLOT_COUNT }, () => mustStack('stone', 64))
+  slots[0] = mustStack('book', 64)
+  slots[1] = mustStack('lapis_lazuli', 5)
   return PlayerStorage.storageFromInventory({ slots })
 }
 
@@ -101,6 +124,118 @@ describe('EnchantmentTableService plan-first apply', () => {
       expect(Number(Vitals.experienceProgress(nextVitals))).toBeCloseTo(0.5)
       expect(fragment.postCommitEvents).toEqual([])
     }).pipe(Effect.provide(makeServiceLayer(storageWith(mustStack('iron_sword', 1)), makeVitalsAt(30, 0.5))))
+  )
+
+  it.effect('rejects invalid offers, sources, storage, and insufficient lapis', () =>
+    Effect.gen(function* () {
+      const service = yield* EnchantmentTableService
+      const coordinator = yield* WorldCommitCoordinator
+      const player = yield* coordinator.snapshot(playerOwnerId, PlayerStorageSnapshotSchema)
+      const vitals = yield* coordinator.snapshot(vitalsOwnerId, Vitals.VitalsSchema)
+      const snapshot = {
+        world: player.world,
+        expectedRevision: player.revision,
+        expectedDimensions: [],
+        state: { playerStorage: player.state, vitals: vitals.state },
+      }
+      const valid = request()
+      const invalidOffers: ReadonlyArray<typeof valid.offer> = [
+        { ...valid.offer, enchantments: [] },
+        { ...valid.offer, enchantments: [{ id: 'sharpness', level: 6 }] },
+        { ...valid.offer, enchantments: [{ id: 'sharpness', level: 3 }, { id: 'sharpness', level: 3 }] },
+        { ...valid.offer, enchantments: [{ id: 'sharpness', level: 3 }, { id: 'smite', level: 3 }] },
+      ]
+      for (const offer of invalidOffers) {
+        const result = yield* Effect.result(service.planApply(snapshot, { ...valid, offer }))
+        expect(Result.isFailure(result)).toBe(true)
+        if (Result.isFailure(result)) expect(result.failure).toMatchObject({ reason: 'invalid-offer' })
+      }
+
+      const sameOwner = yield* Effect.result(service.planApply(snapshot, {
+        ...valid,
+        vitalsOwnerId: playerOwnerId,
+      }))
+      const sameSlot = yield* Effect.result(service.planApply(snapshot, {
+        ...valid,
+        itemSlot: valid.lapisSlot,
+      }))
+      const badLapisCost = yield* Effect.result(service.planApply(snapshot, {
+        ...valid,
+        offer: { ...valid.offer, lapisCost: 2 },
+      }))
+      expect(Result.isFailure(sameOwner)).toBe(true)
+      if (Result.isFailure(sameOwner)) expect(sameOwner.failure._tag).toBe('WorldCommitPlanOwnerConflict')
+      expect(Result.isFailure(sameSlot)).toBe(true)
+      if (Result.isFailure(sameSlot)) expect(sameSlot.failure).toMatchObject({ reason: 'invalid-storage' })
+      expect(Result.isFailure(badLapisCost)).toBe(true)
+      if (Result.isFailure(badLapisCost)) expect(badLapisCost.failure).toMatchObject({ reason: 'invalid-offer' })
+
+      const emptySource = yield* Effect.result(service.planApply({
+        ...snapshot,
+        state: { ...snapshot.state, playerStorage: PlayerStorage.emptyPlayerStorage() },
+      }, valid))
+      const unenchantedBread = yield* Effect.result(service.planApply({
+        ...snapshot,
+        state: { ...snapshot.state, playerStorage: storageWith(mustStack('bread', 1)) },
+      }, valid))
+      const enchantments = must(enchantmentsComponent({ 'minecraft:sharpness': 1 }))
+      const sword = mustStack('iron_sword', 1)
+      const alreadyEnchanted = yield* Effect.result(service.planApply({
+        ...snapshot,
+        state: {
+          ...snapshot.state,
+          playerStorage: storageWith(mustStack('iron_sword', 1, {
+            components: { ...sword.components, enchantments },
+          })),
+        },
+      }, valid))
+      const incompatibleOffer = yield* Effect.result(service.planApply(snapshot, {
+        ...valid,
+        offer: { ...valid.offer, enchantments: [{ id: 'silk_touch', level: 1 }] },
+      }))
+      const noLapis = yield* Effect.result(service.planApply({
+        ...snapshot,
+        state: { ...snapshot.state, playerStorage: storageWithItemOnly(mustStack('iron_sword', 1)) },
+      }, valid))
+      for (const [result, reason] of [
+        [emptySource, 'empty-item-slot'],
+        [unenchantedBread, 'not-enchantable'],
+        [alreadyEnchanted, 'already-enchanted'],
+        [incompatibleOffer, 'invalid-offer'],
+        [noLapis, 'insufficient-lapis'],
+      ] as const) {
+        expect(Result.isFailure(result)).toBe(true)
+        if (Result.isFailure(result)) expect(result.failure).toMatchObject({ reason })
+      }
+    }).pipe(Effect.provide(makeServiceLayer(storageWith(mustStack('iron_sword', 1)), makeVitalsAt(30, 0.5))))
+  )
+
+  it.effect('preserves book outputs and reports a full inventory without a partial candidate', () =>
+    Effect.gen(function* () {
+      const service = yield* EnchantmentTableService
+      const coordinator = yield* WorldCommitCoordinator
+      const player = yield* coordinator.snapshot(playerOwnerId, PlayerStorageSnapshotSchema)
+      const vitals = yield* coordinator.snapshot(vitalsOwnerId, Vitals.VitalsSchema)
+      const snapshot = {
+        world: player.world,
+        expectedRevision: player.revision,
+        expectedDimensions: [],
+        state: { playerStorage: player.state, vitals: vitals.state },
+      }
+      const bookPlan = yield* service.planApply({
+        ...snapshot,
+        state: { ...snapshot.state, playerStorage: storageWith(mustStack('book', 1)) },
+      }, request())
+      expect(bookPlan.result.item.item).toBe('enchanted_book')
+      expect(bookPlan.result.item.components.storedEnchantments?.['minecraft:sharpness']).toBe(3)
+
+      const fullInventory = yield* Effect.result(service.planApply({
+        ...snapshot,
+        state: { ...snapshot.state, playerStorage: fullBookStorage() },
+      }, request()))
+      expect(Result.isFailure(fullInventory)).toBe(true)
+      if (Result.isFailure(fullInventory)) expect(fullInventory.failure).toMatchObject({ reason: 'invalid-storage' })
+    }).pipe(Effect.provide(makeServiceLayer(storageWith(mustStack('book', 1)), makeVitalsAt(30, 0.5))))
   )
 
   it.effect('commits the item, lapis, and experience candidates together', () =>
