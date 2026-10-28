@@ -189,22 +189,27 @@ const invalidAutoSaveInterval = (): InvalidAutoSaveInterval => ({
 const makeAutoSaveSchedule = (
   interval: unknown,
 ): Effect.Effect<AutoSaveSchedule, InvalidAutoSaveInterval> =>
-  Effect.suspend(() => {
-    try {
-      if (!Duration.isDuration(interval)) return Effect.fail(invalidAutoSaveInterval())
+  Effect.try({
+    try: () => {
+      if (!Duration.isDuration(interval)) return { _tag: 'Invalid' as const }
       const intervalMillis = Duration.toMillis(interval)
       if (
         !Number.isFinite(intervalMillis) ||
         intervalMillis < 1 ||
         intervalMillis > Number.MAX_SAFE_INTEGER
       ) {
-        return Effect.fail(invalidAutoSaveInterval())
+        return { _tag: 'Invalid' as const }
       }
-      return Effect.succeed(Schedule.spaced(interval))
-    } catch {
-      return Effect.fail(invalidAutoSaveInterval())
-    }
-  })
+      return { _tag: 'Valid' as const, schedule: Schedule.spaced(interval) }
+    },
+    catch: () => invalidAutoSaveInterval(),
+  }).pipe(
+    Effect.flatMap((result) =>
+      result._tag === 'Valid'
+        ? Effect.succeed(result.schedule)
+        : Effect.fail(invalidAutoSaveInterval()),
+    ),
+  )
 
 export function autoSaveSchedule(): Effect.Effect<AutoSaveSchedule, InvalidAutoSaveInterval>
 export function autoSaveSchedule(
