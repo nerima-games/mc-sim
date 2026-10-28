@@ -239,6 +239,9 @@ describe('BrewingService', () => {
         const advancePlan = yield* brewing.planAdvance(snapshot, elapsedSecs)
         const advancedState = Schema.decodeUnknownSync(BrewingServiceStateSchema)(advancePlan.changes[0]?.state)
         const restoredPlan = yield* brewing.planRestore({ ...snapshot, state: advancedState }, snapshot.state)
+        const invalidRestorePlan = yield* Effect.result(
+          brewing.planRestore({ ...snapshot, state: advancedState }, { bottles: [] }),
+        )
         const resetPlan = yield* brewing.planReset({ ...snapshot, state: advancedState })
 
         expect(bottlePlan.changes[0]?.state).toEqual(bottlePlan.result)
@@ -248,6 +251,7 @@ describe('BrewingService', () => {
         expect(advancePlan.result.brewedCount).toBe(1)
         expect(advancedState.bottles[0]?.item).toBe('awkward_potion')
         expect(restoredPlan.result).toBeUndefined()
+        expect(Result.isFailure(invalidRestorePlan)).toBe(true)
         expect(resetPlan.result).toBeUndefined()
         expect(Schema.decodeUnknownSync(BrewingServiceStateSchema)(restoredPlan.changes[0]?.state)).toEqual(snapshot.state)
         expect(Schema.decodeUnknownSync(BrewingServiceStateSchema)(resetPlan.changes[0]?.state).fuelCharges).toBe(0)
@@ -315,6 +319,20 @@ describe('BrewingService', () => {
         }
 
         const emptyInventory = Inventory.emptyInventory()
+        const emptySlot = yield* Effect.result(brewing.planDrinkPotion({
+          world: coordinator.worldId,
+          expectedRevision,
+          expectedDimensions: [],
+          state: PlayerStorage.storageFromInventory(emptyInventory),
+        }, {
+          inventoryOwnerId: potionOwnerId,
+          actor: potionActor,
+          slotIndex: Schema.decodeUnknownSync(PotionDrinkSlotIndexSchema)(0),
+          tick: potionTick,
+        }))
+        expect(Result.isFailure(emptySlot)).toBe(true)
+        if (Result.isFailure(emptySlot)) expect(emptySlot.failure._tag).toBe('PotionDrinkEmptySlot')
+
         const notDrinkable = yield* Effect.result(brewing.planDrinkPotion({
           world: coordinator.worldId,
           expectedRevision,

@@ -48,6 +48,8 @@ import {
   FishingProgressOutcomeSchema,
   FishingCancelOutcomeSchema,
   FishingWaitTicksSchema,
+  advanceFishingRod,
+  cancelFishingRod,
   castFishingRod,
   emptyFishingState,
   fishingLootForSample,
@@ -216,10 +218,52 @@ describe('FishingService', () => {
     if (Result.isFailure(result)) expect(result.failure._tag).toBe('FishingInvalidLootRoll')
   });
 
-  it('returns typed invalid-state outcomes for illegal domain transitions', () => {
-    const noRod = reelFishingRod(emptyFishingState(), actor)
+  it('covers fishing rod cancellation and timed progression outcomes', () => {
+    const initial = emptyFishingState()
+    const noRod = reelFishingRod(initial, actor)
     expect(Result.isFailure(noRod)).toBe(true)
     if (Result.isFailure(noRod)) expect(noRod.failure._tag).toBe('FishingInvalidState')
+    const noCancel = cancelFishingRod(initial, actor)
+    expect(Result.isFailure(noCancel)).toBe(true)
+    if (Result.isFailure(noCancel)) expect(noCancel.failure.reason).toBe('rod-not-active')
+
+    const waitTicks = Schema.decodeUnknownSync(FishingWaitTicksSchema)(100)
+    const approachTicks = Schema.decodeUnknownSync(FishingApproachTicksSchema)(20)
+    const biteWindowTicks = Schema.decodeUnknownSync(FishingBiteWindowTicksSchema)(20)
+    const elapsed = (ticks: number) => Schema.decodeUnknownSync(FishingElapsedTicksSchema)(ticks)
+    const cast = must(castFishingRod(initial, actor, bobber))
+    expect(cancelFishingRod(cast, actor)).toEqual(Result.succeed({
+      state: initial,
+      outcome: { _tag: 'Cancelled', actor, bobber },
+    }))
+    expect(Result.isFailure(advanceFishingRod(
+      initial, actor, elapsed(0), waitTicks, approachTicks, biteWindowTicks, true,
+    ))).toBe(true)
+
+    expect(must(advanceFishingRod(
+      cast, actor, elapsed(0), waitTicks, approachTicks, biteWindowTicks, false,
+    )).outcome).toEqual({ _tag: 'Cancelled', reason: 'LostWater', bobber })
+    expect(must(advanceFishingRod(
+      cast, actor, elapsed(2), waitTicks, approachTicks, biteWindowTicks, true,
+    )).outcome).toEqual({ _tag: 'Waiting', remainingTicks: 98 })
+    expect(must(advanceFishingRod(
+      cast, actor, elapsed(115), waitTicks, approachTicks, biteWindowTicks, true,
+    )).outcome).toEqual({ _tag: 'Approaching', remainingTicks: 5 })
+    expect(must(advanceFishingRod(
+      cast, actor, elapsed(120), waitTicks, approachTicks, biteWindowTicks, true,
+    )).outcome).toEqual({ _tag: 'Bite', bobber })
+    expect(must(advanceFishingRod(
+      cast, actor, elapsed(140), waitTicks, approachTicks, biteWindowTicks, true,
+    )).outcome).toEqual({ _tag: 'Escaped', bobber })
+
+    const bitten = must(registerFishingBite(cast, actor))
+    for (const ticks of [elapsed(1), elapsed(101)]) {
+      const regressed = advanceFishingRod(
+        bitten, actor, ticks, waitTicks, approachTicks, biteWindowTicks, true,
+      )
+      expect(Result.isFailure(regressed)).toBe(true)
+      if (Result.isFailure(regressed)) expect(regressed.failure.reason).toBe('time-regressed')
+    }
 
     const sample = fishingLootForSample(0.1633802591287037)
     expect(sample).toEqual(Result.succeed('cod'))
