@@ -679,7 +679,32 @@ const finishTransferPlan = (
           if (!snapshotsMatch) {
             return emptyFragment(decodedSnapshot, { _tag: 'InvalidRequest', reason: 'missing-player-snapshot' })
           }
-          if (isPowered) return emptyFragment(decodedSnapshot, { _tag: 'Disabled' })
+          if (isPowered) {
+            const { hopperAddress } = state.intent
+            const existing = recordAt(state.hoppers, hopperAddress)
+            const currentCooldown = existing?.cooldownTicks ?? 0
+            const remainingCooldown = Math.max(0, currentCooldown - ticks)
+            if (remainingCooldown === currentCooldown) {
+              return emptyFragment(decodedSnapshot, { _tag: 'Disabled' })
+            }
+
+            const expectedDimensions = yield* expectedDimensionsFor(
+              decodedSnapshot.expectedDimensions,
+              [hopperAddress.dimension],
+            )
+            const hopper = yield* Schema.decodeUnknownEffect(HopperRuntimeStateSchema)({
+              address: hopperAddress,
+              cooldownTicks: remainingCooldown,
+            })
+            return {
+              world: decodedSnapshot.world,
+              expectedRevision: decodedSnapshot.expectedRevision,
+              expectedDimensions,
+              changes: [{ ownerId: HOPPER_REPLICATED_OWNER_ID, state: upsertHopper(state.hoppers, hopper) }],
+              result: { _tag: 'Disabled' },
+              postCommitEvents: [],
+            } satisfies WorldCommitPlanFragment<HopperTransferOutcome>
+          }
 
           const cooldownFragment = yield* cooledDownFragment(decodedSnapshot, ticks)
           if (cooldownFragment !== undefined) return cooldownFragment
