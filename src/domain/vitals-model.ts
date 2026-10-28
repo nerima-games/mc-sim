@@ -146,7 +146,7 @@ const VitalsFieldsSchema = Schema.Struct({
   lastDamageCause: Schema.Union([DamageCauseSchema, Schema.Undefined]),
 })
 
-export const VitalsSchema: Schema.Schema<Vitals> = VitalsFieldsSchema.check(
+export const VitalsSchema: Schema.Codec<Vitals, unknown> = VitalsFieldsSchema.check(
   Schema.makeFilter((vitals) =>
     vitals.maxHealthPoints > 0 &&
     vitals.healthPoints <= vitals.maxHealthPoints &&
