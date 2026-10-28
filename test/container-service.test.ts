@@ -246,6 +246,59 @@ describe('ContainerStorageService', () => {
     ),
   )
 
+  it.effect('reports missing dimension revisions and mismatched plan worlds', () =>
+    Effect.flatMap(makeFixture(playerWithStack('stone', 1)), ({ coordinator, service }) =>
+      Effect.gen(function* () {
+        const address = addressAt(14)
+        const container = yield* coordinator.snapshot(
+          CONTAINER_STORAGE_REPLICATED_OWNER_ID,
+          ContainerStorageSnapshotSchema,
+        )
+        const player = yield* coordinator.snapshot(playerOwnerId, PlayerStorageSnapshotSchema)
+        const expectedDimensions = [{
+          dimension: address.dimension,
+          expectedRevision: yield* coordinator.dimensionRevision(address.dimension),
+        }]
+        const containerPlanSnapshot = {
+          world: container.world,
+          expectedRevision: container.revision,
+          expectedDimensions,
+          state: container.state,
+        }
+        const playerPlanSnapshot = {
+          world: Schema.decodeUnknownSync(WorldIdSchema)('other-container-plan-world'),
+          expectedRevision: player.revision,
+          expectedDimensions,
+          state: player.state,
+        }
+        const missingDimension = yield* Effect.result(service.planCreateContainerAt({
+          ...containerPlanSnapshot,
+          expectedDimensions: [],
+        }, address, 'chest'))
+        const mismatchedWorld = yield* Effect.result(service.planTransferContainerItem(
+          containerPlanSnapshot,
+          playerPlanSnapshot,
+          {
+            playerOwnerId,
+            address,
+            direction: 'PlayerToContainer',
+            playerSlot: 0,
+            containerSlot: 0,
+            count: 1,
+          },
+        ))
+
+        expect(Result.isFailure(missingDimension)).toBe(true)
+        if (Result.isFailure(missingDimension)) {
+          expect(missingDimension.failure._tag).toBe('WorldCommitPlanDimensionRevisionMissing')
+        }
+        expect(Result.isFailure(mismatchedWorld)).toBe(true)
+        if (Result.isFailure(mismatchedWorld)) expect(mismatchedWorld.failure._tag).toBe('WorldCommitPlanWorldConflict')
+        expect(yield* coordinator.revision).toBe(container.revision)
+      }),
+    ),
+  )
+
   it.effect('rejects overlapping owner candidates and block edits instead of overwriting them', () =>
     Effect.flatMap(makeFixture(), ({ coordinator, service }) =>
       Effect.gen(function* () {

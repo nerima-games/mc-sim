@@ -340,8 +340,7 @@ export function worldContainerIdAt(address: unknown): WorldContainerId | Contain
       if (Result.isFailure(decodedAddress)) return { _tag: 'InvalidContainerAddress' }
       const { dimension, position } = decodedAddress.success
       const id = `${dimension}:${position.x},${position.y},${position.z}`
-      const decodedId = worldContainerId(id)
-      return Result.isFailure(decodedId) ? { _tag: 'InvalidContainerAddress' } : decodedId.success
+      return Brand.nominal<WorldContainerId>()(id)
     },
     catch: () => ({ _tag: 'InvalidContainerAddress' as const }),
   })
