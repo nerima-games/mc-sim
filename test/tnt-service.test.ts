@@ -1,4 +1,5 @@
 import { describe, expect, it } from '@effect/vitest'
+import * as fc from 'fast-check'
 import {
   AIR_BLOCK_ID,
   BlockIdSchema,
@@ -117,7 +118,77 @@ const transactionalFixture = () => Effect.gen(function* () {
 }).pipe(Effect.provide(ChunkStoreRegistryLayer(() => chunkSource, ChunkCapacity(4))))
 
 describe('TntService', () => {
-  it.effect('advances the fuse and returns a detonation candidate with the sim explosion plan', () =>
+  it('preserves every unrelated TNT record when committing a planned detonation', async () => {
+    await fc.assert(
+      fc.asyncProperty(fc.array(fc.integer({ min: 0, max: 20 }), { maxLength: 4 }), async (otherFuses) => {
+        const { coordinator, tnt } = await Effect.runPromise(transactionalFixture())
+        await Effect.runPromise(tnt.prime({
+          id: entity,
+          dimension: 'overworld',
+          center: { x: 8, y: 64, z: 8 },
+          fuseSecs: 1,
+          expectedRevision: revision(0),
+          expectedDimensionRevision: dimensionRevision(0),
+        }))
+
+        await Effect.runPromise(Effect.gen(function* () {
+          for (const [index, fuseSecs] of otherFuses.entries()) {
+            const expectedRevision = yield* coordinator.revision
+            const expectedDimensionRevision = yield* coordinator.dimensionRevision('overworld')
+            yield* tnt.prime({
+              id: Schema.decodeUnknownSync(EntityIdSchema)(`property-other-${index}`),
+              dimension: 'overworld',
+              center: { x: index + 20, y: 64, z: 0 },
+              fuseSecs,
+              expectedRevision,
+              expectedDimensionRevision,
+            })
+          }
+        }))
+
+        const before = await Effect.runPromise(tnt.snapshot)
+        const expectedRevision = await Effect.runPromise(coordinator.revision)
+        const expectedDimensionRevision = await Effect.runPromise(coordinator.dimensionRevision('overworld'))
+        const planned = await Effect.runPromise(tnt.advance({
+          ...advanceRequest(expectedRevision, expectedDimensionRevision, 1),
+          radius: 1,
+        }))
+        expect(Schema.decodeUnknownSync(TntAdvanceOutcomeSchema)(planned)).toEqual(planned)
+        expect(planned._tag).toBe('DetonationPlanned')
+        if (planned._tag !== 'DetonationPlanned') return
+        const targetBefore = before.state.tnts.find(({ id }) => id === planned.id)
+        expect(targetBefore).toBeDefined()
+        if (targetBefore === undefined) return
+
+        const forgedRequest = {
+          id: planned.id,
+          planRevision: planned.planRevision,
+          ownerCandidate: {
+            ownerId,
+            state: {
+              tnts: [{ ...targetBefore, state: { kind: 'detonated' } }],
+            },
+          },
+        } as unknown as Parameters<typeof tnt.commitDetonation>[0]
+        const result = await Effect.runPromise(Effect.result(tnt.commitDetonation(forgedRequest)))
+        const decoded = Schema.decodeUnknownSync(
+          Schema.Result(TntDetonationCommitOutcomeSchema, TntServiceErrorSchema),
+        )(result)
+        expect(decoded).toEqual(result)
+        expect(Result.isSuccess(decoded), JSON.stringify(decoded)).toBe(true)
+        if (Result.isFailure(decoded)) return
+
+        const after = await Effect.runPromise(tnt.snapshot)
+        expect(after.state.tnts.filter(({ id }) => id !== planned.id))
+          .toEqual(before.state.tnts.filter(({ id }) => id !== planned.id))
+        expect(after.state.tnts).toHaveLength(before.state.tnts.length)
+        expect(after.state.tnts.find(({ id }) => id === planned.id)?.state).toEqual({ kind: 'detonated' })
+      }),
+      { numRuns: 12 },
+    )
+  })
+
+  it.effect('advances the fuse and returns a detonation plan without committing terminal state', () =>
     Effect.gen(function* () {
       const tnt = yield* TntService
       const primed = yield* tnt.prime({
@@ -154,23 +225,8 @@ describe('TntService', () => {
       expect(pending.plan.after).toEqual({ kind: 'detonated' })
       expect(pending.plan.deferredSecs).toBe(6)
       expect(pending.explosion.destroyedBlocks.length).toBeGreaterThan(0)
-      expect(pending.ownerCandidate).toEqual({
-        ownerId,
-        state: { tnts: [
-          {
-            id: entity,
-            dimension: 'overworld',
-            center: { x: 0, y: 0, z: 0 },
-            state: { kind: 'detonated' },
-          },
-          {
-            id: otherEntity,
-            dimension: 'overworld',
-            center: { x: 4, y: 0, z: 0 },
-            state: { kind: 'primed', remainingFuseSecs: 4 },
-          },
-        ] },
-      })
+      expect(pending.planRevision).toBeGreaterThan(0)
+      expect(Number.isSafeInteger(pending.planRevision)).toBe(true)
       expect((yield* tnt.snapshot).state.tnts[0]?.state).toEqual({
         kind: 'primed',
         remainingFuseSecs: 3,
@@ -345,7 +401,7 @@ describe('TntService', () => {
         const dimensionBefore = yield* coordinator.dimensionRevision('overworld')
         const tntBefore = yield* tnt.snapshot
         const entityBefore = yield* coordinator.snapshot(affectedEntityOwnerId, Schema.Struct({ health: Schema.Int }))
-        const committed = yield* Effect.result(tnt.commitDetonation(planned, [{
+        const committed = yield* Effect.result(tnt.commitDetonation({ id: planned.id, planRevision: planned.planRevision }, [{
           ownerId: affectedEntityOwnerId,
           state: { health: 8 },
         }]))
@@ -393,14 +449,19 @@ describe('TntService', () => {
         for (const cell of planned.explosion.destroyedBlocks) {
           yield* overworld.setBlock(blockPosition(cell.x, cell.y, cell.z), solidBlock)
         }
+        yield* coordinator.commit({
+          expectedRevision: revision(1),
+          expectedDimensions: [{ dimension: 'overworld', expectedRevision: dimensionRevision(1) }],
+          changes: [{ ownerId: affectedEntityOwnerId, state: { health: 19 } }],
+        })
         const tntBefore = yield* tnt.snapshot
         const entityBefore = yield* coordinator.snapshot(affectedEntityOwnerId, Schema.Struct({ health: Schema.Int }))
         const revisionBefore = yield* coordinator.revision
         const dimensionBefore = yield* coordinator.dimensionRevision('overworld')
 
         const rejected = yield* Effect.result(tnt.commitDetonation({
-          ...planned,
-          expectedRevision: revision(0),
+          id: planned.id,
+          planRevision: planned.planRevision,
         }, [{ ownerId: affectedEntityOwnerId, state: { health: 8 } }]))
         expect(Schema.decodeUnknownSync(
           Schema.Result(TntDetonationCommitOutcomeSchema, TntServiceErrorSchema),
@@ -451,7 +512,7 @@ describe('TntService', () => {
       if (planned._tag !== 'DetonationPlanned') return
       expect(planned.explosion.destroyedBlocks).toEqual([])
 
-      const committed = yield* Effect.result(tnt.commitDetonation(planned, [{
+      const committed = yield* Effect.result(tnt.commitDetonation({ id: planned.id, planRevision: planned.planRevision }, [{
         ownerId: affectedEntityOwnerId,
         state: { health: 8 },
       }]))
@@ -467,7 +528,7 @@ describe('TntService', () => {
     }),
   )
 
-  it.effect('rejects detonation plans whose explosion or owner candidate does not match the plan', () =>
+  it.effect('rejects unknown detonation plan revisions without committing', () =>
     Effect.flatMap(transactionalFixture(), ({ coordinator, tnt }) =>
       Effect.gen(function* () {
         yield* tnt.prime({
@@ -481,31 +542,19 @@ describe('TntService', () => {
         const planned = yield* tnt.advance(advanceRequest(1, 1, 1))
         expect(planned._tag).toBe('DetonationPlanned')
         if (planned._tag !== 'DetonationPlanned') return
-        expect(planned.explosion.destroyedBlocks.length).toBeGreaterThan(0)
-
-        const rejectedExplosion = yield* Effect.result(tnt.commitDetonation({
-          ...planned,
-          explosion: { ...planned.explosion, destroyedBlocks: [] },
+        const before = yield* tnt.snapshot
+        const rejected = yield* Effect.result(tnt.commitDetonation({
+          id: planned.id,
+          planRevision: Number.MAX_SAFE_INTEGER as typeof planned.planRevision,
         }))
-        const rejectedOwnerCandidate = yield* Effect.result(tnt.commitDetonation({
-          ...planned,
-          ownerCandidate: { ...planned.ownerCandidate, state: { tnts: [] } },
-        }))
-        const resultSchema = Schema.Result(TntDetonationCommitOutcomeSchema, TntServiceErrorSchema)
-        const decodedExplosion = Schema.decodeUnknownSync(resultSchema)(rejectedExplosion)
-        const decodedOwnerCandidate = Schema.decodeUnknownSync(resultSchema)(rejectedOwnerCandidate)
-        expect(Result.isFailure(decodedExplosion)).toBe(true)
-        if (Result.isFailure(decodedExplosion)) {
-          expect(decodedExplosion.failure).toMatchObject({ _tag: 'TntServiceFailure', reason: 'invalid-input' })
+        const decoded = Schema.decodeUnknownSync(
+          Schema.Result(TntDetonationCommitOutcomeSchema, TntServiceErrorSchema),
+        )(rejected)
+        expect(Result.isFailure(decoded)).toBe(true)
+        if (Result.isFailure(decoded)) {
+          expect(decoded.failure).toMatchObject({ _tag: 'TntServiceFailure', reason: 'invalid-input' })
         }
-        expect(Result.isFailure(decodedOwnerCandidate)).toBe(true)
-        if (Result.isFailure(decodedOwnerCandidate)) {
-          expect(decodedOwnerCandidate.failure).toMatchObject({ _tag: 'TntServiceFailure', reason: 'invalid-input' })
-        }
-        expect((yield* tnt.snapshot).state.tnts[0]?.state).toEqual({
-          kind: 'primed',
-          remainingFuseSecs: 1,
-        })
+        expect(yield* tnt.snapshot).toEqual(before)
         expect(yield* coordinator.revision).toBe(revision(1))
       }),
     ),
@@ -594,24 +643,15 @@ describe('TntService', () => {
     expect(() => decodeAdvance({})).toThrow()
     expect(() => decodeAdvance({ _tag: null })).toThrow()
 
-    const terminalState: Record<string, unknown> = { kind: 'detonated' }
-    const tntRecord: Record<string, unknown> = {
-      id: entity,
-      dimension: 'overworld',
-      center: { x: 0, y: 0, z: 0 },
-      state: terminalState,
-    }
-    const ownerState: Record<string, unknown> = { tnts: [tntRecord] }
-    const candidate: Record<string, unknown> = { ownerId, state: ownerState }
     const detonationPlanned: Record<string, unknown> = {
       _tag: 'DetonationPlanned',
       plan,
       explosion,
       dimension: 'overworld',
       id: entity,
+      planRevision: 1,
       expectedRevision: 1,
       expectedDimensionRevision: 1,
-      ownerCandidate: candidate,
     }
     assertRequiredFields(decodeAdvance, detonationPlanned, [
       '_tag',
@@ -619,9 +659,9 @@ describe('TntService', () => {
       'explosion',
       'dimension',
       'id',
+      'planRevision',
       'expectedRevision',
       'expectedDimensionRevision',
-      'ownerCandidate',
     ])
     assertNestedRequiredFields(decodeAdvance, detonationPlanned, 'plan', plan, [
       'before', 'after', 'advancedSecs', 'deferredSecs', 'explosion',
@@ -629,56 +669,11 @@ describe('TntService', () => {
     assertNestedRequiredFields(decodeAdvance, detonationPlanned, 'explosion', explosion, [
       'center', 'radius', 'seed', 'destroyedBlocks', 'entityEffects', 'visitedBlocks', 'limits', 'truncated',
     ])
-    assertNestedRequiredFields(decodeAdvance, detonationPlanned, 'ownerCandidate', candidate, ['ownerId', 'state'])
-    const stateWithoutTnts = Object.fromEntries(Object.entries(ownerState).filter(([key]) => key !== 'tnts'))
+    expect(() => decodeAdvance({ ...detonationPlanned, planRevision: 0 })).toThrow()
     expect(() => decodeAdvance({
       ...detonationPlanned,
-      ownerCandidate: { ...candidate, state: stateWithoutTnts },
+      planRevision: Number.MAX_SAFE_INTEGER + 1,
     })).toThrow()
-    expect(() => decodeAdvance({
-      ...detonationPlanned,
-      ownerCandidate: { ...candidate, state: { ...ownerState, tnts: null } },
-    })).toThrow()
-    for (const field of ['id', 'dimension', 'center', 'state']) {
-      const withoutField = Object.fromEntries(Object.entries(tntRecord).filter(([entry]) => entry !== field))
-      expect(() => decodeAdvance({
-        ...detonationPlanned,
-        ownerCandidate: { ...candidate, state: { tnts: [withoutField] } },
-      })).toThrow()
-      expect(() => decodeAdvance({
-        ...detonationPlanned,
-        ownerCandidate: { ...candidate, state: { tnts: [{ ...tntRecord, [field]: null }] } },
-      })).toThrow()
-    }
-    expect(() => decodeAdvance({
-      ...detonationPlanned,
-      ownerCandidate: { ...candidate, state: { tnts: [{ ...tntRecord, state: {} }] } },
-    })).toThrow()
-    expect(() => decodeAdvance({
-      ...detonationPlanned,
-      ownerCandidate: {
-        ...candidate,
-        state: { tnts: [{ ...tntRecord, state: { kind: null } }] },
-      },
-    })).toThrow()
-    const candidateCenter: Record<string, unknown> = { x: 0, y: 0, z: 0 }
-    for (const field of ['x', 'y', 'z']) {
-      const withoutField = Object.fromEntries(Object.entries(candidateCenter).filter(([entry]) => entry !== field))
-      expect(() => decodeAdvance({
-        ...detonationPlanned,
-        ownerCandidate: {
-          ...candidate,
-          state: { tnts: [{ ...tntRecord, center: withoutField }] },
-        },
-      })).toThrow()
-      expect(() => decodeAdvance({
-        ...detonationPlanned,
-        ownerCandidate: {
-          ...candidate,
-          state: { tnts: [{ ...tntRecord, center: { ...candidateCenter, [field]: null } }] },
-        },
-      })).toThrow()
-    }
     for (const field of ['x', 'y', 'z']) {
       const withoutField = Object.fromEntries(Object.entries(explosionCenter).filter(([entry]) => entry !== field))
       expect(() => decodeAdvance({ ...detonationPlanned, explosion: { ...explosion, center: withoutField } })).toThrow()

@@ -2447,8 +2447,7 @@ it('fishing, projectile, and TNT coordinators return typed outcomes for hostile 
       expect(detonationOutcome._tag).toBe('DetonationPlanned')
       if (detonationOutcome._tag !== 'DetonationPlanned') return
       expect(detonationOutcome.plan.after).toEqual({ kind: 'detonated' })
-      expect(detonationOutcome.ownerCandidate.state.tnts.find((tnt) => tnt.id === id)?.state)
-        .toEqual({ kind: 'detonated' })
+      expect(detonationOutcome.planRevision).toBeGreaterThan(0)
       expect(detonation.after.state).toEqual(detonation.before.state)
       expect(detonation.after.state.tnts.find((tnt) => tnt.id === id)?.state)
         .toEqual({ kind: 'primed', remainingFuseSecs: 1.5 })
@@ -2576,8 +2575,7 @@ it('fishing, projectile, and TNT coordinators return typed outcomes for hostile 
           expect(tntAdvance.after.state).toEqual(tntAdvance.before.state)
         } else {
           expect(tntAdvance.after.state).toEqual(tntAdvance.before.state)
-          expect(advanceOutcome.ownerCandidate.state.tnts.find((tnt) => tnt.id === value)?.state)
-            .toEqual({ kind: 'detonated' })
+          expect(advanceOutcome.planRevision).toBeGreaterThan(0)
         }
       }
     }),

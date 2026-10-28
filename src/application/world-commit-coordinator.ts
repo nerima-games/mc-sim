@@ -27,6 +27,7 @@ import {
   type WorldReadSnapshot,
   ReplicatedOwnerChangeSchema,
   WorldBlockPositionSchema,
+  replicatedSnapshotSchema,
   replicatedWorldDeltaSchema,
 } from './replicated-state.js'
 
@@ -352,6 +353,16 @@ export type WorldCommitCoordinatorApi = Readonly<{
   readonly commit: (
     request: WorldCommitRequest,
   ) => Effect.Effect<ReplicatedWorldDelta<PreparedOwnerChange>, WorldCommitCoordinatorError>
+  readonly commitFromSnapshot: <Codec extends AnyCodec, BuildError = never, BuildServices = never>(
+    ownerId: ReplicatedOwnerId,
+    schema: Codec,
+    buildRequest: (snapshot: ReplicatedSnapshot<Codec>) =>
+      Effect.Effect<WorldCommitRequest, BuildError, BuildServices>,
+  ) => Effect.Effect<
+    ReplicatedWorldDelta<PreparedOwnerChange>,
+    WorldCommitCoordinatorError | BuildError,
+    Schema.Codec.DecodingServices<Codec> | BuildServices
+  >
 }>
 
 const WorldCommitCoordinatorBase: Context.ServiceClass<
@@ -668,8 +679,8 @@ export const makeWorldCommitCoordinator = (
         }
       }))
 
-    const commit: WorldCommitCoordinatorApi['commit'] = (request) =>
-      semaphore.withPermit(Effect.uninterruptibleMask((restore) => Effect.gen(function* () {
+    const commitLocked: WorldCommitCoordinatorApi['commit'] = (request) =>
+      Effect.uninterruptibleMask((restore) => Effect.gen(function* () {
         const inputs = yield* restore(prepareCommitInputs(request, world, registry, chunkStores))
         const { expectedRevision, expectedDimensions, preparedChanges, block } = inputs
         const current = yield* Ref.get(committed)
@@ -734,7 +745,30 @@ export const makeWorldCommitCoordinator = (
         }
         yield* Ref.set(committed, nextState)
         return validatedDelta
-      })))
+      }))
+
+    const commit: WorldCommitCoordinatorApi['commit'] = (request) =>
+      semaphore.withPermit(commitLocked(request))
+
+    const commitFromSnapshot: WorldCommitCoordinatorApi['commitFromSnapshot'] = (
+      ownerId,
+      schema,
+      buildRequest,
+    ) => semaphore.withPermit(Effect.gen(function* () {
+      const decodedOwnerId = yield* Schema.decodeUnknownEffect(ReplicatedOwnerIdSchema)(ownerId)
+      const current = yield* Ref.get(committed)
+      const ownerState = current.owners.get(decodedOwnerId)
+      if (ownerState === undefined) {
+        return yield* Effect.fail(new ReplicatedOwnerUnknown({ ownerId: decodedOwnerId }))
+      }
+      const currentSnapshot = yield* Schema.decodeUnknownEffect(replicatedSnapshotSchema(schema))({
+        world: current.world,
+        revision: current.revision,
+        state: ownerState,
+      })
+      const request = yield* buildRequest(currentSnapshot)
+      return yield* commitLocked(request)
+    }))
 
     return {
       worldId: world,
@@ -745,6 +779,7 @@ export const makeWorldCommitCoordinator = (
         Effect.map(Ref.get(committed), (current) => current.dimensionRevisions.get(dimension) ?? initialDimensionRevision),
       ),
       commit,
+      commitFromSnapshot,
     }
   })
 

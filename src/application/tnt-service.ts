@@ -13,7 +13,7 @@ import {
   type Position,
   position,
 } from '@nerima-games/mc-kernel'
-import { Context, Effect, Layer, Result, Schema } from 'effect'
+import { Brand, Context, Effect, Layer, Result, Schema } from 'effect'
 import type { YieldableError } from 'effect/Cause'
 import { SchemaErrorSchema } from '../schema-errors.js'
 import type {
@@ -32,7 +32,6 @@ import {
 } from '../domain/primed-tnt.js'
 import {
   makeReplicatedOwnerId,
-  ReplicatedOwnerIdSchema,
   replicatedSnapshotSchema,
   type ReplicatedOwnerId,
   type ReplicatedSnapshot,
@@ -227,21 +226,38 @@ export const TntDetonationCommitOutcomeSchema: Schema.Codec<TntDetonationCommitO
   revision: SafeWorldRevisionSchema,
 })
 
+type TntDetonationPlanRevision = number & Brand.Brand<'TntDetonationPlanRevision'>
+const TntDetonationPlanRevisionSchema: Schema.Codec<TntDetonationPlanRevision, number> = Schema.Int.check(
+  Schema.isBetween({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+).pipe(Schema.brand('TntDetonationPlanRevision'))
+
+const TntDetonationReferenceSchema: Schema.Struct<{
+  id: typeof EntityIdSchema
+  planRevision: typeof TntDetonationPlanRevisionSchema
+}> = Schema.Struct({
+  id: EntityIdSchema,
+  planRevision: TntDetonationPlanRevisionSchema,
+})
+type TntDetonationReference = Schema.Schema.Type<typeof TntDetonationReferenceSchema>
+
+type PendingTntDetonation = Readonly<{
+  id: EntityId
+  dimension: Dimension
+  expectedRevision: WorldRevision
+  expectedDimensionRevision: DimensionRevision
+  plan: PrimedTntPlan
+}>
+
 type TntDetonationPlanned = Readonly<{
   _tag: 'DetonationPlanned'
   plan: PrimedTntPlan
   explosion: ExplosionPlan
   dimension: Dimension
   id: EntityId
+  planRevision: TntDetonationPlanRevision
   expectedRevision: WorldRevision
   expectedDimensionRevision: DimensionRevision
-  ownerCandidate: Readonly<{ ownerId: ReplicatedOwnerId; state: TntServiceSnapshot }>
 }>
-
-const TntOwnerCandidateSchema: Schema.Codec<TntDetonationPlanned['ownerCandidate'], unknown> = Schema.Struct({
-  ownerId: ReplicatedOwnerIdSchema,
-  state: TntServiceSnapshotSchema,
-})
 
 const TntDetonationPlannedSchema: Schema.Codec<TntDetonationPlanned, unknown> = Schema.Struct({
   _tag: Schema.Literal('DetonationPlanned'),
@@ -249,9 +265,9 @@ const TntDetonationPlannedSchema: Schema.Codec<TntDetonationPlanned, unknown> = 
   explosion: TntExplosionPlanSchema,
   dimension: TntDimensionSchema,
   id: EntityIdSchema,
+  planRevision: TntDetonationPlanRevisionSchema,
   expectedRevision: SafeWorldRevisionSchema,
   expectedDimensionRevision: SafeDimensionRevisionSchema,
-  ownerCandidate: TntOwnerCandidateSchema,
 })
 
 export type TntAdvanceOutcome =
@@ -283,7 +299,7 @@ export type TntServiceApi = Readonly<{
   prime: (request: TntPrimeRequest) => Effect.Effect<TntPrimeOutcome, TntServiceError>
   advance: (request: TntAdvanceRequest) => Effect.Effect<TntAdvanceOutcome, TntServiceError>
   commitDetonation: (
-    planned: Extract<TntAdvanceOutcome, { readonly _tag: 'DetonationPlanned' }>,
+    reference: TntDetonationReference,
     affectedEntityChanges?: ReadonlyArray<ReplicatedOwnerCandidate>,
   ) => Effect.Effect<TntDetonationCommitOutcome, TntServiceError>
 }>
@@ -328,6 +344,9 @@ export const makeTntService = (
     const coordinator = yield* WorldCommitCoordinator
 
     const snapshot = () => coordinator.snapshot(ownerId, TntServiceSnapshotSchema)
+    const pendingDetonations = new Map<TntDetonationPlanRevision, PendingTntDetonation>()
+    const planRevisionByTnt = new Map<EntityId, TntDetonationPlanRevision>()
+    let latestPlanRevision = 0
 
     const prime: TntServiceApi['prime'] = (request) => Effect.gen(function* () {
       const primedState = primeTnt(
@@ -402,20 +421,31 @@ export const makeTntService = (
       const plan = planResult.success
 
       if (plan.explosion !== undefined) {
-        const next: TntServiceSnapshot = {
-          tnts: current.state.tnts.map((record) => record.id === request.id
-            ? { ...record, state: plan.after }
-            : record),
-        }
-        return {
-          _tag: 'DetonationPlanned',
-          plan,
-          explosion: plan.explosion,
-          dimension: tnt.dimension,
+        const planRevision = yield* Schema.decodeUnknownEffect(TntDetonationPlanRevisionSchema)(
+          latestPlanRevision + 1,
+        )
+        latestPlanRevision = planRevision
+        const previousPlanRevision = planRevisionByTnt.get(request.id)
+        if (previousPlanRevision !== undefined) pendingDetonations.delete(previousPlanRevision)
+        const explosion = plan.explosion
+        const storedPlan = structuredClone(plan)
+        pendingDetonations.set(planRevision, {
           id: request.id,
+          dimension: tnt.dimension,
           expectedRevision: request.expectedRevision,
           expectedDimensionRevision: request.expectedDimensionRevision,
-          ownerCandidate: { ownerId, state: next },
+          plan: storedPlan,
+        })
+        planRevisionByTnt.set(request.id, planRevision)
+        return {
+          _tag: 'DetonationPlanned',
+          plan: structuredClone(storedPlan),
+          explosion: structuredClone(explosion),
+          dimension: tnt.dimension,
+          id: request.id,
+          planRevision,
+          expectedRevision: request.expectedRevision,
+          expectedDimensionRevision: request.expectedDimensionRevision,
         } as const
       }
 
@@ -435,48 +465,70 @@ export const makeTntService = (
       return { _tag: 'FuseAdvanced', plan, revision: committed.revision } as const
     })
 
-    const commitDetonation: TntServiceApi['commitDetonation'] = (planned, affectedEntityChanges = []) =>
-      Effect.flatMap(Schema.decodeUnknownEffect(TntDetonationPlannedSchema)(planned), (decoded) =>
-      Effect.gen(function* () {
-        if (
-          decoded.plan.after.kind !== 'detonated' ||
-          decoded.plan.explosion === undefined ||
-          decoded.ownerCandidate.ownerId !== ownerId ||
-          JSON.stringify(decoded.plan.explosion) !== JSON.stringify(decoded.explosion)
-        ) {
-          return yield* Effect.fail(new TntServiceFailure({ reason: 'invalid-input' }))
-        }
-        const candidate = yield* Schema.decodeUnknownEffect(TntServiceSnapshotSchema)(decoded.ownerCandidate.state)
-        const detonatedTnt = candidate.tnts.find(({ id }) => id === decoded.id)
-        if (
-          detonatedTnt === undefined ||
-          detonatedTnt.dimension !== decoded.dimension ||
-          detonatedTnt.state.kind !== 'detonated'
-        ) {
-          return yield* Effect.fail(new TntServiceFailure({ reason: 'invalid-input' }))
-        }
-
-        const blockWrite = yield* Schema.decodeUnknownEffect(WorldWriteBatchSchema)({
-          world: coordinator.worldId,
-          expectedWorldRevision: decoded.expectedRevision,
-          dimension: decoded.dimension,
-          expectedDimensionRevision: decoded.expectedDimensionRevision,
-          edits: decoded.explosion.destroyedBlocks.map(({ x, y, z }) => ({
-            position: { x, y, z },
-            block: AIR_BLOCK_ID,
-          })),
-        })
-        const committed = yield* coordinator.commit({
-          expectedRevision: decoded.expectedRevision,
-          expectedDimensions: [{
-            dimension: decoded.dimension,
-            expectedRevision: decoded.expectedDimensionRevision,
-          }],
-          changes: [decoded.ownerCandidate, ...affectedEntityChanges],
-          ...(blockWrite.edits.length === 0 ? {} : { blockWrite }),
-        })
-        return { _tag: 'Committed', revision: committed.revision } as const
-      }))
+    const commitDetonation: TntServiceApi['commitDetonation'] = (reference, affectedEntityChanges = []) =>
+      Effect.flatMap(Schema.decodeUnknownEffect(TntDetonationReferenceSchema)(reference), (decoded) =>
+        Effect.gen(function* () {
+          const pending = pendingDetonations.get(decoded.planRevision)
+          if (
+            pending === undefined ||
+            pending.id !== decoded.id ||
+            pending.plan.after.kind !== 'detonated' ||
+            pending.plan.explosion === undefined
+          ) {
+            return yield* Effect.fail(new TntServiceFailure({ reason: 'invalid-input' }))
+          }
+          const explosion = pending.plan.explosion
+          const terminalState = pending.plan.after
+          const blockWrite = yield* Schema.decodeUnknownEffect(WorldWriteBatchSchema)({
+            world: coordinator.worldId,
+            expectedWorldRevision: pending.expectedRevision,
+            dimension: pending.dimension,
+            expectedDimensionRevision: pending.expectedDimensionRevision,
+            edits: explosion.destroyedBlocks.map(({ x, y, z }) => ({
+              position: { x, y, z },
+              block: AIR_BLOCK_ID,
+            })),
+          })
+          const committed = yield* coordinator.commitFromSnapshot(
+            ownerId,
+            TntServiceSnapshotSchema,
+            (current) => Effect.gen(function* () {
+              if (current.revision !== pending.expectedRevision) {
+                return yield* Effect.fail(new WorldRevisionConflict({
+                  expected: pending.expectedRevision,
+                  actual: current.revision,
+                }))
+              }
+              const target = current.state.tnts.find(({ id }) => id === decoded.id)
+              if (
+                target === undefined ||
+                target.dimension !== pending.dimension ||
+                target.state.kind !== 'primed'
+              ) {
+                return yield* Effect.fail(new TntServiceFailure({ reason: 'invalid-input' }))
+              }
+              const nextState: TntServiceSnapshot = {
+                tnts: current.state.tnts.map((record) => record.id === decoded.id
+                  ? { ...record, state: terminalState }
+                  : record),
+              }
+              return {
+                expectedRevision: pending.expectedRevision,
+                expectedDimensions: [{
+                  dimension: pending.dimension,
+                  expectedRevision: pending.expectedDimensionRevision,
+                }],
+                changes: [{ ownerId, state: nextState }, ...affectedEntityChanges],
+                ...(blockWrite.edits.length === 0 ? {} : { blockWrite }),
+              }
+            }),
+          )
+          pendingDetonations.delete(decoded.planRevision)
+          if (planRevisionByTnt.get(decoded.id) === decoded.planRevision) {
+            planRevisionByTnt.delete(decoded.id)
+          }
+          return { _tag: 'Committed', revision: committed.revision } as const
+        }))
 
     return {
       snapshot: snapshot(),

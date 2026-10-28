@@ -744,6 +744,10 @@ owner state、world revision、dimension revision を更新しない。成功時
 block write がある dimension の revision も一度だけ進める。返す `ReplicatedWorldDelta` は owner の
 `changes` に加え、編集セルごとの `dimension`、`position`、`before`、`after` を `blockChanges` に含める。
 
+`commitFromSnapshot(ownerId, schema, buildRequest)` は coordinator gate を保持したまま owner snapshot を読み、
+その snapshot から commit request を組み立てて commit する。candidate が現在 state に依存する操作は、別々の
+`snapshot` と `commit` の間に更新を挟まずにこの API を使える。
+
 ```typescript
 const delta = yield* coordinator.commit({
   expectedRevision,
@@ -779,10 +783,12 @@ owner state だけを commit し、revision expectation が stale なら失敗�
 する境界である。空の edits は `NoChanges` を返し、player storage を変更しない。この port は bucket の
 ゲームプレイルールや fluid 探索を実装しない。
 
-`TntService.advance` は通常の fuse 更新を commit する。起爆時は terminal TNT owner candidate と
-`ExplosionPlan` を `DetonationPlanned` として返し、状態をまだ commit しない。呼び出し側は entity owner
-candidates を `commitDetonation` に渡す。これが terminal TNT state、関連 entity state、破壊 block を AIR に
-する write を一つの coordinator commit に束ねる。成功後に同じ explosion effects を別経路で再適用しない。
+`TntService.advance` は通常の fuse 更新を commit する。起爆時は `ExplosionPlan` と一意な `planRevision` を
+`DetonationPlanned` として返し、状態をまだ commit しない。呼び出し側は `{ id, planRevision }` と任意の entity
+owner candidates を `commitDetonation` に渡す。service は coordinator gate 内の現在 snapshot から対象 TNT
+だけを terminal にした state を作り、関連 entity state と破壊 block を AIR にする write を一つの coordinator
+commit に束ねる。plan の revision が古い場合は conflict として commit しない。成功後に同じ explosion effects
+を別経路で再適用しない。
 
 ### チャンクダーティ通知は mc-worldgen のものになった
 
