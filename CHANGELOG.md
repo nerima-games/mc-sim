@@ -1,5 +1,13 @@
 # @nerima-games/mc-sim
 
+## 0.7.0
+
+### Minor Changes
+
+- Update the mc-kernel dependency to 0.12.0.
+
+- Add public `WorldCommitPlanFragment` and `mergeWorldCommitPlans` APIs for combining owner changes and block edits in one coordinator commit, with typed failures for conflicting revisions, owners, positions, or dimensions. Hopper, container, brewing, fishing, and enchantment-table services expose plan APIs while keeping their stateful operations as commit wrappers. The new plan operations cover enchantment application, potion drinking, fishing cancellation, and elapsed fishing progression.
+
 ## 0.6.0
 
 ### Minor Changes
