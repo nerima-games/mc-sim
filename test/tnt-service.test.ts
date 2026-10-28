@@ -301,6 +301,43 @@ describe('TntService', () => {
       expect((yield* tnt.snapshot).revision).toBe(revision(1))
     }).pipe(Effect.provide(layer())))
 
+  it.effect('maps block reader exceptions to typed TNT failures without changing revisions', () =>
+    Effect.flatMap(transactionalFixture(), ({ coordinator, tnt }) =>
+      Effect.gen(function* () {
+      yield* tnt.prime({
+        id: entity,
+        dimension: 'overworld',
+        center: { x: 8, y: 64, z: 8 },
+        fuseSecs: 1,
+        expectedRevision: revision(0),
+        expectedDimensionRevision: dimensionRevision(0),
+      })
+      const revisionBefore = yield* coordinator.revision
+      const dimensionRevisionBefore = yield* coordinator.dimensionRevision('overworld')
+      const tntBefore = yield* tnt.snapshot
+      const failed = yield* Effect.result(tnt.advance({
+        ...advanceRequest(revisionBefore, dimensionRevisionBefore, 1),
+        blocks: () => {
+          throw new Error('reader unavailable')
+        },
+      }))
+      const decoded = Schema.decodeUnknownSync(
+        Schema.Result(TntAdvanceOutcomeSchema, TntServiceErrorSchema),
+      )(failed)
+      expect(Result.isFailure(decoded)).toBe(true)
+      if (Result.isFailure(decoded)) {
+        expect(decoded.failure).toMatchObject({
+          _tag: 'TntServiceFailure',
+          reason: 'block-reader-failed',
+        })
+      }
+      expect(yield* coordinator.revision).toBe(revisionBefore)
+      expect(yield* coordinator.dimensionRevision('overworld')).toBe(dimensionRevisionBefore)
+      expect(yield* tnt.snapshot).toEqual(tntBefore)
+      }),
+    ),
+  )
+
   it.effect('rejects invalid fuse and explosion inputs without committing the TNT owner', () =>
     Effect.gen(function* () {
       const tnt = yield* TntService

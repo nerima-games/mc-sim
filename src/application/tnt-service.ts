@@ -116,9 +116,11 @@ export const TNT_REPLICATED_OWNER_ID: ReplicatedOwnerId = makeReplicatedOwnerId(
 
 export const INITIAL_TNT_SERVICE_SNAPSHOT: TntServiceSnapshot = { tnts: [] }
 
-type TntServiceFailureFields = Readonly<{ reason: 'tnt-already-primed' | 'unknown-tnt' | 'invalid-input' }>
+type TntServiceFailureFields = Readonly<{
+  reason: 'tnt-already-primed' | 'unknown-tnt' | 'invalid-input' | 'block-reader-failed'
+}>
 const TntServiceFailureReasonSchema: Schema.Codec<TntServiceFailureFields['reason'], string> =
-  Schema.Literals(['tnt-already-primed', 'unknown-tnt', 'invalid-input'])
+  Schema.Literals(['tnt-already-primed', 'unknown-tnt', 'invalid-input', 'block-reader-failed'])
 const TntServiceFailureFieldsSchema: Readonly<{ reason: typeof TntServiceFailureReasonSchema }> = {
   reason: TntServiceFailureReasonSchema,
 }
@@ -416,7 +418,11 @@ export const makeTntService = (
         ...(request.limits === undefined ? {} : { limits: request.limits }),
       })
       if (Result.isFailure(planResult)) {
-        return yield* Effect.fail(new TntServiceFailure({ reason: 'invalid-input' }))
+        const reason = planResult.failure._tag === 'ExplosionValidationFailure' &&
+            planResult.failure.reason === 'block reader threw'
+          ? 'block-reader-failed'
+          : 'invalid-input'
+        return yield* Effect.fail(new TntServiceFailure({ reason }))
       }
       const plan = planResult.success
 

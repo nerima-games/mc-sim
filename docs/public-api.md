@@ -788,7 +788,8 @@ owner state だけを commit し、revision expectation が stale なら失敗�
 owner candidates を `commitDetonation` に渡す。service は coordinator gate 内の現在 snapshot から対象 TNT
 だけを terminal にした state を作り、関連 entity state と破壊 block を AIR にする write を一つの coordinator
 commit に束ねる。plan の revision が古い場合は conflict として commit しない。成功後に同じ explosion effects
-を別経路で再適用しない。
+を別経路で再適用しない。block reader が throw した場合は `TntServiceFailure` の
+`block-reader-failed` として返し、world revision と TNT state は変わらない。
 
 ### チャンクダーティ通知は mc-worldgen のものになった
 
