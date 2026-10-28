@@ -53,8 +53,9 @@
  * The simulation's answer to "where is the player looking" is unaffected by
  * whether a sword is currently swinging.
  */
-import type { CameraPoseSnapshot, MonotonicTimeSecs, Position } from "@nerima-games/mc-kernel"
-import { AngleRadians, PositionAxis, position } from "@nerima-games/mc-kernel"
+import { Brand, Result } from 'effect'
+import type { CameraPoseSnapshot, MonotonicTimeSecs, Position } from '@nerima-games/mc-kernel'
+import { AngleRadians, MonotonicTimeSecs as MonotonicTimeSecsValue, PositionAxis, position } from '@nerima-games/mc-kernel'
 
 /**
  * Pitch bound, radians.
@@ -93,8 +94,10 @@ export const INITIAL_PLAYER_POSE: PlayerPose = {
 }
 
 /** Clamp a pitch into the gimbal-safe range. */
-export const clampPitch = (pitchRadians: number): number =>
-  Math.max(PITCH_MIN_RADIANS, Math.min(PITCH_MAX_RADIANS, pitchRadians))
+export const clampPitch = (pitchRadians: number): Result.Result<number, CameraPoseError> =>
+  Result.map(AngleRadians.result(pitchRadians), (validatedPitch) =>
+    Math.max(PITCH_MIN_RADIANS, Math.min(PITCH_MAX_RADIANS, validatedPitch)),
+  )
 
 /**
  * Apply a look delta.
@@ -104,11 +107,44 @@ export const clampPitch = (pitchRadians: number): number =>
  * about the absolute heading can normalise themselves. Pitch IS clamped,
  * because unlike yaw it has a physical limit.
  */
-export const applyLook = (pose: PlayerPose, deltaYaw: number, deltaPitch: number): PlayerPose => ({
-  ...pose,
-  yawRadians: pose.yawRadians + deltaYaw,
-  pitchRadians: clampPitch(pose.pitchRadians + deltaPitch),
-})
+export const applyLook = (
+  pose: PlayerPose,
+  deltaYaw: number,
+  deltaPitch: number,
+): Result.Result<PlayerPose, ApplyLookError> => {
+  const isRecord = (value: unknown): value is Record<string, unknown> =>
+    typeof value === 'object' && value !== null && !Array.isArray(value)
+  const failure = (field: CameraPoseInputError['field']): Result.Result<never, CameraPoseInputError> =>
+    Result.fail({ _tag: 'CameraPoseInputError', field })
+
+  if (!isRecord(pose)) return failure('pose')
+  const feetPosition = pose['feetPosition']
+  if (!isRecord(feetPosition)) return failure('pose.feetPosition')
+  if (typeof feetPosition['x'] !== 'number') return failure('pose.feetPosition.x')
+  if (typeof feetPosition['y'] !== 'number') return failure('pose.feetPosition.y')
+  if (typeof feetPosition['z'] !== 'number') return failure('pose.feetPosition.z')
+  if (typeof pose['yawRadians'] !== 'number') return failure('pose.yawRadians')
+  if (typeof pose['pitchRadians'] !== 'number') return failure('pose.pitchRadians')
+  if (typeof deltaYaw !== 'number') return failure('deltaYaw')
+  if (typeof deltaPitch !== 'number') return failure('deltaPitch')
+
+  const yawRadians = pose['yawRadians']
+  const pitchRadians = pose['pitchRadians']
+  return Result.gen(function* () {
+    const x = yield* PositionAxis.result(feetPosition['x'])
+    const y = yield* PositionAxis.result(feetPosition['y'])
+    const z = yield* PositionAxis.result(feetPosition['z'])
+    const validYawDelta = yield* AngleRadians.result(deltaYaw)
+    const validPitchDelta = yield* AngleRadians.result(deltaPitch)
+    const nextYaw = yield* AngleRadians.result(yawRadians + validYawDelta)
+    const nextPitch = yield* clampPitch(pitchRadians + validPitchDelta)
+    return {
+      feetPosition: position(x, y, z),
+      yawRadians: nextYaw,
+      pitchRadians: nextPitch,
+    }
+  })
+}
 
 export const withFeetPosition = (pose: PlayerPose, feetPosition: Position): PlayerPose => ({
   ...pose,
@@ -130,16 +166,47 @@ export const withFeetPosition = (pose: PlayerPose, feetPosition: Position): Play
  * which the player experiences as "I clicked the block above the one I aimed
  * at".
  */
-export const cameraPoseOf = (pose: PlayerPose, capturedAtSecs: MonotonicTimeSecs): CameraPoseSnapshot => ({
-  position: position(
-    PositionAxis(pose.feetPosition.x),
-    PositionAxis(pose.feetPosition.y + EYE_LEVEL_OFFSET),
-    PositionAxis(pose.feetPosition.z),
-  ),
-  yawRadians: AngleRadians(pose.yawRadians),
-  pitchRadians: AngleRadians(pose.pitchRadians),
-  capturedAtSecs,
-})
+export type CameraPoseInputError = Readonly<{
+  _tag: 'CameraPoseInputError'
+  field: 'pose' | 'pose.feetPosition' | 'pose.feetPosition.x' | 'pose.feetPosition.y' | 'pose.feetPosition.z' | 'pose.yawRadians' | 'pose.pitchRadians' | 'capturedAtSecs' | 'deltaYaw' | 'deltaPitch'
+}>
+
+export type CameraPoseError = Brand.BrandError | CameraPoseInputError
+
+
+export type ApplyLookError = Brand.BrandError | CameraPoseInputError
+
+export const cameraPoseOf = (
+  pose: PlayerPose,
+  capturedAtSecs: MonotonicTimeSecs,
+): Result.Result<CameraPoseSnapshot, CameraPoseError> =>
+  Result.gen(function* () {
+    const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+      typeof value === 'object' && value !== null && !Array.isArray(value)
+    const inputFailure = (field: CameraPoseInputError['field']): Result.Result<never, CameraPoseInputError> =>
+      Result.fail({ _tag: 'CameraPoseInputError', field })
+    if (!isRecord(pose)) return yield* inputFailure('pose')
+    const feetPosition = pose['feetPosition']
+    if (!isRecord(feetPosition)) return yield* inputFailure('pose.feetPosition')
+    if (typeof feetPosition['x'] !== 'number') return yield* inputFailure('pose.feetPosition.x')
+    if (typeof feetPosition['y'] !== 'number') return yield* inputFailure('pose.feetPosition.y')
+    if (typeof feetPosition['z'] !== 'number') return yield* inputFailure('pose.feetPosition.z')
+    if (typeof pose['yawRadians'] !== 'number') return yield* inputFailure('pose.yawRadians')
+    if (typeof pose['pitchRadians'] !== 'number') return yield* inputFailure('pose.pitchRadians')
+    if (typeof capturedAtSecs !== 'number') return yield* inputFailure('capturedAtSecs')
+    const x = yield* PositionAxis.result(pose.feetPosition.x)
+    const y = yield* PositionAxis.result(pose.feetPosition.y + EYE_LEVEL_OFFSET)
+    const z = yield* PositionAxis.result(pose.feetPosition.z)
+    const yawRadians = yield* AngleRadians.result(pose.yawRadians)
+    const pitchRadians = yield* AngleRadians.result(pose.pitchRadians)
+    const capturedAt = yield* MonotonicTimeSecsValue.result(capturedAtSecs)
+    return {
+      position: position(x, y, z),
+      yawRadians,
+      pitchRadians,
+      capturedAtSecs: capturedAt,
+    }
+  })
 
 /**
  * Unit forward vector implied by a snapshot.
@@ -152,16 +219,18 @@ export const cameraPoseOf = (pose: PlayerPose, capturedAtSecs: MonotonicTimeSecs
  * Convention: yaw 0 looks down -Z, yaw increases towards -X (THREE's 'YXZ'
  * Euler order, matching ts-minecraft/packages/app/application/frame/stages/camera-stage.ts:67).
  */
-export type CameraOrientation = Pick<CameraPoseSnapshot, 'yawRadians' | 'pitchRadians'>
+export type CameraOrientation = Readonly<{ yawRadians: number; pitchRadians: number }>
 
-export const forwardVector = (snapshot: CameraOrientation): Position => {
-  const cosPitch = Math.cos(snapshot.pitchRadians)
-  return position(
-    PositionAxis(-Math.sin(snapshot.yawRadians) * cosPitch),
-    PositionAxis(Math.sin(snapshot.pitchRadians)),
-    PositionAxis(-Math.cos(snapshot.yawRadians) * cosPitch),
-  )
-}
+export const forwardVector = (snapshot: CameraOrientation): Result.Result<Position, CameraPoseError> =>
+  Result.gen(function* () {
+    const yawRadians = yield* AngleRadians.result(snapshot.yawRadians)
+    const pitchRadians = yield* AngleRadians.result(snapshot.pitchRadians)
+    const cosPitch = Math.cos(pitchRadians)
+    const x = yield* PositionAxis.result(-Math.sin(yawRadians) * cosPitch)
+    const y = yield* PositionAxis.result(Math.sin(pitchRadians))
+    const z = yield* PositionAxis.result(-Math.cos(yawRadians) * cosPitch)
+    return position(x, y, z)
+  })
 
 /**
  * Age of a snapshot at a given instant, in seconds. Negative under clock skew,

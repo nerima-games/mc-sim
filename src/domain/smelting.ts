@@ -1,133 +1,490 @@
+import { Brand, Result, Schema } from 'effect'
 import {
-  addItemStack,
-  countOf,
-  itemStack,
-  type ItemStackFailure,
-  type Inventory,
-  type ItemStack,
-} from './inventory.js'
-import { itemStackWithCount } from './item-stack.js'
-import { Result } from 'effect'
-import {
-  isItemComponents,
+  COOKING_STATIONS,
+  FixedDurationSecs,
+  RecipeCompletionCount,
+  RecipeId,
+  type FixedDurationSecs as FixedDurationSecsValue,
+  RecipeExperience,
   isItemStack,
   isItemType,
+  itemStackFromUnknown,
   itemStacksCanMerge,
   maxStackCountForStack,
+  type CookingStation,
+  type FuelRule as KernelFuelRule,
+  type FurnaceAdvanceResult,
+  type FurnaceState,
+  type FurnaceStateInput,
+  type ItemStack,
   type ItemType,
+  type SmeltingRecipe as KernelSmeltingRecipe,
 } from '@nerima-games/mc-kernel'
-import { STARTER_FUEL_RULES, STARTER_SMELTING_RECIPES } from './smelting-data.js'
+import {
+  VANILLA_FUEL_RULES,
+  VANILLA_SMELTING_RECIPES,
+  STARTER_FUEL_RULES,
+} from './smelting-data.js'
+import {
+  addItemStack,
+  BrandErrorSchema,
+  countOf,
+  ItemStackFailureSchema,
+  ItemStackSchema,
+  itemStack,
+  type Inventory,
+  type ItemStackFailure,
+} from './inventory.js'
+import { itemStackWithCount } from './item-stack.js'
 
-export type SmeltingRecipe = {
+export {
+  COOKING_STATIONS,
+  VANILLA_FUEL_RULES,
+  VANILLA_SMELTING_RECIPES,
+}
+export type {
+  CookingStation,
+  FurnaceAdvanceResult,
+  FurnaceState,
+  FurnaceStateInput,
+  KernelFuelRule as FuelRule,
+  KernelSmeltingRecipe,
+}
+
+export type StarterSmeltingRecipe = Readonly<{
   readonly id: string
   readonly input: ItemType
   readonly output: ItemStack
   readonly cookDurationSecs: number
-}
-
-export type FuelRule = {
+  readonly experience?: number
+}>
+export type SmeltingRecipeInput = KernelSmeltingRecipe | StarterSmeltingRecipe
+export type StarterFuelRule = Readonly<{
   readonly item: ItemType
   readonly burnDurationSecs: number
-}
+}>
+export type FuelRuleInput = KernelFuelRule | StarterFuelRule
 
-export type FurnaceState = {
-  readonly input: ItemStack | null
-  readonly fuel: ItemStack | null
-  readonly output: ItemStack | null
-  readonly cookElapsedSecs: number
-  readonly burnRemainingSecs: number
-}
+export type FurnaceStateValidationFailure = Readonly<{
+  readonly _tag: 'FurnaceStateValidationFailure'
+  readonly path: string
+  readonly reason: string
+}>
+export type SmeltingValidationFailure = Readonly<{
+  readonly _tag: 'SmeltingValidationFailure'
+  readonly path: string
+  readonly reason: string
+}>
+export type FurnaceFailure =
+  | Brand.BrandError
+  | ItemStackFailure
+  | FurnaceStateValidationFailure
+  | SmeltingValidationFailure
 
-export type FurnaceOutcome = {
-  readonly state: FurnaceState
-  readonly smelted: number
+type FurnaceStateFailure = Brand.BrandError | ItemStackFailure | FurnaceStateValidationFailure
+
+export type FurnaceOutcome = FurnaceAdvanceResult & Readonly<{
   readonly fuelConsumed: number
-}
+}>
 
 export type FurnaceTransferSlot = 'input' | 'fuel'
-
-export type FurnaceTransferResult =
-  | { readonly _tag: 'Transferred'; readonly item: ItemType; readonly count: number }
+export type FurnaceTransferRejection =
+  | { readonly _tag: 'InvalidInput'; readonly field: 'inventory' | 'furnace' | 'slot' | 'item' | 'count' }
   | { readonly _tag: 'InvalidCount'; readonly count: number }
   | { readonly _tag: 'InsufficientItems'; readonly available: number }
   | { readonly _tag: 'WrongItem'; readonly expected: ItemType }
   | { readonly _tag: 'NoRoom'; readonly available: number }
   | { readonly _tag: 'ItemStackFailure'; readonly error: ItemStackFailure }
-
-export type FurnaceTransferOutcome = {
+export type FurnaceTransferResult =
+  | { readonly _tag: 'Transferred'; readonly item: ItemType; readonly count: number }
+  | FurnaceTransferRejection
+export type FurnaceTransferOutcome = Readonly<{
   readonly inventory: Inventory
   readonly furnace: FurnaceState
   readonly result: FurnaceTransferResult
-}
-
+}>
+export type FurnaceTransferSelection =
+  | { readonly _tag: 'Ready'; readonly current: ItemStack | undefined; readonly selected: ItemStack }
+  | { readonly _tag: 'Rejected'; readonly result: FurnaceTransferRejection }
 export type FurnaceCollectionResult =
+  | { readonly _tag: 'InvalidInput'; readonly field: 'inventory' | 'furnace' }
   | { readonly _tag: 'Collected'; readonly output: ItemStack }
   | { readonly _tag: 'Empty' }
   | { readonly _tag: 'NoRoom' }
   | { readonly _tag: 'ItemStackFailure'; readonly error: ItemStackFailure }
-
-export type FurnaceCollectionOutcome = {
+export type FurnaceCollectionOutcome = Readonly<{
   readonly inventory: Inventory
   readonly furnace: FurnaceState
   readonly result: FurnaceCollectionResult
-}
-
-export type FurnaceSnapshotValidationError = {
-  readonly _tag: 'FurnaceSnapshotValidationError'
-  readonly path: string
-  readonly reason: string
-}
-
+}>
 export type FurnaceSnapshotValidationResult =
   | { readonly _tag: 'Valid'; readonly state: FurnaceState }
-  | { readonly _tag: 'Invalid'; readonly error: FurnaceSnapshotValidationError }
+  | { readonly _tag: 'Invalid'; readonly error: FurnaceStateValidationFailure }
+  | { readonly _tag: 'BrandFailure'; readonly error: Brand.BrandError }
   | { readonly _tag: 'ItemStackFailure'; readonly error: ItemStackFailure }
 
-export const emptyFurnaceState = (): FurnaceState => ({
-  input: null,
-  fuel: null,
-  output: null,
-  cookElapsedSecs: 0,
-  burnRemainingSecs: 0,
+export const FurnaceStateValidationFailureSchema: Schema.Schema<FurnaceStateValidationFailure> =
+  Schema.TaggedStruct('FurnaceStateValidationFailure', { path: Schema.String, reason: Schema.String })
+export const SmeltingValidationFailureSchema: Schema.Schema<SmeltingValidationFailure> =
+  Schema.TaggedStruct('SmeltingValidationFailure', { path: Schema.String, reason: Schema.String })
+export const FurnaceFailureSchema: Schema.Schema<FurnaceFailure> = Schema.Union([
+  BrandErrorSchema,
+  ItemStackFailureSchema,
+  FurnaceStateValidationFailureSchema,
+  SmeltingValidationFailureSchema,
+])
+
+type Slot = ItemStack | undefined
+type RecordValue = Readonly<Record<string, unknown>>
+
+const validationFailure = (path: string, reason: string): FurnaceStateValidationFailure => ({
+  _tag: 'FurnaceStateValidationFailure',
+  path,
+  reason,
+})
+const smeltingFailure = (path: string, reason: string): SmeltingValidationFailure => ({
+  _tag: 'SmeltingValidationFailure',
+  path,
+  reason,
+})
+const isRecord = (value: unknown): value is RecordValue =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+const isCookingStation = (value: unknown): value is CookingStation =>
+  typeof value === 'string' && COOKING_STATIONS.some((station) => station === value)
+const isCookingStationTable = (value: unknown): value is ReadonlyArray<CookingStation> =>
+  Array.isArray(value) && value.every(isCookingStation)
+const isFiniteNonNegative = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value) && value >= 0
+const isFinitePositive = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value) && value > 0
+const isSlot = (value: unknown): value is Slot => value === undefined || isItemStack(value)
+const isInventoryEnvelope = (value: unknown): value is Inventory =>
+  isRecord(value) && Array.isArray(value['slots'])
+const isInventory = (value: unknown): value is Inventory =>
+  isInventoryEnvelope(value) && value.slots.every(isSlot)
+const isTransferSlot = (value: unknown): value is FurnaceTransferSlot =>
+  value === 'input' || value === 'fuel'
+
+const validateSlot = (value: unknown, path: string): Result.Result<Slot, FurnaceStateFailure> => {
+  if (value === undefined) return Result.succeed(undefined)
+  if (!isRecord(value) || Object.keys(value).some((key) => !['item', 'count', 'components'].includes(key))) {
+    return Result.fail(validationFailure(path, 'expected an ItemStack or undefined'))
+  }
+  if (isItemStack(value)) return itemStack(value.item, value.count, { components: value.components })
+  if (!isItemType(value['item'])) {
+    return Result.fail(validationFailure(path, 'expected an ItemStack or undefined'))
+  }
+  if (!Object.hasOwn(value, 'count') || !Object.hasOwn(value, 'components')) {
+    return Result.fail(validationFailure(path, 'expected an ItemStack or undefined'))
+  }
+  const components = value['components']
+  if (!isRecord(components) || Object.keys(components).length === 0) {
+    return itemStackFromUnknown(value['item'], value['count'], { components })
+  }
+  return Result.flatMap(itemStackFromUnknown(value['item'], value['count']), (defaults) =>
+    itemStackFromUnknown(value['item'], value['count'], {
+      components: { ...defaults.components, ...components },
+    }),
+  )
+}
+
+const fixedDuration = (
+  value: unknown,
+  path: string,
+): Result.Result<FixedDurationSecsValue, FurnaceStateFailure> => {
+  if (!isFiniteNonNegative(value)) {
+    return Result.fail(validationFailure(path, 'must be a finite non-negative number'))
+  }
+  return FixedDurationSecs.result(value)
+}
+
+export const furnaceState = (
+  input: unknown = {},
+): Result.Result<FurnaceState, FurnaceStateFailure> => {
+  if (!isRecord(input)) return Result.fail(validationFailure('state', 'expected an object'))
+  const station = input['station'] ?? 'furnace'
+  if (!isCookingStation(station)) return Result.fail(validationFailure('station', 'expected a cooking station'))
+  const furnaceInput = validateSlot(input['input'], 'input')
+  const fuel = validateSlot(input['fuel'], 'fuel')
+  const output = validateSlot(input['output'], 'output')
+  const fuelTimeRemaining = fixedDuration(input['fuelTimeRemainingSecs'] ?? 0, 'fuelTimeRemainingSecs')
+  const fuelTimeTotal = fixedDuration(input['fuelTimeTotalSecs'] ?? 0, 'fuelTimeTotalSecs')
+  const cookProgress = fixedDuration(input['cookProgressSecs'] ?? 0, 'cookProgressSecs')
+  return Result.flatMap(Result.all([furnaceInput, fuel, output]), ([validInput, validFuel, validOutput]) =>
+    Result.flatMap(Result.all([fuelTimeRemaining, fuelTimeTotal, cookProgress]), ([remaining, total, progress]) => {
+      if (remaining > total) {
+        return Result.fail(validationFailure('fuelTimeRemainingSecs', 'cannot exceed fuelTimeTotalSecs'))
+      }
+      return Result.succeed({
+        station,
+        input: validInput,
+        fuel: validFuel,
+        output: validOutput,
+        fuelTimeRemainingSecs: remaining,
+        fuelTimeTotalSecs: total,
+        cookProgressSecs: progress,
+      })
+    }),
+  )
+}
+
+const isFurnaceState = (value: unknown): value is FurnaceState => {
+  if (!isRecord(value)) return false
+  const fields = ['station', 'input', 'fuel', 'output', 'fuelTimeRemainingSecs', 'fuelTimeTotalSecs', 'cookProgressSecs']
+  return fields.every((field) => Object.hasOwn(value, field)) && Result.isSuccess(furnaceState(value))
+}
+
+const CanonicalItemStackSchema: Schema.Codec<ItemStack, ItemStack> = Schema.declare(isItemStack)
+const FurnaceSlotSchema: Schema.Codec<Slot, Slot> = Schema.UndefinedOr(CanonicalItemStackSchema)
+const FixedDurationSecsSchema: Schema.Codec<FixedDurationSecsValue, number> = Schema.Finite.check(
+  Schema.makeFilter((value) => FixedDurationSecs.is(value)),
+).pipe(Schema.brand('FixedDurationSecs'))
+export const FurnaceStateSchema: Schema.Codec<FurnaceState, unknown> = Schema.Struct({
+  station: Schema.Literals(COOKING_STATIONS),
+  input: FurnaceSlotSchema,
+  fuel: FurnaceSlotSchema,
+  output: FurnaceSlotSchema,
+  fuelTimeRemainingSecs: FixedDurationSecsSchema,
+  fuelTimeTotalSecs: FixedDurationSecsSchema,
+  cookProgressSecs: FixedDurationSecsSchema,
+}).check(Schema.makeFilter((state) => state.fuelTimeRemainingSecs <= state.fuelTimeTotalSecs))
+export const InventorySchema: Schema.Codec<Inventory, unknown> = Schema.Struct({
+  slots: Schema.Array(FurnaceSlotSchema),
+})
+export const FurnaceSnapshotValidationResultSchema: Schema.Schema<FurnaceSnapshotValidationResult> = Schema.Union([
+  Schema.TaggedStruct('Valid', { state: FurnaceStateSchema }),
+  Schema.TaggedStruct('Invalid', { error: FurnaceStateValidationFailureSchema }),
+  Schema.TaggedStruct('BrandFailure', { error: BrandErrorSchema }),
+  Schema.TaggedStruct('ItemStackFailure', { error: ItemStackFailureSchema }),
+])
+const ItemTypeSchema: Schema.Codec<ItemType, unknown> = Schema.declare(isItemType)
+const RecipeIdSchema: Schema.Codec<RecipeId, string> = Schema.String.check(
+  Schema.makeFilter((value) => RecipeId.is(value)),
+).pipe(Schema.brand('ResourceLocation'))
+const RecipeExperienceSchema: Schema.Codec<RecipeExperience, number> = Schema.Finite.check(
+  Schema.makeFilter((value) => RecipeExperience.is(value)),
+).pipe(Schema.brand('RecipeExperience'))
+const FiniteNumberSchema = Schema.Finite
+const SafePositiveIntegerSchema = Schema.Int.check(Schema.makeFilter((value) => Number.isSafeInteger(value) && value > 0))
+const SafeNonNegativeIntegerSchema = Schema.Int.check(Schema.makeFilter((value) => Number.isSafeInteger(value) && value >= 0))
+
+const FurnaceTransferRejectionSchema: Schema.Schema<FurnaceTransferRejection> = Schema.Union([
+  Schema.TaggedStruct('InvalidInput', {
+    field: Schema.Literals(['inventory', 'furnace', 'slot', 'item', 'count']),
+  }),
+  Schema.TaggedStruct('InvalidCount', { count: FiniteNumberSchema }),
+  Schema.TaggedStruct('InsufficientItems', { available: FiniteNumberSchema }),
+  Schema.TaggedStruct('WrongItem', { expected: ItemTypeSchema }),
+  Schema.TaggedStruct('NoRoom', { available: FiniteNumberSchema }),
+  Schema.TaggedStruct('ItemStackFailure', { error: ItemStackFailureSchema }),
+])
+export const FurnaceTransferResultSchema: Schema.Schema<FurnaceTransferResult> = Schema.Union([
+  Schema.TaggedStruct('Transferred', { item: ItemTypeSchema, count: SafePositiveIntegerSchema }),
+  FurnaceTransferRejectionSchema,
+])
+export const FurnaceTransferSelectionSchema: Schema.Schema<FurnaceTransferSelection> = Schema.Union([
+  Schema.TaggedStruct('Ready', {
+    current: Schema.UndefinedOr(ItemStackSchema),
+    selected: ItemStackSchema,
+  }),
+  Schema.TaggedStruct('Rejected', { result: FurnaceTransferRejectionSchema }),
+])
+export const FurnaceTransferOutcomeSchema: Schema.Schema<FurnaceTransferOutcome> = Schema.Struct({
+  inventory: InventorySchema,
+  furnace: FurnaceStateSchema,
+  result: FurnaceTransferResultSchema,
 })
 
-/** Atomically move player-owned items into one furnace slot. */
-type FurnaceTransferRejection = Extract<
-  FurnaceTransferResult,
-  { readonly _tag: 'InvalidCount' | 'InsufficientItems' | 'WrongItem' | 'NoRoom' }
->
+export const FurnaceCollectionResultSchema: Schema.Schema<FurnaceCollectionResult> = Schema.Union([
+  Schema.TaggedStruct('InvalidInput', { field: Schema.Literals(['inventory', 'furnace']) }),
+  Schema.TaggedStruct('Collected', { output: ItemStackSchema }),
+  Schema.TaggedStruct('Empty', {}),
+  Schema.TaggedStruct('NoRoom', {}),
+  Schema.TaggedStruct('ItemStackFailure', { error: ItemStackFailureSchema }),
+])
+export const FurnaceCollectionOutcomeSchema: Schema.Schema<FurnaceCollectionOutcome> = Schema.Struct({
+  inventory: InventorySchema,
+  furnace: FurnaceStateSchema,
+  result: FurnaceCollectionResultSchema,
+})
 
-type FurnaceTransferSelection =
-  | { readonly _tag: 'Rejected'; readonly result: FurnaceTransferRejection }
-  | { readonly _tag: 'Ready'; readonly current: ItemStack | null; readonly selected: ItemStack }
+export const emptyFurnaceState = (
+  station: CookingStation = 'furnace',
+): Result.Result<FurnaceState, FurnaceFailure> => furnaceState({ station })
 
-const selectFurnaceTransfer = (
+export const validateFurnaceSnapshot = (value: unknown): FurnaceSnapshotValidationResult => {
+  if (!isRecord(value)) return { _tag: 'Invalid', error: validationFailure('snapshot', 'expected an object') }
+  const fields = ['station', 'input', 'fuel', 'output', 'fuelTimeRemainingSecs', 'fuelTimeTotalSecs', 'cookProgressSecs']
+  if (Object.keys(value).length !== fields.length || !fields.every((field) => Object.hasOwn(value, field))) {
+    return { _tag: 'Invalid', error: validationFailure('snapshot', 'expected the complete furnace state') }
+  }
+  const state = furnaceState(value)
+  if (Result.isFailure(state)) {
+    if (state.failure._tag === 'FurnaceStateValidationFailure') return { _tag: 'Invalid', error: state.failure }
+    if (state.failure._tag === 'BrandError') return { _tag: 'BrandFailure', error: state.failure }
+    return { _tag: 'ItemStackFailure', error: state.failure }
+  }
+  return { _tag: 'Valid', state: state.success }
+}
+
+const validStarterRecipe = (
+  value: unknown,
+): value is StarterSmeltingRecipe =>
+  isRecord(value) &&
+  value['_tag'] === undefined &&
+  typeof value['id'] === 'string' &&
+  value['id'].length > 0 &&
+  isItemType(value['input']) &&
+  isItemStack(value['output']) &&
+  isFinitePositive(value['cookDurationSecs']) &&
+  (value['experience'] === undefined || isFiniteNonNegative(value['experience']))
+
+const validateRecipe = (
+  value: unknown,
+): Result.Result<SmeltingRecipeInput, FurnaceFailure> => {
+  if (!isRecord(value)) return Result.fail(smeltingFailure('recipe', 'expected an object'))
+  if (value['_tag'] !== 'Smelting') {
+    return validStarterRecipe(value)
+      ? Result.succeed(value)
+      : Result.fail(smeltingFailure('recipe', 'invalid starter smelting recipe'))
+  }
+  const id = value['id']
+  const input = value['input']
+  const output = value['output']
+  const stations = value['stations']
+  const cookTimeSecs = value['cookTimeSecs']
+  const experience = value['experience']
+  if (
+    typeof id !== 'string' ||
+    id.length === 0 ||
+    !isItemType(input) ||
+    !isItemStack(output) ||
+    !isCookingStationTable(stations) ||
+    stations.length === 0 ||
+    !isFinitePositive(cookTimeSecs) ||
+    !isFiniteNonNegative(experience)
+  ) {
+    return Result.fail(smeltingFailure('recipe', 'invalid kernel smelting recipe'))
+  }
+  return Result.map(
+    Result.all([
+      RecipeId.result(id),
+      FixedDurationSecs.result(cookTimeSecs),
+      RecipeExperience.result(experience),
+    ]),
+    ([validId, validDuration, validExperience]) => ({
+      _tag: 'Smelting',
+      id: validId,
+      input,
+      output,
+      cookTimeSecs: validDuration,
+      experience: validExperience,
+      stations,
+    }),
+  )
+}
+
+const resolveRecipeTable = (
+  recipes: unknown,
+): Result.Result<ReadonlyArray<SmeltingRecipeInput>, FurnaceFailure> => {
+  if (recipes === VANILLA_SMELTING_RECIPES) return Result.succeed(VANILLA_SMELTING_RECIPES)
+  if (!Array.isArray(recipes)) return Result.fail(smeltingFailure('recipes', 'expected an array'))
+  return Result.all(recipes.map(validateRecipe))
+}
+
+const StarterSmeltingRecipeSchema: Schema.Codec<StarterSmeltingRecipe, unknown> = Schema.Struct({
+  id: Schema.NonEmptyString,
+  input: ItemTypeSchema,
+  output: CanonicalItemStackSchema,
+  cookDurationSecs: Schema.Finite.check(Schema.isGreaterThan(0)),
+  experience: Schema.optionalKey(Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))),
+})
+const KernelSmeltingRecipeSchema: Schema.Codec<KernelSmeltingRecipe, unknown> = Schema.Struct({
+  _tag: Schema.Literal('Smelting'),
+  id: RecipeIdSchema,
+  input: ItemTypeSchema,
+  output: CanonicalItemStackSchema,
+  cookTimeSecs: FixedDurationSecsSchema.check(Schema.isGreaterThan(0)),
+  experience: RecipeExperienceSchema,
+  stations: Schema.Array(Schema.Literals(COOKING_STATIONS)).check(Schema.makeFilter((stations) => stations.length > 0)),
+})
+export const SmeltingRecipeInputSchema: Schema.Codec<SmeltingRecipeInput, unknown> = Schema.Union([
+  StarterSmeltingRecipeSchema,
+  KernelSmeltingRecipeSchema,
+])
+export const SmeltingRecipeOptionSchema: Schema.Codec<SmeltingRecipeInput | undefined, unknown> = Schema.Union([
+  SmeltingRecipeInputSchema,
+  Schema.Undefined,
+])
+
+const recipeInput = (recipe: SmeltingRecipeInput): ItemType => recipe.input
+const recipeOutput = (recipe: SmeltingRecipeInput): ItemStack => recipe.output
+const isKernelSmeltingRecipe = (recipe: SmeltingRecipeInput): recipe is KernelSmeltingRecipe =>
+  '_tag' in recipe && recipe._tag === 'Smelting'
+const recipeDuration = (recipe: SmeltingRecipeInput): number =>
+  isKernelSmeltingRecipe(recipe) ? recipe.cookTimeSecs : recipe.cookDurationSecs
+const recipeExperience = (recipe: SmeltingRecipeInput): number =>
+  isKernelSmeltingRecipe(recipe) ? recipe.experience : recipe.experience ?? 0
+const recipeSupportsStation = (recipe: SmeltingRecipeInput, station: CookingStation): boolean =>
+  isKernelSmeltingRecipe(recipe) ? recipe.stations.includes(station) : station === 'furnace'
+
+export const matchSmeltingRecipe = (
+  input: Slot,
+  station: CookingStation = 'furnace',
+  recipes: ReadonlyArray<SmeltingRecipeInput> = VANILLA_SMELTING_RECIPES,
+): Result.Result<SmeltingRecipeInput | undefined, FurnaceFailure> => {
+  if (!isCookingStation(station)) return Result.fail(smeltingFailure('station', 'unknown cooking station'))
+  if (!isSlot(input)) return Result.fail(smeltingFailure('input', 'expected an ItemStack or undefined'))
+  return Result.map(resolveRecipeTable(recipes), (table) => {
+    if (input === undefined) return undefined
+    return table.find((recipe) => recipeInput(recipe) === input.item && recipeSupportsStation(recipe, station))
+  })
+}
+
+export const selectFurnaceTransfer = (
   inventory: Inventory,
   furnace: FurnaceState,
   slot: FurnaceTransferSlot,
   item: ItemType,
   count: number,
 ): FurnaceTransferSelection => {
-  if (!Number.isSafeInteger(count) || count <= 0)
+  if (!Number.isSafeInteger(count) || count <= 0) {
+    if (!Number.isFinite(count)) {
+      return { _tag: 'Rejected', result: { _tag: 'InvalidInput', field: 'count' } }
+    }
     return { _tag: 'Rejected', result: { _tag: 'InvalidCount', count } }
+  }
+  if (!isInventoryEnvelope(inventory)) {
+    return { _tag: 'Rejected', result: { _tag: 'InvalidInput', field: 'inventory' } }
+  }
+  if (!isFurnaceState(furnace)) {
+    return { _tag: 'Rejected', result: { _tag: 'InvalidInput', field: 'furnace' } }
+  }
+  if (!isTransferSlot(slot)) {
+    return { _tag: 'Rejected', result: { _tag: 'InvalidInput', field: 'slot' } }
+  }
+  if (!isItemType(item)) {
+    return { _tag: 'Rejected', result: { _tag: 'InvalidInput', field: 'item' } }
+  }
   const totalAvailable = countOf(inventory, item)
-  if (totalAvailable < count)
+  if (totalAvailable < count) {
     return { _tag: 'Rejected', result: { _tag: 'InsufficientItems', available: totalAvailable } }
+  }
   const current = furnace[slot]
-  if (current !== null && current.item !== item)
+  if (current !== undefined && current.item !== item) {
     return { _tag: 'Rejected', result: { _tag: 'WrongItem', expected: current.item } }
+  }
   const selected = current ?? inventory.slots.findLast((held) => held?.item === item && isItemStack(held))
-  if (selected === undefined)
+  if (selected === undefined) {
     return { _tag: 'Rejected', result: { _tag: 'InsufficientItems', available: 0 } }
+  }
   const available = inventory.slots.reduce(
-    (total, held) => total + (held !== undefined && itemStacksCanMerge(held, selected) ? held.count : 0),
+    (total, held) => total + (isItemStack(held) && itemStacksCanMerge(held, selected) ? held.count : 0),
     0,
   )
-  if (available < count)
-    return { _tag: 'Rejected', result: { _tag: 'InsufficientItems', available } }
+  if (available < count) return { _tag: 'Rejected', result: { _tag: 'InsufficientItems', available } }
   const capacity = maxStackCountForStack(selected) - (current?.count ?? 0)
-  if (capacity < count)
-    return { _tag: 'Rejected', result: { _tag: 'NoRoom', available: capacity } }
+  if (capacity < count) return { _tag: 'Rejected', result: { _tag: 'NoRoom', available: capacity } }
   return { _tag: 'Ready', current, selected }
 }
 
@@ -139,14 +496,16 @@ export const transferToFurnace = (
   count: number,
 ): FurnaceTransferOutcome => {
   const selection = selectFurnaceTransfer(inventory, furnace, slot, item, count)
-  if (selection._tag === 'Rejected')
-    return { inventory, furnace, result: selection.result }
+  if (selection._tag === 'Rejected') return { inventory, furnace, result: selection.result }
+  if (!isInventory(inventory)) {
+    return { inventory, furnace, result: { _tag: 'InvalidInput', field: 'inventory' } }
+  }
   const { current, selected } = selection
   const slots = [...inventory.slots]
   let remaining = count
   for (let index = slots.length - 1; index >= 0 && remaining > 0; index -= 1) {
     const held = slots[index]
-    if (held === undefined || !itemStacksCanMerge(held, selected)) continue
+    if (!isItemStack(held) || !itemStacksCanMerge(held, selected)) continue
     const taken = Math.min(held.count, remaining)
     if (held.count !== taken) {
       const reduced = itemStackWithCount(held, held.count - taken)
@@ -165,262 +524,237 @@ export const transferToFurnace = (
   }
   return {
     inventory: { slots },
-    furnace: {
-      ...furnace,
-      [slot]: destination.success,
-    },
+    furnace: { ...furnace, [slot]: destination.success },
     result: { _tag: 'Transferred', item, count },
   }
 }
 
-/** Atomically collect the complete output stack, or leave both states unchanged. */
 export const collectFurnaceOutput = (
   inventory: Inventory,
   furnace: FurnaceState,
 ): FurnaceCollectionOutcome => {
-  if (furnace.output === null) {
-    return { inventory, furnace, result: { _tag: 'Empty' } }
+  if (!isInventory(inventory)) {
+    return { inventory, furnace, result: { _tag: 'InvalidInput', field: 'inventory' } }
   }
+  if (!isFurnaceState(furnace)) {
+    return { inventory, furnace, result: { _tag: 'InvalidInput', field: 'furnace' } }
+  }
+  if (furnace.output === undefined) return { inventory, furnace, result: { _tag: 'Empty' } }
   const inserted = addItemStack(inventory, furnace.output)
-  if (Result.isFailure(inserted)) {
-    return { inventory, furnace, result: { _tag: 'ItemStackFailure', error: inserted.failure } }
-  }
-  if (inserted.success.leftover > 0) {
-    return { inventory, furnace, result: { _tag: 'NoRoom' } }
-  }
+  if (Result.isFailure(inserted)) return { inventory, furnace, result: { _tag: 'ItemStackFailure', error: inserted.failure } }
+  if (inserted.success.leftover > 0) return { inventory, furnace, result: { _tag: 'NoRoom' } }
   return {
     inventory: inserted.success.inventory,
-    furnace: { ...furnace, output: null },
+    furnace: { ...furnace, output: undefined },
     result: { _tag: 'Collected', output: furnace.output },
   }
 }
 
-const assertPositiveFinite = (value: number, label: string): void => {
-  if (!Number.isFinite(value) || value <= 0) {
-    throw new RangeError(`${label} must be finite and greater than zero, received ${String(value)}`)
+const validateFuelRule = (
+  value: unknown,
+): Result.Result<FuelRuleInput, FurnaceFailure> => {
+  if (!isRecord(value)) return Result.fail(smeltingFailure('fuel', 'expected an object'))
+  if (Object.hasOwn(value, 'fuel')) {
+    const fuel = value['fuel']
+    const duration = value['burnTimeSecs']
+    if (!isItemType(fuel) || !isFinitePositive(duration)) {
+      return Result.fail(smeltingFailure('fuel', 'invalid fuel rule'))
+    }
+    return Result.map(FixedDurationSecs.result(duration), (burnTimeSecs): KernelFuelRule => ({ fuel, burnTimeSecs }))
   }
+  const item = value['item']
+  const duration = value['burnDurationSecs']
+  return isItemType(item) && isFinitePositive(duration)
+    ? Result.succeed<StarterFuelRule>({ item, burnDurationSecs: duration })
+    : Result.fail(smeltingFailure('fuel', 'invalid fuel rule'))
 }
 
-const assertNonNegativeFinite = (value: number, label: string): void => {
-  if (!Number.isFinite(value) || value < 0) {
-    throw new RangeError(`${label} must be finite and non-negative, received ${String(value)}`)
-  }
+const resolveFuelTable = (
+  fuels: unknown,
+): Result.Result<ReadonlyArray<FuelRuleInput>, FurnaceFailure> => {
+  if (fuels === VANILLA_FUEL_RULES) return Result.succeed(VANILLA_FUEL_RULES)
+  if (fuels === STARTER_FUEL_RULES) return Result.succeed(STARTER_FUEL_RULES)
+  if (!Array.isArray(fuels)) return Result.fail(smeltingFailure('fuels', 'expected an array'))
+  return Result.all(fuels.map(validateFuelRule))
 }
 
-const assertSlot = (slot: ItemStack | null, label: string): void => {
-  if (slot === null) return
-  if (!isItemStack(slot)) throw new RangeError(`Invalid ${label} ItemStack`)
+const fuelItem = (rule: FuelRuleInput): ItemType =>
+  'fuel' in rule ? rule.fuel : rule.item
+const fuelDuration = (rule: FuelRuleInput): number =>
+  'burnTimeSecs' in rule ? rule.burnTimeSecs : rule.burnDurationSecs
+
+const consumeOne = (stack: Slot): Result.Result<Slot, ItemStackFailure> => {
+  if (stack === undefined || stack.count === 1) return Result.succeed(undefined)
+  return itemStackWithCount(stack, stack.count - 1)
 }
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
-
-const invalidSnapshot = (path: string, reason: string): FurnaceSnapshotValidationResult => ({
-  _tag: 'Invalid',
-  error: { _tag: 'FurnaceSnapshotValidationError', path, reason },
-})
-
-const itemStackFailure = (error: ItemStackFailure): FurnaceSnapshotValidationResult => ({
-  _tag: 'ItemStackFailure',
-  error,
-})
-
-const isValidDuration = (value: unknown): value is number =>
-  typeof value === 'number' && Number.isFinite(value) && value >= 0
-
-const validateFurnaceSlot = (
-  value: Record<string, unknown>, name: 'input' | 'fuel' | 'output',
-): ItemStack | null | FurnaceSnapshotValidationResult => {
-  const slot = value[name]
-  if (slot === null) return null
-  if (!isRecord(slot) || Object.keys(slot).length !== 3 ||
-      !Object.hasOwn(slot, 'item') || !Object.hasOwn(slot, 'count') || !Object.hasOwn(slot, 'components')) {
-    return invalidSnapshot(name, 'expected null or a canonical ItemStack')
-  }
-  if (typeof slot['item'] !== 'string' || !isItemType(slot['item'])) {
-    return invalidSnapshot(`${name}.item`, 'expected a known item')
-  }
-  const savedComponents = slot['components']
-  if (!isRecord(savedComponents) ||
-      !Object.hasOwn(savedComponents, 'maxStackSize') ||
-      !Object.hasOwn(savedComponents, 'repairCost') ||
-      !Object.hasOwn(savedComponents, 'rarity')) {
-    return invalidSnapshot(`${name}.components`, 'expected valid resolved item components')
-  }
-  const defaultStack = itemStack(slot['item'], 1)
-  if (Result.isFailure(defaultStack)) return itemStackFailure(defaultStack.failure)
-  const components = { ...defaultStack.success.components, ...savedComponents }
-  if (!isItemComponents(components)) {
-    return invalidSnapshot(`${name}.components`, 'expected valid resolved item components')
-  }
-  const restored = { ...slot, components }
-  if (!isItemStack(restored)) {
-    return invalidSnapshot(`${name}.count`, 'expected a valid positive stack count')
-  }
-  const stack = itemStack(restored.item, restored.count, { components: restored.components })
-  return Result.isFailure(stack) ? itemStackFailure(stack.failure) : stack.success
+const appendOutput = (
+  output: Slot,
+  addition: ItemStack,
+): Result.Result<ItemStack, ItemStackFailure> => {
+  if (output === undefined) return Result.succeed(addition)
+  return itemStackWithCount(output, output.count + addition.count)
 }
 
-const validateFurnaceDurations = (
-  value: Record<string, unknown>,
-): { readonly cookElapsedSecs: number; readonly burnRemainingSecs: number } | FurnaceSnapshotValidationResult => {
-  let cookElapsedSecs = 0
-  let burnRemainingSecs = 0
-  for (const name of ['cookElapsedSecs', 'burnRemainingSecs'] as const) {
-    const duration = value[name]
-    if (!isValidDuration(duration)) return invalidSnapshot(name, 'expected a finite non-negative number')
-    if (name === 'cookElapsedSecs') cookElapsedSecs = duration
-    else burnRemainingSecs = duration
+const resetCookProgress = (state: FurnaceState): Result.Result<FurnaceState, FurnaceFailure> =>
+  Result.map(FixedDurationSecs.result(0), (cookProgressSecs) => ({ ...state, cookProgressSecs }))
+
+const smeltingRecipeFor = (
+  recipes: ReadonlyArray<SmeltingRecipeInput>,
+  input: ItemStack,
+  station: CookingStation,
+): SmeltingRecipeInput | undefined => {
+  for (const recipe of recipes) {
+    if (recipeInput(recipe) === input.item && recipeSupportsStation(recipe, station)) return recipe
   }
-  return { cookElapsedSecs, burnRemainingSecs }
+  return undefined
 }
 
-/** Validate an untrusted JSON furnace snapshot before installing it in world state. */
-export const validateFurnaceSnapshot = (value: unknown): FurnaceSnapshotValidationResult => {
-  if (!isRecord(value)) return invalidSnapshot('snapshot', 'expected an object')
-  const keys = ['input', 'fuel', 'output', 'cookElapsedSecs', 'burnRemainingSecs']
-  if (Object.keys(value).length !== keys.length || !keys.every((key) => Object.hasOwn(value, key))) {
-    return invalidSnapshot('snapshot', `expected exactly { ${keys.join(', ')} }`)
-  }
+const canAppendRecipeOutput = (output: Slot, addition: ItemStack): boolean =>
+  output === undefined || itemStacksCanMerge(output, addition) &&
+    output.count + addition.count <= maxStackCountForStack(output)
 
-  const slots: Record<'input' | 'fuel' | 'output', ItemStack | null> = { input: null, fuel: null, output: null }
-  for (const name of ['input', 'fuel', 'output'] as const) {
-    const validated = validateFurnaceSlot(value, name)
-    if (validated !== null && '_tag' in validated) return validated
-    slots[name] = validated
+const fuelRuleFor = (
+  fuel: Slot,
+  fuels: ReadonlyArray<FuelRuleInput>,
+): FuelRuleInput | undefined => {
+  if (fuel === undefined) return undefined
+  for (const rule of fuels) {
+    if (fuelItem(rule) === fuel.item) return rule
   }
-  const durations = validateFurnaceDurations(value)
-  if ('_tag' in durations) return durations
-  return {
-    _tag: 'Valid',
-    state: {
-      input: slots.input,
-      fuel: slots.fuel,
-      output: slots.output,
-      cookElapsedSecs: durations.cookElapsedSecs,
-      burnRemainingSecs: durations.burnRemainingSecs,
-    },
-  }
+  return undefined
 }
 
-const assertRecipe = (recipe: SmeltingRecipe): void => {
-  if (recipe.id.length === 0) throw new RangeError('Smelting recipe id must not be empty')
-  if (!isItemType(recipe.input)) {
-    throw new RangeError(`Invalid input for recipe ${recipe.id}: ${String(recipe.input)}`)
-  }
-  assertSlot(recipe.output, `output for recipe ${recipe.id}`)
-  assertPositiveFinite(recipe.cookDurationSecs, `Cook duration for recipe ${recipe.id}`)
+type FuelStart = Readonly<{ readonly state: FurnaceState; readonly fuelConsumed: number }>
+
+const startFuelBurn = (
+  state: FurnaceState,
+  fuels: ReadonlyArray<FuelRuleInput>,
+): Result.Result<FuelStart | undefined, FurnaceFailure> => {
+  if (state.fuelTimeRemainingSecs !== 0) return Result.succeed({ state, fuelConsumed: 0 })
+  const rule = fuelRuleFor(state.fuel, fuels)
+  if (rule === undefined) return Result.succeed(undefined)
+  return Result.flatMap(consumeOne(state.fuel), (fuel) =>
+    Result.map(FixedDurationSecs.result(fuelDuration(rule)), (burnTime) => ({
+      state: { ...state, fuel, fuelTimeRemainingSecs: burnTime, fuelTimeTotalSecs: burnTime },
+      fuelConsumed: 1,
+    })),
+  )
 }
 
-const assertFuelRule = (rule: FuelRule): void => {
-  if (!isItemType(rule.item)) {
-    throw new RangeError(`Invalid fuel item: ${String(rule.item)}`)
-  }
-  assertPositiveFinite(rule.burnDurationSecs, `Burn duration for fuel ${rule.item}`)
+type CookingInterval = Readonly<{
+  readonly state: FurnaceState
+  readonly remaining: number
+  readonly smelted: boolean
+}>
+
+const advanceCookingInterval = (
+  state: FurnaceState,
+  recipe: SmeltingRecipeInput,
+  remaining: number,
+): Result.Result<CookingInterval, FurnaceFailure> => {
+  const cookRemaining = recipeDuration(recipe) - state.cookProgressSecs
+  const step = Math.min(remaining, cookRemaining, state.fuelTimeRemainingSecs)
+  const fuelTimeRemainingSecs = FixedDurationSecs.result(state.fuelTimeRemainingSecs - step)
+  const cookProgressSecs = FixedDurationSecs.result(state.cookProgressSecs + step)
+  return Result.flatMap(Result.all([fuelTimeRemainingSecs, cookProgressSecs]), ([fuelRemaining, cookProgress]) => {
+    const nextState = { ...state, fuelTimeRemainingSecs: fuelRemaining, cookProgressSecs: cookProgress }
+    const nextRemaining = remaining - step
+    if (cookProgress < recipeDuration(recipe)) {
+      return Result.succeed<CookingInterval>({ state: nextState, remaining: nextRemaining, smelted: false })
+    }
+    return Result.flatMap(consumeOne(nextState.input), (input) =>
+      Result.flatMap(appendOutput(nextState.output, recipeOutput(recipe)), (output) =>
+        Result.map(resetCookProgress({ ...nextState, input, output }), (completedState): CookingInterval => ({
+          state: completedState,
+          remaining: nextRemaining,
+          smelted: true,
+        })),
+      ),
+    )
+  })
 }
 
-const decrementSlot = (slot: ItemStack): Result.Result<ItemStack | null, ItemStackFailure> =>
-  slot.count === 1 ? Result.succeed(null) : itemStackWithCount(slot, slot.count - 1)
-
-const outputAccepts = (output: ItemStack | null, produced: ItemStack): boolean =>
-  output === null ||
-  (itemStacksCanMerge(output, produced) &&
-    output.count + produced.count <= maxStackCountForStack(output))
-
-const addOutput = (output: ItemStack | null, produced: ItemStack): Result.Result<ItemStack, ItemStackFailure> =>
-  output === null
-    ? Result.succeed(produced)
-    : itemStackWithCount(output, output.count + produced.count)
-
-export const matchSmeltingRecipe = (
-  recipes: ReadonlyArray<SmeltingRecipe>,
-  input: ItemStack | null,
-): SmeltingRecipe | null => {
-  assertSlot(input, 'furnace input')
-  for (const recipe of recipes) assertRecipe(recipe)
-  if (input === null) return null
-  return recipes.find((recipe) => recipe.input === input.item) ?? null
+const completedCookProgressFailure = (
+  state: FurnaceState,
+  recipes: ReadonlyArray<SmeltingRecipeInput>,
+): FurnaceFailure | undefined => {
+  if (state.input === undefined) return undefined
+  const recipe = smeltingRecipeFor(recipes, state.input, state.station)
+  if (recipe === undefined || state.cookProgressSecs < recipeDuration(recipe)) return undefined
+  return validationFailure('cookProgressSecs', 'must be less than the matched recipe duration')
 }
 
 export const advanceFurnace = (
   state: FurnaceState,
-  deltaTimeSecs: number,
-  recipes?: ReadonlyArray<SmeltingRecipe>,
-  fuelRules: ReadonlyArray<FuelRule> = STARTER_FUEL_RULES,
-): Result.Result<FurnaceOutcome, ItemStackFailure> => {
-  if (!Number.isFinite(deltaTimeSecs) || deltaTimeSecs <= 0) {
-    return Result.succeed({ state, smelted: 0, fuelConsumed: 0 })
-  }
-
-  const recipeTable = recipes === undefined ? STARTER_SMELTING_RECIPES : Result.succeed(recipes)
+  elapsedSecs: number,
+  recipes: ReadonlyArray<SmeltingRecipeInput> = VANILLA_SMELTING_RECIPES,
+  fuels: ReadonlyArray<FuelRuleInput> = VANILLA_FUEL_RULES,
+): Result.Result<FurnaceOutcome, FurnaceFailure> => {
+  const validatedState = furnaceState(state)
+  if (Result.isFailure(validatedState)) return Result.fail(validatedState.failure)
+  const elapsed = fixedDuration(elapsedSecs, 'elapsedSecs')
+  if (Result.isFailure(elapsed)) return Result.fail(elapsed.failure)
+  const recipeTable = resolveRecipeTable(recipes)
   if (Result.isFailure(recipeTable)) return Result.fail(recipeTable.failure)
-  const activeRecipes = recipeTable.success
+  const fuelTable = resolveFuelTable(fuels)
+  if (Result.isFailure(fuelTable)) return Result.fail(fuelTable.failure)
 
-  assertSlot(state.input, 'furnace input')
-  assertSlot(state.fuel, 'furnace fuel')
-  assertSlot(state.output, 'furnace output')
-  assertNonNegativeFinite(state.cookElapsedSecs, 'Cook elapsed time')
-  assertNonNegativeFinite(state.burnRemainingSecs, 'Burn remaining time')
-  for (const recipe of activeRecipes) assertRecipe(recipe)
-  for (const rule of fuelRules) assertFuelRule(rule)
-
-  let input = state.input
-  let fuel = state.fuel
-  let output = state.output
-  let cookElapsedSecs = state.cookElapsedSecs
-  let burnRemainingSecs = state.burnRemainingSecs
-  let remainingSecs = deltaTimeSecs
-  let smelted = 0
+  let current = validatedState.success
+  const completedProgressFailure = completedCookProgressFailure(current, recipeTable.success)
+  if (completedProgressFailure !== undefined) return Result.fail(completedProgressFailure)
+  let remaining: number = elapsed.success
+  let smeltedCount = 0
+  let experienceGained = 0
   let fuelConsumed = 0
 
-  while (remainingSecs > 0) {
-    const recipe = matchSmeltingRecipe(activeRecipes, input)
-    if (recipe === null || input === null) {
-      cookElapsedSecs = 0
+  while (remaining > 0) {
+    if (current.input === undefined) {
+      const reset = resetCookProgress(current)
+      if (Result.isFailure(reset)) return Result.fail(reset.failure)
+      current = reset.success
       break
     }
-    if (cookElapsedSecs >= recipe.cookDurationSecs) {
-      throw new RangeError('Cook elapsed time must be less than the matched recipe duration')
-    }
-    if (!outputAccepts(output, recipe.output)) {
-      cookElapsedSecs = 0
+    const recipe = smeltingRecipeFor(recipeTable.success, current.input, current.station)
+    if (recipe === undefined || !canAppendRecipeOutput(current.output, recipeOutput(recipe))) {
+      const reset = resetCookProgress(current)
+      if (Result.isFailure(reset)) return Result.fail(reset.failure)
+      current = reset.success
       break
     }
 
-    if (burnRemainingSecs === 0) {
-      if (fuel === null) break
-      const fuelItem = fuel.item
-      const fuelRule = fuelRules.find((rule) => rule.item === fuelItem)
-      if (fuelRule === undefined) break
-      const reducedFuel = decrementSlot(fuel)
-      if (Result.isFailure(reducedFuel)) return Result.fail(reducedFuel.failure)
-      fuel = reducedFuel.success
-      burnRemainingSecs = fuelRule.burnDurationSecs
-      fuelConsumed += 1
-    }
+    const burn = startFuelBurn(current, fuelTable.success)
+    if (Result.isFailure(burn)) return Result.fail(burn.failure)
+    if (burn.success === undefined) break
+    current = burn.success.state
+    fuelConsumed += burn.success.fuelConsumed
 
-    const cookRemainingSecs = recipe.cookDurationSecs - cookElapsedSecs
-    const activeSecs = Math.min(remainingSecs, burnRemainingSecs, cookRemainingSecs)
-    const completedRecipe = activeSecs >= cookRemainingSecs
-    remainingSecs = Math.max(0, remainingSecs - activeSecs)
-    burnRemainingSecs = Math.max(0, burnRemainingSecs - activeSecs)
-    cookElapsedSecs += activeSecs
-
-    if (completedRecipe) {
-      const reducedInput = decrementSlot(input)
-      if (Result.isFailure(reducedInput)) return Result.fail(reducedInput.failure)
-      const updatedOutput = addOutput(output, recipe.output)
-      if (Result.isFailure(updatedOutput)) return Result.fail(updatedOutput.failure)
-      input = reducedInput.success
-      output = updatedOutput.success
-      cookElapsedSecs = 0
-      smelted += 1
+    const interval = advanceCookingInterval(current, recipe, remaining)
+    if (Result.isFailure(interval)) return Result.fail(interval.failure)
+    current = interval.success.state
+    remaining = interval.success.remaining
+    if (interval.success.smelted) {
+      smeltedCount += 1
+      experienceGained += recipeExperience(recipe)
     }
   }
 
-  return Result.succeed({
-    state: { input, fuel, output, cookElapsedSecs, burnRemainingSecs },
-    smelted,
-    fuelConsumed,
-  })
+  return Result.map(
+    Result.all([
+      RecipeCompletionCount.result(smeltedCount),
+      RecipeExperience.result(experienceGained),
+    ]),
+    ([count, experience]) => ({ state: current, smeltedCount: count, experienceGained: experience, fuelConsumed }),
+  )
 }
+
+const RecipeCompletionCountSchema: Schema.Codec<RecipeCompletionCount, number> = Schema.Int.check(
+  Schema.makeFilter((value) => RecipeCompletionCount.is(value)),
+).pipe(Schema.brand('RecipeCompletionCount'))
+
+export const FurnaceOutcomeSchema: Schema.Schema<FurnaceOutcome> = Schema.Struct({
+  state: FurnaceStateSchema,
+  smeltedCount: RecipeCompletionCountSchema,
+  experienceGained: RecipeExperienceSchema,
+  fuelConsumed: SafeNonNegativeIntegerSchema,
+})

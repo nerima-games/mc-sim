@@ -53,21 +53,16 @@
  * and the frame already visits every consumer once. A consumer reads `snapshot`
  * on the frame it cares about.
  */
-import { Brand, Context, Effect, Layer, Ref } from 'effect'
-import { applySettings } from '../domain/settings.js'
-import {
-  DEFAULT_SETTINGS,
-  InputAction,
-  KeyCode,
-  normaliseSettings,
-  rebindKey,
-  unbindKey,
-  type Settings,
-} from '@nerima-games/mc-kernel'
+import { Brand, Context, Effect, Layer, Ref, Schema, SchemaIssue } from 'effect'
+import { applySettings, normaliseSettings, rebindKey, unbindKey } from '../domain/settings.js'
+import { DEFAULT_SETTINGS, type Settings } from '../domain/settings.js'
+import { InputAction, KeyCode } from '@nerima-games/mc-kernel'
 
 export type SettingsServiceApi = {
   /** Every held value. Read on the frame a consumer wants to act on them. */
   readonly snapshot: Effect.Effect<Settings>
+  /** Read and normalise a candidate without installing it, for coordinator commits. */
+  readonly candidate: (patch: Partial<Settings>) => Effect.Effect<Settings>
   /**
    * Change some values and leave the rest. The result is normalised, so a
    * screen cannot install a render distance nothing can load.
@@ -104,6 +99,9 @@ const SettingsServiceBase: Context.ServiceClass<
 
 export class SettingsService extends SettingsServiceBase {}
 
+const invalidKeyString = (value: unknown): Brand.BrandError =>
+  new Brand.BrandError(new SchemaIssue.InvalidType(Schema.String.ast, value))
+
 /**
  * Build a SettingsService over a fresh Ref.
  *
@@ -117,6 +115,7 @@ export const makeSettingsService = (
 ): Effect.Effect<SettingsServiceApi> =>
   Effect.map(Ref.make(normaliseSettings(initial)), (state) => ({
     snapshot: Ref.get(state),
+    candidate: (patch) => Ref.get(state).pipe(Effect.map((current) => applySettings(current, patch))),
     update: (patch) =>
       Ref.modify(state, (current) => {
         const next = applySettings(current, patch)
@@ -124,12 +123,15 @@ export const makeSettingsService = (
       }),
     rebindKey: (action, code) =>
       Effect.gen(function* () {
+        if (typeof action !== 'string') return yield* Effect.fail(invalidKeyString(action))
         const inputAction = yield* Effect.fromResult(InputAction.result(action))
+        if (typeof code !== 'string') return yield* Effect.fail(invalidKeyString(code))
         const keyCode = yield* Effect.fromResult(KeyCode.result(code))
         yield* Ref.update(state, (current) => rebindKey(current, inputAction, keyCode))
       }),
     unbindKey: (action) =>
       Effect.gen(function* () {
+        if (typeof action !== 'string') return yield* Effect.fail(invalidKeyString(action))
         const inputAction = yield* Effect.fromResult(InputAction.result(action))
         yield* Ref.update(state, (current) => unbindKey(current, inputAction))
       }),

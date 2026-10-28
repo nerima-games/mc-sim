@@ -22,17 +22,25 @@
  */
 import { Duration, Effect, Fiber, Ref, Result, Schedule } from 'effect'
 import { TestClock } from 'effect/testing'
-import { autoSaveSchedule, startAutoSaveDaemon } from '../../src/application/autosave'
+import {
+  autoSaveSchedule,
+  startAutoSaveDaemon,
+  type InvalidAutoSaveInterval,
+} from '../../src/application/autosave'
 import { makeGameLoop } from '../../src/application/game-loop'
 import { makeInventoryService } from '../../src/application/inventory-service'
 import { makeTimeService } from '../../src/application/time-service'
 import { itemStack } from '../../src/domain/inventory'
+import type { PlayerStorageFailure } from '../../src/domain/player-storage'
+import type { RecipeFailure } from '../../src/domain/recipe'
 import {
   clampFrameDelta,
   DeltaTimeSecs,
   FIRST_FRAME_DELTA_SECS,
   frameDeltaBetween,
   frameDeltaLossSecs,
+  FixedDurationSecs,
+  InterpolationFraction,
   MAX_FRAME_DELTA_SECS,
   MIN_FRAME_DELTA_SECS,
   MonotonicTimeSecs,
@@ -126,24 +134,37 @@ const frameClampProbe = (): ReadonlyArray<string> => {
 const timeOrderProbe = (): ReadonlyArray<string> => {
   const fresh = Time.INITIAL_TIME_STATE
 
-  const safe = Time.setTimeOfDay(Time.setDayLength(fresh, 600), 0.3)
-  const unsafe = Time.setDayLength(Time.setTimeOfDay(fresh, 0.3), 600)
-  const combined = Time.setDayLengthThenTimeOfDay(fresh, 600, 0.3)
+  const safe = Time.setTimeOfDay(
+    Time.setDayLength(fresh, FixedDurationSecs(600)),
+    InterpolationFraction(0.3),
+  )
+  const unsafe = Time.setDayLength(
+    Time.setTimeOfDay(fresh, InterpolationFraction(0.3)),
+    FixedDurationSecs(600),
+  )
+  const combined = Time.setDayLengthThenTimeOfDay(
+    fresh,
+    FixedDurationSecs(600),
+    InterpolationFraction(0.3),
+  )
 
   // Age a world four in-game days, then "load" it two ways.
   let aged = fresh
   for (let day = 0; day < 4; day += 1) {
-    aged = Time.advance(aged, DeltaTimeSecs(Time.dayLengthSecs(aged)))
+    aged = Result.getOrThrow(Time.advance(aged, DeltaTimeSecs(Time.dayLengthSecs(aged))))
   }
   const viaRestore = aged
   const viaConfigure = Time.setDayLengthThenTimeOfDay(
     aged,
-    Time.dayLengthSecs(aged),
-    Time.timeOfDay(aged),
+    FixedDurationSecs(Time.dayLengthSecs(aged)),
+    InterpolationFraction(Time.timeOfDay(aged)),
   )
 
   // The module header's OTHER worked example, with the day length the test uses.
-  const unsafeShorter = Time.setDayLength(Time.setTimeOfDay(fresh, 0.3), 200)
+  const unsafeShorter = Time.setDayLength(
+    Time.setTimeOfDay(fresh, InterpolationFraction(0.3)),
+    FixedDurationSecs(200),
+  )
 
   const clockOf = (state: Time.TimeState): string => clockFace(Time.timeOfDay(state))
 
@@ -219,7 +240,7 @@ const timeRestoreProbe = Effect.gen(function* () {
     dayLengthSecs: yield* time.dayLengthSecs,
   }
 
-  yield* time.setTimeOfDay(0.5)
+  yield* time.setTimeOfDay(InterpolationFraction(0.5))
   const afterSetter = yield* time.timeOfDay
 
   yield* time.advance(DeltaTimeSecs(1))
@@ -353,9 +374,8 @@ const autoSaveProbe = Effect.gen(function* () {
   const spacedTick = Effect.sleep(Duration.millis(40)).pipe(
     Effect.andThen(Ref.update(spacedRuns, (count) => count + 1)),
   )
-  const spacedFiber = yield* Effect.forkChild(
-    Effect.repeat(spacedTick, autoSaveSchedule(Duration.millis(100))),
-  )
+  const spacedSchedule = yield* autoSaveSchedule(Duration.millis(100))
+  const spacedFiber = yield* Effect.forkChild(Effect.repeat(spacedTick, spacedSchedule))
   yield* TestClock.adjust(Duration.millis(1000))
   yield* Fiber.interrupt(spacedFiber)
 
@@ -414,7 +434,7 @@ const autoSaveProbe = Effect.gen(function* () {
       'Which clock does the autosave schedule read?',
     ),
     '   PlayerService.cameraPose   Effect<CameraPoseSnapshot, never, ClockPort>     <- Port in the type',
-    '   startAutoSaveDaemon        Effect<Fiber.RuntimeFiber<number, never>>        <- Effect Clock',
+    '   startAutoSaveDaemon        Effect<Fiber.RuntimeFiber<number, never>, InvalidAutoSaveInterval> <- Effect Clock',
     '',
     '   SIM-6 DECIDED — NOT MOVED, and the reasoning is now in application/autosave.ts rather',
     '   than only here. The complaint was fair: domain/time-of-day.ts says "Time enters the',
@@ -541,10 +561,17 @@ const FOOTER: ReadonlyArray<string> = [
  * value reaches an export — including this private intermediate, since
  * `export const statsReport` below is typed by referring to it. None of the
  * (`Effect.provide` supplies `TestClock.layer()` and `Effect.scoped` closes the
- * child-fiber scope). Inventory operations can fail with `ItemStackFailure`, so
- * that channel is preserved for the caller instead of becoming a report line.
+ * child-fiber scope). Inventory operations can fail with `ItemStackFailure` or
+ * `PlayerStorageFailure`, and starter recipe construction can fail with
+ * `RecipeFailure`, and autosave schedule construction can fail with
+ * `InvalidAutoSaveInterval`, so all channels are preserved for the caller
+ * instead of becoming a report line.
  */
-const statsReportEffect: Effect.Effect<ReadonlyArray<string>, ItemStackFailure, never> = Effect.gen(function* () {
+const statsReportEffect: Effect.Effect<
+  ReadonlyArray<string>,
+  ItemStackFailure | PlayerStorageFailure | RecipeFailure | InvalidAutoSaveInterval,
+  never
+> = Effect.gen(function* () {
   const parts = [
     ...HEADER,
     ...frameClampProbe(),
@@ -558,4 +585,8 @@ const statsReportEffect: Effect.Effect<ReadonlyArray<string>, ItemStackFailure, 
   return parts.map(line)
 }).pipe(Effect.scoped, Effect.provide(TestClock.layer()))
 
-export const statsReport: Effect.Effect<ReadonlyArray<string>, ItemStackFailure, never> = statsReportEffect
+export const statsReport: Effect.Effect<
+  ReadonlyArray<string>,
+  ItemStackFailure | PlayerStorageFailure | RecipeFailure | InvalidAutoSaveInterval,
+  never
+> = statsReportEffect

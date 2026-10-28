@@ -56,6 +56,13 @@ describe('DomainEventBus', () => {
     }),
   )
 
+  it.effect('rejects subscriber capacities that exceed the bounded buffer limit', () =>
+    Effect.sync(() => {
+      const capacity = Schema.decodeUnknownResult(EventSubscriberCapacitySchema)(1_000_000_000_000)
+      expect(capacity._tag).toBe('Failure')
+    }),
+  )
+
   it.effect('publishes the kernel event variants to every active subscriber in order', () =>
     Effect.gen(function* () {
       const capacity = yield* Schema.decodeUnknownEffect(EventSubscriberCapacitySchema)(64)

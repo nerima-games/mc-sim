@@ -8,6 +8,7 @@ import * as Ref from 'effect/Ref'
 import * as Schema from 'effect/Schema'
 import * as Stream from 'effect/Stream'
 import type * as Brand from 'effect/Brand'
+import { SchemaErrorSchema } from '../schema-errors.js'
 
 interface GateTicket {
   readonly signal: Deferred.Deferred<void>
@@ -22,14 +23,18 @@ export type DomainEvent = Schema.Schema.Type<typeof DomainEventSchema>
 
 export type EventSubscriberCapacity = number & Brand.Brand<'EventSubscriberCapacity'>
 
+const MAX_EVENT_SUBSCRIBER_CAPACITY = 65_536
+
 export const EventSubscriberCapacitySchema: Schema.Codec<EventSubscriberCapacity, number> = Schema.Int
-  .check(Schema.isGreaterThan(0))
+  .check(Schema.isGreaterThan(0), Schema.isLessThanOrEqualTo(MAX_EVENT_SUBSCRIBER_CAPACITY))
   .pipe(Schema.brand('EventSubscriberCapacity'))
 
 export type DomainEventBusApi = {
-  readonly publish: (event: DomainEvent) => Effect.Effect<void>
+  readonly publish: (event: DomainEvent) => Effect.Effect<void, Schema.SchemaError>
   readonly events: Stream.Stream<DomainEvent>
 }
+
+export const DomainEventBusErrorSchema: Schema.Schema<unknown> = SchemaErrorSchema
 
 const DomainEventBusBase: Context.ServiceClass<
   DomainEventBus,
@@ -39,12 +44,15 @@ const DomainEventBusBase: Context.ServiceClass<
 
 export class DomainEventBus extends DomainEventBusBase {}
 
-export const DomainEventBusLayer = (capacity: EventSubscriberCapacity): Layer.Layer<DomainEventBus> =>
+export const DomainEventBusLayer = (
+  capacity: EventSubscriberCapacity,
+): Layer.Layer<DomainEventBus, Schema.SchemaError> =>
   Layer.effect(
     DomainEventBus,
     Effect.gen(function* () {
+      const validCapacity = yield* Schema.decodeUnknownEffect(EventSubscriberCapacitySchema)(capacity)
       const pubsub = yield* Effect.acquireRelease(
-        PubSub.bounded<DomainEvent>({ capacity, replay: 0 }),
+        PubSub.bounded<DomainEvent>({ capacity: validCapacity, replay: 0 }),
         (value) => PubSub.shutdown(value),
       )
       const gate = yield* Ref.make<GateState>({ owner: undefined, waiters: [] })
@@ -89,7 +97,10 @@ export const DomainEventBusLayer = (capacity: EventSubscriberCapacity): Layer.La
 
       return {
         publish: (event) =>
-          withGate(PubSub.publish(pubsub, event).pipe(Effect.asVoid)),
+          Effect.flatMap(
+            Schema.decodeUnknownEffect(DomainEventSchema)(event),
+            (validEvent) => withGate(PubSub.publish(pubsub, validEvent).pipe(Effect.asVoid)),
+          ),
         events: Stream.unwrap(
           withGate(
             PubSub.subscribe(pubsub).pipe(Effect.map(Stream.fromSubscription)),

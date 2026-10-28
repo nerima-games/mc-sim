@@ -1,6 +1,6 @@
 import { type ItemType } from '@nerima-games/mc-kernel'
 import { StackCount } from '@nerima-games/mc-kernel'
-import { Brand } from 'effect'
+import { Brand, Result } from 'effect'
 import {
   ANVIL_MAX_CUSTOM_NAME_LENGTH as maxCustomNameLength,
   ANVIL_SNAPSHOT_VERSION as snapshotVersion,
@@ -187,11 +187,15 @@ export {
   nextAnvilRepairCost,
 } from './anvil-planning.js'
 
+export type { AnvilRepairCostFailure } from './anvil-planning.js'
+
 export type {
   AnvilRuleSetCompilation,
   CompiledAnvilEnchantmentRule,
   CompiledAnvilRuleSet,
 } from './anvil-validation.js'
+
+export type { AnvilPrimitiveFailure } from './anvil-primitives.js'
 
 export { planAnvil }
 
@@ -216,7 +220,16 @@ export const applyAnvil = (state: AnvilState, rules: AnvilRuleInput): AnvilApply
   const right = canonical.snapshot.state.right
   let remainingRight: CanonicalAnvilState['right'] = null
   if (right !== null && right.count !== Number(plan.materialCost)) {
-    remainingRight = { payload: right.payload, count: StackCount(right.count - plan.materialCost) }
+    const remainingCount = StackCount.result(right.count - plan.materialCost)
+    if (Result.isFailure(remainingCount)) {
+      return {
+        ok: false,
+        state,
+        reason: 'invalid-input',
+        issues: [{ path: '$.state.right.count', reason: remainingCount.failure.message }],
+      }
+    }
+    remainingRight = { payload: right.payload, count: remainingCount.success }
   }
 
   return {

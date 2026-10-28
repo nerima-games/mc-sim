@@ -402,6 +402,18 @@ describe('loop observability', () => {
     }),
   )
 
+  it.effect('returns a typed failure for an initial tick with a non-callable toString', () =>
+    Effect.gen(function* () {
+      const loop = yield* makeGameLoop({ toString: '' } as never)
+      const startResult = yield* Effect.result(loop.start(() => Effect.void))
+
+      expect(Result.isFailure(startResult)).toBe(true)
+      if (Result.isFailure(startResult)) expect(startResult.failure._tag).toBe('BrandError')
+      expect(yield* loop.isRunning).toBe(false)
+      expect(yield* loop.framesProcessed).toBe(0)
+    }),
+  )
+
   it.effect('REGRESSION: frames the dropping queue refuses are counted, not silently discarded', () =>
     Effect.gen(function* () {
       const loop = yield* makeGameLoop()

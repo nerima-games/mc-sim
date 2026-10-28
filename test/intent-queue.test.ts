@@ -165,7 +165,9 @@ describe('IntentQueue', () => {
       expect(Result.isFailure(rejected)).toBe(true)
       if (Result.isFailure(rejected)) {
         expect(rejected.failure).toBeInstanceOf(IntentQueueFull)
-        expect(rejected.failure.capacity).toBe(makeIntentQueueCapacity(1))
+        if (rejected.failure instanceof IntentQueueFull) {
+          expect(rejected.failure.capacity).toBe(makeIntentQueueCapacity(1))
+        }
       }
 
       const consumed = yield* queue.takeReady(makeSimulationTick(1))
@@ -186,5 +188,39 @@ describe('IntentQueue', () => {
       expect(firstTake.map(({ intent: ready }) => ready.id)).toStrictEqual(['once'])
       expect(secondTake).toStrictEqual([])
     }).pipe(Effect.provide(IntentQueueLayer({ capacity: makeIntentQueueCapacity(1) }))),
+  )
+
+  it.effect('rejects malformed intents and ticks before mutating the queue', () =>
+    Effect.gen(function* () {
+      const queue = yield* IntentQueue
+      const malformedIntent = yield* Effect.result(queue.enqueue({} as never))
+      expect(Result.isFailure(malformedIntent)).toBe(true)
+      if (Result.isFailure(malformedIntent)) expect(malformedIntent.failure._tag).toBe('SchemaError')
+
+      const valid = yield* decodeIntent(localIntent('valid-after-invalid', 1, useItemPayload))
+      expect(yield* queue.enqueue(valid)).toBe(0)
+
+      const malformedTick = yield* Effect.result(queue.takeReady(Number.POSITIVE_INFINITY as never))
+      expect(Result.isFailure(malformedTick)).toBe(true)
+      if (Result.isFailure(malformedTick)) expect(malformedTick.failure._tag).toBe('SchemaError')
+
+      const ready = yield* queue.takeReady(makeSimulationTick(1))
+      expect(ready.map(({ sequence, intent }) => [sequence, intent.id])).toStrictEqual([
+        [0, 'valid-after-invalid'],
+      ])
+    }).pipe(Effect.provide(IntentQueueLayer({ capacity: makeIntentQueueCapacity(1) }))),
+  )
+
+  it.effect('rejects invalid capacity during layer construction', () =>
+    Effect.gen(function* () {
+      const initialized = yield* Effect.result(
+        Effect.gen(function* () {
+          return yield* IntentQueue
+        }).pipe(Effect.provide(IntentQueueLayer({ capacity: 0 as never }))),
+      )
+
+      expect(Result.isFailure(initialized)).toBe(true)
+      if (Result.isFailure(initialized)) expect(initialized.failure._tag).toBe('SchemaError')
+    }),
   )
 })

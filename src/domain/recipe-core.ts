@@ -1,121 +1,230 @@
 import { Result } from 'effect'
+import {
+  RecipeGridDimension as RecipeGridDimensionBrand,
+  RecipeId as RecipeIdBrand,
+  RecipeIngredientCount as RecipeIngredientCountBrand,
+  RecipePatternRow as RecipePatternRowBrand,
+  RecipePatternSymbol as RecipePatternSymbolBrand,
+  TagLocation,
+  VANILLA_ITEM_TAG_MEMBERSHIPS,
+  anyOf as kernelAnyOf,
+  exactly as kernelExactly,
+  shapedRecipe as kernelShapedRecipe,
+  shapelessRecipe as kernelShapelessRecipe,
+  tagged as kernelTagged,
+  craftGrid as kernelCraftGrid,
+  type CraftingIngredientInput,
+  type IngredientInput,
+  type AnyOfIngredient,
+  type CraftGrid,
+  type CraftingIngredient,
+  type ExactIngredient,
+  type ItemTagMemberships,
+  type RecipeFailure,
+  type RecipeOptions,
+  type ShapedRecipe,
+  type ShapelessRecipe,
+  isCraftingIngredient as kernelIsCraftingIngredient,
+} from '@nerima-games/mc-kernel'
 import type { ItemType } from '@nerima-games/mc-kernel'
 
-import { itemStack, type ItemStack, type ItemStackFailure, type Slot } from './inventory.js'
+import { type ItemStack, type ItemStackFailure, type Slot } from './inventory.js'
 
-export type RecipeId = string
+const typeFailure = (message: string): RecipeFailure => ({
+  _tag: 'RecipeTypeFailure',
+  name: 'TypeError',
+  message,
+})
 
-export type Ingredient = {
-  readonly _tag: 'Exact'
-  readonly item: ItemType
+const rangeFailure = (message: string): RecipeFailure => ({
+  _tag: 'RecipeRangeFailure',
+  name: 'RangeError',
+  message,
+})
+
+const itemFailure = (failure: ItemStackFailure): RecipeFailure =>
+  failure._tag === 'BrandError'
+    ? rangeFailure(failure.message)
+    : { _tag: 'RecipeItemFailure', failure }
+
+const recipeId = (id: string) =>
+  typeof id === 'string'
+    ? Result.mapError(RecipeIdBrand.result(id), () => typeFailure('Recipe id must be a resource location'))
+    : Result.fail(typeFailure('Recipe id must be a resource location'))
+
+const ingredientCount = (count: number) =>
+  Result.mapError(
+    RecipeIngredientCountBrand.result(count),
+    () => rangeFailure(`Ingredient count must be an integer in [1, 64], received ${String(count)}`),
+  )
+
+const patternKeyMap = (key: Readonly<Record<string, CraftingIngredientInput>>) => {
+  if (key === null || typeof key !== 'object' || Array.isArray(key)) {
+    return Result.fail(typeFailure('Shaped recipe keys must be a record'))
+  }
+  const entries = Result.all(
+    Object.entries(key).map(([symbol, ingredient]) =>
+      Result.mapError(
+        Result.map(
+          RecipePatternSymbolBrand.result(symbol),
+          (validatedSymbol) => [validatedSymbol, ingredient] as const,
+        ),
+        () => typeFailure('Shaped recipe keys must use one non-space character'),
+      ),
+    ),
+  )
+  return Result.map(entries, (validatedEntries) => {
+    const validated: Record<import('@nerima-games/mc-kernel').RecipePatternSymbol, CraftingIngredientInput> = {}
+    for (const [symbol, ingredient] of validatedEntries) validated[symbol] = ingredient
+    return validated
+  })
 }
 
-export const exactly = (item: ItemType): Ingredient => ({ _tag: 'Exact', item })
-
-export const ingredientMatches = (ingredient: Ingredient, item: ItemType): boolean =>
-  ingredient._tag === 'Exact' && ingredient.item === item
-
-export type PatternCell = Ingredient | undefined
-
-export type RecipePattern = {
-  readonly width: number
-  readonly height: number
-  readonly cells: ReadonlyArray<PatternCell>
+const patternRows = (rows: ReadonlyArray<string>) => {
+  if (!Array.isArray(rows)) return Result.fail(typeFailure('Shaped recipe rows must be an array'))
+  for (let index = 0; index < rows.length; index += 1) {
+    if (!(index in rows)) return Result.fail(typeFailure('Shaped recipe rows must not be sparse'))
+  }
+  return Result.mapError(
+    Result.all(rows.map((row) => RecipePatternRowBrand.result(row))),
+    () => rangeFailure('Shaped recipe rows must be strings no wider than 3 characters'),
+  )
 }
 
-export type ShapedRecipe = {
-  readonly _tag: 'Shaped'
-  readonly id: RecipeId
-  readonly pattern: RecipePattern
-  readonly output: ItemStack
+export const exactly: (
+  item: ItemType,
+  count?: number,
+) => Result.Result<ExactIngredient, RecipeFailure> = (item, count = 1) =>
+  Result.flatMap(ingredientCount(count), (validatedCount) => kernelExactly(item, validatedCount))
+
+export const tagged: (tag: string, count?: number) => Result.Result<
+  import('@nerima-games/mc-kernel').ItemTagIngredient,
+  RecipeFailure
+> = (tag, count = 1) =>
+  Result.flatMap(
+    Result.mapError(TagLocation.result(tag), () => typeFailure('Recipe item tag must be a tag location')),
+    (validatedTag) =>
+      Result.flatMap(ingredientCount(count), (validatedCount) => kernelTagged(validatedTag, validatedCount)),
+  )
+
+export const anyOf: (
+  options: ReadonlyArray<IngredientInput>,
+  count?: number,
+) => Result.Result<AnyOfIngredient, RecipeFailure> = (options, count = 1) =>
+  Result.flatMap(ingredientCount(count), (validatedCount) => kernelAnyOf(options, validatedCount))
+
+export const ingredientMatches: (
+  ingredient: CraftingIngredient,
+  item: ItemType,
+  itemTags?: ItemTagMemberships,
+) => boolean = (ingredient, item, itemTags = VANILLA_ITEM_TAG_MEMBERSHIPS) => {
+  if (!kernelIsCraftingIngredient(ingredient)) return false
+  if (ingredient._tag === 'AnyOf') {
+    return ingredient.options.some((option) => ingredientMatches(option, item, itemTags))
+  }
+  if (ingredient._tag === 'Exact') return ingredient.item === item
+  return itemTags.get(ingredient.tag)?.has(item) ?? false
 }
 
-export type ShapelessRecipe = {
-  readonly _tag: 'Shapeless'
-  readonly id: RecipeId
-  readonly ingredients: ReadonlyArray<Ingredient>
-  readonly output: ItemStack
-}
+export type {
+  AnyOfIngredient,
+  CraftGrid,
+  CraftGridInput,
+  CraftingIngredient,
+  CraftingIngredientInput,
+  ExactIngredient,
+  Ingredient,
+  IngredientInput,
+  ItemTagIngredient,
+  ItemTagMemberships,
+  PatternCell,
+  Recipe,
+  RecipeCategory,
+  RecipeFailure,
+  RecipeGridIndex,
+  RecipeItemTag,
+  RecipeMatchContext,
+  RecipeOptions,
+  RecipePatternKeyMap,
+  RecipePattern,
+  RecipeTable,
+  ShapedRecipe,
+  ShapelessRecipe,
+} from '@nerima-games/mc-kernel'
 
-export type Recipe = ShapedRecipe | ShapelessRecipe
+export {
+  MAX_RECIPE_SIDE,
+  craftingIngredient,
+  isAnyOfIngredient,
+  isCraftingIngredient,
+  isCraftingIngredientInput,
+} from '@nerima-games/mc-kernel'
 
-export type RecipeTable = ReadonlyArray<Recipe>
-
-export type CraftGrid = {
-  readonly width: number
-  readonly height: number
-  readonly cells: ReadonlyArray<Slot>
-}
+export {
+  RecipeGridDimension,
+  RecipeId,
+  RecipeIngredientCount,
+  RecipePatternRow,
+  RecipePatternSymbol,
+  RecipePriority,
+  RecipeStationTag,
+} from '@nerima-games/mc-kernel'
 
 export const craftGrid = (
   width: number,
   height: number,
-  items: ReadonlyArray<ItemType | undefined>,
-): Result.Result<CraftGrid, ItemStackFailure> => {
-  const cells = Array.from({ length: Math.max(0, width * height) }, (_unused, index) => {
-    const item = items[index]
-    return item === undefined ? Result.succeed(undefined) : itemStack(item, 1)
-  })
-  return Result.map(Result.all(cells), (values) => ({ width, height, cells: values }))
+  items: ReadonlyArray<ItemType | ItemStack | undefined>,
+): Result.Result<CraftGrid, RecipeFailure> => {
+  const dimensions = Result.all([
+    Result.mapError(
+      RecipeGridDimensionBrand.result(width),
+      () => rangeFailure('Craft grid width must be an integer in [0, 3]'),
+    ),
+    Result.mapError(
+      RecipeGridDimensionBrand.result(height),
+      () => rangeFailure('Craft grid height must be an integer in [0, 3]'),
+    ),
+  ])
+  return Result.flatMap(dimensions, ([validWidth, validHeight]) =>
+    kernelCraftGrid(validWidth, validHeight, items),
+  )
 }
 
 export const cellAt = (grid: CraftGrid, x: number, y: number): Slot =>
-  x < 0 || y < 0 || x >= grid.width || y >= grid.height ? undefined : grid.cells[y * grid.width + x]
-
-const trimPattern = (rows: ReadonlyArray<string>, key: Readonly<Record<string, ItemType>>): RecipePattern => {
-  const rawHeight = rows.length
-  const rawWidth = rows.reduce((widest, row) => Math.max(widest, row.length), 0)
-
-  const rawCellAt = (x: number, y: number): PatternCell => {
-    const character = (rows[y] ?? '')[x]
-    const item = character === undefined ? undefined : key[character]
-    return item === undefined ? undefined : exactly(item)
-  }
-
-  let minX = rawWidth
-  let minY = rawHeight
-  let maxX = -1
-  let maxY = -1
-
-  for (let y = 0; y < rawHeight; y += 1) {
-    for (let x = 0; x < rawWidth; x += 1) {
-      if (rawCellAt(x, y) === undefined) {
-        continue
-      }
-      minX = Math.min(minX, x)
-      minY = Math.min(minY, y)
-      maxX = Math.max(maxX, x)
-      maxY = Math.max(maxY, y)
-    }
-  }
-
-  if (maxX < 0) {
-    return { width: 0, height: 0, cells: [] }
-  }
-
-  const width = maxX - minX + 1
-  const height = maxY - minY + 1
-
-  return {
-    width,
-    height,
-    cells: Array.from({ length: width * height }, (_unused, index) =>
-      rawCellAt(minX + (index % width), minY + Math.floor(index / width)),
-    ),
-  }
-}
+  !Number.isSafeInteger(x) || !Number.isSafeInteger(y) ||
+  x < 0 || y < 0 || x >= grid.width || y >= grid.height
+    ? undefined
+    : grid.cells[y * grid.width + x]
 
 export const shapedRecipe = (
-  id: RecipeId,
+  id: string,
   rows: ReadonlyArray<string>,
-  key: Readonly<Record<string, ItemType>>,
-  output: ReturnType<typeof itemStack>,
-): Result.Result<ShapedRecipe, ItemStackFailure> =>
-  Result.map(output, (stack) => ({ _tag: 'Shaped', id, pattern: trimPattern(rows, key), output: stack }))
+  key: Readonly<Record<string, CraftingIngredientInput>>,
+  output: Result.Result<ItemStack, ItemStackFailure>,
+  options?: RecipeOptions,
+): Result.Result<ShapedRecipe, RecipeFailure> => {
+  const prepared = Result.all([
+    recipeId(id),
+    patternRows(rows),
+    patternKeyMap(key),
+    Result.mapError(output, itemFailure),
+  ])
+  return Result.flatMap(prepared, ([validId, validRows, validKey, validOutput]) =>
+    kernelShapedRecipe(validId, validRows, validKey, validOutput, options),
+  )
+}
 
 export const shapelessRecipe = (
-  id: RecipeId,
-  items: ReadonlyArray<ItemType>,
-  output: ReturnType<typeof itemStack>,
-): Result.Result<ShapelessRecipe, ItemStackFailure> =>
-  Result.map(output, (stack) => ({ _tag: 'Shapeless', id, ingredients: items.map(exactly), output: stack }))
+  id: string,
+  ingredients: ReadonlyArray<CraftingIngredientInput>,
+  output: Result.Result<ItemStack, ItemStackFailure>,
+  options?: RecipeOptions,
+): Result.Result<ShapelessRecipe, RecipeFailure> => {
+  const prepared = Result.all([
+    recipeId(id),
+    Result.mapError(output, itemFailure),
+  ])
+  return Result.flatMap(prepared, ([validId, validOutput]) =>
+    kernelShapelessRecipe(validId, ingredients, validOutput, options),
+  )
+}

@@ -1,7 +1,7 @@
-import { Result } from 'effect'
+import { Result, Schema } from 'effect'
 import { BlockAxis, type BlockPosition } from '@nerima-games/mc-kernel/domain/coordinates'
 import { DIMENSIONS, isDimension, type BlockType, type Dimension, type ItemType } from '@nerima-games/mc-kernel'
-import { itemStack, type ItemStack, type ItemStackFailure } from './inventory.js'
+import { ItemStackSchema, itemStack, type ItemStack, type ItemStackFailure } from './inventory.js'
 
 export const CROP_TYPES = ['wheat_crop', 'potato_crop', 'nether_wart_crop'] as const
 
@@ -64,11 +64,70 @@ export type CropSnapshot = {
   readonly crops: ReadonlyArray<CropState>
 }
 
+type CropPositionEncoded = Readonly<{ x: number; y: number; z: number }>
+type CropStateEncoded = Readonly<{
+  dimension: Dimension
+  position: CropPositionEncoded
+  crop: CropType
+  growthSecs: number
+}>
+
+export const CropTypeSchema: Schema.Codec<CropType, CropType> = Schema.Literals(CROP_TYPES)
+
+const CropDimensionSchema: Schema.Codec<Dimension, Dimension> = Schema.Literals(DIMENSIONS)
+const CropAxisSchema: Schema.Codec<BlockPosition['x'], number> = Schema.Int.check(
+  Schema.isBetween({ minimum: Number.MIN_SAFE_INTEGER, maximum: Number.MAX_SAFE_INTEGER }),
+).pipe(Schema.brand('BlockAxis'))
+
+const CropPositionSchema: Schema.Codec<BlockPosition, CropPositionEncoded> = Schema.Struct({
+  x: CropAxisSchema,
+  y: CropAxisSchema,
+  z: CropAxisSchema,
+})
+
+export const CropLocationSchema: Schema.Codec<CropLocation, unknown> = Schema.Struct({
+  dimension: CropDimensionSchema,
+  position: CropPositionSchema,
+})
+
+const cropStateVariant = (
+  crop: CropType,
+  maturitySecs: number,
+): Schema.Codec<CropState, CropStateEncoded> => Schema.Struct({
+  dimension: CropDimensionSchema,
+  position: CropPositionSchema,
+  crop: Schema.Literal(crop),
+  growthSecs: Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: maturitySecs })),
+})
+
+export const CropStateSchema: Schema.Codec<CropState, unknown> = Schema.Union([
+  cropStateVariant('wheat_crop', WHEAT_MATURITY_SECS),
+  cropStateVariant('potato_crop', POTATO_MATURITY_SECS),
+  cropStateVariant('nether_wart_crop', NETHER_WART_MATURITY_SECS),
+])
+
+export const CropSnapshotSchema: Schema.Codec<CropSnapshot, unknown> = Schema.Struct({
+  crops: Schema.Array(CropStateSchema),
+})
+
+export const MatureYieldsSchema: Schema.Codec<ReadonlyArray<ItemStack> | null, unknown> = Schema.Union([
+  Schema.Array(ItemStackSchema),
+  Schema.Null,
+])
+
 export type CropValidationError = {
   readonly _tag: 'CropValidationError'
   readonly path: string
   readonly reason: string
 }
+
+export const CropValidationErrorSchema: Schema.Codec<CropValidationError, unknown> = Schema.TaggedStruct(
+  'CropValidationError',
+  {
+    path: Schema.String,
+    reason: Schema.String,
+  },
+)
 
 export type CropValidationResult =
   | { readonly _tag: 'Valid'; readonly snapshot: CropSnapshot }

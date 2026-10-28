@@ -33,7 +33,14 @@ import { Result } from 'effect'
 import { addItemStack, countOf, removeItem, type Inventory, type ItemStack } from './inventory.js'
 import type { ItemStackFailure } from './inventory.js'
 import type { ItemType } from "@nerima-games/mc-kernel"
-import { cellAt, matchRecipe, type CraftGrid, type RecipeId, type RecipeTable } from './recipe.js'
+import {
+  cellAt,
+  matchRecipeWithAssignments,
+  type CraftGrid,
+  type RecipeId,
+  type RecipeIngredientAssignment,
+  type RecipeTable,
+} from './recipe.js'
 
 /**
  * What one craft costs: one item per occupied cell, summed per item id.
@@ -51,6 +58,16 @@ export const ingredientCost = (grid: CraftGrid): ReadonlyMap<ItemType, number> =
         cost.set(slot.item, (cost.get(slot.item) ?? 0) + 1)
       }
     }
+  }
+  return cost
+}
+
+const assignedIngredientCost = (
+  assignments: ReadonlyArray<RecipeIngredientAssignment>,
+): ReadonlyMap<ItemType, number> => {
+  const cost = new Map<ItemType, number>()
+  for (const { item, ingredient } of assignments) {
+    cost.set(item, (cost.get(item) ?? 0) + ingredient.count)
   }
   return cost
 }
@@ -106,12 +123,12 @@ export const craftFromGrid = (
   table: RecipeTable,
   grid: CraftGrid,
 ): Result.Result<CraftOutcome, CraftFailure> => {
-  const match = matchRecipe(table, grid)
+  const match = matchRecipeWithAssignments(table, grid)
   if (match._tag === 'NoMatch') {
     return Result.succeed({ inventory, result: { _tag: 'NoMatch' } })
   }
 
-  const cost = ingredientCost(grid)
+  const cost = assignedIngredientCost(match.assignments)
 
   const missing = [...cost].flatMap(([item, needed]) => {
     const held = countOf(inventory, item)

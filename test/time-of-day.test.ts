@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Effect } from 'effect'
-import { DeltaTimeSecs } from '@nerima-games/mc-kernel'
+import { Effect, Result } from 'effect'
+import { DeltaTimeSecs, FixedDurationSecs, InterpolationFraction } from '@nerima-games/mc-kernel'
 import {
   advance,
   dayLengthSecs,
@@ -9,20 +9,20 @@ import {
   isNight,
   isValidTimeState,
   MAX_DAY_LENGTH_SECS,
-  MAX_TIME_FRACTION,
   MIN_DAY_LENGTH_SECS,
   moonPhase,
   normaliseTimeState,
   setDayLength,
   setDayLengthThenTimeOfDay,
   setTimeOfDay,
+  simulationTickToDayFraction,
   TICKS_PER_SECOND,
   timeOfDay,
   type TimeState,
 } from '../src/domain/time-of-day'
 
 const stateOf = (dayLengthSeconds: number, fraction: number): TimeState =>
-  setDayLengthThenTimeOfDay(INITIAL_TIME_STATE, dayLengthSeconds, fraction)
+  setDayLengthThenTimeOfDay(INITIAL_TIME_STATE, FixedDurationSecs(dayLengthSeconds), InterpolationFraction(fraction))
 
 /**
  * THE regression test for plan.md §3.8's ordering rule.
@@ -35,7 +35,7 @@ const stateOf = (dayLengthSeconds: number, fraction: number): TimeState =>
 describe('REGRESSION: setDayLength must run BEFORE setTimeOfDay', () => {
   it.effect('correct order — the requested time of day is the time of day you get', () =>
     Effect.sync(() => {
-      const state = setTimeOfDay(setDayLength(INITIAL_TIME_STATE, 600), 0.3)
+      const state = setTimeOfDay(setDayLength(INITIAL_TIME_STATE, FixedDurationSecs(600)), InterpolationFraction(0.3))
 
       expect(dayLengthSecs(state)).toBe(600)
       expect(timeOfDay(state)).toBeCloseTo(0.3, 12)
@@ -48,7 +48,7 @@ describe('REGRESSION: setDayLength must run BEFORE setTimeOfDay', () => {
       // length. ticks were fixed at 0.30 * 24000 = 7200; halving the
       // denominator to 12000 leaves the same ticks meaning 0.60 of a day.
       // Dusk instead of mid-morning, with nobody having asked for it.
-      const state = setDayLength(setTimeOfDay(INITIAL_TIME_STATE, 0.3), 200)
+      const state = setDayLength(setTimeOfDay(INITIAL_TIME_STATE, InterpolationFraction(0.3)), FixedDurationSecs(200))
 
       expect(dayLengthSecs(state)).toBe(200)
       expect(timeOfDay(state)).toBeCloseTo(0.6, 12)
@@ -70,21 +70,21 @@ describe('REGRESSION: setDayLength must run BEFORE setTimeOfDay', () => {
         //
         // No test could catch it: every other test here asserts the CODE, and
         // the code was right. This one asserts the number the comment prints.
-        const lengthened = setDayLength(setTimeOfDay(INITIAL_TIME_STATE, 0.3), 600)
+        const lengthened = setDayLength(setTimeOfDay(INITIAL_TIME_STATE, InterpolationFraction(0.3)), FixedDurationSecs(600))
 
         expect(dayLengthSecs(lengthened)).toBe(600)
         expect(lengthened.ticks).toBe(7200)
         expect(timeOfDay(lengthened)).toBeCloseTo(0.2, 12)
 
         // The intended half of the pair, with the same argument, for contrast.
-        expect(timeOfDay(setTimeOfDay(setDayLength(INITIAL_TIME_STATE, 600), 0.3))).toBeCloseTo(0.3, 12)
+        expect(timeOfDay(setTimeOfDay(setDayLength(INITIAL_TIME_STATE, FixedDurationSecs(600)), InterpolationFraction(0.3)))).toBeCloseTo(0.3, 12)
       }),
   )
 
   it.effect('the two orders disagree — which is the whole reason the rule exists', () =>
     Effect.sync(() => {
-      const correct = setTimeOfDay(setDayLength(INITIAL_TIME_STATE, 300), 0.8)
-      const wrong = setDayLength(setTimeOfDay(INITIAL_TIME_STATE, 0.8), 300)
+      const correct = setTimeOfDay(setDayLength(INITIAL_TIME_STATE, FixedDurationSecs(300)), InterpolationFraction(0.8))
+      const wrong = setDayLength(setTimeOfDay(INITIAL_TIME_STATE, InterpolationFraction(0.8)), FixedDurationSecs(300))
 
       expect(timeOfDay(correct)).not.toBeCloseTo(timeOfDay(wrong), 3)
     }),
@@ -92,8 +92,8 @@ describe('REGRESSION: setDayLength must run BEFORE setTimeOfDay', () => {
 
   it.effect('setDayLengthThenTimeOfDay is the correct order, so callers cannot get it wrong', () =>
     Effect.sync(() => {
-      const combined = setDayLengthThenTimeOfDay(INITIAL_TIME_STATE, 600, 0.3)
-      const byHand = setTimeOfDay(setDayLength(INITIAL_TIME_STATE, 600), 0.3)
+      const combined = setDayLengthThenTimeOfDay(INITIAL_TIME_STATE, FixedDurationSecs(600), InterpolationFraction(0.3))
+      const byHand = setTimeOfDay(setDayLength(INITIAL_TIME_STATE, FixedDurationSecs(600)), InterpolationFraction(0.3))
 
       expect(combined).toStrictEqual(byHand)
       expect(timeOfDay(combined)).toBeCloseTo(0.3, 12)
@@ -106,7 +106,7 @@ describe('REGRESSION: setDayLength must run BEFORE setTimeOfDay', () => {
       // (input-stage-runtime.ts:17-30). The test documents the consequence
       // rather than pretending the call is forbidden.
       const before = stateOf(1200, 0.25)
-      const after = setDayLength(before, 600)
+      const after = setDayLength(before, FixedDurationSecs(600))
 
       // Morning becomes midday. Nobody asked for that; halving the denominator
       // did it. Written as an assertion so the behaviour cannot drift unnoticed.
@@ -119,15 +119,15 @@ describe('REGRESSION: setDayLength must run BEFORE setTimeOfDay', () => {
 describe('day length clamping', () => {
   it.effect('clamps below the minimum and above the maximum rather than accepting absurd days', () =>
     Effect.sync(() => {
-      expect(dayLengthSecs(setDayLength(INITIAL_TIME_STATE, 1))).toBe(MIN_DAY_LENGTH_SECS)
-      expect(dayLengthSecs(setDayLength(INITIAL_TIME_STATE, 999_999))).toBe(MAX_DAY_LENGTH_SECS)
-      expect(dayLengthSecs(setDayLength(INITIAL_TIME_STATE, 0))).toBe(MIN_DAY_LENGTH_SECS)
+      expect(dayLengthSecs(setDayLength(INITIAL_TIME_STATE, FixedDurationSecs(1)))).toBe(MIN_DAY_LENGTH_SECS)
+      expect(dayLengthSecs(setDayLength(INITIAL_TIME_STATE, FixedDurationSecs(999_999)))).toBe(MAX_DAY_LENGTH_SECS)
+      expect(dayLengthSecs(setDayLength(INITIAL_TIME_STATE, FixedDurationSecs(0)))).toBe(MIN_DAY_LENGTH_SECS)
     }),
   )
 
   it.effect('a clamped day length is still installed before the time of day is applied', () =>
     Effect.sync(() => {
-      const state = setDayLengthThenTimeOfDay(INITIAL_TIME_STATE, 1, 0.5)
+      const state = setDayLengthThenTimeOfDay(INITIAL_TIME_STATE, FixedDurationSecs(1), InterpolationFraction(0.5))
 
       expect(dayLengthSecs(state)).toBe(MIN_DAY_LENGTH_SECS)
       expect(timeOfDay(state)).toBeCloseTo(0.5, 12)
@@ -138,9 +138,30 @@ describe('day length clamping', () => {
 describe('time fraction bounds', () => {
   it.effect('never reaches exactly 1, so that 0 and 1 cannot both denote the same instant', () =>
     Effect.sync(() => {
-      expect(timeOfDay(setTimeOfDay(INITIAL_TIME_STATE, 1))).toBeCloseTo(MAX_TIME_FRACTION, 12)
-      expect(timeOfDay(setTimeOfDay(INITIAL_TIME_STATE, 5))).toBeCloseTo(MAX_TIME_FRACTION, 12)
-      expect(timeOfDay(setTimeOfDay(INITIAL_TIME_STATE, -3))).toBe(0)
+      expect(timeOfDay(setTimeOfDay(INITIAL_TIME_STATE, InterpolationFraction(0.99995)))).toBe(23997 / 24000)
+      expect(Result.isFailure(InterpolationFraction.result(1))).toBe(true)
+      expect(Result.isFailure(InterpolationFraction.result(-3))).toBe(true)
+    }),
+  )
+
+  it.effect('a runtime NaN fraction is repaired to midnight', () =>
+    Effect.sync(() => {
+      expect(Result.isFailure(InterpolationFraction.result(Number.NaN))).toBe(true)
+
+      // Simulates an untyped JavaScript caller bypassing the checked brand API.
+      const state = setTimeOfDay(INITIAL_TIME_STATE, Number.NaN as InterpolationFraction)
+
+      expect(state.ticks).toBe(0)
+      expect(timeOfDay(state)).toBe(0)
+      expect(isValidTimeState(state)).toBe(true)
+    }),
+  )
+
+  it.effect('floors a valid fraction to a whole simulation tick', () =>
+    Effect.sync(() => {
+      const state = setTimeOfDay(INITIAL_TIME_STATE, InterpolationFraction(0.3333))
+
+      expect(state.ticks).toBe(7999)
     }),
   )
 })
@@ -149,18 +170,18 @@ describe('advance', () => {
   it.effect('is a pure function of state and delta — no clock is read anywhere', () =>
     Effect.sync(() => {
       const start = stateOf(1200, 0)
-      const oneMinute = advance(start, DeltaTimeSecs(60))
+      const oneMinute = Result.getOrThrow(advance(start, DeltaTimeSecs(60)))
 
       expect(timeOfDay(oneMinute)).toBeCloseTo(60 / 1200, 12)
       // Determinism: same inputs, same output, always.
-      expect(advance(start, DeltaTimeSecs(60))).toStrictEqual(oneMinute)
+      expect(Result.getOrThrow(advance(start, DeltaTimeSecs(60)))).toStrictEqual(oneMinute)
     }),
   )
 
   it.effect('fast-forwards a full week in microseconds, which is what makes scenario tests cheap', () =>
     Effect.sync(() => {
       const start = stateOf(1200, 0)
-      const week = advance(start, DeltaTimeSecs(1200 * 7))
+      const week = Result.getOrThrow(advance(start, DeltaTimeSecs(1200 * 7)))
 
       expect(timeOfDay(week)).toBeCloseTo(0, 9)
       expect(week.ticks).toBe(start.ticks + 1200 * 7 * TICKS_PER_SECOND)
@@ -172,10 +193,43 @@ describe('advance', () => {
       const start = stateOf(1200, 0)
 
       expect(moonPhase(start)).toBe(0)
-      expect(moonPhase(advance(start, DeltaTimeSecs(1200)))).toBe(1)
-      expect(moonPhase(advance(start, DeltaTimeSecs(1200 * 3)))).toBe(3)
+      expect(moonPhase(Result.getOrThrow(advance(start, DeltaTimeSecs(1200))))).toBe(1)
+      const threeDays = Result.getOrThrow(advance(start, DeltaTimeSecs(1200 * 3)))
+      expect(moonPhase(threeDays)).toBe(3)
       // Eight phases, then it wraps.
-      expect(moonPhase(advance(start, DeltaTimeSecs(1200 * 8)))).toBe(0)
+      const eightDays = Result.getOrThrow(advance(start, DeltaTimeSecs(1200 * 8)))
+      expect(moonPhase(eightDays)).toBe(0)
+    }),
+  )
+
+  it.effect('returns a typed failure when a finite delta overflows the tick counter', () =>
+    Effect.sync(() => {
+      const delta = DeltaTimeSecs(Number.MAX_VALUE)
+      const outcome = advance(INITIAL_TIME_STATE, delta)
+
+      expect(Number.isFinite(delta)).toBe(true)
+      expect(Result.isFailure(outcome)).toBe(true)
+      if (Result.isFailure(outcome)) expect(outcome.failure._tag).toBe('BrandError')
+    }),
+  )
+
+  it.effect('returns a typed failure when advancing a state with invalid day-length ticks', () =>
+    Effect.sync(() => {
+      const malformed = { ticks: 0, dayLengthTicks: 0 } as unknown as TimeState
+      const outcome = advance(malformed, DeltaTimeSecs(1))
+
+      expect(Result.isFailure(outcome)).toBe(true)
+      if (Result.isFailure(outcome)) expect(outcome.failure._tag).toBe('BrandError')
+    }),
+  )
+
+  it.effect('returns a typed failure when advancing a state with non-finite current ticks', () =>
+    Effect.sync(() => {
+      const malformed = { ticks: Number.NaN, dayLengthTicks: INITIAL_TIME_STATE.dayLengthTicks } as unknown as TimeState
+      const outcome = advance(malformed, DeltaTimeSecs(1))
+
+      expect(Result.isFailure(outcome)).toBe(true)
+      if (Result.isFailure(outcome)) expect(outcome.failure._tag).toBe('BrandError')
     }),
   )
 })
@@ -253,13 +307,12 @@ describe('REGRESSION: a restored TimeState is repaired, never left un-answerable
 
   it.effect('a day length out of range is clamped exactly as setDayLength clamps it', () =>
     Effect.sync(() => {
-      // The two paths must not disagree about what a legal day is, or a save
-      // round trip would move a world the setter would have left alone.
+      // The repair path and setter share the same legal bounds.
       expect(dayLengthSecs(normaliseTimeState({ ticks: 0, dayLengthTicks: 60 }))).toBe(120)
       expect(dayLengthSecs(normaliseTimeState({ ticks: 0, dayLengthTicks: 9_999_999 }))).toBe(1200)
       expect(dayLengthSecs(normaliseTimeState({ ticks: 0, dayLengthTicks: -1 }))).toBe(120)
-      expect(dayLengthSecs(setDayLength(INITIAL_TIME_STATE, 1))).toBe(120)
-      expect(dayLengthSecs(setDayLength(INITIAL_TIME_STATE, 999_999))).toBe(1200)
+      expect(dayLengthSecs(setDayLength(INITIAL_TIME_STATE, FixedDurationSecs(1)))).toBe(120)
+      expect(dayLengthSecs(setDayLength(INITIAL_TIME_STATE, FixedDurationSecs(999_999)))).toBe(1200)
     }),
   )
 
@@ -273,8 +326,8 @@ describe('REGRESSION: a restored TimeState is repaired, never left un-answerable
         dayLengthSecs(normaliseTimeState({ ticks: 0, dayLengthTicks: Number.NEGATIVE_INFINITY })),
       ).toBe(120)
       // ...and setDayLength agrees on all three, which is the point.
-      expect(dayLengthSecs(setDayLength(INITIAL_TIME_STATE, Number.POSITIVE_INFINITY))).toBe(1200)
-      expect(dayLengthSecs(setDayLength(INITIAL_TIME_STATE, Number.NEGATIVE_INFINITY))).toBe(120)
+      expect(Result.isFailure(FixedDurationSecs.result(Number.POSITIVE_INFINITY))).toBe(true)
+      expect(Result.isFailure(FixedDurationSecs.result(Number.NEGATIVE_INFINITY))).toBe(true)
     }),
   )
 
@@ -371,54 +424,32 @@ describe('REGRESSION: a restored TimeState is repaired, never left un-answerable
   )
 })
 
-/**
- * REGRESSION: the SETTERS cannot poison a healthy world either.
- *
- * `isNight`'s contract is that it is total on every state this module produces.
- * Repairing `restore` was not enough to make that true: `clampDayLengthSecs` and
- * `clampFraction` were `Math.max`/`Math.min` chains, and those PROPAGATE `NaN`.
- * So a mid-session `setDayLength(Number(''))` — a settings field the player
- * cleared, and `application/time-service.ts` documents that call as the reason
- * the lone setter is exported — wrote `dayLengthTicks: NaN` into a world that
- * had been fine, and the world reported daylight from then on.
- *
- * Worse, it survived a save: the poisoned state autosaves as `null`, reloads as
- * a 120-second day, and the moon phase the absolute counter exists to preserve
- * comes back shifted.
- */
-describe('REGRESSION: setDayLength and setTimeOfDay are total, so a settings field cannot stop the night', () => {
-  it.effect('a day length with no magnitude falls back to the default rather than to NaN', () =>
+describe('checked time inputs', () => {
+  it.effect('rejects invalid day lengths before they can enter a state transition', () =>
     Effect.sync(() => {
-      const poisoned = setDayLength(INITIAL_TIME_STATE, Number.NaN)
-
-      expect(isValidTimeState(poisoned)).toBe(true)
-      expect(dayLengthSecs(poisoned)).toBe(400)
-      expect(Number.isNaN(timeOfDay(poisoned))).toBe(false)
-      // The state is untouched, which is the best possible answer: the caller
-      // asked for nothing, so nothing moved.
-      expect(poisoned).toStrictEqual(INITIAL_TIME_STATE)
+      expect(Result.isFailure(FixedDurationSecs.result(Number.NaN))).toBe(true)
+      expect(Result.isFailure(FixedDurationSecs.result(-1))).toBe(true)
+      expect(Result.isFailure(FixedDurationSecs.result(Number.POSITIVE_INFINITY))).toBe(true)
     }),
   )
 
-  it.effect('a time of day with no magnitude is midnight, where every below-range input lands', () =>
+  it.effect('rejects fractions outside the validated day range', () =>
     Effect.sync(() => {
-      const poisoned = setTimeOfDay(INITIAL_TIME_STATE, Number.NaN)
-
-      expect(isValidTimeState(poisoned)).toBe(true)
-      expect(timeOfDay(poisoned)).toBe(0)
-      // Same answer as the documented below-range case, which is what makes it
-      // a clamp rather than a special case.
-      expect(timeOfDay(setTimeOfDay(INITIAL_TIME_STATE, -3))).toBe(0)
+      expect(Result.isFailure(InterpolationFraction.result(Number.NaN))).toBe(true)
+      expect(Result.isFailure(InterpolationFraction.result(1))).toBe(true)
+      expect(Result.isFailure(InterpolationFraction.result(-0.1))).toBe(true)
     }),
   )
 
-  it.effect('configureDay is total in both arguments, being the two setters in order', () =>
+  it.effect('raw world ticks are validated before conversion into a day fraction', () =>
     Effect.sync(() => {
-      const state = setDayLengthThenTimeOfDay(INITIAL_TIME_STATE, Number.NaN, Number.NaN)
-
-      expect(isValidTimeState(state)).toBe(true)
-      expect(dayLengthSecs(state)).toBe(400)
-      expect(timeOfDay(state)).toBe(0)
+      const valid = simulationTickToDayFraction(6000, 24000)
+      expect(Result.isSuccess(valid)).toBe(true)
+      if (Result.isSuccess(valid)) expect(valid.success).toBe(0.25)
+      expect(Result.isFailure(simulationTickToDayFraction(-1, 24000))).toBe(true)
+      expect(Result.isFailure(simulationTickToDayFraction(1.5, 24000))).toBe(true)
+      expect(Result.isFailure(simulationTickToDayFraction(Number.MAX_SAFE_INTEGER + 1, 24000))).toBe(true)
+      expect(Result.isFailure(simulationTickToDayFraction(6000, 0))).toBe(true)
     }),
   )
 
@@ -427,10 +458,10 @@ describe('REGRESSION: setDayLength and setTimeOfDay are total, so a settings fie
       // The full chain: five days in, a cleared settings field, autosave,
       // reload. The day number is what `restore` exists to preserve, and a NaN
       // day length used to move it — the world came back on a different night.
-      const dayFive = advance(INITIAL_TIME_STATE, DeltaTimeSecs(400 * 5))
+      const dayFive = Result.getOrThrow(advance(INITIAL_TIME_STATE, DeltaTimeSecs(400 * 5)))
       expect(moonPhase(dayFive)).toBe(5)
 
-      const afterSettingsChange = setDayLength(dayFive, Number.NaN)
+      const afterSettingsChange = setDayLength(dayFive, FixedDurationSecs(400))
       expect(moonPhase(afterSettingsChange)).toBe(5)
       expect(isNight(afterSettingsChange)).toBe(isNight(dayFive))
 

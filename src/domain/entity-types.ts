@@ -1,51 +1,39 @@
-import { Brand } from 'effect'
-import { PositionAxis, position, type Position } from '@nerima-games/mc-kernel'
+import { Brand, Schema } from 'effect'
+import {
+  EntityIdSchema,
+  EntityHealthPoints,
+  EntityRosterRepairCount,
+  EntitySerial,
+  PositionAxis,
+  position,
+  type EntityId,
+  type EntityKind,
+  type Position,
+} from '@nerima-games/mc-kernel'
 
-export type EntityId = string & Brand.Brand<'EntityId'>
+export {
+  EntityHealthPoints,
+  EntityId,
+  EntityKind,
+  EntityRosterRepairCount,
+  EntitySerial,
+  isEntityId,
+  isEntityKind,
+  ENTITY_ID_PREFIX,
+  mintEntityId,
+  serialOfEntityId,
+} from '@nerima-games/mc-kernel'
 
-const entityId: Brand.Constructor<EntityId> = Brand.make<EntityId>(
-  (value) =>
-    typeof value === 'string' && value.trim().length > 0
-      ? true
-      : `EntityId must be a non-blank string, received ${JSON.stringify(value)}`,
+export type EntityCount = number & Brand.Brand<'EntityCount'>
+export const EntityCount: Brand.Constructor<EntityCount> = Brand.make((value) =>
+  Number.isSafeInteger(value) && value >= 0
+    ? true
+    : `EntityCount must be a non-negative safe integer, received ${String(value)}`,
 )
-export { entityId as EntityId }
-
-export type EntityKind = string & Brand.Brand<'EntityKind'>
-
-const entityKind: Brand.Constructor<EntityKind> = Brand.make<EntityKind>(
-  (value) =>
-    typeof value === 'string' && value.trim().length > 0
-      ? true
-      : `EntityKind must be a non-blank string, received ${JSON.stringify(value)}`,
-)
-export { entityKind as EntityKind }
-
-export const isEntityId = (value: unknown): value is EntityId =>
-  typeof value === 'string' && value.trim().length > 0
-
-export const isEntityKind = (value: unknown): value is EntityKind =>
-  typeof value === 'string' && value.trim().length > 0
-
-export const ENTITY_ID_PREFIX = 'e:'
-
-export const mintEntityId = (serial: number): EntityId => entityId(`${ENTITY_ID_PREFIX}${serial}`)
-
-export const serialOfEntityId = (id: string): number | undefined => {
-  if (!id.startsWith(ENTITY_ID_PREFIX)) {
-    return undefined
-  }
-  const digits = id.slice(ENTITY_ID_PREFIX.length)
-  if (digits.length === 0 || !/^\d+$/.test(digits)) {
-    return undefined
-  }
-  const serial = Number(digits)
-  return Number.isSafeInteger(serial) ? serial : undefined
-}
 
 export type EntityState<S> = {
   readonly feetPosition: Position
-  readonly healthPoints: number
+  readonly healthPoints: EntityHealthPoints
   readonly behaviour: S
 }
 
@@ -56,20 +44,81 @@ export type Entity<S> = EntityState<S> & {
 
 export type EntityRoster<S> = {
   readonly entities: ReadonlyArray<Entity<S>>
-  readonly nextSerial: number
+  readonly nextSerial: EntitySerial
 }
+
+const NonNegativeSafeIntegerSchema = Schema.Int.check(
+  Schema.makeFilter((value) => Number.isSafeInteger(value) && value >= 0),
+)
+
+export const EntitySerialSchema: Schema.Codec<EntitySerial, number> = NonNegativeSafeIntegerSchema.pipe(
+  Schema.brand('EntitySerial'),
+)
+
+export const EntityHealthPointsSchema: Schema.Codec<EntityHealthPoints, number> = Schema.Finite.check(
+  Schema.isGreaterThanOrEqualTo(0),
+).pipe(Schema.brand('EntityHealthPoints'))
+
+export const EntityRosterRepairCountSchema: Schema.Codec<EntityRosterRepairCount, number> =
+  NonNegativeSafeIntegerSchema.pipe(Schema.brand('EntityRosterRepairCount'))
+
+const PositionAxisSchema: Schema.Codec<PositionAxis, number> = Schema.Finite.pipe(Schema.brand('PositionAxis'))
+const EntityPositionSchema: Schema.Codec<Position, {
+  readonly x: number
+  readonly y: number
+  readonly z: number
+}> = Schema.Struct({
+  x: PositionAxisSchema,
+  y: PositionAxisSchema,
+  z: PositionAxisSchema,
+})
+
+const NonBlankEntityIdSchema: Schema.Codec<EntityId, string> = EntityIdSchema.check(Schema.isPattern(/\S/))
+const EntityKindSchema: Schema.Codec<EntityKind, string> =
+  Schema.String.check(Schema.isPattern(/\S/)).pipe(Schema.brand('EntityKind'))
+
+type EntitySchemaFields<Behaviour extends Schema.Constraint> = {
+  readonly id: typeof NonBlankEntityIdSchema
+  readonly kind: typeof EntityKindSchema
+  readonly feetPosition: typeof EntityPositionSchema
+  readonly healthPoints: typeof EntityHealthPointsSchema
+  readonly behaviour: Behaviour
+}
+
+type EntityRosterSchemaFields<Behaviour extends Schema.Constraint> = {
+  readonly entities: Schema.$Array<Schema.Struct<EntitySchemaFields<Behaviour>>>
+  readonly nextSerial: typeof EntitySerialSchema
+}
+
+export const EntitySchema = <Behaviour extends Schema.Constraint>(
+  behaviourSchema: Behaviour,
+): Schema.Struct<EntitySchemaFields<Behaviour>> => Schema.Struct({
+  id: NonBlankEntityIdSchema,
+  kind: EntityKindSchema,
+  feetPosition: EntityPositionSchema,
+  healthPoints: EntityHealthPointsSchema,
+  behaviour: behaviourSchema,
+})
+
+export const EntityRosterSchema = <Behaviour extends Schema.Constraint>(
+  behaviourSchema: Behaviour,
+): Schema.Struct<EntityRosterSchemaFields<Behaviour>> => Schema.Struct({
+  entities: Schema.Array(EntitySchema(behaviourSchema)),
+  nextSerial: EntitySerialSchema,
+})
 
 export const NO_ENTITIES: ReadonlyArray<never> = []
 
-const magnitude = (value: number): number => (Number.isFinite(value) ? value : 0)
+const magnitude = (value: unknown): number =>
+  typeof value === 'number' && Number.isFinite(value) ? value : 0
 
 const repairPosition = (value: Position): Position =>
   typeof value === 'object' && value !== null
     ? position(PositionAxis(magnitude(value.x)), PositionAxis(magnitude(value.y)), PositionAxis(magnitude(value.z)))
     : position(PositionAxis(0), PositionAxis(0), PositionAxis(0))
 
-const repairHealth = (value: number): number =>
-  typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : 0
+const repairHealth = (value: number): EntityHealthPoints =>
+  EntityHealthPoints(typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : 0)
 
 export const repairState = <S>(state: EntityState<S>): EntityState<S> => ({
   feetPosition: repairPosition(state.feetPosition),
@@ -80,7 +129,7 @@ export const repairState = <S>(state: EntityState<S>): EntityState<S> => ({
 export type SpawnRequest<S> = {
   readonly kind: EntityKind
   readonly feetPosition: Position
-  readonly healthPoints: number
+  readonly healthPoints: EntityHealthPoints
   readonly behaviour: S
 }
 
@@ -88,6 +137,13 @@ export type SpawnOutcome<S> = {
   readonly roster: EntityRoster<S>
   readonly entity: Entity<S>
 }
+
+export type EntitySerialExhausted = {
+  readonly _tag: 'EntitySerialExhausted'
+}
+
+export const EntitySerialExhaustedSchema: Schema.Codec<EntitySerialExhausted, EntitySerialExhausted> =
+  Schema.TaggedStruct('EntitySerialExhausted', {})
 
 export type DespawnOutcome<S> = {
   readonly roster: EntityRoster<S>
@@ -112,9 +168,17 @@ export type SweepOutcome<S, A> = {
 export type BehaviourRepair<S> = (kind: EntityKind, behaviour: S) => S
 
 export type RosterRepair = {
+  readonly discarded: EntityRosterRepairCount
+  readonly reidentified: EntityRosterRepairCount
+}
+
+export const RosterRepairSchema: Schema.Codec<RosterRepair, {
   readonly discarded: number
   readonly reidentified: number
-}
+}> = Schema.Struct({
+  discarded: EntityRosterRepairCountSchema,
+  reidentified: EntityRosterRepairCountSchema,
+})
 
 export type NormaliseRosterOutcome<S> = RosterRepair & {
   readonly roster: EntityRoster<S>

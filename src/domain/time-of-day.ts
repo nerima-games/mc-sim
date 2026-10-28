@@ -61,7 +61,14 @@
  * loop, and is passed down. That is what makes fast-forward possible: a
  * scenario test can advance a simulated week in a few microseconds.
  */
-import type { DeltaTimeSecs } from "@nerima-games/mc-kernel"
+import { Brand, Result, Schema, SchemaIssue } from 'effect'
+import {
+  DeltaTimeSecs,
+  FixedDurationSecs,
+  InterpolationFraction,
+  PositiveTickCount,
+  SimulationTick,
+} from '@nerima-games/mc-kernel'
 
 /** Simulation ticks per second. Vanilla parity; the reference uses the same rate. */
 export const TICKS_PER_SECOND = 60
@@ -86,6 +93,20 @@ export type TimeState = {
   /** Ticks in one day. The DENOMINATOR — changing it moves the time of day. */
   readonly dayLengthTicks: number
 }
+
+type FiniteTimeTicks = number & Brand.Brand<'FiniteTimeTicks'>
+const FiniteTimeTicks = Brand.make<FiniteTimeTicks>((value) =>
+  Number.isFinite(value) && value >= 0 ? true : 'Time tick counter must remain finite and non-negative',
+)
+
+type ValidTimeDayLengthTicks = number & Brand.Brand<'ValidTimeDayLengthTicks'>
+const ValidTimeDayLengthTicks = Brand.make<ValidTimeDayLengthTicks>((value) =>
+  Number.isFinite(value) &&
+  value >= MIN_DAY_LENGTH_SECS * TICKS_PER_SECOND &&
+  value <= MAX_DAY_LENGTH_SECS * TICKS_PER_SECOND
+    ? true
+    : 'Time day length must be finite and within the supported range',
+)
 
 /**
  * Fresh-world state. Values taken verbatim from
@@ -131,6 +152,12 @@ export const DEFAULT_DAY_LENGTH_SECS = 400
  */
 const hasMagnitude = (value: number): boolean => typeof value === 'number' && !Number.isNaN(value)
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const invalidTimeStateValue = (value: unknown): Brand.BrandError =>
+  new Brand.BrandError(new SchemaIssue.InvalidType(Schema.Number.ast, value))
+
 /**
  * Clamp a day length in seconds into [MIN, MAX]. TOTAL over every input.
  *
@@ -173,12 +200,25 @@ const clampFraction = (fraction: number): number =>
  * Exported so that a persistence layer (mc-save) can tell a save it must repair
  * from one it may load verbatim, WITHOUT having to know the clamp bounds.
  */
-export const isValidTimeState = (state: TimeState): boolean =>
-  Number.isFinite(state.ticks) &&
-  state.ticks >= 0 &&
-  Number.isFinite(state.dayLengthTicks) &&
-  state.dayLengthTicks >= MIN_DAY_LENGTH_SECS * TICKS_PER_SECOND &&
-  state.dayLengthTicks <= MAX_DAY_LENGTH_SECS * TICKS_PER_SECOND
+export const isValidTimeState = (state: unknown): boolean => {
+  if (!isRecord(state)) return false
+  const dayLengthTicks = state['dayLengthTicks']
+  return Number.isFinite(state['ticks']) &&
+    Number(state['ticks']) >= 0 &&
+    typeof dayLengthTicks === 'number' && Result.isSuccess(ValidTimeDayLengthTicks.result(dayLengthTicks))
+}
+
+const FiniteTimeTicksSchema: Schema.Codec<FiniteTimeTicks, number> = Schema.Finite.check(
+  Schema.makeFilter((value) => FiniteTimeTicks.is(value)),
+).pipe(Schema.brand('FiniteTimeTicks'))
+const ValidTimeDayLengthTicksSchema: Schema.Codec<ValidTimeDayLengthTicks, number> = Schema.Finite.check(
+  Schema.makeFilter((value) => ValidTimeDayLengthTicks.is(value)),
+).pipe(Schema.brand('ValidTimeDayLengthTicks'))
+
+export const TimeStateSchema: Schema.Codec<TimeState, unknown> = Schema.Struct({
+  ticks: FiniteTimeTicksSchema,
+  dayLengthTicks: ValidTimeDayLengthTicksSchema,
+})
 
 /**
  * Repair a state read from persistence into one every reader can answer for.
@@ -208,18 +248,23 @@ export const isValidTimeState = (state: TimeState): boolean =>
  * always satisfies `isValidTimeState`; `test/time-of-day.test.ts` asserts that
  * over the malformed shapes as well as the out-of-range ones.
  */
-export const normaliseTimeState = (state: TimeState): TimeState => ({
-  ticks: Number.isFinite(state.ticks) && state.ticks >= 0 ? state.ticks : 0,
-  dayLengthTicks:
-    clampDayLengthSecs(
-      // `undefined / 60` is NaN and would be caught, but `null / 60` is 0 and
-      // would clamp to the minimum. Deciding on the value itself, before any
-      // arithmetic can coerce it, is what keeps the two indistinguishable.
-      typeof state.dayLengthTicks === 'number'
-        ? state.dayLengthTicks / TICKS_PER_SECOND
-        : Number.NaN,
-    ) * TICKS_PER_SECOND,
-})
+export const normaliseTimeState = (state: TimeState): TimeState => {
+  const candidate: Readonly<Record<string, unknown>> = isRecord(state) ? state : {}
+  return {
+    ticks: Number.isFinite(candidate['ticks']) && Number(candidate['ticks']) >= 0
+      ? Number(candidate['ticks'])
+      : 0,
+    dayLengthTicks:
+      clampDayLengthSecs(
+        // `undefined / 60` is NaN and would be caught, but `null / 60` is 0 and
+        // would clamp to the minimum. Deciding on the value itself, before any
+        // arithmetic can coerce it, is what keeps the two indistinguishable.
+        typeof candidate['dayLengthTicks'] === 'number'
+          ? candidate['dayLengthTicks'] / TICKS_PER_SECOND
+          : Number.NaN,
+      ) * TICKS_PER_SECOND,
+  }
+}
 
 /**
  * Position within the current day, in [0, 1).
@@ -230,14 +275,20 @@ export const normaliseTimeState = (state: TimeState): TimeState => ({
  * both that note and `isNight` directly below: night is `< 0.25 || > 0.75`,
  * which is the half centred on 0, and that is only night if 0 is midnight.
  */
-export const timeOfDay = (state: TimeState): number => (state.ticks % state.dayLengthTicks) / state.dayLengthTicks
+export const timeOfDay = (state: TimeState): number => {
+  const normalized = normaliseTimeState(state)
+  return (normalized.ticks % normalized.dayLengthTicks) / normalized.dayLengthTicks
+}
 
 /** Day length in seconds — the inverse of what `setDayLength` takes. */
-export const dayLengthSecs = (state: TimeState): number => state.dayLengthTicks / TICKS_PER_SECOND
+export const dayLengthSecs = (state: TimeState): number =>
+  normaliseTimeState(state).dayLengthTicks / TICKS_PER_SECOND
 
 /** Which of the eight moon phases tonight is. Needs the ABSOLUTE tick counter. */
-export const moonPhase = (state: TimeState): number =>
-  Math.floor(state.ticks / state.dayLengthTicks) % MOON_PHASE_COUNT
+export const moonPhase = (state: TimeState): number => {
+  const normalized = normaliseTimeState(state)
+  return Math.floor(normalized.ticks / normalized.dayLengthTicks) % MOON_PHASE_COUNT
+}
 
 /**
  * Night is the half of the day centred on the 0/1 boundary.
@@ -260,10 +311,28 @@ export const isNight = (state: TimeState): boolean => {
 }
 
 /** Advance by one frame. Pure; the delta is supplied, never read from a clock. */
-export const advance = (state: TimeState, dt: DeltaTimeSecs): TimeState => ({
-  ...state,
-  ticks: state.ticks + dt * TICKS_PER_SECOND,
-})
+export const advance = (
+  state: TimeState,
+  dt: DeltaTimeSecs,
+): Result.Result<TimeState, Brand.BrandError> => {
+  const candidate: Readonly<Record<string, unknown>> = isRecord(state) ? state : {}
+  const dayLengthTicksValue = candidate['dayLengthTicks']
+  if (typeof dayLengthTicksValue !== 'number') return Result.fail(invalidTimeStateValue(dayLengthTicksValue))
+  const dayLengthTicks = ValidTimeDayLengthTicks.result(dayLengthTicksValue)
+  if (Result.isFailure(dayLengthTicks)) return Result.fail(dayLengthTicks.failure)
+
+  if (typeof dt !== 'number') return Result.fail(invalidTimeStateValue(dt))
+  const delta = DeltaTimeSecs.result(dt)
+  if (Result.isFailure(delta)) return Result.fail(delta.failure)
+
+  const currentTicksValue = candidate['ticks']
+  if (typeof currentTicksValue !== 'number') return Result.fail(invalidTimeStateValue(currentTicksValue))
+  const currentTicks = FiniteTimeTicks.result(currentTicksValue)
+  if (Result.isFailure(currentTicks)) return Result.fail(currentTicks.failure)
+
+  const nextTicks = FiniteTimeTicks.result(currentTicks.success + delta.success * TICKS_PER_SECOND)
+  return Result.map(nextTicks, (ticks) => ({ ticks, dayLengthTicks: dayLengthTicks.success }))
+}
 
 /**
  * Install a new day length.
@@ -272,10 +341,27 @@ export const advance = (state: TimeState, dt: DeltaTimeSecs): TimeState => ({
  * untouched, so the time of day this state reports afterwards is generally not
  * the one it reported before. See the module header.
  */
-export const setDayLength = (state: TimeState, seconds: number): TimeState => ({
-  ...state,
-  dayLengthTicks: clampDayLengthSecs(seconds) * TICKS_PER_SECOND,
-})
+export const simulationTickToDayFraction = (
+  rawTick: number,
+  dayLengthTicks: number,
+): Result.Result<InterpolationFraction, Brand.BrandError> => {
+  if (typeof rawTick !== 'number') return Result.fail(invalidTimeStateValue(rawTick))
+  if (typeof dayLengthTicks !== 'number') return Result.fail(invalidTimeStateValue(dayLengthTicks))
+
+  return Result.flatMap(SimulationTick.result(rawTick), (tick) =>
+    Result.flatMap(PositiveTickCount.result(dayLengthTicks), (dayTicks) =>
+      InterpolationFraction.result(Math.min(MAX_TIME_FRACTION, (tick % dayTicks) / dayTicks)),
+    ),
+  )
+}
+
+export const setDayLength = (state: TimeState, seconds: FixedDurationSecs): TimeState => {
+  const base = normaliseTimeState(state)
+  return {
+    ...base,
+    dayLengthTicks: clampDayLengthSecs(seconds) * TICKS_PER_SECOND,
+  }
+}
 
 /**
  * Move to a position within the current day.
@@ -284,10 +370,13 @@ export const setDayLength = (state: TimeState, seconds: number): TimeState => ({
  * be correct when this runs. Note that this also resets the day counter to 0,
  * i.e. it moves within day zero — matching the reference.
  */
-export const setTimeOfDay = (state: TimeState, fraction: number): TimeState => ({
-  ...state,
-  ticks: clampFraction(fraction) * state.dayLengthTicks,
-})
+export const setTimeOfDay = (state: TimeState, fraction: InterpolationFraction): TimeState => {
+  const base = normaliseTimeState(state)
+  return {
+    ...base,
+    ticks: Math.floor(clampFraction(fraction) * base.dayLengthTicks),
+  }
+}
 
 /**
  * Set day length and time of day together, in the only safe order.
@@ -300,6 +389,6 @@ export const setTimeOfDay = (state: TimeState, fraction: number): TimeState => (
  */
 export const setDayLengthThenTimeOfDay = (
   state: TimeState,
-  seconds: number,
-  fraction: number,
+  seconds: FixedDurationSecs,
+  fraction: InterpolationFraction,
 ): TimeState => setTimeOfDay(setDayLength(state, seconds), fraction)

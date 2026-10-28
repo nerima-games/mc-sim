@@ -1,26 +1,64 @@
-import { type Damage, type Vitals } from './vitals-model.js'
+import { EntityHealthPoints, FoodSaturation, type HealthAmount } from '@nerima-games/mc-kernel'
+import { isValidVitals, normaliseVitals } from './vitals-validation.js'
+import {
+  DamageCause,
+  ExhaustionAmount,
+  FoodTimerSecs,
+  HungerPoints,
+  TotalExperience,
+  type Damage,
+  type Vitals,
+} from './vitals-model.js'
 import { delta } from './vitals-number.js'
 
-export const isDead = (vitals: Vitals): boolean => vitals.healthPoints <= 0
+const safeVitals = (vitals: Vitals): Vitals => {
+  if (
+    isValidVitals(vitals) &&
+    EntityHealthPoints.is(vitals.healthPoints) &&
+    EntityHealthPoints.is(vitals.maxHealthPoints) &&
+    HungerPoints.is(vitals.hungerPoints) &&
+    HungerPoints.is(vitals.maxHungerPoints) &&
+    FoodSaturation.is(vitals.saturation) &&
+    ExhaustionAmount.is(vitals.exhaustion) &&
+    FoodTimerSecs.is(vitals.foodTimerSecs) &&
+    TotalExperience.is(vitals.totalExperience) &&
+    (vitals.lastDamageCause === undefined || DamageCause.is(vitals.lastDamageCause))
+  ) {
+    return vitals
+  }
+  return normaliseVitals(vitals)
+}
+
+const isDeadState = (vitals: Vitals): boolean => vitals.healthPoints <= 0
+
+export const isDead = (vitals: Vitals): boolean => isDeadState(safeVitals(vitals))
 
 export const applyDamage = (vitals: Vitals, damage: Damage): Vitals => {
-  const amount = delta(damage.amount)
-  if (isDead(vitals) || amount <= 0) return vitals
+  const base = safeVitals(vitals)
+  const damageEnvelope = typeof damage === 'object' && damage !== null && !Array.isArray(damage)
+    ? damage
+    : undefined
+  const rawAmount = damageEnvelope?.amount
+  const amount = delta(typeof rawAmount === 'number' ? rawAmount : Number.NaN)
+  if (isDeadState(base) || amount <= 0) return base
 
-  const healthPoints = Math.max(0, vitals.healthPoints - amount)
+  const healthPoints = EntityHealthPoints(Math.max(0, base.healthPoints - amount))
   return {
-    ...vitals,
+    ...base,
     healthPoints,
-    lastDamageCause: healthPoints <= 0 ? damage.cause : vitals.lastDamageCause,
+    lastDamageCause: healthPoints <= 0 && typeof damageEnvelope?.cause === 'string'
+      ? DamageCause(damageEnvelope.cause)
+      : base.lastDamageCause,
   }
 }
 
-export const heal = (vitals: Vitals, amount: number): Vitals => {
+export const heal = (vitals: Vitals, amount: HealthAmount): Vitals => {
+  const base = safeVitals(vitals)
   const healed = delta(amount)
-  if (isDead(vitals) || healed <= 0) return vitals
+  if (isDeadState(base) || healed <= 0) return base
 
   return {
-    ...vitals,
-    healthPoints: Math.min(vitals.maxHealthPoints, vitals.healthPoints + healed),
+    ...base,
+    healthPoints: EntityHealthPoints(Math.min(base.maxHealthPoints, base.healthPoints + healed)),
   }
 }

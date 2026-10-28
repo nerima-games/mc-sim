@@ -28,6 +28,9 @@ export const excludeReservedPlacementConsumptions = <Item>(
   consumedItems: ReadonlyArray<Item>,
   reservedItems: ReadonlyArray<Item>,
 ): ReadonlyArray<Item> => {
+  if (!Array.isArray(consumedItems)) return []
+  if (!Array.isArray(reservedItems)) return [...consumedItems]
+
   const remainingReservations = [...reservedItems]
 
   return consumedItems.filter((item) => {

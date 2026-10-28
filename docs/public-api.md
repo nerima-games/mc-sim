@@ -1,5 +1,7 @@
 # 公開API
 
+Code snippets illustrate public contracts and may omit fields from complete declarations.
+
 ## 0.1 依存する共有契約
 
 本 package は `mc-kernel` の canonical `ItemStack`、`ItemSlot`、時間 brand、座標 brand、設定・統計の
@@ -11,12 +13,13 @@
 `DeltaTimeSecs` と `FixedDurationSecs`、`SimulationTick` と plain `number`、`BlockAxis` と
 `ChunkAxis` は相互変換せず、それぞれの公開 API の境界で constructor または validator を通す。
 `Dimension` は `mc-kernel` が所有し、player、crop、vehicle、save coordinator の公開境界で
-同じ型を使う。`mc-worldgen` は `Chunk` と live chunk の所有者であり、worldgen pin と
-read/edit vocabulary の移行は後続変更に残す。
+同じ型を使う。`mc-worldgen` は `Chunk`、`ChunkStore`、live block state の所有者である。
+`WorldCommitCoordinator` は C4 の world revision と owner state を管理し、C7 の block write を
+`ChunkStore` の copy-on-write transaction と同じ commit に束ねる。
 
-## 0.2 今回の release declaration 差分
+## 0.2 Fixed-step API declarations
 
-R-SI1 の `origin/main` と release declaration の差分は次の 4 ファイルに現れる。
+The fixed-step API appears in these published declaration files:
 
 | declaration | 公開契約の変更 |
 | --- | --- |
@@ -25,7 +28,7 @@ R-SI1 の `origin/main` と release declaration の差分は次の 4 ファイ�
 | `domain/frame-timing.d.ts` | 削除。旧 forwarder は公開しない |
 | `index.d.ts` | fixed-step APIを追加し、root の frame-timing 名は kernel から再輸出 |
 
-宣言差分に含まれる import 表記の変更は実行時 API ではなく、上表の型所有権変更に伴う生成結果である。
+Import spelling changes in these declarations reflect type ownership; they do not add runtime exports.
 
 ### 0.2.1 canonical ItemStack と inventory
 
@@ -40,32 +43,9 @@ crafting、drop、save の境界で stack を生成・比較・分割すると�
 player / container / equipment snapshot の untrusted input は decoder / validator 境界で canonical
 shape を検証し、旧 shape は Invalid 系の結果として拒否する。
 
-plan.md §3.8 は主要な公開APIを「`tick(input, dt)`、各状態サービスの読み書き、チャンクダーティ通知」
-と書いている。本書はそれを、**参照実装の実コードと突き合わせて**具体化したもの。
-パスはすべて `takeokunn/ts-minecraft` リポジトリルート相対。
+## 0. Service composition
 
-> **この公開APIが全下流の依存先（=最重要界面）。APIロックファイルを最初から適用**（plan.md §3.8）
-
-## 0. 参照実装のサービス定義方式
-
-参照実装は `Effect.Service` クラスを使う（`Context.Tag` ではない）。
-
-```
-packages/entity/application/player-service.ts:8-11
-  export class PlayerService extends Effect.Service<PlayerService>()(
-    '@minecraft/application/PlayerService',
-    { effect: Effect.gen(function* () { ... }) }
-  ) {}
-```
-
-**新実装は `Context.Tag` + 明示的な `Layer` を採る**（`application/*.ts` 参照）。理由:
-
-- `Effect.Service` は実装と Tag を 1 つのクラスに束ねるため、テスト用の差し替え実装を作るのに
-  クラス継承かキャストが要る。`Context.Tag` なら `Layer.succeed(Tag, fake)` で済む。
-- **同じサービスを複数インスタンス作れる。** これが plan.md §3.8 の「再入可能な初期化」に効く。
-  参照実装が `reset()` を後付けする羽目になったのは、シングルトンしか作れなかったためである
-  （`packages/entity/application/player-service.ts:15-18` のコメント参照）。
-- Tag の文字列は `@nerima-games/mc-sim/XxxService` に統一する（参照実装は `@minecraft/application/Xxx`）。
+Application services expose `Context.Service` tags and their Layers. Most services use a named class with a fixed API type. `EntityManager` exports the generic `entityManagerTag<S>` and `EntityManagerLayer<S>` because the host owns its behavior payload type; both use the same stable service key.
 
 ## 1. カメラ姿勢 — 最重要
 
@@ -90,10 +70,12 @@ const snapshotAgeSecs: (snapshot: CameraPoseSnapshot, now: MonotonicTimeSecs) =>
 // application/player-service.ts
 type PlayerServiceApi = {
   readonly pose: Effect.Effect<PlayerPose>
+  readonly dimension: Effect.Effect<Dimension>
   readonly look: (deltaYaw: number, deltaPitch: number) => Effect.Effect<PlayerPose>
   readonly moveTo: (feetPosition: Position) => Effect.Effect<void>
+  readonly setDimension: (dimension: Dimension) => Effect.Effect<void>
   readonly cameraPose: Effect.Effect<CameraPoseSnapshot, never, ClockPort>   // 唯一の発行口
-  readonly restore: (pose: PlayerPose) => Effect.Effect<void>
+  readonly restore: (pose: PlayerPose, dimension: Dimension) => Effect.Effect<void>
   readonly reset: Effect.Effect<void>
 }
 ```
@@ -369,7 +351,7 @@ type InventoryServiceApi = {
   ) => Effect.Effect<RemoveAtResult>
   readonly countOf: (item: ItemType) => Effect.Effect<number>
   readonly snapshot: Effect.Effect<Inventory>
-  readonly restore: (inventory: Inventory) => Effect.Effect<number>  // 戻り値 = 入らなかった数。§4-1
+  readonly restore: (inventory: unknown) => Effect.Effect<number, ItemStackFailure | PlayerStorageFailure>  // §4-1
   readonly reset: Effect.Effect<void>
   readonly getSlot: (slotIndex: number) => Effect.Effect<InventoryCarriedSlot>
   readonly getHotbarSlots: Effect.Effect<ReadonlyArray<InventoryCarriedSlot>>
@@ -444,13 +426,15 @@ type HotbarServiceApi = {
 
 ### 4-0-1. `SimulationSave` — セーブされる状態
 
-`domain/save-data.ts` の `SimulationSave` v3 は、セーブを跨ぐ状態を定義する。
-`player.selectedHotbarSlot`（0..8）と `statistics.counters` /
-`statistics.unlocked` を保存し、実績の registry / predicate は持たない。
-player inventory は解決済み canonical `ItemStack`（`item` / `count` / `components`）を wire に
-保持する。`saveSimulation` / `loadSimulation` / `listSimulationSaves` は `mc-save` の保存形式を
-利用する。migration chain は提供しないため、v1 と v2 の envelope、components を持たない旧 stack
-は `SaveDecodeError` で拒否する。v3 への暗黙変換、初期選択 0 や空の統計台帳の補完は行わない。
+`SimulationSave` v3 in `domain/save-data.ts` defines the state persisted across world loads. It
+stores `player.selectedHotbarSlot` (0..8) and `statistics.counters` / `statistics.unlocked`, but
+not the achievement registry or predicates. Player inventory uses canonical resolved `ItemStack`
+values (`item` / `count` / `components`) on the wire. `saveSimulation`, `loadSimulation`, and
+`listSimulationSaves` use the `mc-save` format. V1 and v2 envelopes and legacy stacks without
+components fail with `SaveDecodeError`; loading does not implicitly convert v3 values, add a
+default selected slot, or create an empty statistics ledger. The separate
+`migrateSimulationSaveV3` API passes a legacy monolithic v3 payload to registered slice restore;
+it is not a v1/v2 migration chain.
 container snapshot も components 必須の shape に合わせて version 3 とし、version 2 以下は
 migration せず typed `Invalid` として拒否する。
 
@@ -461,7 +445,12 @@ migration せず typed `Invalid` として拒否する。
 その後に採掘した 1000 ブロックのうち 872 が地面に落ちる。症状は「なぜか常に満杯」だけである。
 スナップショットはバージョン境界を跨いで届き、それはまさにスロット数が変わる瞬間である。
 
-`domain/inventory.ts` の `normaliseInventory` が修復を 1 か所に持つ。
+`restore` accepts `unknown` because this is the inventory migration entry point. It applies
+`domain/inventory.ts` `normaliseInventory` before installing state and can fail with
+`ItemStackFailure` or `PlayerStorageFailure`. `InventorySnapshotSchema` validates the canonical
+snapshot shape; it does not replace normalization at this restore boundary.
+
+`normaliseInventory` is the single repair path.
 
 ```typescript
 type NormaliseOutcome = { readonly inventory: Inventory
@@ -737,11 +726,70 @@ const resetLandingImpact: (state: SimFrameState) => Effect.Effect<void>
 | 体力 / 空腹 / XP | `VitalsService` (`src/application/vitals-service.ts`) | mx-gameplay / mx-ui |
 | 実績 / 統計 | `StatisticsService` (`src/application/statistics-service.ts`) | mx-gameplay / mx-ui |
 | 設定状態 | `SettingsService` (`src/application/settings-service.ts`) | mx-ui / mc-render |
+| C4/C7 world transaction | `WorldCommitCoordinator` (`src/application/world-commit-coordinator.ts`) | mc-compose / gameplay ports |
 | ~~チャンクダーティ通知~~ | — | **mc-worldgen に移った。下記** |
 | ドロップ / 経験値オーブ | mx-gameplay のルール層 | mx-gameplay / mc-render |
-| ~~レシピ~~ | — | **§4.1 で設計済** |
+| レシピ / craft | `domain/recipe-data.ts`, `domain/recipe.ts`, `domain/crafting.ts`, `InventoryService` | mx-ui / mx-gameplay |
 | かまど / チェスト / 装備 | `InventoryService` / `EquipmentService` | mx-ui / mx-gameplay |
+| ホッパー転送 | `HopperService` (`src/application/hopper-service.ts`) | mx-redstone / mx-gameplay |
+| バケツの fluid write | `BucketService` (`src/application/bucket-service.ts`) | mx-gameplay |
+| primed TNT | `TntService` (`src/application/tnt-service.ts`) | mx-gameplay / mc-compose |
 | `GameModule` | `src/stages/registration.ts` の `simModule` | mc-compose |
+
+### C4/C7 world transaction と block read
+
+`WorldCommitCoordinator.commit` は owner candidate と、任意の `WorldWriteBatch` を一つの commit として
+処理する。block write は `ChunkStore` の copy-on-write prepare/publish を使い、publish が失敗した場合は
+owner state、world revision、dimension revision を更新しない。成功時は world revision を一度だけ進め、
+block write がある dimension の revision も一度だけ進める。返す `ReplicatedWorldDelta` は owner の
+`changes` に加え、編集セルごとの `dimension`、`position`、`before`、`after` を `blockChanges` に含める。
+
+`commitFromSnapshot(ownerId, schema, buildRequest)` は coordinator gate を保持したまま owner snapshot を読み、
+その snapshot から commit request を組み立てて commit する。candidate が現在 state に依存する操作は、別々の
+`snapshot` と `commit` の間に更新を挟まずにこの API を使える。
+
+```typescript
+const delta = yield* coordinator.commit({
+  expectedRevision,
+  expectedDimensions: [{ dimension, expectedRevision: expectedDimensionRevision }],
+  changes: [{ ownerId, state: nextOwnerState }],
+  blockWrite: {
+    world,
+    expectedWorldRevision: expectedRevision,
+    dimension,
+    expectedDimensionRevision,
+    edits: [{ position, block }],
+  },
+})
+
+const observed = yield* coordinator.observe(ownerId, ownerSchema, [{ dimension, position }])
+```
+
+`observe` は owner state と要求された block reads を同じ coordinator gate 内で読み、同じ world revision を
+返す。block read は `Block`、`ChunkNotLoaded`、`OutOfWorld` のいずれかである。別途 `ChunkStore.load` や
+`peek` で取得した値は coordinator commit 後に古くなり得るため、必要な呼び手は commit 後に読み直す。
+owner-only commit は dimension revision を変えない。block-only commit は owner change が空の delta を返す。
+
+### Hopper、bucket、TNT の transaction port
+
+`HopperService.transfer` は hopper cell を含む `WorldWriteBatch` を受け取り、container storage、必要な
+player storage、hopper cooldown、block edits を同じ coordinator commit に渡す。`ContainerStorageCommitOptions`
+は `expectedRevision`、任意の `blockWrite` と `additionalChanges` を受け取り、hopper は自身の runtime state を
+`additionalChanges` に渡す。player-to-player 転送、
+dimension 不一致、hopper cell を含まない batch は `InvalidRequest` になる。`advanceCooldown` は hopper
+owner state だけを commit し、revision expectation が stale なら失敗する。
+
+`BucketService.commitUse` は呼び出し側が準備した player storage candidate と fluid-cell edits を同時に commit
+する境界である。空の edits は `NoChanges` を返し、player storage を変更しない。この port は bucket の
+ゲームプレイルールや fluid 探索を実装しない。
+
+`TntService.advance` は通常の fuse 更新を commit する。起爆時は `ExplosionPlan` と一意な `planRevision` を
+`DetonationPlanned` として返し、状態をまだ commit しない。呼び出し側は `{ id, planRevision }` と任意の entity
+owner candidates を `commitDetonation` に渡す。service は coordinator gate 内の現在 snapshot から対象 TNT
+だけを terminal にした state を作り、関連 entity state と破壊 block を AIR にする write を一つの coordinator
+commit に束ねる。plan の revision が古い場合は conflict として commit しない。成功後に同じ explosion effects
+を別経路で再適用しない。block reader が throw した場合は `TntServiceFailure` の
+`block-reader-failed` として返し、world revision と TNT state は変わらない。
 
 ### チャンクダーティ通知は mc-worldgen のものになった
 
@@ -771,16 +819,16 @@ mc-render は plan.md §2.1 に既にある `render → worldgen` エッジで�
 | --- | --- |
 | 公開型 | `pnpm typecheck` で source / test / preview の 3 プロジェクトを型検査する。検査のみで emit はしない |
 | 実行時入口 | `pnpm build` が `dist/index.d.ts` と ESM 実行物を生成し、Node 24 から `dist/index.js` を import する |
-| Effect サービス | `Context.Tag` と `Layer` の組み合わせを、公開 source と型宣言で確認する |
+| Effect service | Verify the public `Context.Service` and `Layer` declarations and their composition |
 | 挙動 | `pnpm test` と `pnpm test:coverage` で純粋な遷移・サービス境界・統合シナリオを検査する |
 | 依存境界 | `package.json` の直接依存、静的 import、TypeScript の型検査で所有パッケージを確認する |
 
 ### 6.1 Effect サービスの公開契約
 
-`PlayerService`、`InventoryService`、`TimeService` などの Effect サービスは、Tag の識別子と
-サービス値の型が一つの契約になる。`Context.Tag` / `Context.GenericTag` と `Layer` を直接公開し、
-呼び出し側が同じ Tag を解決できる形を維持する。サービスの内部実装を変更しても、公開される
-メソッド・戻り値・エラー型を変えない限り配布物の契約は変わらない。
+`PlayerService`, `InventoryService`, `TimeService`, and similar services publish named
+`Context.Service` tags and Layers. `EntityManager` publishes a generic `entityManagerTag<S>` and
+`EntityManagerLayer<S>` using a stable service key because the host chooses its behavior payload
+type. Both forms make the tag identifier and service value type part of the public contract.
 
 ### 6.2 宣言と挙動の役割分担
 
@@ -841,7 +889,7 @@ type EntityManagerApi<S> = {
   readonly reset:       Effect.Effect<void>
 }
 const ENTITY_MANAGER_TAG_KEY = '@nerima-games/mc-sim/EntityManager'
-const entityManagerTag:   <S>() => Context.Tag<EntityManager, EntityManagerApi<S>>
+const entityManagerTag:   <S>() => Context.Service<EntityManager, EntityManagerApi<S>>
 const makeEntityManager:  <S>(initial?, repairBehaviour?) => Effect.Effect<EntityManagerApi<S>>
 const EntityManagerLayer: <S>(initial?, repairBehaviour?) => Layer.Layer<EntityManager>
 ```
@@ -891,11 +939,11 @@ mx-gameplay はキャストもアダプタも無しで `CreeperFuse` を読み�
 `test/entity.test.ts` は無知そのものを固定する: mc-sim が解釈しうるフィールドを 1 つも持たない値が、
 spawn / sweep / snapshot / restore を**参照同一性のまま**通り抜ける。
 
-**Tag が `Context.Tag` クラスではなく関数なのはこのためである。** クラスは自分の Tag に対して
-generic になれない。`Context.GenericTag<EntityManager, EntityManagerApi<S>>(KEY)` は
-クラスが束ねている 2 つを分ける —— **コンテキスト同一性**（`EntityManager`。引数を持たず、
-すべての `R` に現れるのはこちら）と**サービス値型**（引数を持つ）。
-Effect は Tag を文字列キーで解決するので、どの具体化も同じ 1 つのサービスを指す。
+`EntityManager` uses a generic factory instead of a named service class because a class cannot make
+its service key generic. `Context.Service<EntityManager, EntityManagerApi<S>>(KEY)` separates the
+context identity (`EntityManager`, which has no type parameter and appears in every `R`) from the
+service value type (which carries `S`). Effect resolves services by the stable key, so every
+instantiation names the same service.
 
 これは依存パッケージの型をローカルで再宣言することによる形の不一致とは**別物**である。
 ローカルのミラーを許すと、少ないフィールドの Layer が別の Tag を満たし、
@@ -1001,7 +1049,8 @@ plan.md §5.1-3 が参照実装のテストをオラクルとして使う前提�
 `simModule` が型引数を持つかどうかは配線の段の判断であり、公開面の破壊的変更なので、
 計測できるホストができてから採るべきである。
 
-したがってホストは、`simModule.layers` と**同じ `Effect.provide` の中で**明示的に渡す。
+The host includes `simModule.layers` and `EntityManagerLayer` in the same `Layer.merge`, then
+provides the Effect with that combined Layer.
 
 ```typescript
 // 1. 世界を組む —— roster は sim の他のサービスと同じ 1 回の provide の中で建てる
@@ -1054,10 +1103,9 @@ mc-sim と一緒に到着する」と書いているものが `countOfKind` で�
 
 ## 8. 爆発計画
 
-**mc-physics への委譲に伴う破壊的変更。** `domain/explosion.ts` /
-`domain/primed-tnt.ts` は独自実装（xorshift ベースの破壊ハッシュ）を廃止し、
-`@nerima-games/mc-physics`（= mc-kernel 実装）への named re-export に置き換わった。
-本節は**この新 API を現状として**記述する。旧実装からの非互換点:
+**爆発計画 API の破壊的変更。** `domain/explosion.ts` が爆発を計画し、
+`domain/primed-tnt.ts` が fuse の進行と爆発計画を組み合わせる。両 API は不正な値を成功値へ
+置き換えず、型付き検証失敗を返す。本節はこの API を記述する。旧 API からの非互換点は次のとおりである。
 
 - **同一 seed の破壊パターンが変わる**(旧 xorshift ハッシュ → kernel の `Math.sin` ベースの
   ハッシュ)。保存済み seed をリプレイして同一の破壊結果を期待するホスト・fixture は影響を受ける。
@@ -1086,7 +1134,35 @@ type ExplosionLimits = {
 
 declare const DEFAULT_EXPLOSION_LIMITS: ExplosionLimits
 
-declare const planExplosion: (request: ExplosionRequest) => ExplosionPlan
+type ExplosionEntity = {
+  readonly id: EntityId
+  readonly feetPosition: Position
+}
+
+type ExplosionRequest = {
+  readonly center: Position
+  readonly radius: number
+  readonly seed: number
+  readonly blocks: ExplosionBlockReader
+  readonly entities: ReadonlyArray<ExplosionEntity>
+  readonly limits?: Partial<ExplosionLimits>
+}
+
+type ExplosionValidationFailure = Readonly<{
+  readonly _tag: 'ExplosionValidationFailure'
+  readonly path: string
+  readonly reason: string
+}>
+
+declare const MAX_EXPLOSION_RADIUS = 64
+
+declare const validateExplosionRequest: (
+  request: ExplosionRequest,
+) => Result.Result<void, ExplosionValidationFailure>
+
+declare const planExplosion: (
+  request: ExplosionRequest,
+) => Result.Result<ExplosionPlan, ExplosionValidationFailure>
 
 type ExplosionCommit = (mutation: ExplosionMutation) => void
 
@@ -1096,9 +1172,14 @@ declare const applyExplosionPlan: (
 ) => void
 ```
 
-`planExplosion` は純粋関数である。同じ seed・snapshot・入力には同じ結果を返し、距離減衰、
-ブロック耐性、遮蔽を計算する。reader が `undefined` を返すセルは未ロード境界として扱い、
-その先へ ray を進めず、破壊対象にも含めない。
+`validateExplosionRequest`と`planExplosion`は不正な入力を`Failure`として返す。中心座標とseedは有限値、
+radiusは0以上`MAX_EXPLOSION_RADIUS`以下でなければならない。各中心座標の絶対値とradiusの和も`Number.MAX_SAFE_INTEGER`を
+超えてはならない。`planExplosion`は有効な入力に対して純粋であり、
+同じseed・snapshot・入力には同じ結果を返す。距離減衰、ブロック耐性、遮蔽を計算する。readerが
+`undefined`を返すセルは未ロード境界として扱う。その先へrayを進めず、破壊対象にも含めない。
+
+エンティティへのダメージはkernelの`DamageAmountSchema`で検査し、有限で正かつ`Number.MAX_SAFE_INTEGER`以下の
+値だけを計画に含める。`planExplosion`が`Failure`を返した場合、呼び出し側は`applyExplosionPlan`を呼ばない。
 
 計算量は `maxVisitedBlocks`・`maxRaySteps`・`maxAffectedEntities` で制限できる。
 上限に達した計画は `truncated: true` を返すため、ホストは適用・延期・破棄を明示的に選べる。
@@ -1108,13 +1189,13 @@ declare const applyExplosionPlan: (
 原子性とロールバックは具体的な保存先を所有するホストの責務であり、host は自分の
 `Ref.modify` や Effect の中から `commit` を直接呼ぶ（`Effect` の `E` / `R` はもう関与しない）。
 
-**`commit` は throw しないこと。** 型付き失敗チャネル（旧 `Effect` の `E`）は無くなったため、
-`commit` の内部で失敗しうる処理を行う呼び出し側は、その呼び出しを自前で `try`/`catch` すること。
+**`commit` は throw しない同期関数でなければならない。** この API は失敗を型付き結果として返さず、
+部分適用を取り消す機構も持たない。爆発 mutation を不可分に適用できるホストの更新境界だけを渡す。
 
 ### 8.1 Primed TNT
 
-`domain/primed-tnt.ts` も同じく `@nerima-games/mc-physics`（= mc-kernel）への re-export である。
-host 所有の fuse snapshot を 1 要求あたり最大 `MAX_TNT_FUSE_ADVANCE_SECS`（10）秒だけ進める。
+`domain/primed-tnt.ts` は host 所有の fuse snapshot を 1 要求あたり最大
+`MAX_TNT_FUSE_ADVANCE_SECS`（10）秒だけ進め、起爆時に `domain/explosion.ts` の計画を返す。
 
 ```typescript
 type PrimedTntState =
@@ -1125,9 +1206,27 @@ declare const DEFAULT_TNT_FUSE_SECS = 4
 
 declare const MAX_TNT_FUSE_ADVANCE_SECS = 10
 
-declare const primeTnt: (fuseSecs?: number) => PrimedTntState
+type PrimedTntRequest = Omit<ExplosionRequest, 'limits'> & {
+  readonly state: PrimedTntState
+  readonly deltaTimeSecs: number
+  readonly limits?: Partial<ExplosionLimits>
+}
 
-declare const planPrimedTnt: (request: PrimedTntRequest) => PrimedTntPlan
+type PrimedTntValidationFailure = Readonly<{
+  readonly _tag: 'PrimedTntValidationFailure'
+  readonly path: string
+  readonly reason: string
+}>
+
+type PrimedTntFailure = PrimedTntValidationFailure | ExplosionValidationFailure
+
+declare const primeTnt: (
+  fuseSecs?: number,
+) => Result.Result<PrimedTntState, PrimedTntValidationFailure>
+
+declare const planPrimedTnt: (
+  request: PrimedTntRequest,
+) => Result.Result<PrimedTntPlan, PrimedTntFailure>
 
 type PrimedTntCommit = (mutation: PrimedTntMutation) => void
 
@@ -1137,12 +1236,13 @@ declare const applyPrimedTntPlan: (
 ) => void
 ```
 
-`primeTnt` の `fuseSecs` は省略可能で、省略時は `DEFAULT_TNT_FUSE_SECS`（4 秒）。非有限な値は
-0 に丸める（`Number.isFinite` で弾き、負値は 0 にクランプ）。
+`primeTnt`の`fuseSecs`は省略可能で、省略時は`DEFAULT_TNT_FUSE_SECS`（4秒）。負数または非有限値を
+渡すと`PrimedTntValidationFailure`を返す。
 
-`planPrimedTnt` は fuse が尽きた呼び出しでだけ既存の `planExplosion` を呼び、終端状態
-（`kind: 'detonated'`）への再入力から二度目の爆発を生成しない。上限を超えた時間は
-`deferredSecs` として返す。
+`planPrimedTnt`はfuseの残り時間とdeltaが有限かつ非負であることを検査する。中心座標、radius、
+seedも進行前に検査する。いずれかが不正なら`PrimedTntFailure`を返し、呼び出し側は状態をcommitしない。
+fuseが尽きたときだけ`planExplosion`を呼び、終端状態（`kind: 'detonated'`）への再入力では二度目の爆発を
+生成しない。上限を超えた時間は`deferredSecs`として返す。
 
 `applyPrimedTntPlan` は `expected` snapshot、次の fuse 状態、任意の爆発 mutation を
 一つの `PrimedTntMutation` に束ね、`commit` を **1 回だけ、同期的に**呼ぶ。`explosion`
@@ -1150,8 +1250,9 @@ declare const applyPrimedTntPlan: (
 host は同じ更新単位（`Ref.modify` など）の中で `expected` を比較してから、
 TNT entity の更新または除去と block/entity effects を一括適用する。
 
-**`commit` は throw しないこと。** §8 と同じ理由で型付き失敗チャネルは無い。失敗しうる処理は
-呼び出し側が `try`/`catch` する。
+この低レベル関数を直接使う host は、§8 と同じく `commit` を throw しない同期関数にし、TNT state と
+爆発 mutation を同じ不可分の更新境界で適用できる場合にだけ呼ぶ。シミュレーション coordinator と統合する場合は、上記の
+`TntService.commitDetonation` が worldgen block state、owner revisions、entity owner changes を一緒に commit する。
 
 ## 9. Projectile
 
@@ -1227,3 +1328,45 @@ declare const raycastArrowBlock: (
   isBlocking: IsArrowBlocker,
 ) => Option.Option<ArrowBlockImpact>
 ```
+
+## 10. Effect result Schemas
+
+The root barrel exports Effect Schemas for public operation results and their declared error unions. Property tests decode both channels with these Schemas. Newly exported result Schemas are listed by owning module. `TimeStateSchema` validates time snapshots; `Time.advance` returns `void` and has no result value to decode. Names ending in `ErrorSchema`, `FailureSchema`, or `ValidationErrorSchema` describe error channels, while success and outcome Schemas describe successful values.
+
+| Module | Exported Schemas |
+| --- | --- |
+| `application/autosave` | `AutoSaveScheduleSchema`, `AutoSaveDaemonSchema`, `InvalidAutoSaveIntervalSchema` |
+| `application/bucket-service` | `BucketServiceErrorSchema`, `BucketUseOutcomeSchema` |
+| `application/core` | `CoreTickRunTickSuccessSchema`, `makeCoreTickErrorSchema` |
+| `application/crop-service` | `CropServiceAdvanceByBoneMealSuccessSchema`, `CropServiceAdvanceSuccessSchema`, `CropServiceCropAtSuccessSchema`, `CropServiceMatureYieldsErrorSchema`, `CropServiceMatureYieldsSuccessSchema`, `CropServiceNoFailureSchema`, `CropServicePlantSuccessSchema`, `CropServiceRemoveSuccessSchema`, `CropServiceResetSuccessSchema`, `CropServiceRestoreSuccessSchema`, `CropServiceSnapshotSuccessSchema`, `CropServiceValidationErrorSchema` |
+| `application/equipment-service` | `EquipmentServiceDamageSuccessSchema`, `EquipmentServiceEquipSuccessSchema`, `EquipmentServiceNoFailureSchema`, `EquipmentServiceResetSuccessSchema`, `EquipmentServiceRestoreSuccessSchema`, `EquipmentServiceSnapshotSuccessSchema`, `EquipmentServiceSwapSuccessSchema`, `EquipmentServiceUnequipSuccessSchema`, `EquipmentServiceValidationErrorSchema` |
+| `application/fishing-service` | `FishingServiceBiteSuccessSchema`, `FishingServiceCastSuccessSchema`, `FishingServiceErrorSchema`, `FishingServiceReelSuccessSchema`, `FishingServiceSnapshotSuccessSchema` |
+| `application/hopper-service` | `HopperCooldownOutcomeSchema`, `HopperCooldownTicksSchema`, `HopperServiceErrorSchema`, `HopperServiceSnapshotSchema`, `HopperTransferOutcomeSchema` |
+| `application/intent-queue` | `IntentQueueEnqueueFailureSchema` |
+| `application/player-service` | `PlayerServiceLookErrorSchema`, `PlayerServiceLookSuccessSchema` |
+| `application/projectile-service` | `EnderPearlImpactSchema`, `ProjectileLaunchOutcomeSchema`, `ProjectileServiceErrorSchema`, `ProjectileServiceFailureSchema`, `ProjectileServiceSnapshotErrorSchema`, `ProjectileServiceSnapshotSuccessSchema`, `ProjectileStepOutcomeSchema` |
+| `application/replicated-state` | `ReplicatedBlockChangeSchema`, `WorldBlockPositionSchema`, `WorldBlockReadSchema`, `WorldReadSnapshotSchema`, `replicatedWorldDeltaSchema` |
+| `application/save-coordinator` | `SaveCoordinatorRequestSaveSuccessSchema`, `SaveSnapshotConsistencyErrorSchema`, `saveCoordinatorRequestSaveErrorSchema` |
+| `application/save-service` | `LoadSimulationSuccessSchema`, `SaveSimulationSuccessSchema`, `SimulationSaveErrorSchema` |
+| `application/save-v3-migration` | `SimulationSaveV3MigrationSuccessSchema`, `simulationSaveV3MigrationErrorSchema` |
+| `application/statistics-service` | `StatisticsServiceRecordErrorSchema`, `StatisticsServiceRecordSuccessSchema` |
+| `application/tnt-service` | `TntAdvanceOutcomeSchema`, `TntDetonationCommitOutcomeSchema`, `TntPrimeOutcomeSchema`, `TntServiceErrorSchema`, `TntServiceFailureSchema`, `TntServiceSnapshotErrorSchema`, `TntServiceSnapshotSuccessSchema` |
+| `application/vehicle-service` | `VehicleOperationErrorSchema`, `VehicleServiceDespawnSuccessSchema`, `VehicleServiceDismountSuccessSchema`, `VehicleServiceMountSuccessSchema`, `VehicleServiceNoFailureSchema`, `VehicleServiceOperationErrorSchema`, `VehicleServiceRestoreSuccessSchema`, `VehicleServiceSnapshotSuccessSchema`, `VehicleServiceSpawnSuccessSchema`, `VehicleServiceUpdateStateSuccessSchema`, `VehicleServiceUpdateTransformSuccessSchema`, `VehicleServiceUpdateVelocitySuccessSchema`, `VehicleServiceValidationErrorSchema`, `VehicleServiceVehiclesSuccessSchema`, `VehicleServiceVoidSuccessSchema` |
+| `application/vitals-service` | `DamageOutcomeSchema`, `VitalsServiceNoErrorSchema`, `VitalsServiceVoidSchema` |
+| `application/world-commit-coordinator` | `ChunkStoreRevisionSchema`, `WorldCommitCoordinatorErrorSchema`, `WorldCommitCoordinatorSnapshotErrorSchema`, `WorldCommitResultSchema`, `WorldWriteStaleActualRevisionSchema` |
+| `domain/crop` | `CropLocationSchema`, `CropSnapshotSchema`, `CropStateSchema`, `CropTypeSchema`, `CropValidationErrorSchema` |
+| `domain/entity-types` | `EntityHealthPointsSchema`, `EntityRosterRepairCountSchema`, `EntityRosterSchema`, `EntitySchema`, `EntitySerialExhaustedSchema`, `EntitySerialSchema`, `RosterRepairSchema` |
+| `domain/equipment` | `DamageEquipmentResultSchema`, `DurabilitySchema`, `EquipmentItemFailureSchema`, `EquipmentItemSchema`, `EquipmentSchema`, `EquipmentSlotsSchema`, `EquipmentValidationErrorSchema` |
+| `domain/fishing` | `FishingFailureSchema`, `FishingInvalidLootRollSchema`, `FishingInvalidStateSchema` |
+| `domain/fixed-step` | `FixedStepAccumulatorSchema`, `FixedStepAdvanceSchema`, `FixedStepFailureSchema` |
+| `domain/statistics` | `StatisticsRecordFailureSchema`, `StatisticsSchema` |
+| `domain/time-of-day` | `TimeStateSchema` (existing public snapshot Schema) |
+| `domain/vehicle` | `VehiclePositionSchema`, `VehicleSchema`, `VehicleSnapshotSchema`, `VehicleValidationErrorSchema`, `VehicleVelocitySchema` |
+| `domain/vitals` | `FoodTickSignalSchema`, `VitalsSchema`, `VitalsViewSchema` |
+| `domain/weather` | `WeatherSchema`, `WeatherStateSchema`, `WeatherValidationFailureSchema` |
+| `domain/wither` | `WitherDamageResultSchema`, `WitherStateSchema`, `WitherStepFailureSchema`, `WitherStepSchema` |
+| `stages/registration` | `SimPhysicsConfigErrorSchema`, `SimPhysicsStagesSchema` |
+
+Schemas are strict decoders for the represented value. Constructors and snapshot-ingress functions that intentionally migrate older persisted shapes remain separate normalization paths; their retained entry points are listed in `docs/schema-decoder-audit.md`.
+
+Function-valued service objects do not have a useful serializable Schema. Their property tests exercise operations and assert the resulting state, brands, ownership, ordering, and count invariants directly.

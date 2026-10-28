@@ -1,26 +1,33 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Effect } from 'effect'
+import { Effect, Result } from 'effect'
 import {
   changed,
   countOfKind,
+  EntityCount,
   DESPAWNED,
   despawnEntity,
   emptyRoster,
   ENTITY_ID_PREFIX,
+  EntityHealthPoints,
   EntityId,
   EntityKind,
+  EntitySerial,
   findEntity,
   isEntityId,
   isEntityKind,
   mintEntityId,
-  normaliseRoster,
+  normaliseRoster as normaliseRosterResult,
   serialOfEntityId,
-  spawnEntity,
+  spawnEntity as spawnEntityResult,
   sweepRoster,
   UNCHANGED,
+  type BehaviourRepair,
   type Entity,
   type EntityRoster,
   type EntityStep,
+  type NormaliseRosterOutcome,
+  type SpawnOutcome,
+  type SpawnRequest,
 } from '../src/domain/entity'
 import { PositionAxis, position as coordinatePosition } from '@nerima-games/mc-kernel'
 
@@ -49,7 +56,7 @@ const position = (x: number, y: number, z: number) =>
 const creeper = (x: number, fuse: Fuse = DORMANT) => ({
   kind: EntityKind('creeper'),
   feetPosition: position(x, 64, 0),
-  healthPoints: 20,
+  healthPoints: EntityHealthPoints(20),
   behaviour: fuse,
 })
 
@@ -64,6 +71,18 @@ const creeper = (x: number, fuse: Fuse = DORMANT) => ({
  * `EntityRoster<Fuse>` at the one boundary that has to survive them.
  */
 const savedRoster = (value: unknown): EntityRoster<Fuse> => value as EntityRoster<Fuse>
+
+const spawnEntity = <S>(roster: EntityRoster<S>, request: SpawnRequest<S>): SpawnOutcome<S> => {
+  const outcome = spawnEntityResult(roster, request)
+  if (Result.isFailure(outcome)) throw new Error('test fixture unexpectedly exhausted entity serials')
+  return outcome.success
+}
+
+const normaliseRoster = <S>(roster: EntityRoster<S>, repair?: BehaviourRepair<S>): NormaliseRosterOutcome<S> => {
+  const outcome = normaliseRosterResult(roster, repair)
+  if (Result.isFailure(outcome)) throw new Error('test fixture unexpectedly exhausted entity serials')
+  return outcome.success
+}
 
 const idsOf = <S>(roster: EntityRoster<S>): ReadonlyArray<string> => roster.entities.map((entity) => entity.id)
 
@@ -106,35 +125,57 @@ describe('EntityId', () => {
   it.effect('the minted spelling is the prefix and the serial, literally', () =>
     Effect.sync(() => {
       expect(ENTITY_ID_PREFIX).toBe('e:')
-      expect(mintEntityId(0)).toBe('e:0')
-      expect(mintEntityId(41)).toBe('e:41')
+      expect(mintEntityId(EntitySerial(0))).toBe('e:0')
+      expect(mintEntityId(EntitySerial(41))).toBe('e:41')
     }),
   )
 
   it.effect('reads back the serial it minted, and nothing else', () =>
     Effect.sync(() => {
-      expect(serialOfEntityId('e:0')).toBe(0)
-      expect(serialOfEntityId('e:41')).toBe(41)
+      expect(serialOfEntityId(EntityId('e:0'))).toBe(0)
+      expect(serialOfEntityId(EntityId('e:41'))).toBe(41)
 
       // A foreign build's id is not this module's to interpret.
-      expect(serialOfEntityId('creeper-7')).toBeUndefined()
-      expect(serialOfEntityId('e:')).toBeUndefined()
+      expect(serialOfEntityId(EntityId('creeper-7'))).toBeUndefined()
+      expect(serialOfEntityId(EntityId('e:'))).toBeUndefined()
 
       // `Number('')` is 0 and `Number(' 1')` is 1, so the digits are tested
       // before the conversion — the discipline `normaliseTimeState` states for
       // `null / 60`: decide on the value before arithmetic makes it look
       // deliberate.
-      expect(serialOfEntityId('e: 1')).toBeUndefined()
-      expect(serialOfEntityId('e:-1')).toBeUndefined()
-      expect(serialOfEntityId('e:1.5')).toBeUndefined()
-      expect(serialOfEntityId('e:1e3')).toBeUndefined()
-      expect(serialOfEntityId('e:NaN')).toBeUndefined()
-      expect(serialOfEntityId('e:99999999999999999999')).toBeUndefined()
+      expect(serialOfEntityId(EntityId('e: 1'))).toBeUndefined()
+      expect(serialOfEntityId(EntityId('e:-1'))).toBeUndefined()
+      expect(serialOfEntityId(EntityId('e:1.5'))).toBeUndefined()
+      expect(serialOfEntityId(EntityId('e:1e3'))).toBeUndefined()
+      expect(serialOfEntityId(EntityId('e:NaN'))).toBeUndefined()
+      expect(serialOfEntityId(EntityId('e:99999999999999999999'))).toBeUndefined()
+    }),
+  )
+})
+
+describe('EntityCount', () => {
+  it.effect('returns validation failures for negative and fractional counts', () =>
+    Effect.sync(() => {
+      expect(Result.isFailure(EntityCount.result(-1))).toBe(true)
+      expect(Result.isFailure(EntityCount.result(1.5))).toBe(true)
     }),
   )
 })
 
 describe('spawnEntity / despawnEntity', () => {
+  it.effect('returns a typed failure instead of reusing a serial at exhaustion', () =>
+    Effect.sync(() => {
+      const lastSerial = EntitySerial(Number.MAX_SAFE_INTEGER)
+      const roster: EntityRoster<Fuse> = {
+        entities: [],
+        nextSerial: lastSerial,
+      }
+
+      const outcome = spawnEntityResult(roster, creeper(1))
+
+      expect(outcome).toStrictEqual(Result.fail({ _tag: 'EntitySerialExhausted' }))
+    }),
+  )
   it.effect('mints ids in order and advances the counter', () =>
     Effect.sync(() => {
       const one = spawnEntity(emptyRoster<Fuse>(), creeper(0))
@@ -144,6 +185,16 @@ describe('spawnEntity / despawnEntity', () => {
       expect(two.entity.id).toBe('e:1')
       expect(two.roster.nextSerial).toBe(2)
       expect(idsOf(two.roster)).toStrictEqual(['e:0', 'e:1'])
+    }),
+  )
+
+  it.effect('skips a serial already present when a restored counter lags behind the roster', () =>
+    Effect.sync(() => {
+      const first = spawnEntity(emptyRoster<Fuse>(), creeper(0))
+      const staleCounter = { ...first.roster, nextSerial: EntitySerial(0) }
+      const second = spawnEntity(staleCounter, creeper(1))
+
+      expect(second.entity.id).toBe('e:1')
     }),
   )
 
@@ -186,6 +237,22 @@ describe('spawnEntity / despawnEntity', () => {
     }),
   )
 
+  it.effect('normalisation reports serial exhaustion rather than wrapping a duplicate id to a stale serial', () =>
+    Effect.sync(() => {
+      const lastId = mintEntityId(EntitySerial(Number.MAX_SAFE_INTEGER))
+      const outcome = normaliseRosterResult(savedRoster({
+        entities: [
+          { ...creeper(0), id: lastId },
+          { ...creeper(1), id: lastId },
+          { ...creeper(2), id: lastId },
+        ],
+        nextSerial: Number.MAX_SAFE_INTEGER,
+      }))
+
+      expect(outcome).toStrictEqual(Result.fail({ _tag: 'EntitySerialExhausted' }))
+    }),
+  )
+
   it.effect('repairs a health or a position that has no magnitude, at the spawn boundary too', () =>
     Effect.sync(() => {
       // mx-gameplay's preview finding F5 is a bare `NaN` reaching `applyDamage`,
@@ -199,7 +266,7 @@ describe('spawnEntity / despawnEntity', () => {
       const spawned = spawnEntity(emptyRoster<Fuse>(), {
         kind: EntityKind('creeper'),
         feetPosition,
-        healthPoints: Number.NaN,
+        healthPoints: Number.NaN as EntityHealthPoints,
         behaviour: DORMANT,
       })
 
@@ -274,7 +341,7 @@ describe('sweepRoster', () => {
   it.effect('a rule cannot change an id or a kind, because a transition does not carry one', () =>
     Effect.sync(() => {
       const outcome = sweepRoster<Fuse, never>(threeCreepers, (entity) => ({
-        transition: changed({ feetPosition: position(9, 9, 9), healthPoints: 1, behaviour: entity.behaviour }),
+        transition: changed({ feetPosition: position(9, 9, 9), healthPoints: EntityHealthPoints(1), behaviour: entity.behaviour }),
         emit: undefined,
       }))
 
@@ -313,7 +380,7 @@ describe('sweepRoster', () => {
       // enters through, and `normaliseTimeState`'s history is that guarding only
       // the save path leaves the sibling entrance open (docs/testing.md §3.0.1).
       const outcome = sweepRoster<Fuse, never>(threeCreepers, (entity) => ({
-        transition: changed({ ...entity, healthPoints: Number.NaN }),
+        transition: changed({ ...entity, healthPoints: Number.NaN as EntityHealthPoints }),
         emit: undefined,
       }))
 
@@ -475,6 +542,16 @@ describe('normaliseRoster', () => {
       expect(
         normaliseRoster(savedRoster({ entities: [{ ...creeper(0), id: 'e:41' }], nextSerial: 0 })).roster.nextSerial,
       ).toBe(42)
+
+      const lastSerial = EntitySerial(Number.MAX_SAFE_INTEGER)
+      expect(
+        normaliseRoster(
+          savedRoster({
+            entities: [{ ...creeper(0), id: mintEntityId(lastSerial) }],
+            nextSerial: 0,
+          }),
+        ).roster.nextSerial,
+      ).toBe(Number.MAX_SAFE_INTEGER)
 
       // A saved counter AHEAD of the ids is honoured: serials 0..40 may belong to
       // mobs this save despawned, and reissuing one would name a mob a renderer

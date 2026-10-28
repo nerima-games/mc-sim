@@ -1,7 +1,20 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Effect } from 'effect'
-import { DeltaTimeSecs } from '@nerima-games/mc-kernel'
+import { Effect, Result } from 'effect'
+import { DeltaTimeSecs, FoodNutrition, foodComponentOf } from '@nerima-games/mc-kernel'
 import {
+  DamageAmount,
+  DamageCause,
+  ExperienceAmount,
+  ExperienceCost,
+  ExperienceDelta,
+  ExperienceLevel,
+  ExperienceProgress,
+  ExhaustionAmount,
+  FoodTimerSecs,
+  HealthAmount,
+  HungerPoints,
+  SaturationModifier,
+  TotalExperience,
   addExhaustion,
   addExperience,
   advanceFoodTimer,
@@ -23,9 +36,38 @@ import {
   type Vitals,
 } from '../src/domain/vitals'
 
-const withVitals = (patch: Partial<Vitals>): Vitals => ({ ...SPAWN_VITALS, ...patch })
+const withVitals = (patch: Partial<Record<keyof Vitals, unknown>>): Vitals =>
+  ({ ...SPAWN_VITALS, ...patch }) as Vitals
 
 const dt = (seconds: number): DeltaTimeSecs => DeltaTimeSecs(seconds)
+const damage = (amount: number, cause: string) => ({ amount: DamageAmount(amount), cause: DamageCause(cause) })
+const invalidDamage = (amount: number, cause: string) => ({ amount: amount as DamageAmount, cause: DamageCause(cause) })
+const testLevel = (value: number): ExperienceLevel =>
+  Number.isSafeInteger(value) && value >= 0 ? ExperienceLevel(value) : value as ExperienceLevel
+const testTotalExperience = (value: number): TotalExperience =>
+  Number.isFinite(value) && value >= 0 ? TotalExperience(value) : value as TotalExperience
+
+describe('vitals brand constructors', () => {
+  it.effect('reports invalid scalar inputs through Result', () =>
+    Effect.sync(() => {
+      expect(Result.isFailure(DamageAmount.result(0))).toBe(true)
+      expect(Result.isFailure(HealthAmount.result(0))).toBe(true)
+      expect(Result.isSuccess(ExperienceAmount.result(1))).toBe(true)
+      expect(Result.isFailure(ExperienceAmount.result(0))).toBe(true)
+      expect(Result.isFailure(ExperienceAmount.result(Number.NaN))).toBe(true)
+      expect(Result.isFailure(ExperienceDelta.result(Number.POSITIVE_INFINITY))).toBe(true)
+      expect(Result.isFailure(ExperienceLevel.result(-1))).toBe(true)
+      expect(Result.isFailure(DamageCause.result(null as never))).toBe(true)
+      expect(Result.isFailure(HungerPoints.result(-1))).toBe(true)
+      expect(Result.isFailure(ExhaustionAmount.result(Number.NaN))).toBe(true)
+      expect(Result.isFailure(FoodTimerSecs.result(Number.POSITIVE_INFINITY))).toBe(true)
+      expect(Result.isFailure(TotalExperience.result(-1))).toBe(true)
+      expect(Result.isFailure(ExperienceCost.result(0))).toBe(true)
+      expect(Result.isFailure(ExperienceProgress.result(1.1))).toBe(true)
+      expect(Result.isFailure(SaturationModifier.result(-1))).toBe(true)
+    }),
+  )
+})
 
 /**
  * THE regression test for this module's reason to exist.
@@ -42,14 +84,14 @@ const dt = (seconds: number): DeltaTimeSecs => DeltaTimeSecs(seconds)
 describe('REGRESSION: a NaN blow must not make a player immortal', () => {
   it.effect('NaN damage leaves the health it found, and the player can still be killed', () =>
     Effect.sync(() => {
-      const struck = applyDamage(SPAWN_VITALS, { amount: Number.NaN, cause: 'explosion' })
+      const struck = applyDamage(SPAWN_VITALS, invalidDamage(Number.NaN, 'explosion'))
 
       expect(struck.healthPoints).toBe(20)
       expect(struck.lastDamageCause).toBeUndefined()
       expect(isDead(struck)).toBe(false)
 
       // The point of the test: the state is still killable afterwards.
-      const killed = applyDamage(struck, { amount: 40, cause: 'lava' })
+      const killed = applyDamage(struck, damage(40, 'lava'))
       expect(killed.healthPoints).toBe(0)
       expect(isDead(killed)).toBe(true)
     }),
@@ -70,7 +112,7 @@ describe('REGRESSION: a NaN blow must not make a player immortal', () => {
 
   it.effect('an INFINITE blow still kills — an infinity has a direction, a NaN does not', () =>
     Effect.sync(() => {
-      const killed = applyDamage(SPAWN_VITALS, { amount: Number.POSITIVE_INFINITY, cause: 'void' })
+      const killed = applyDamage(SPAWN_VITALS, invalidDamage(Number.POSITIVE_INFINITY, 'void'))
 
       expect(killed.healthPoints).toBe(0)
       expect(killed.lastDamageCause).toBe('void')
@@ -79,13 +121,13 @@ describe('REGRESSION: a NaN blow must not make a player immortal', () => {
 
   it.effect('a NaN exhaustion charge does not move the hunger bar', () =>
     Effect.sync(() => {
-      expect(addExhaustion(SPAWN_VITALS, Number.NaN)).toBe(SPAWN_VITALS)
+      expect(addExhaustion(SPAWN_VITALS, Number.NaN as ExhaustionAmount)).toBe(SPAWN_VITALS)
     }),
   )
 
   it.effect('a NaN experience award does not move the level', () =>
     Effect.sync(() => {
-      const awarded = addExperience(withVitals({ totalExperience: 100 }), Number.NaN)
+      const awarded = addExperience(withVitals({ totalExperience: 100 }), Number.NaN as ExperienceDelta)
 
       expect(awarded.totalExperience).toBe(100)
       expect(experienceLevel(awarded)).toBe(experienceLevel(withVitals({ totalExperience: 100 })))
@@ -96,11 +138,11 @@ describe('REGRESSION: a NaN blow must not make a player immortal', () => {
 describe('damage and the cause it carries', () => {
   it.effect('the cause is recorded only on the killing blow', () =>
     Effect.sync(() => {
-      const hurt = applyDamage(SPAWN_VITALS, { amount: 5, cause: 'fall' })
+      const hurt = applyDamage(SPAWN_VITALS, damage(5, 'fall'))
       expect(hurt.healthPoints).toBe(15)
       expect(hurt.lastDamageCause).toBeUndefined()
 
-      const killed = applyDamage(hurt, { amount: 15, cause: 'lava' })
+      const killed = applyDamage(hurt, damage(15, 'lava'))
       expect(killed.healthPoints).toBe(0)
       expect(killed.lastDamageCause).toBe('lava')
     }),
@@ -108,8 +150,8 @@ describe('damage and the cause it carries', () => {
 
   it.effect('a corpse struck again keeps the cause that killed it', () =>
     Effect.sync(() => {
-      const killed = applyDamage(SPAWN_VITALS, { amount: 20, cause: 'fall' })
-      const struckAgain = applyDamage(killed, { amount: 100, cause: 'explosion' })
+      const killed = applyDamage(SPAWN_VITALS, damage(20, 'fall'))
+      const struckAgain = applyDamage(killed, damage(100, 'explosion'))
 
       expect(struckAgain.lastDamageCause).toBe('fall')
       expect(struckAgain).toBe(killed)
@@ -121,7 +163,7 @@ describe('damage and the cause it carries', () => {
       // The point of `DamageCause = string`. mx-gameplay owns the roster of
       // eleven; mc-sim must carry whatever it is handed, including a member
       // added there tomorrow, without a change here.
-      const killed = applyDamage(SPAWN_VITALS, { amount: 20, cause: 'sculk-shrieker' })
+      const killed = applyDamage(SPAWN_VITALS, damage(20, 'sculk-shrieker'))
 
       expect(killed.lastDamageCause).toBe('sculk-shrieker')
     }),
@@ -129,20 +171,20 @@ describe('damage and the cause it carries', () => {
 
   it.effect('negative damage does not heal — the healing path is the healing path', () =>
     Effect.sync(() => {
-      const hurt = applyDamage(SPAWN_VITALS, { amount: 5, cause: 'fall' })
+      const hurt = applyDamage(SPAWN_VITALS, damage(5, 'fall'))
 
-      expect(applyDamage(hurt, { amount: -100, cause: 'fall' })).toBe(hurt)
+      expect(applyDamage(hurt, invalidDamage(-100, 'fall'))).toBe(hurt)
     }),
   )
 
   it.effect('healing stops at the maximum and never revives the dead', () =>
     Effect.sync(() => {
-      const hurt = applyDamage(SPAWN_VITALS, { amount: 12, cause: 'fall' })
-      expect(heal(hurt, 100).healthPoints).toBe(20)
+      const hurt = applyDamage(SPAWN_VITALS, damage(12, 'fall'))
+      expect(heal(hurt, HealthAmount(100)).healthPoints).toBe(20)
 
-      const killed = applyDamage(SPAWN_VITALS, { amount: 20, cause: 'fall' })
-      expect(heal(killed, 10)).toBe(killed)
-      expect(isDead(heal(killed, 10))).toBe(true)
+      const killed = applyDamage(SPAWN_VITALS, damage(20, 'fall'))
+      expect(heal(killed, HealthAmount(10))).toBe(killed)
+      expect(isDead(heal(killed, HealthAmount(10)))).toBe(true)
     }),
   )
 })
@@ -152,7 +194,7 @@ describe('hunger: saturation, exhaustion and the cascade', () => {
     Effect.sync(() => {
       // EXHAUSTION_PER_POINT is 4 (hunger-service.config.ts:11). Asserted as a
       // literal per docs/testing.md §4.6.
-      const worn = addExhaustion(SPAWN_VITALS, 4)
+      const worn = addExhaustion(SPAWN_VITALS, ExhaustionAmount(4))
 
       expect(worn.saturation).toBe(4)
       expect(worn.hungerPoints).toBe(20)
@@ -164,18 +206,18 @@ describe('hunger: saturation, exhaustion and the cascade', () => {
     Effect.sync(() => {
       // Spawn saturation is 5 (hunger-service.config.ts:7), so 5 * 4 = 20
       // exhaustion empties the reserve exactly, and the next 4 takes a shank.
-      const drained = addExhaustion(SPAWN_VITALS, 20)
+      const drained = addExhaustion(SPAWN_VITALS, ExhaustionAmount(20))
       expect(drained.saturation).toBe(0)
       expect(drained.hungerPoints).toBe(20)
 
-      const hungry = addExhaustion(drained, 4)
+      const hungry = addExhaustion(drained, ExhaustionAmount(4))
       expect(hungry.hungerPoints).toBe(19)
     }),
   )
 
   it.effect('the remainder stays in the accumulator rather than being rounded away', () =>
     Effect.sync(() => {
-      const worn = addExhaustion(SPAWN_VITALS, 4.5)
+      const worn = addExhaustion(SPAWN_VITALS, ExhaustionAmount(4.5))
 
       expect(worn.saturation).toBe(4)
       expect(worn.exhaustion).toBeCloseTo(0.5, 12)
@@ -187,7 +229,7 @@ describe('hunger: saturation, exhaustion and the cascade', () => {
       // The reference's `cascadeRaw` recurses on `exhaustion - 4`, and
       // `Infinity - 4` is `Infinity`. Clamping into [0, MAX_EXHAUSTION] before
       // the loop is what bounds it here.
-      const worn = addExhaustion(SPAWN_VITALS, Number.POSITIVE_INFINITY)
+      const worn = addExhaustion(SPAWN_VITALS, Number.POSITIVE_INFINITY as ExhaustionAmount)
 
       expect(worn.exhaustion).toBe(0)
       expect(worn.saturation).toBe(0)
@@ -199,7 +241,7 @@ describe('hunger: saturation, exhaustion and the cascade', () => {
     Effect.sync(() => {
       // player-hunger.ts:14-25: saturation may never exceed foodLevel.
       const starving = withVitals({ hungerPoints: 0, saturation: 0 })
-      const fed = eat(starving, 6, 1.2)
+      const fed = eat(starving, FoodNutrition(6), SaturationModifier(1.2))
 
       expect(fed.hungerPoints).toBe(6)
       expect(fed.saturation).toBe(6)
@@ -210,20 +252,22 @@ describe('hunger: saturation, exhaustion and the cascade', () => {
     Effect.sync(() => {
       // Mirrors 'negative damage does not heal' below: the early return must
       // hand back the SAME object, not an equal-looking copy.
-      expect(eat(SPAWN_VITALS, 0, 1)).toBe(SPAWN_VITALS)
-      expect(eat(SPAWN_VITALS, -3, 1)).toBe(SPAWN_VITALS)
+      expect(eat(SPAWN_VITALS, FoodNutrition(0), SaturationModifier(1))).toBe(SPAWN_VITALS)
+      expect(eat(SPAWN_VITALS, -3 as FoodNutrition, SaturationModifier(1))).toBe(SPAWN_VITALS)
     }),
   )
 
-  it.effect('the saturation term is food * modifier * 2, as in the reference', () =>
+  it.effect('kernel bread saturation is an absolute gain; sim eat takes a modifier', () =>
     Effect.sync(() => {
-      // player-hunger-resolution.ts:52. Bread is 5 food, modifier 0.6, so the
-      // reserve gains 6 — which the cap above would hide if the bar were low.
+      // Kernel bread stores a gain of 6. Sim keeps the reference modifier input,
+      // so 5 food uses 0.6 and adds 5 * 0.6 * 2 = 6 saturation.
+      expect(foodComponentOf('bread')).toMatchObject({ nutrition: 5, saturation: 6 })
       const peckish = withVitals({ hungerPoints: 10, saturation: 0 })
-      const fed = eat(peckish, 5, 0.6)
+      const fed = eat(peckish, FoodNutrition(5), SaturationModifier(0.6))
 
       expect(fed.hungerPoints).toBe(15)
       expect(fed.saturation).toBe(6)
+      expect(eat(peckish, FoodNutrition(5), SaturationModifier(6)).saturation).toBe(15)
     }),
   )
 })
@@ -329,9 +373,15 @@ describe('the food tick reports, and applies nothing', () => {
       // build. The guard exists for that boundary, exactly as
       // `normaliseTimeState`'s does.
       const [signal, after] = advanceFoodTimer(SPAWN_VITALS, Number.NaN as DeltaTimeSecs)
+      const [infiniteSignal, afterInfinity] = advanceFoodTimer(
+        withVitals({ healthPoints: 10 }),
+        Number.POSITIVE_INFINITY as DeltaTimeSecs,
+      )
 
       expect(signal).toBe('none')
       expect(after.foodTimerSecs).toBe(0)
+      expect(infiniteSignal).toBe('regen')
+      expect(afterInfinity.foodTimerSecs).toBe(0)
     }),
   )
 })
@@ -348,12 +398,12 @@ describe('REGRESSION: the XP curve is the reference curve, and its closed form i
   it.effect('the three pieces are the reference’s, at every boundary', () =>
     Effect.sync(() => {
       // player-xp-calc.ts:9-13. Literals, per docs/testing.md §4.6.
-      expect(experienceCostOfLevel(0)).toBe(7)
-      expect(experienceCostOfLevel(15)).toBe(37)
-      expect(experienceCostOfLevel(16)).toBe(42)
-      expect(experienceCostOfLevel(30)).toBe(112)
-      expect(experienceCostOfLevel(31)).toBe(121)
-      expect(experienceCostOfLevel(40)).toBe(202)
+      expect(experienceCostOfLevel(ExperienceLevel(0))).toBe(7)
+      expect(experienceCostOfLevel(ExperienceLevel(15))).toBe(37)
+      expect(experienceCostOfLevel(ExperienceLevel(16))).toBe(42)
+      expect(experienceCostOfLevel(ExperienceLevel(30))).toBe(112)
+      expect(experienceCostOfLevel(ExperienceLevel(31))).toBe(121)
+      expect(experienceCostOfLevel(ExperienceLevel(40))).toBe(202)
     }),
   )
 
@@ -361,8 +411,8 @@ describe('REGRESSION: the XP curve is the reference curve, and its closed form i
     Effect.sync(() => {
       let accumulated = 0
       for (let level = 0; level <= 400; level++) {
-        expect(totalExperienceAtLevel(level)).toBe(accumulated)
-        accumulated += experienceCostOfLevel(level)
+        expect(totalExperienceAtLevel(ExperienceLevel(level))).toBe(accumulated)
+        accumulated += experienceCostOfLevel(ExperienceLevel(level))
       }
     }),
   )
@@ -373,9 +423,9 @@ describe('REGRESSION: the XP curve is the reference curve, and its closed form i
       // (player-xp-calc.ts:15-25). Bisection must give the same answers.
       let accumulated = 0
       for (let level = 0; level < 120; level++) {
-        const cost = experienceCostOfLevel(level)
-        expect(levelForTotalExperience(accumulated)).toBe(level)
-        expect(levelForTotalExperience(accumulated + cost - 1)).toBe(level)
+        const cost = experienceCostOfLevel(ExperienceLevel(level))
+        expect(levelForTotalExperience(TotalExperience(accumulated))).toBe(level)
+        expect(levelForTotalExperience(TotalExperience(accumulated + cost - 1))).toBe(level)
         accumulated += cost
       }
     }),
@@ -406,7 +456,7 @@ describe('REGRESSION: experienceCostOfLevel must never return zero or negative',
       ]
 
       for (const level of inputs) {
-        expect(experienceCostOfLevel(level)).toBeGreaterThanOrEqual(7)
+        expect(experienceCostOfLevel(testLevel(level))).toBeGreaterThanOrEqual(7)
       }
     }),
   )
@@ -426,21 +476,23 @@ describe('REGRESSION: experienceCostOfLevel must never return zero or negative',
 describe('REGRESSION: a non-finite experience total must not hang the level lookup', () => {
   it.effect('Infinity and NaN both answer, and answer 0', () =>
     Effect.sync(() => {
-      expect(levelForTotalExperience(Number.POSITIVE_INFINITY)).toBe(0)
-      expect(levelForTotalExperience(Number.NaN)).toBe(0)
-      expect(levelForTotalExperience(Number.NEGATIVE_INFINITY)).toBe(0)
+      expect(levelForTotalExperience(testTotalExperience(Number.POSITIVE_INFINITY))).toBe(0)
+      expect(levelForTotalExperience(testTotalExperience(Number.NaN))).toBe(0)
+      expect(levelForTotalExperience(testTotalExperience(Number.NEGATIVE_INFINITY))).toBe(0)
     }),
   )
 
   it.effect('an enormous but finite total answers without counting to it', () =>
     Effect.sync(() => {
       // The reference's linear scan would need ~1.5e7 iterations for this one.
-      const level = levelForTotalExperience(1e15)
+      const totalExperience = TotalExperience(1e15)
+      const level = levelForTotalExperience(totalExperience)
 
       expect(Number.isFinite(level)).toBe(true)
       expect(level).toBeGreaterThan(0)
-      expect(totalExperienceAtLevel(level)).toBeLessThanOrEqual(1e15)
-      expect(totalExperienceAtLevel(level + 1)).toBeGreaterThan(1e15)
+      expect(totalExperienceAtLevel(level)).toBeLessThanOrEqual(totalExperience)
+      expect(totalExperienceAtLevel(ExperienceLevel(level + 1))).toBeGreaterThan(totalExperience)
+      expect(levelForTotalExperience(TotalExperience(Number.MAX_VALUE))).toBe(Number.MAX_SAFE_INTEGER)
     }),
   )
 })
@@ -467,6 +519,22 @@ describe('experience as the HUD reads it', () => {
     }),
   )
 
+  it.effect('falls back to zero when total experience changes after validation', () =>
+    Effect.sync(() => {
+      let totalExperienceReads = 0
+      const vitals = {
+        ...SPAWN_VITALS,
+        get totalExperience() {
+          totalExperienceReads += 1
+          return totalExperienceReads <= 3 ? 11 : Number.POSITIVE_INFINITY
+        },
+      } as Vitals
+
+      expect(experienceProgress(vitals)).toBe(0)
+      expect(totalExperienceReads).toBe(4)
+    }),
+  )
+
   it.effect('the bar fills within a level and resets at the boundary', () =>
     Effect.sync(() => {
       // Level 1 costs 9 (2*1+7), so 7 + 4 is a bar a bit under half.
@@ -482,7 +550,7 @@ describe('experience as the HUD reads it', () => {
 
   it.effect('spending experience floors at zero rather than going negative', () =>
     Effect.sync(() => {
-      const spent = addExperience(withVitals({ totalExperience: 30 }), -100)
+      const spent = addExperience(withVitals({ totalExperience: 30 }), ExperienceDelta(-100))
 
       expect(spent.totalExperience).toBe(0)
       expect(experienceLevel(spent)).toBe(0)
@@ -495,7 +563,7 @@ describe('respawn keeps what a rule owns', () => {
     Effect.sync(() => {
       const killed = applyDamage(
         withVitals({ totalExperience: 400, hungerPoints: 3, saturation: 0, exhaustion: 3 }),
-        { amount: 20, cause: 'starvation' },
+        damage(20, 'starvation'),
       )
       const alive = respawn(killed)
 
@@ -631,7 +699,7 @@ describe('REGRESSION: a restored accumulator must not sit above its own threshol
       expect(isValidVitals(repaired)).toBe(true)
 
       // And the settled state behaves like one this module produced.
-      expect(addExhaustion(repaired, 0.01).hungerPoints).toBe(20)
+      expect(addExhaustion(repaired, ExhaustionAmount(0.01)).hungerPoints).toBe(20)
     }),
   )
 
@@ -668,15 +736,22 @@ describe('normaliseVitals is total over what a save can contain', () => {
         withVitals({ totalExperience: Number.POSITIVE_INFINITY }),
         // The shapes a version boundary really delivers: fields that satisfy
         // `number` at the type level and are not numbers at runtime.
-        { ...SPAWN_VITALS, healthPoints: undefined as unknown as number },
-        { ...SPAWN_VITALS, maxHungerPoints: null as unknown as number },
-        { ...SPAWN_VITALS, saturation: '5' as unknown as number },
-        { ...SPAWN_VITALS, lastDamageCause: 7 as unknown as string },
+        withVitals({ healthPoints: undefined }),
+        withVitals({ maxHungerPoints: null }),
+        withVitals({ saturation: '5' }),
+        withVitals({ lastDamageCause: 7 }),
       ]
 
       for (const state of malformed) {
         expect(isValidVitals(normaliseVitals(state))).toBe(true)
       }
+    }),
+  )
+
+  it.effect('a non-record save normalises to fresh-world vitals', () =>
+    Effect.sync(() => {
+      expect(normaliseVitals(null)).toEqual({ ...SPAWN_VITALS, healthPoints: 0, hungerPoints: 0, saturation: 0 })
+      expect(normaliseVitals([])).toEqual({ ...SPAWN_VITALS, healthPoints: 0, hungerPoints: 0, saturation: 0 })
     }),
   )
 
@@ -749,7 +824,7 @@ describe('vitalsView produces what mx-ui’s VitalsSnapshot needs', () => {
     Effect.sync(() => {
       // mx-ui's `iconRow` half-heart rule is what reads this. The value carried
       // across is the odd point, and this asserts mc-sim can produce one.
-      const view = vitalsView(applyDamage(SPAWN_VITALS, { amount: 1, cause: 'fall' }))
+      const view = vitalsView(applyDamage(SPAWN_VITALS, damage(1, 'fall')))
 
       expect(view.healthPoints).toBe(19)
       expect(view.maxHealthPoints).toBe(20)
@@ -761,7 +836,7 @@ describe('vitalsView produces what mx-ui’s VitalsSnapshot needs', () => {
       // A state that bypassed the load path projects verbatim. mx-ui's clamp
       // sends it to a drawable row; a second clamp here would mean two
       // repositories each held half of one decision.
-      const bypassed: Vitals = { ...SPAWN_VITALS, healthPoints: 99 }
+      const bypassed = withVitals({ healthPoints: 99 })
 
       expect(vitalsView(bypassed).healthPoints).toBe(99)
     }),

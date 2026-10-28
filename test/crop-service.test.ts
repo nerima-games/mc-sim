@@ -1,5 +1,7 @@
 import { describe, expect, it } from '@effect/vitest'
+import { vi } from 'vitest'
 import type { BlockPosition } from '@nerima-games/mc-kernel'
+import { BlockAxis } from '@nerima-games/mc-kernel/domain/coordinates'
 import { Effect, Layer, Result } from 'effect'
 import { CropService, CropServiceLayer } from '../src/application/crop-service'
 import { PlayerServiceLayer } from '../src/application/player-service'
@@ -64,6 +66,62 @@ describe('crop service', () => {
       expect(yield* crops.plant(location(3, 64, 0), 'potato_crop', 'soul_sand')).toBe(false)
       expect(yield* crops.plant(location(4, 64, 0, 'nether'), 'nether_wart_crop', 'soul_sand')).toBe(true)
       expect(yield* crops.plant(location(5, 64, 0, 'nether'), 'nether_wart_crop', 'farmland')).toBe(false)
+    }).pipe(Effect.provide(CropServiceLayer)),
+  )
+
+  it.effect('returns a typed validation failure for an invalid crop before choosing its default soil', () =>
+    Effect.gen(function* () {
+      const crops = yield* CropService
+      const invalid = yield* Effect.result(crops.plant(location(0, 64, 0), null as never))
+
+      expect(invalid._tag).toBe('Failure')
+      if (invalid._tag === 'Failure') expect(invalid.failure._tag).toBe('CropValidationError')
+      expect((yield* crops.snapshot).crops).toEqual([])
+    }).pipe(Effect.provide(CropServiceLayer)),
+  )
+
+  it.effect('returns a typed validation failure for an invalid soil block type', () =>
+    Effect.gen(function* () {
+      const crops = yield* CropService
+      const invalid = yield* Effect.result(crops.plant(location(0, 64, 0), 'potato_crop', 'not_a_block' as never))
+
+      expect(invalid).toMatchObject({
+        _tag: 'Failure',
+        failure: { _tag: 'CropValidationError', path: 'soil' },
+      })
+    }).pipe(Effect.provide(CropServiceLayer)),
+  )
+
+  it.effect('returns typed failures for malformed and unrepresentable crop locations', () =>
+    Effect.gen(function* () {
+      const crops = yield* CropService
+      const malformed = yield* Effect.result(crops.plant(null as never))
+      expect(malformed).toMatchObject({
+        _tag: 'Failure',
+        failure: { _tag: 'CropValidationError', path: 'location' },
+      })
+
+      const unsafeCoordinate = yield* Effect.result(crops.plant({
+        dimension: 'overworld',
+        position: { x: Number.MAX_SAFE_INTEGER + 1, y: 64, z: 0 },
+      } as never))
+      expect(unsafeCoordinate).toMatchObject({
+        _tag: 'Failure',
+        failure: { _tag: 'CropValidationError', path: 'location.position' },
+      })
+
+      const invalidAxis = BlockAxis.result(Number.NaN)
+      if (Result.isSuccess(invalidAxis)) throw new Error('invalid block axis unexpectedly passed')
+      const axisSpy = vi.spyOn(BlockAxis, 'result').mockReturnValue(invalidAxis)
+      try {
+        const failedAxis = yield* Effect.result(crops.plant(location(1, 64, 0)))
+        expect(failedAxis).toMatchObject({
+          _tag: 'Failure',
+          failure: { _tag: 'CropValidationError', path: 'location.position' },
+        })
+      } finally {
+        axisSpy.mockRestore()
+      }
     }).pipe(Effect.provide(CropServiceLayer)),
   )
 

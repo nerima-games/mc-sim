@@ -22,7 +22,14 @@ import {
   type ItemStack,
 } from '../src/domain/inventory'
 import type { ItemType } from '@nerima-games/mc-kernel'
-import { craftGrid as craftGridResult, shapelessRecipe as shapelessRecipeResult, type CraftGrid } from '../src/domain/recipe'
+import {
+  anyOf as anyOfResult,
+  exactly as exactlyResult,
+  RecipeGridDimension,
+  craftGrid as craftGridResult,
+  shapelessRecipe as shapelessRecipeResult,
+  type CraftGrid,
+} from '../src/domain/recipe'
 import { STARTER_RECIPES as starterRecipesResult } from '../src/domain/recipe-data'
 
 const requireSuccess = <A, E>(result: Result.Result<A, E>): A => {
@@ -42,6 +49,8 @@ const shapelessRecipe = (
   items: Parameters<typeof shapelessRecipeResult>[1],
   output: ItemStack,
 ) => requireSuccess(shapelessRecipeResult(id, items, Result.succeed(output)))
+const anyOf = (...args: Parameters<typeof anyOfResult>) => requireSuccess(anyOfResult(...args))
+const exactly = (...args: Parameters<typeof exactlyResult>) => requireSuccess(exactlyResult(...args))
 const STARTER_RECIPES = requireSuccess(starterRecipesResult)
 
 const LEGEND: Readonly<Record<string, ItemType>> = {
@@ -126,8 +135,8 @@ describe('ingredientCost', () => {
       // A cell holding 12 planks still costs one plank, which is the rule that
       // makes "hold a stack in the grid and craft repeatedly" work.
       const fat: CraftGrid = {
-        width: 1,
-        height: 2,
+        width: RecipeGridDimension(1),
+        height: RecipeGridDimension(2),
         cells: [itemStack('oak_planks', 12), itemStack('oak_planks', 3)],
       }
       expect([...ingredientCost(fat)]).toStrictEqual([['oak_planks', 2]])
@@ -141,6 +150,71 @@ describe('ingredientCost', () => {
 })
 
 describe('craftFromGrid', () => {
+  it.effect('charges each assigned ingredient count, aggregated by its matched item', () =>
+    Effect.sync(() => {
+      const recipe = shapelessRecipe(
+        'test:counted-ingredients',
+        [
+          anyOf(['oak_planks', 'stick'], 2),
+          exactly('oak_planks', 3),
+          exactly('stick', 1),
+        ],
+        itemStack('torch', 1),
+      )
+      const grid: CraftGrid = {
+        width: RecipeGridDimension(3),
+        height: RecipeGridDimension(1),
+        cells: [itemStack('oak_planks', 9), itemStack('oak_planks', 8), itemStack('stick', 7)],
+      }
+      const before = stocked([
+        ['oak_planks', 7],
+        ['stick', 4],
+      ])
+
+      const after = craftFromGrid(before, [recipe], grid)
+
+      expect(after.result).toStrictEqual({
+        _tag: 'Crafted',
+        recipeId: 'test:counted-ingredients',
+        output: itemStack('torch', 1),
+      })
+      expect(countOf(after.inventory, 'oak_planks')).toBe(2)
+      expect(countOf(after.inventory, 'stick')).toBe(3)
+      expect(countOf(after.inventory, 'torch')).toBe(1)
+    }),
+  )
+
+  it.effect('reports the aggregate count shortfall and leaves inventory untouched', () =>
+    Effect.sync(() => {
+      const recipe = shapelessRecipe(
+        'test:counted-ingredients',
+        [
+          anyOf(['oak_planks', 'stick'], 2),
+          exactly('oak_planks', 3),
+          exactly('stick', 1),
+        ],
+        itemStack('torch', 1),
+      )
+      const grid: CraftGrid = {
+        width: RecipeGridDimension(3),
+        height: RecipeGridDimension(1),
+        cells: [itemStack('oak_planks', 9), itemStack('oak_planks', 8), itemStack('stick', 7)],
+      }
+      const before = stocked([['oak_planks', 4]])
+
+      const after = craftFromGrid(before, [recipe], grid)
+
+      expect(after.result).toStrictEqual({
+        _tag: 'MissingIngredients',
+        missing: [
+          { item: 'oak_planks', short: 1 },
+          { item: 'stick', short: 1 },
+        ],
+      })
+      expect(after.inventory).toBe(before)
+    }),
+  )
+
   it.effect('crafts an Eye of Ender atomically from an ender pearl and blaze powder', () =>
     Effect.sync(() => {
       const before = stocked([
@@ -481,8 +555,8 @@ describe('craftFromGrid', () => {
     Effect.sync(() => {
       const before = stocked([['oak_planks', 64]])
       const fat: CraftGrid = {
-        width: 1,
-        height: 2,
+        width: RecipeGridDimension(1),
+        height: RecipeGridDimension(2),
         cells: [itemStack('oak_planks', 32), itemStack('oak_planks', 32)],
       }
       const after = craftFromGrid(before, STARTER_RECIPES, fat)

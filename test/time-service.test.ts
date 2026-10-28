@@ -16,8 +16,8 @@
  * and the only method that can is `restore`.
  */
 import { describe, expect, it } from '@effect/vitest'
-import { Effect } from 'effect'
-import { DeltaTimeSecs } from '@nerima-games/mc-kernel'
+import { Effect, Result } from 'effect'
+import { DeltaTimeSecs, FixedDurationSecs, InterpolationFraction } from '@nerima-games/mc-kernel'
 import { INITIAL_TIME_STATE } from '../src/domain/time-of-day'
 import { makeTimeService } from '../src/application/time-service'
 
@@ -56,7 +56,7 @@ describe('REGRESSION: restore repairs a corrupt save instead of reporting perman
       const time = yield* makeTimeService()
       yield* time.restore({ ticks: 0, dayLengthTicks: 0 })
 
-      yield* time.setTimeOfDay(0.5)
+      yield* time.setTimeOfDay(InterpolationFraction(0.5))
       expect(yield* time.timeOfDay).toBeCloseTo(0.5, 12)
 
       yield* time.advance(DeltaTimeSecs(30))
@@ -68,7 +68,7 @@ describe('REGRESSION: restore repairs a corrupt save instead of reporting perman
   it.effect('a HEALTHY save round-trips byte-identically, so the repair costs a good world nothing', () =>
     Effect.gen(function* () {
       const time = yield* makeTimeService()
-      yield* time.configureDay(600, 0.25)
+      yield* time.configureDay(FixedDurationSecs(600), InterpolationFraction(0.25))
       yield* time.advance(DeltaTimeSecs(600 * 4))
       const saved = yield* time.snapshot
 
@@ -103,11 +103,20 @@ describe('REGRESSION: restore repairs a corrupt save instead of reporting perman
     }),
   )
 
+  it.effect('a null constructor envelope returns the declared typed failure', () =>
+    Effect.gen(function* () {
+      const outcome = yield* Effect.result(makeTimeService(null as never))
+
+      expect(Result.isFailure(outcome)).toBe(true)
+      if (Result.isFailure(outcome)) expect(outcome.failure._tag).toBe('BrandError')
+    }),
+  )
+
   it.effect('setDayLength changes the clock denominator', () =>
     Effect.gen(function* () {
       const time = yield* makeTimeService()
 
-      yield* time.setDayLength(300)
+      yield* time.setDayLength(FixedDurationSecs(300))
 
       expect(yield* time.dayLengthSecs).toBe(300)
     }),
@@ -159,7 +168,7 @@ describe('REGRESSION: world load is restore, not configureDay — the day counte
   it.effect('configureDay is still the right call for BOOTSTRAP, in the only safe order', () =>
     Effect.gen(function* () {
       const time = yield* makeTimeService()
-      yield* time.configureDay(600, 0.3)
+      yield* time.configureDay(FixedDurationSecs(600), InterpolationFraction(0.3))
 
       expect(yield* time.dayLengthSecs).toBe(600)
       expect(yield* time.timeOfDay).toBeCloseTo(0.3, 12)
@@ -175,6 +184,38 @@ describe('REGRESSION: world load is restore, not configureDay — the day counte
 
       expect(yield* time.snapshot).toStrictEqual({ ticks: 7200, dayLengthTicks: 24000 })
       expect(yield* time.isNight).toBe(false)
+    }),
+  )
+
+  it.effect('advanceCandidate computes the coordinator input without mutating local state', () =>
+    Effect.gen(function* () {
+      const time = yield* makeTimeService()
+      const before = yield* time.snapshot
+      const candidate = yield* time.advanceCandidate(DeltaTimeSecs(60))
+
+      expect(candidate.ticks).toBe(before.ticks + 3600)
+      expect(yield* time.snapshot).toStrictEqual(before)
+      yield* time.restore(candidate)
+      expect(yield* time.snapshot).toStrictEqual(candidate)
+    }),
+  )
+
+  it.effect('finite delta overflow is a typed failure and leaves the clock unchanged', () =>
+    Effect.gen(function* () {
+      const time = yield* makeTimeService()
+      const before = yield* time.snapshot
+      const hugeDelta = DeltaTimeSecs(Number.MAX_VALUE)
+
+      const candidate = yield* Effect.result(time.advanceCandidate(hugeDelta))
+      expect(Result.isFailure(candidate)).toBe(true)
+      if (Result.isFailure(candidate)) expect(candidate.failure._tag).toBe('BrandError')
+
+      const advance = yield* Effect.result(time.advance(hugeDelta))
+      expect(Result.isFailure(advance)).toBe(true)
+      if (Result.isFailure(advance)) expect(advance.failure._tag).toBe('BrandError')
+      expect(yield* time.snapshot).toStrictEqual(before)
+      expect(Number.isFinite(yield* time.timeOfDay)).toBe(true)
+      expect(Number.isFinite(yield* time.dayLengthSecs)).toBe(true)
     }),
   )
 })

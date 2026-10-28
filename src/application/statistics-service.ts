@@ -26,8 +26,12 @@
  * the inventory has it. Fewer services when the state is shared; separate
  * services when the resets differ.
  */
-import { Context, Effect, Layer, Ref } from 'effect'
+import { Context, Effect, Layer, Ref, Result, Schema } from 'effect'
 import * as Statistics from '../domain/statistics.js'
+
+export const StatisticsServiceRecordSuccessSchema: Schema.Schema<void> = Schema.Undefined
+export const StatisticsServiceRecordErrorSchema: Schema.Schema<Statistics.StatisticsRecordFailure> =
+  Statistics.StatisticsRecordFailureSchema
 
 export type StatisticsServiceApi = {
   /** Whole record, for persistence and for mx-ui's statistics screen. */
@@ -38,10 +42,16 @@ export type StatisticsServiceApi = {
    * WHAT counts as an event is the caller's — mc-sim never decides that a block
    * was mined, only that somebody said so. See `domain/statistics.ts`.
    */
-  readonly record: (key: Statistics.StatisticKey, amount?: number) => Effect.Effect<void>
+  readonly record: (
+    key: Statistics.StatisticKey,
+    amount?: number,
+  ) => Effect.Effect<void, Statistics.StatisticsRecordFailure>
   readonly counterOf: (key: Statistics.StatisticKey) => Effect.Effect<number>
   /**
    * Mark an achievement earned. Idempotent.
+   *
+   * This updates only the local statistics snapshot. Simulation commits that
+   * also publish `AchievementUnlocked` use `AchievementService`'s staged path.
    *
    * mc-sim holds no registry and evaluates no predicate: the reference's
    * `evaluateUnlocks` sweep over `isUnlocked: (stats) => boolean` entries
@@ -78,7 +88,13 @@ export const makeStatisticsService = (
 ): Effect.Effect<StatisticsServiceApi> =>
   Effect.map(Ref.make(Statistics.normaliseStatistics(initial)), (state) => ({
     snapshot: Ref.get(state),
-    record: (key, amount) => Ref.update(state, (current) => Statistics.record(current, key, amount)),
+    record: (key, amount) =>
+      Ref.modify(state, (current): readonly [Result.Result<void, Statistics.StatisticsRecordFailure>, Statistics.Statistics] => {
+        const next = Statistics.record(current, key, amount)
+        return Result.isSuccess(next)
+          ? [Result.succeed(undefined), next.success]
+          : [Result.fail(next.failure), current]
+      }).pipe(Effect.flatMap(Effect.fromResult)),
     counterOf: (key) => Ref.get(state).pipe(Effect.map((current) => Statistics.counterOf(current, key))),
     unlock: (id) => Ref.update(state, (current) => Statistics.unlock(current, id)),
     isUnlocked: (id) => Ref.get(state).pipe(Effect.map((current) => Statistics.isUnlocked(current, id))),

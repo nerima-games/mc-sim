@@ -1,3 +1,5 @@
+import { Result, Schema } from 'effect'
+
 /** Weather kinds shared by persistence, gameplay, and presentation boundaries. */
 export const WEATHERS = ['clear', 'rain', 'thunder'] as const
 
@@ -9,9 +11,48 @@ export type WeatherState = {
   readonly remainingSecs: number
 }
 
+type WeatherStateEncoded = Readonly<{
+  weather: Weather
+  remainingSecs: number
+}>
+
+export const WeatherSchema: Schema.Codec<Weather, Weather> = Schema.Literals(WEATHERS)
+
+const PositiveFiniteDurationSchema: Schema.Codec<number, number> = Schema.Finite.check(Schema.isGreaterThan(0))
+
+/** Strict success schema shared by weather state boundaries. */
+export const WeatherStateSchema: Schema.Codec<WeatherState, WeatherStateEncoded> = Schema.Struct({
+  weather: WeatherSchema,
+  remainingSecs: PositiveFiniteDurationSchema,
+})
+
+export type WeatherValidationFailure = Readonly<{
+  readonly _tag: 'WeatherValidationFailure'
+  readonly field: 'state' | 'weather' | 'remainingSecs'
+  readonly reason: 'not-object' | 'unknown-weather' | 'invalid-duration'
+}>
+
+/** Failure variants emitted by weather validation and transitions. */
+export const WeatherValidationFailureSchema: Schema.Codec<WeatherValidationFailure, WeatherValidationFailure> = Schema.Union([
+  Schema.TaggedStruct('WeatherValidationFailure', {
+    field: Schema.Literal('state'),
+    reason: Schema.Literal('not-object'),
+  }),
+  Schema.TaggedStruct('WeatherValidationFailure', {
+    field: Schema.Literal('weather'),
+    reason: Schema.Literal('unknown-weather'),
+  }),
+  Schema.TaggedStruct('WeatherValidationFailure', {
+    field: Schema.Literal('remainingSecs'),
+    reason: Schema.Literal('invalid-duration'),
+  }),
+])
+
+export const DEFAULT_WEATHER_REMAINING_SECS = 600
+
 export const INITIAL_WEATHER_STATE: WeatherState = {
   weather: 'clear',
-  remainingSecs: 600,
+  remainingSecs: DEFAULT_WEATHER_REMAINING_SECS,
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -32,6 +73,32 @@ export const isValidWeatherState = (value: unknown): value is WeatherState => {
   )
 }
 
+export const validateWeatherState = (
+  value: unknown,
+): Result.Result<WeatherState, WeatherValidationFailure> => {
+  if (!isRecord(value)) {
+    return Result.fail({ _tag: 'WeatherValidationFailure', field: 'state', reason: 'not-object' })
+  }
+
+  const weather = value['weather']
+  if (!isWeather(weather)) {
+    return Result.fail({ _tag: 'WeatherValidationFailure', field: 'weather', reason: 'unknown-weather' })
+  }
+
+  const remainingSecs = value['remainingSecs']
+  if (typeof remainingSecs !== 'number' || !Number.isFinite(remainingSecs) || remainingSecs <= 0) {
+    return Result.fail({ _tag: 'WeatherValidationFailure', field: 'remainingSecs', reason: 'invalid-duration' })
+  }
+
+  return Result.succeed({ weather, remainingSecs })
+}
+
+export const makeWeatherTransition = (
+  weather: unknown,
+  remainingSecs: unknown = DEFAULT_WEATHER_REMAINING_SECS,
+): Result.Result<WeatherState, WeatherValidationFailure> =>
+  validateWeatherState({ weather, remainingSecs })
+
 /** Repair state entering from construction or persistence without making a world unloadable. */
 export const normaliseWeatherState = (value: unknown): WeatherState => {
   if (!isRecord(value)) return INITIAL_WEATHER_STATE
@@ -44,6 +111,6 @@ export const normaliseWeatherState = (value: unknown): WeatherState => {
       Number.isFinite(state['remainingSecs']) &&
       state['remainingSecs'] > 0
         ? state['remainingSecs']
-        : INITIAL_WEATHER_STATE.remainingSecs,
+        : DEFAULT_WEATHER_REMAINING_SECS,
   }
 }

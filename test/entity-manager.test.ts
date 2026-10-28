@@ -10,10 +10,13 @@ import {
 } from '../src/application/entity-manager'
 import {
   changed,
+  EntityHealthPoints,
+  EntityId,
   EntityKind,
+  EntitySerial,
+  mintEntityId,
   UNCHANGED,
   type Entity,
-  type EntityId,
   type EntityRoster,
 } from '../src/domain/entity'
 import { PositionAxis, position as coordinatePosition } from '@nerima-games/mc-kernel'
@@ -34,7 +37,7 @@ const DORMANT: Fuse = { _tag: 'Dormant' }
 const creeper = (x: number, fuse: Fuse = DORMANT) => ({
   kind: EntityKind('creeper'),
   feetPosition: coordinatePosition(PositionAxis(x), PositionAxis(64), PositionAxis(0)),
-  healthPoints: 20,
+  healthPoints: EntityHealthPoints(20),
   behaviour: fuse,
 })
 
@@ -44,6 +47,52 @@ const savedRoster = (value: unknown): EntityRoster<Fuse> => value as EntityRoste
 const idle = { transition: UNCHANGED, emit: undefined }
 
 describe('EntityManager — the roster', () => {
+  it.effect('fails construction when an initial roster cannot reidentify a duplicate serial', () =>
+    Effect.gen(function* () {
+      const lastId = mintEntityId(EntitySerial(Number.MAX_SAFE_INTEGER))
+      const roster = savedRoster({
+        entities: [{ ...creeper(1), id: lastId }, { ...creeper(2), id: lastId }],
+        nextSerial: Number.MAX_SAFE_INTEGER,
+      })
+
+      const result = yield* Effect.result(makeEntityManager<Fuse>(roster))
+      expect(result._tag).toBe('Failure')
+      if (result._tag === 'Failure') expect(result.failure).toStrictEqual({ _tag: 'EntitySerialExhausted' })
+    }),
+  )
+
+  it.effect('fails at serial exhaustion without changing the roster', () =>
+    Effect.gen(function* () {
+      const roster = savedRoster({ entities: [], nextSerial: Number.MAX_SAFE_INTEGER })
+      const world = yield* makeEntityManager<Fuse>(roster)
+      const before = yield* world.snapshot
+      const failure = yield* Effect.flip(world.spawn(creeper(1)))
+
+      expect(failure).toStrictEqual({ _tag: 'EntitySerialExhausted' })
+      expect(yield* world.snapshot).toStrictEqual(before)
+    }),
+  )
+
+  it.effect('a restore that cannot reidentify a duplicate leaves the roster unchanged', () =>
+    Effect.gen(function* () {
+      const world = yield* makeEntityManager<Fuse>()
+      const original = yield* world.spawn(creeper(1))
+      const before = yield* world.snapshot
+      const lastId = mintEntityId(EntitySerial(Number.MAX_SAFE_INTEGER))
+      const failure = yield* Effect.flip(world.restore(savedRoster({
+        entities: [
+          { ...creeper(2), id: lastId },
+          { ...creeper(3), id: lastId },
+        ],
+        nextSerial: Number.MAX_SAFE_INTEGER,
+      })))
+
+      expect(original.id).toBe('e:0')
+      expect(failure).toStrictEqual({ _tag: 'EntitySerialExhausted' })
+      expect(yield* world.snapshot).toStrictEqual(before)
+    }),
+  )
+
   it.effect('spawn and despawn round-trip through the service', () =>
     Effect.gen(function* () {
       const roster = yield* makeEntityManager<Fuse>()
@@ -174,7 +223,7 @@ describe('EntityManager — iteration is the hot path', () => {
       yield* roster.spawn(creeper(2))
 
       const hit = yield* roster.sweep<number>((entity) => ({
-        transition: changed({ ...entity, healthPoints: entity.healthPoints - 7 }),
+        transition: changed({ ...entity, healthPoints: EntityHealthPoints(entity.healthPoints - 7) }),
         emit: entity.healthPoints - 7,
       }))
 
@@ -389,8 +438,8 @@ describe('EntityManager — the Tag', () => {
   it.effect('an initial roster reaches the service through the Layer', () =>
     Effect.gen(function* () {
       const saved: EntityRoster<Fuse> = {
-        entities: [{ id: 'e:4' as EntityId, ...creeper(1) }],
-        nextSerial: 5,
+        entities: [{ id: EntityId('e:4'), ...creeper(1) }],
+        nextSerial: EntitySerial(5),
       }
 
       const ids = yield* Effect.gen(function* () {

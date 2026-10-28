@@ -87,7 +87,7 @@
  * The physics state below contains only integration inputs and results. The
  * authoritative pose and clock remain in `PlayerService` and `TimeService`.
  */
-import { Effect, Layer, Option, Ref } from 'effect'
+import { Effect, Layer, Option, Ref, Schema } from 'effect'
 import {
   BlockLength,
   BlocksPerSecond,
@@ -106,6 +106,8 @@ import {
 } from '@nerima-games/mc-physics'
 import { InventoryService, InventoryServiceLayer } from '../application/inventory-service.js'
 import type { ItemStackFailure } from '../domain/inventory.js'
+import type { PlayerStorageFailure } from '../domain/player-storage.js'
+import type { RecipeFailure } from '../domain/recipe.js'
 import { CropService, CropServiceLayer, type CropServiceApi } from '../application/crop-service.js'
 import { PlayerService, PlayerServiceLayer, type PlayerServiceApi, type PlayerServiceInputError } from '../application/player-service.js'
 import { TimeService, TimeServiceLayer, type TimeServiceApi } from '../application/time-service.js'
@@ -127,6 +129,80 @@ export type SimPhysicsConfig = {
   readonly resolve: ResolveOptions
   readonly walkSpeed: number
   readonly jumpSpeed: number
+}
+
+export type SimPhysicsConfigError = Readonly<{
+  readonly _tag: 'SimPhysicsConfigError'
+  readonly field: 'config' | 'resolve' | 'walkSpeed' | 'jumpSpeed'
+}>
+
+export const SimPhysicsConfigErrorSchema: Schema.Schema<SimPhysicsConfigError> = Schema.Struct({
+  _tag: Schema.Literal('SimPhysicsConfigError'),
+  field: Schema.Literals(['config', 'resolve', 'walkSpeed', 'jumpSpeed']),
+})
+
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const isSimPhysicsStages = (value: unknown): value is ReadonlyArray<StageRegistration> =>
+  Array.isArray(value) && value.length === 1 && value.every((stage) => {
+    if (!isRecord(stage)) return false
+    const keys = Object.keys(stage).sort()
+    return stage['id'] === SIM_STAGE_IDS.physics &&
+      typeof stage['run'] === 'function' &&
+      keys.length === 2 && keys[0] === 'id' && keys[1] === 'run'
+  })
+
+export const SimPhysicsStagesSchema: Schema.Schema<ReadonlyArray<StageRegistration>> =
+  Schema.declare(isSimPhysicsStages)
+
+const isFiniteNumber = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value)
+
+const isNonnegativeFiniteNumber = (value: unknown): value is number =>
+  isFiniteNumber(value) && value >= 0
+
+const isOptionalFunction = (value: unknown): boolean =>
+  value === undefined || typeof value === 'function'
+
+const hasValidResolveCallbacks = (
+  resolve: Readonly<Record<string, unknown>>,
+  environment: Readonly<Record<string, unknown>>,
+): boolean =>
+  typeof environment['blockAt'] === 'function' &&
+  typeof resolve['blockPropertiesAt'] === 'function' &&
+  isOptionalFunction(environment['blockShapeAt']) &&
+  isOptionalFunction(resolve['blockShapeAt']) &&
+  isOptionalFunction(resolve['bouncinessAt'])
+
+const hasValidResolveDimensions = (resolve: Readonly<Record<string, unknown>>): boolean => {
+  const halfWidth = resolve['halfWidth']
+  const halfHeight = resolve['halfHeight']
+  const stepHeight = resolve['stepHeight']
+  return isFiniteNumber(halfWidth) &&
+    isFiniteNumber(halfHeight) && halfHeight > 0 &&
+    (stepHeight === undefined || isFiniteNumber(stepHeight))
+}
+
+const hasValidResolveConfig = (value: unknown): boolean => {
+  if (!isRecord(value)) return false
+  const environment = value['environment']
+  if (!isRecord(environment)) return false
+  return hasValidResolveCallbacks(value, environment) && hasValidResolveDimensions(value)
+}
+
+const invalidSimPhysicsConfig = (config: unknown): SimPhysicsConfigError | undefined => {
+  if (!isRecord(config)) return { _tag: 'SimPhysicsConfigError', field: 'config' }
+
+  const walkSpeed = config['walkSpeed']
+  const jumpSpeed = config['jumpSpeed']
+  if (!isNonnegativeFiniteNumber(walkSpeed))
+    return { _tag: 'SimPhysicsConfigError', field: 'walkSpeed' }
+  if (!isNonnegativeFiniteNumber(jumpSpeed))
+    return { _tag: 'SimPhysicsConfigError', field: 'jumpSpeed' }
+  if (!hasValidResolveConfig(config['resolve'])) return { _tag: 'SimPhysicsConfigError', field: 'resolve' }
+
+  return undefined
 }
 
 export type LandingImpact = {
@@ -261,7 +337,10 @@ export const simStages = (
         // A zero `dt` is legal (kernel's brand admits it, and a frame can be
         // scheduled twice inside one clock tick), and `Time.advance` handles it
         // by advancing nothing. Nothing here divides by `dt`.
-        yield* time.advance(dt)
+        // `StageRegistration.run` has no typed error channel. Keep the time
+        // service's validation failure visible as a defect at this integration
+        // boundary; direct callers can still handle the typed BrandError.
+        yield* Effect.orDie(time.advance(dt))
         yield* crops.advance(dt)
 
         // Frame-local overrides win for exactly one frame and skip physics.
@@ -408,8 +487,10 @@ export const makeSimStages: Effect.Effect<
 
 export const makeSimStagesWithPhysics = (
   config: SimPhysicsConfig,
-): Effect.Effect<ReadonlyArray<StageRegistration>, never, TimeService | PlayerService | CropService> =>
-  Effect.gen(function* () {
+): Effect.Effect<ReadonlyArray<StageRegistration>, SimPhysicsConfigError, TimeService | PlayerService | CropService> => {
+  const error = invalidSimPhysicsConfig(config)
+  if (error !== undefined) return Effect.fail(error)
+  return Effect.gen(function* () {
     const time = yield* TimeService
     const player = yield* PlayerService
     const crops = yield* CropService
@@ -417,6 +498,7 @@ export const makeSimStagesWithPhysics = (
     yield* Ref.set(state.physicsConfig, Option.some(config))
     return simStages(state, time, player, crops)
   })
+}
 
 /**
  * mc-sim as a `GameModule` (plan.md §4.1).
@@ -459,7 +541,7 @@ export const makeSimStagesWithPhysics = (
  */
 export const simModule: GameModule<
   InventoryService | PlayerService | TimeService | CropService,
-  ItemStackFailure | PlayerServiceInputError,
+  ItemStackFailure | PlayerServiceInputError | RecipeFailure | PlayerStorageFailure,
   never,
   PlayerService | TimeService | CropService
 > = {
@@ -512,10 +594,12 @@ export const makeControllableSimStagesWithPhysics = (
     readonly stages: ReadonlyArray<StageRegistration>
     readonly input: SimInputPort
   },
-  never,
+  SimPhysicsConfigError,
   TimeService | PlayerService | CropService
-> =>
-  Effect.gen(function* () {
+> => {
+  const error = invalidSimPhysicsConfig(config)
+  if (error !== undefined) return Effect.fail(error)
+  return Effect.gen(function* () {
     const time = yield* TimeService
     const player = yield* PlayerService
     const crops = yield* CropService
@@ -523,3 +607,4 @@ export const makeControllableSimStagesWithPhysics = (
     yield* Ref.set(state.physicsConfig, Option.some(config))
     return { state, stages: simStages(state, time, player, crops), input: makeSimInputPort(state) }
   })
+}

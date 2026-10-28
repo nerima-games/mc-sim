@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect, Result } from 'effect'
-import type { ItemType } from '@nerima-games/mc-kernel'
+import { itemComponents, MaxStackSize, type ItemType } from '@nerima-games/mc-kernel'
 import { afterEach, vi } from 'vitest'
 import { makeInventoryService } from '../src/application/inventory-service.js'
 import * as Container from '../src/domain/container-storage.js'
@@ -12,12 +12,25 @@ import * as Player from '../src/domain/player-storage.js'
 import * as Recipe from '../src/domain/recipe.js'
 import { STARTER_RECIPES } from '../src/domain/recipe-data.js'
 
-const kernelFailures = vi.hoisted(() => ({ itemStackFailureCountdown: 0 }))
+const kernelFailures = vi.hoisted(() => ({ itemStackFailureCountdown: 0, itemDamageFailureCountdown: 0 }))
 
 vi.mock('@nerima-games/mc-kernel', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@nerima-games/mc-kernel')>()
   return {
     ...actual,
+    ItemDamage: Object.assign(
+      (value: number) => actual.ItemDamage(value),
+      actual.ItemDamage,
+      {
+        result: (value: number) => {
+          if (kernelFailures.itemDamageFailureCountdown > 0) {
+            kernelFailures.itemDamageFailureCountdown -= 1
+            if (kernelFailures.itemDamageFailureCountdown === 0) return actual.ItemDamage.result(Number.NaN)
+          }
+          return actual.ItemDamage.result(value)
+        },
+      },
+    ),
     itemStack: (...args: Parameters<typeof actual.itemStack>) => {
       if (kernelFailures.itemStackFailureCountdown > 0) {
         kernelFailures.itemStackFailureCountdown -= 1
@@ -33,6 +46,7 @@ vi.mock('@nerima-games/mc-kernel', async (importOriginal) => {
 
 afterEach(() => {
   kernelFailures.itemStackFailureCountdown = 0
+  kernelFailures.itemDamageFailureCountdown = 0
 })
 
 const requireSuccess = <A, E>(result: Result.Result<A, E>): A => {
@@ -60,25 +74,27 @@ const stackThatFailsOnComponentSnapshot = (
   return { ...original, components }
 }
 
-const oversizedStackThatFailsOnSpill = (item: ItemType): Inv.ItemStack => {
+const oversizedStackThatFailsOnSpill = (
+  item: ItemType,
+  failOnEnumeration: number | undefined = 7,
+): Inv.ItemStack => {
   const original = stack(item, 2)
-  const components = { ...original.components }
-  Object.defineProperty(components, 'maxStackSize', {
-    value: 1,
-    enumerable: true,
-    configurable: true,
-    writable: true,
-  })
+  const components = requireSuccess(itemComponents(item, { maxStackSize: MaxStackSize(1) }))
   let enumerations = 0
   const unstableComponents = new Proxy(components, {
     ownKeys(target) {
       enumerations += 1
-      if (enumerations === 7) throw new Error('overflow stack snapshot failed')
+      if (enumerations === failOnEnumeration) throw new Error('overflow stack snapshot failed')
       return Reflect.ownKeys(target)
     },
   })
   return { ...original, components: unstableComponents }
 }
+
+const oversizedStack = (item: ItemType): Inv.ItemStack => ({
+  ...stack(item, 2),
+  components: requireSuccess(itemComponents(item, { maxStackSize: MaxStackSize(1) })),
+})
 
 const expectHostileFailure = (failure: unknown): void => {
   expect(failure).toMatchObject({ _tag: 'ItemValidationFailure', reason: 'hostile-input' })
@@ -87,6 +103,11 @@ const expectHostileFailure = (failure: unknown): void => {
 const expectResultFailure = <A, E>(result: Result.Result<A, E>): void => {
   expect(Result.isFailure(result)).toBe(true)
   if (Result.isFailure(result)) expectHostileFailure(result.failure)
+}
+
+const expectBrandFailure = <A, E>(result: Result.Result<A, E>): void => {
+  expect(Result.isFailure(result)).toBe(true)
+  if (Result.isFailure(result)) expect(result.failure).toMatchObject({ _tag: 'BrandError' })
 }
 
 const setSlot = (inventory: Inv.Inventory, index: number, item: Inv.ItemStack): void => {
@@ -159,8 +180,17 @@ describe('inventory migration constructor-failure edges', () => {
     extendedSlots.push(stackThatFailsOnComponentSnapshot('stone', 1, 3))
     expectResultFailure(Inv.normaliseInventory({ slots: extendedSlots }))
 
+    const extendedValidSlots = [...Inv.emptyInventory().slots, stack('stone')]
+    kernelFailures.itemStackFailureCountdown = 5
+    expectBrandFailure(Inv.normaliseInventory({ slots: extendedValidSlots }))
+
     expectResultFailure(Inv.normaliseInventory({
       slots: [oversizedStackThatFailsOnSpill('oak_planks')],
+    }))
+
+    kernelFailures.itemStackFailureCountdown = 9
+    expectBrandFailure(Inv.normaliseInventory({
+      slots: [oversizedStack('oak_planks')],
     }))
   })
 
@@ -382,6 +412,48 @@ describe('container storage constructor-failure edges', () => {
 })
 
 describe('player storage constructor-failure edges', () => {
+  it.effect('keeps the inventory service snapshot unchanged when durability branding fails', () =>
+    Effect.gen(function* () {
+      const service = yield* makeInventoryService({
+        slots: [stack('bow'), stack('stone'), ...Array.from({ length: 34 }, () => undefined)],
+      })
+      const before = yield* service.storageSnapshot
+      kernelFailures.itemDamageFailureCountdown = 1
+
+      const result = yield* service.consumeAndDamageAt({
+        consume: { item: 'stone', count: 1 },
+        damage: { location: { _tag: 'Inventory', slotIndex: 0 }, expectedItem: 'bow', amount: 1 },
+      })
+      expect(result).toMatchObject({
+        _tag: 'EquipmentFailure', error: { _tag: 'BrandError' },
+      })
+      expect(yield* service.storageSnapshot).toStrictEqual(before)
+    }),
+  )
+
+  it('keeps storage unchanged when damage construction returns a BrandError', () => {
+    const storage = Player.storageFromInventory({
+      slots: [stack('bow'), stack('stone'), ...Array.from({ length: 34 }, () => undefined)],
+    })
+    kernelFailures.itemDamageFailureCountdown = 1
+
+    const damaged = Player.damageAt(storage, { _tag: 'Inventory', slotIndex: 0 }, 1)
+    expect(damaged.result).toMatchObject({
+      _tag: 'EquipmentFailure', error: { _tag: 'BrandError' },
+    })
+    expect(damaged.storage).toBe(storage)
+
+    kernelFailures.itemDamageFailureCountdown = 1
+    const consumed = Player.consumeAndDamageAt(storage, {
+      consume: { item: 'stone', count: 1 },
+      damage: { location: { _tag: 'Inventory', slotIndex: 0 }, expectedItem: 'bow', amount: 1 },
+    })
+    expect(consumed.result).toMatchObject({
+      _tag: 'EquipmentFailure', error: { _tag: 'BrandError' },
+    })
+    expect(consumed.storage).toBe(storage)
+  })
+
   it('returns snapshot failures from the outer player-storage validator', () => {
     const empty = Player.emptyPlayerStorage()
     const result = Player.validatePlayerStorageSnapshot({

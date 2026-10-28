@@ -6,7 +6,11 @@ import { SaveSliceIdSchema, tickDuration } from '@nerima-games/mc-kernel'
 import type { Intent, IntentSequence, IntentQueueFull } from '../application/intent-queue.js'
 import type { SimulationTick } from '@nerima-games/mc-kernel'
 import type { NoiseSeed } from '@nerima-games/mc-worldgen'
-import { HeadlessHarnessSessionFactory, type HeadlessHarnessSession } from './session-factory.js'
+import {
+  HeadlessHarnessSessionFactory,
+  type HeadlessHarnessSession,
+  type HeadlessHarnessStages,
+} from './session-factory.js'
 
 export type TickCount = number & Brand.Brand<'TickCount'>
 export type RandomSeed = number & Brand.Brand<'RandomSeed'>
@@ -14,6 +18,9 @@ export type StateHash = string & Brand.Brand<'StateHash'>
 
 export const TickCountSchema: Schema.Codec<TickCount, number> = Schema.Int.check(Schema.isGreaterThan(0)).pipe(Schema.brand('TickCount'))
 export const RandomSeedSchema: Schema.Codec<RandomSeed, number> = Schema.Int.pipe(Schema.brand('RandomSeed'))
+const NoiseSeedSchema: Schema.Codec<NoiseSeed, number> = Schema.Int.check(
+  Schema.isBetween({ minimum: -Number.MAX_SAFE_INTEGER, maximum: Number.MAX_SAFE_INTEGER }),
+).pipe(Schema.brand('NoiseSeed'))
 
 export const StateHashSchema: Schema.Codec<StateHash, string> = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/)).pipe(Schema.brand('StateHash'))
 
@@ -21,6 +28,11 @@ export type HeadlessHarnessResetInput = {
   readonly worldSeed: NoiseSeed
   readonly randomSeed: RandomSeed
 }
+
+const HeadlessHarnessResetInputSchema: Schema.Codec<HeadlessHarnessResetInput, unknown> = Schema.Struct({
+  worldSeed: NoiseSeedSchema,
+  randomSeed: RandomSeedSchema,
+})
 
 type StateHashNonJsonValueFields = Readonly<{
   sliceId: Schema.Schema.Type<typeof SaveSliceIdSchema>
@@ -40,12 +52,12 @@ const HeadlessHarnessNotInitializedBase: new () =>
 export class HeadlessHarnessNotInitialized extends HeadlessHarnessNotInitializedBase {}
 
 export type HeadlessHarnessApi = {
-  readonly reset: (input: HeadlessHarnessResetInput) => Effect.Effect<void>
+  readonly reset: (input: HeadlessHarnessResetInput) => Effect.Effect<void, Schema.SchemaError>
   readonly enqueue: (intent: Intent) => Effect.Effect<
     IntentSequence,
-    IntentQueueFull | HeadlessHarnessNotInitialized
+    IntentQueueFull | HeadlessHarnessNotInitialized | Schema.SchemaError
   >
-  readonly step: (count: TickCount) => Effect.Effect<void, HeadlessHarnessNotInitialized>
+  readonly step: (count: TickCount) => Effect.Effect<void, HeadlessHarnessNotInitialized | Schema.SchemaError>
   readonly stateHash: Effect.Effect<
     StateHash,
     Schema.SchemaError | StateHashNonJsonValue | HeadlessHarnessNotInitialized
@@ -194,7 +206,9 @@ const serializeJson = (
     : serializeObject(value, path, nextAncestors, serializeJson)
 }
 
-const makeHeadlessHarness: Effect.Effect<HeadlessHarnessApi, never, HeadlessHarnessSessionFactory> =
+const makeHeadlessHarness = (
+  stages: HeadlessHarnessStages,
+): Effect.Effect<HeadlessHarnessApi, never, HeadlessHarnessSessionFactory> =>
   Effect.gen(function* () {
     const factory = yield* HeadlessHarnessSessionFactory
     const testClock = yield* TestClock.testClockWith((clock) => Effect.succeed(clock))
@@ -224,6 +238,7 @@ const makeHeadlessHarness: Effect.Effect<HeadlessHarnessApi, never, HeadlessHarn
     return {
       reset: (input: HeadlessHarnessResetInput) =>
         semaphore.withPermit(Effect.gen(function* () {
+          const validInput = yield* Schema.decodeUnknownEffect(HeadlessHarnessResetInputSchema)(input)
           const previous = yield* Ref.get(state)
           if (previous !== undefined) {
             yield* withRuntimeServices(previous.session.close, previous.random, previous.clock)
@@ -232,27 +247,31 @@ const makeHeadlessHarness: Effect.Effect<HeadlessHarnessApi, never, HeadlessHarn
           yield* Ref.set(state, undefined)
           yield* testClock.setTime(0)
 
-          const random = yield* Random.withSeed(input.randomSeed)(Random.Random)
+          const random = yield* Random.withSeed(validInput.randomSeed)(Random.Random)
           const clock = makeSessionClock(testClock)
-          const session = yield* withRuntimeServices(factory.open(input.worldSeed), random, clock)
+          const session = yield* withRuntimeServices(factory.open(validInput.worldSeed, stages), random, clock)
           yield* Ref.set(state, { tick: makeSimulationTick(0), random, clock, session })
         })),
       enqueue: (intent: Intent): Effect.Effect<
         IntentSequence,
-        IntentQueueFull | HeadlessHarnessNotInitialized
+        IntentQueueFull | HeadlessHarnessNotInitialized | Schema.SchemaError
       > =>
         semaphore.withPermit(withSession((current) => current.session.intents.enqueue(intent))),
-      step: (count: TickCount): Effect.Effect<void, HeadlessHarnessNotInitialized> =>
-        semaphore.withPermit(Effect.gen(function* () {
-          for (let index = 0; index < count; index += 1) {
-            const current = yield* withSession(Effect.succeed)
-            const nextTick = makeSimulationTick(current.tick + 1)
-            yield* testClock.adjust(Duration.seconds(tickDuration))
-            const ready = yield* current.session.intents.takeReady(nextTick)
-            yield* withRuntimeServices(current.session.runTick(nextTick, ready), current.random, current.clock)
-            yield* Ref.set(state, { ...current, tick: nextTick })
-          }
-        })),
+      step: (count: TickCount): Effect.Effect<void, HeadlessHarnessNotInitialized | Schema.SchemaError> =>
+        semaphore.withPermit(
+          Schema.decodeUnknownEffect(TickCountSchema)(count).pipe(
+            Effect.flatMap((validCount) => Effect.gen(function* () {
+              for (let index = 0; index < validCount; index += 1) {
+                const current = yield* withSession(Effect.succeed)
+                const nextTick = makeSimulationTick(current.tick + 1)
+                yield* testClock.adjust(Duration.seconds(tickDuration))
+                const ready = yield* current.session.intents.takeReady(nextTick)
+                yield* withRuntimeServices(current.session.runTick(nextTick, ready), current.random, current.clock)
+                yield* Ref.set(state, { ...current, tick: nextTick })
+              }
+            })),
+          ),
+        ),
       stateHash: semaphore.withPermit(Effect.gen(function* () {
         const current = yield* withSession(Effect.succeed)
         const entries: Array<readonly [string, string]> = []
@@ -282,5 +301,7 @@ const makeHeadlessHarness: Effect.Effect<HeadlessHarnessApi, never, HeadlessHarn
     }
   })
 
-export const HeadlessHarnessTestLayer: Layer.Layer<HeadlessHarness, never, HeadlessHarnessSessionFactory> =
-  Layer.effect(HeadlessHarness, makeHeadlessHarness).pipe(Layer.provide(TestClock.layer()))
+export const HeadlessHarnessTestLayer = (
+  stages: HeadlessHarnessStages,
+): Layer.Layer<HeadlessHarness, never, HeadlessHarnessSessionFactory> =>
+  Layer.effect(HeadlessHarness, makeHeadlessHarness(stages)).pipe(Layer.provide(TestClock.layer()))

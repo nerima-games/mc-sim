@@ -1,3 +1,4 @@
+import { Result } from 'effect'
 import { canonicalEnchantments } from './anvil-normalization.js'
 import { ANVIL_REPAIR_BONUS_RATIO, ANVIL_TOO_EXPENSIVE_LEVEL } from './anvil-constants.js'
 import {
@@ -8,11 +9,12 @@ import {
   type CompiledAnvilEnchantmentRule,
   type CompiledAnvilRuleSet,
 } from './anvil-validation.js'
-import { AnvilMaterialCost } from './anvil-primitives.js'
+import { anvilMaterialCostFromInvariant } from './anvil-primitives.js'
 import type {
   AnvilDurability,
   AnvilEnchantment,
   AnvilEnchantmentId,
+  AnvilMaterialCost,
   AnvilPlan,
   CanonicalAnvilItemPayload,
 } from './anvil.js'
@@ -32,14 +34,42 @@ export type TransformationResult =
 const safeAdd = (left: number, right: number): number =>
   Math.min(Number.MAX_SAFE_INTEGER, left + right)
 
-export const nextAnvilRepairCost = (repairCost: number): number =>
-  Math.min(Number.MAX_SAFE_INTEGER, repairCost * 2 + 1)
+export type AnvilRepairCostFailure =
+  | Readonly<{
+      readonly _tag: 'InvalidAnvilRepairCost'
+      readonly reason: 'repair cost must be a non-negative safe integer'
+    }>
+  | Readonly<{
+      readonly _tag: 'AnvilRepairCostOverflow'
+      readonly reason: 'next repair cost exceeds the maximum safe integer'
+    }>
+
+export const nextAnvilRepairCost = (
+  repairCost: number,
+): Result.Result<number, AnvilRepairCostFailure> => {
+  if (!Number.isSafeInteger(repairCost) || repairCost < 0) {
+    return Result.fail({
+      _tag: 'InvalidAnvilRepairCost',
+      reason: 'repair cost must be a non-negative safe integer',
+    })
+  }
+
+  const nextRepairCost = repairCost * 2 + 1
+  if (!Number.isSafeInteger(nextRepairCost)) {
+    return Result.fail({
+      _tag: 'AnvilRepairCostOverflow',
+      reason: 'next repair cost exceeds the maximum safe integer',
+    })
+  }
+
+  return Result.succeed(nextRepairCost)
+}
 
 export const initialTransformationOf = (left: CanonicalAnvilItemPayload): TransformationState => ({
   durability: left.durability === null ? null : { ...left.durability },
   enchantments: [...left.enchantments],
   operationCost: 0,
-  materialCost: AnvilMaterialCost(0),
+  materialCost: anvilMaterialCostFromInvariant(0),
   rightContributed: false,
 })
 
@@ -69,7 +99,7 @@ const repairWithSameItem = (
       ...transformation,
       durability: { current: repaired, max: transformation.durability.max },
       operationCost: safeAdd(transformation.operationCost, 2),
-      materialCost: AnvilMaterialCost(1),
+      materialCost: anvilMaterialCostFromInvariant(1),
       rightContributed: true,
     },
   }
@@ -110,7 +140,7 @@ const repairWithMaterial = (
         max: transformation.durability.max,
       },
       operationCost: safeAdd(transformation.operationCost, units),
-      materialCost: AnvilMaterialCost(units),
+      materialCost: anvilMaterialCostFromInvariant(units),
       rightContributed: true,
     },
   }
@@ -177,7 +207,7 @@ const mergeOneEnchantment = (
         transformation.operationCost,
         mergedLevel * definition.costPerLevel,
       ),
-      materialCost: AnvilMaterialCost(Math.max(transformation.materialCost, 1)),
+      materialCost: anvilMaterialCostFromInvariant(Math.max(transformation.materialCost, 1)),
       rightContributed: true,
     },
   }
@@ -229,13 +259,22 @@ export const finalizeAnvilPlan = (
   }
 
   const priorRepairCost = Math.max(left.repairCost, right?.payload.repairCost ?? 0)
+  const outputRepairCost = nextAnvilRepairCost(priorRepairCost)
+  if (Result.isFailure(outputRepairCost)) {
+    const repairCostPath =
+      right !== null && right.payload.repairCost > left.repairCost
+        ? '$.state.right.payload.repairCost'
+        : '$.state.left.repairCost'
+    return rejection('invalid-input', repairCostPath, outputRepairCost.failure.reason)
+  }
+
   return {
     ok: true,
     output: {
       item: left.item,
       durability: transformation.durability,
       enchantments: canonicalEnchantments(transformation.enchantments),
-      repairCost: nextAnvilRepairCost(priorRepairCost),
+      repairCost: outputRepairCost.success,
       customName: rename,
     },
     levelCost,

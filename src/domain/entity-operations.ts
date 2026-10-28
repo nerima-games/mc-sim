@@ -1,4 +1,8 @@
+import { Result } from 'effect'
 import {
+  EntityCount,
+  EntityRosterRepairCount,
+  EntitySerial,
   isEntityId,
   isEntityKind,
   mintEntityId,
@@ -16,24 +20,44 @@ import type {
   EntityState,
   EntityStep,
   EntityTransition,
+  EntitySerialExhausted,
   NormaliseRosterOutcome,
   SpawnOutcome,
   SpawnRequest,
   SweepOutcome,
 } from './entity-types.js'
 
-export const emptyRoster = <S>(): EntityRoster<S> => ({ entities: NO_ENTITIES, nextSerial: 0 })
+const MAX_SERIAL = Number.MAX_SAFE_INTEGER
 
-export const spawnEntity = <S>(roster: EntityRoster<S>, request: SpawnRequest<S>): SpawnOutcome<S> => {
-  const entity: Entity<S> = {
-    id: mintEntityId(roster.nextSerial),
-    kind: request.kind,
-    ...repairState(request),
-  }
-  return {
-    roster: { entities: [...roster.entities, entity], nextSerial: roster.nextSerial + 1 },
-    entity,
-  }
+const firstFreeSerial = (
+  start: EntitySerial,
+  taken: ReadonlySet<string>,
+): Result.Result<EntitySerial, EntitySerialExhausted> => {
+  let candidate = start
+  while (candidate < MAX_SERIAL && taken.has(mintEntityId(candidate))) candidate = EntitySerial(candidate + 1)
+  return candidate < MAX_SERIAL
+    ? Result.succeed(candidate)
+    : Result.fail({ _tag: 'EntitySerialExhausted' })
+}
+
+export const emptyRoster = <S>(): EntityRoster<S> => ({ entities: NO_ENTITIES, nextSerial: EntitySerial(0) })
+
+export const spawnEntity = <S>(
+  roster: EntityRoster<S>,
+  request: SpawnRequest<S>,
+): Result.Result<SpawnOutcome<S>, EntitySerialExhausted> => {
+  const taken = new Set(roster.entities.map((entity) => entity.id))
+  return Result.map(firstFreeSerial(roster.nextSerial, taken), (serial) => {
+    const entity: Entity<S> = {
+      id: mintEntityId(serial),
+      kind: request.kind,
+      ...repairState(request),
+    }
+    return {
+      roster: { entities: [...roster.entities, entity], nextSerial: EntitySerial(serial + 1) },
+      entity,
+    }
+  })
 }
 
 export const despawnEntity = <S>(roster: EntityRoster<S>, id: EntityId): DespawnOutcome<S> => {
@@ -46,8 +70,8 @@ export const despawnEntity = <S>(roster: EntityRoster<S>, id: EntityId): Despawn
 export const findEntity = <S>(roster: EntityRoster<S>, id: EntityId): Entity<S> | undefined =>
   roster.entities.find((entity) => entity.id === id)
 
-export const countOfKind = <S>(roster: EntityRoster<S>, kind: EntityKind): number =>
-  roster.entities.reduce((total, entity) => (entity.kind === kind ? total + 1 : total), 0)
+export const countOfKind = <S>(roster: EntityRoster<S>, kind: EntityKind): EntityCount =>
+  EntityCount(roster.entities.reduce((total, entity) => (entity.kind === kind ? total + 1 : total), 0))
 
 export const UNCHANGED: EntityTransition<never> = { _tag: 'Unchanged' }
 export const DESPAWNED: EntityTransition<never> = { _tag: 'Despawned' }
@@ -87,34 +111,46 @@ export const sweepRoster = <S, A>(
 export const normaliseRoster = <S>(
   roster: EntityRoster<S>,
   repairBehaviour?: BehaviourRepair<S>,
-): NormaliseRosterOutcome<S> => {
+): Result.Result<NormaliseRosterOutcome<S>, EntitySerialExhausted> => {
   const incoming: ReadonlyArray<Entity<S>> =
     typeof roster === 'object' && roster !== null && Array.isArray(roster.entities) ? roster.entities : NO_ENTITIES
 
   const savedSerial =
     typeof roster?.nextSerial === 'number' && Number.isSafeInteger(roster.nextSerial)
-      ? Math.max(0, roster.nextSerial)
-      : 0
+      ? EntitySerial(Math.max(0, roster.nextSerial))
+      : EntitySerial(0)
   const highestSerial = incoming.reduce((highest, entity) => {
     const serial = isEntityId(entity?.id) ? serialOfEntityId(entity.id) : undefined
-    return serial !== undefined && serial >= highest ? serial + 1 : highest
+    return serial !== undefined && serial >= highest
+      ? serial === MAX_SERIAL ? MAX_SERIAL : serial + 1
+      : highest
   }, 0)
 
-  let nextSerial = Math.max(savedSerial, highestSerial)
+  let nextSerial = EntitySerial(Math.max(savedSerial, highestSerial))
   let discarded = 0
   let reidentified = 0
   const taken = new Set<string>()
   const entities: Array<Entity<S>> = []
 
+  let allocationFailure: EntitySerialExhausted | undefined
   incoming.forEach((entity) => {
+    if (allocationFailure !== undefined) return
     if (typeof entity !== 'object' || entity === null || !isEntityKind(entity.kind)) {
       discarded += 1
       return
     }
     const keepsItsId = isEntityId(entity.id) && !taken.has(entity.id)
-    const id = keepsItsId ? entity.id : mintEntityId(nextSerial)
-    if (!keepsItsId) {
-      nextSerial += 1
+    let id: EntityId
+    if (keepsItsId) {
+      id = entity.id
+    } else {
+      const replacementSerial = firstFreeSerial(nextSerial, taken)
+      if (Result.isFailure(replacementSerial)) {
+        allocationFailure = replacementSerial.failure
+        return
+      }
+      id = mintEntityId(replacementSerial.success)
+      nextSerial = EntitySerial(replacementSerial.success + 1)
       reidentified += 1
     }
     taken.add(id)
@@ -129,9 +165,9 @@ export const normaliseRoster = <S>(
     })
   })
 
-  return {
+  return allocationFailure === undefined ? Result.succeed({
     roster: { entities: entities.length === 0 ? NO_ENTITIES : entities, nextSerial },
-    discarded,
-    reidentified,
-  }
+    discarded: EntityRosterRepairCount(discarded),
+    reidentified: EntityRosterRepairCount(reidentified),
+  }) : Result.fail(allocationFailure)
 }

@@ -8,13 +8,14 @@
  * functions return `{ inventory, leftover }` rather than mutating: the tuple is
  * exactly what `Ref.modify` wants.
  */
-import { Context, Effect, Layer, Ref, Result } from 'effect'
+import { Context, Effect, Layer, Ref, Result, Schema } from 'effect'
 import * as Container from '../domain/container-storage.js'
 import * as Craft from '../domain/crafting.js'
 import * as Eq from '../domain/equipment.js'
 import * as Hotbar from '../domain/hotbar.js'
 import * as Inv from '../domain/inventory.js'
-import type { ItemType } from '@nerima-games/mc-kernel'
+import { ITEM_TYPES, RecipeGroup, itemValidationFailure, type ItemType, type RecipeGroup as RecipeGroupValue } from '@nerima-games/mc-kernel'
+import { TagLocation } from '@nerima-games/mc-kernel'
 import * as Storage from '../domain/player-storage.js'
 import * as Recipe from '../domain/recipe.js'
 import { STARTER_RECIPES } from '../domain/recipe-data.js'
@@ -74,6 +75,65 @@ export type InventorySortResult =
   | { readonly _tag: 'Sorted' }
   | { readonly _tag: 'NoChange' }
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const ItemTypeSchema: AnySchema = Schema.Literals(ITEM_TYPES)
+const ResourceLocationSchema: AnySchema = Schema.declare<Recipe.RecipeId>(
+  (value): value is Recipe.RecipeId =>
+    typeof value === 'string' && Result.isSuccess(Recipe.RecipeId.result(value)),
+)
+
+const EquipmentValidationErrorSchema: AnySchema = Schema.Struct({
+  _tag: Schema.Literal('EquipmentValidationError'),
+  path: Schema.String,
+  reason: Schema.String,
+})
+
+const InvalidInventoryDurabilitySchema: AnySchema = Schema.Struct({
+  _tag: Schema.Literal('InvalidInventoryDurability'),
+  slotIndex: Schema.Int,
+  item: ItemTypeSchema,
+})
+
+export const PlayerStorageFailureSchema: AnySchema = Schema.Union([
+  Inv.BrandErrorSchema,
+  EquipmentValidationErrorSchema,
+  InvalidInventoryDurabilitySchema,
+])
+
+export const PlayerStorageValidationErrorSchema: AnySchema = Schema.Struct({
+  _tag: Schema.Literal('PlayerStorageValidationError'),
+  path: Schema.String,
+  reason: Schema.String,
+})
+
+export const RecipeFailureSchema: AnySchema = Schema.Union([
+  Schema.Struct({
+    _tag: Schema.Literal('RecipeTypeFailure'),
+    name: Schema.Literal('TypeError'),
+    message: Schema.String,
+  }),
+  Schema.Struct({
+    _tag: Schema.Literal('RecipeRangeFailure'),
+    name: Schema.Literal('RangeError'),
+    message: Schema.String,
+  }),
+  Schema.Struct({
+    _tag: Schema.Literal('RecipeExternalFailure'),
+    name: Schema.String,
+    message: Schema.String,
+    componentKey: Schema.optional(Schema.String),
+  }),
+  Schema.Struct({
+    _tag: Schema.Literal('RecipeItemFailure'),
+    failure: Inv.ItemStackFailureSchema,
+  }),
+])
+
+const invalidInventoryInput = (field: string): Inv.ItemStackFailure =>
+  itemValidationFailure(field, 'expected a valid inventory input', 'invalid-type')
+
 /** A world-container address owned by the host's dimension and block coordinates. */
 export type ContainerPositionAddress = {
   readonly dimension: string
@@ -120,21 +180,21 @@ export type InventoryServiceApi = {
    * gameplay's, and `BlockDrop.affectedByFortune` exists so gameplay can make
    * them. mc-sim's part is to be told a number.
    */
-  readonly add: (item: ItemType, count: number) => Effect.Effect<number, Inv.ItemStackFailure>
+  readonly add: (item: ItemType, count: number) => Effect.Effect<number, Inv.ItemStackFailure | Storage.PlayerStorageFailure>
   /** Insert one exact item stack, preserving durability and returning anything that did not fit. */
   readonly addStoredStack: (
     stack: Container.ContainerStoredStack,
   ) => Effect.Effect<Storage.AddStoredStackResult>
   /** Take items. Resolves to the number actually taken. */
-  readonly remove: (item: ItemType, count: number) => Effect.Effect<number, Inv.ItemStackFailure>
+  readonly remove: (item: ItemType, count: number) => Effect.Effect<number, Inv.ItemStackFailure | Storage.PlayerStorageFailure>
   /** Remove exactly `count` items from the selected slot when its item still matches. */
   readonly removeAt: (
     slotIndex: number,
     expectedItem: ItemType,
     count: number,
-  ) => Effect.Effect<Inv.RemoveAtResult, Inv.ItemStackFailure>
+  ) => Effect.Effect<Inv.RemoveAtResult, Inv.ItemStackFailure | Storage.PlayerStorageFailure>
   /** Atomically apply one left or right slot click and return the new carried stack. */
-  readonly click: (click: InventoryClick) => Effect.Effect<InventoryClickResult, Inv.ItemStackFailure>
+  readonly click: (click: InventoryClick) => Effect.Effect<InventoryClickResult, Inv.ItemStackFailure | Storage.PlayerStorageFailure>
   /** Read one slot including tool durability without exposing mutable state. */
   readonly getSlot: (slotIndex: number) => Effect.Effect<InventoryCarriedSlot>
   /** Read the nine hotbar slots in their player-inventory order. */
@@ -143,16 +203,16 @@ export type InventoryServiceApi = {
   readonly setSlot: (
     slotIndex: number,
     slot: InventoryCarriedSlot,
-  ) => Effect.Effect<InventorySetSlotResult, Inv.ItemStackFailure>
+  ) => Effect.Effect<InventorySetSlotResult, Inv.ItemStackFailure | Storage.PlayerStorageFailure>
   /** Move, merge, or exchange two player inventory slots atomically. */
   readonly moveStack: (
     sourceIndex: number,
     targetIndex: number,
-  ) => Effect.Effect<InventoryMoveResult, Inv.ItemStackFailure>
+  ) => Effect.Effect<InventoryMoveResult, Inv.ItemStackFailure | Storage.PlayerStorageFailure>
   /** Shift-click a stack between the main inventory and hotbar. */
-  readonly quickMove: (slotIndex: number) => Effect.Effect<InventoryQuickMoveResult, Inv.ItemStackFailure>
+  readonly quickMove: (slotIndex: number) => Effect.Effect<InventoryQuickMoveResult, Inv.ItemStackFailure | Storage.PlayerStorageFailure>
   /** Canonically sort inventory stacks while keeping durability attached. */
-  readonly sortInventory: Effect.Effect<InventorySortResult, Inv.ItemStackFailure>
+  readonly sortInventory: Effect.Effect<InventorySortResult, Inv.ItemStackFailure | Storage.PlayerStorageFailure>
   readonly countOf: (item: ItemType) => Effect.Effect<number>
   readonly snapshot: Effect.Effect<Inv.Inventory>
   readonly equipmentSnapshot: Effect.Effect<Eq.Equipment>
@@ -175,7 +235,7 @@ export type InventoryServiceApi = {
   /** Atomically consume inventory items and damage the expected item at a captured location. */
   readonly consumeAndDamageAt: (
     request: Storage.ConsumeAndDamageAtRequest,
-  ) => Effect.Effect<Storage.ConsumeAndDamageAtResult>
+  ) => Effect.Effect<Storage.ConsumeAndDamageAtResult, Inv.ItemStackFailure>
   /** Create one fixed-capacity container under a stable host-defined id. */
   readonly createContainer: (
     id: Container.ContainerId,
@@ -255,7 +315,7 @@ export type InventoryServiceApi = {
    * public, pure, and returns both numbers, so calling it before `restore`
    * gives the full accounting and costs one repair that is idempotent.
    */
-  readonly restore: (inventory: Inv.Inventory) => Effect.Effect<number, Inv.ItemStackFailure>
+  readonly restore: (inventory: unknown) => Effect.Effect<number, Inv.ItemStackFailure | Storage.PlayerStorageFailure>
   /**
    * Empty the inventory.
    *
@@ -275,7 +335,7 @@ export type InventoryServiceApi = {
    * alternative is mx-ui keeping its own copy — which is plan.md §2.3-1's
    * failure mode with a table instead of a rule.
    */
-  readonly recipes: Effect.Effect<Recipe.RecipeTable, Inv.ItemStackFailure>
+  readonly recipes: Effect.Effect<Recipe.RecipeTable, Inv.ItemStackFailure | Recipe.RecipeFailure>
   /**
    * What `grid` would make, without making it.
    *
@@ -297,8 +357,282 @@ export type InventoryServiceApi = {
    * Every failure leaves the inventory byte-identical; see
    * `domain/crafting.ts`.
    */
-  readonly craft: (grid: Recipe.CraftGrid) => Effect.Effect<Craft.CraftResult, Craft.CraftFailure>
+  readonly craft: (grid: Recipe.CraftGrid) => Effect.Effect<Craft.CraftResult, Craft.CraftFailure | Storage.PlayerStorageFailure>
 }
+
+type AnySchema = Schema.Schema<unknown>
+
+const NonNegativeIntegerSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
+export const InventoryCountSchema: AnySchema = NonNegativeIntegerSchema
+export const InventoryAddLeftoverSchema: AnySchema = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))
+const PositiveIntegerSchema = Schema.Int.check(Schema.isGreaterThan(0))
+
+export const InventorySnapshotSchema: AnySchema = Schema.declare<Inv.Inventory>(
+  (value): value is Inv.Inventory =>
+    isRecord(value) &&
+    Object.keys(value).length === 1 &&
+    Array.isArray(value['slots']) &&
+    value['slots'].length === Inv.INVENTORY_SLOT_COUNT &&
+    value['slots'].every((slot) => slot === undefined || Schema.is(Inv.ItemStackSchema)(slot)),
+)
+
+export const ContainerStoredStackSchema: Schema.Codec<Container.ContainerStoredStack, unknown> = Eq.EquipmentItemSchema.check(Schema.makeFilter((stack) => {
+  const durabilityDefinition = Eq.itemDurabilityDefinitionFor(stack.item)
+  return durabilityDefinition === undefined
+    ? stack.durability === null
+    : Eq.isValidDurabilityForItem(stack.item, stack.durability)
+}))
+
+const InventoryCarriedStackSchema: AnySchema = Schema.declare<InventoryCarriedStack>(
+  (value): value is InventoryCarriedStack => value !== undefined && validCarried(value),
+)
+
+export const InventoryCarriedSlotSchema: AnySchema = Schema.Union([
+  InventoryCarriedStackSchema,
+  Schema.Undefined,
+])
+
+const isEquipmentItemShape = (value: unknown): value is Eq.EquipmentItem => {
+  if (
+    !isRecord(value) ||
+    Object.keys(value).length !== 4 ||
+    !Object.hasOwn(value, 'durability')
+  ) return false
+  const itemStack = {
+    item: value['item'],
+    count: value['count'],
+    components: value['components'],
+  }
+  return Schema.is(Inv.ItemStackSchema)(itemStack) &&
+    (value['durability'] === null || Eq.isDurability(value['durability']))
+}
+
+const EquipmentItemSchema: AnySchema = Schema.declare(isEquipmentItemShape)
+
+const EquipmentItemFailureSchema: AnySchema = Schema.Union([
+  Inv.BrandErrorSchema,
+  EquipmentValidationErrorSchema,
+])
+
+const DamageRejectedSchema: AnySchema = Schema.Union([
+  Schema.Struct({ _tag: Schema.Literal('InvalidAmount'), amount: Schema.Finite }),
+  Schema.Struct({ _tag: Schema.Literal('Empty') }),
+  Schema.Struct({ _tag: Schema.Literal('NotDamageable'), item: EquipmentItemSchema }),
+  Schema.Struct({ _tag: Schema.Literal('EquipmentFailure'), error: EquipmentItemFailureSchema }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidLocation') }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidDurability'), item: Inv.ItemStackSchema }),
+])
+
+export const ConsumeAndDamageAtResultSchema: AnySchema = Schema.Union([
+  Schema.Struct({
+    _tag: Schema.Literal('Applied'),
+    consumed: NonNegativeIntegerSchema,
+    damage: Schema.Union([
+      Schema.Struct({
+        _tag: Schema.Literal('Damaged'),
+        item: EquipmentItemSchema,
+        applied: PositiveIntegerSchema,
+      }),
+      Schema.Struct({
+        _tag: Schema.Literal('Broken'),
+        item: EquipmentItemSchema,
+        applied: PositiveIntegerSchema,
+      }),
+    ]),
+  }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidConsumableCount'), count: Schema.Finite }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidDamageAmount'), amount: Schema.Finite }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidLocation') }),
+  Schema.Struct({
+    _tag: Schema.Literal('DamageTargetMismatch'),
+    actualItem: Schema.Union([ItemTypeSchema, Schema.Null]),
+  }),
+  Schema.Struct({ _tag: Schema.Literal('NotDamageable'), item: Inv.ItemStackSchema }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidDurability'), item: Inv.ItemStackSchema }),
+  Schema.Struct({ _tag: Schema.Literal('EquipmentFailure'), error: EquipmentItemFailureSchema }),
+  Schema.Struct({ _tag: Schema.Literal('StorageFailure'), error: PlayerStorageFailureSchema }),
+  Schema.Struct({ _tag: Schema.Literal('DamageRejected'), damage: DamageRejectedSchema }),
+  Schema.Struct({ _tag: Schema.Literal('InsufficientConsumable'), available: NonNegativeIntegerSchema }),
+  Schema.Struct({ _tag: Schema.Literal('ItemStackFailure'), error: Inv.ItemStackFailureSchema }),
+])
+
+export const InventoryRemoveAtResultSchema: AnySchema = Schema.Union([
+  Schema.Struct({ _tag: Schema.Literal('Removed'), removed: NonNegativeIntegerSchema }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidSlot') }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidCount') }),
+  Schema.Struct({ _tag: Schema.Literal('EmptySlot') }),
+  Schema.Struct({ _tag: Schema.Literal('ItemMismatch'), actualItem: ItemTypeSchema }),
+  Schema.Struct({ _tag: Schema.Literal('Insufficient'), available: NonNegativeIntegerSchema }),
+])
+
+export const AddStoredStackResultSchema: AnySchema = Schema.Union([
+  Schema.Struct({
+    _tag: Schema.Literal('Added'),
+    added: NonNegativeIntegerSchema,
+    leftover: Schema.Union([ContainerStoredStackSchema, Schema.Null]),
+  }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidStack') }),
+  Schema.Struct({ _tag: Schema.Literal('ItemStackFailure'), error: Inv.ItemStackFailureSchema }),
+])
+
+export const InventoryClickResultSchema: AnySchema = Schema.Union([
+  Schema.Struct({ _tag: Schema.Literal('PickedUp'), carried: InventoryCarriedStackSchema }),
+  Schema.Struct({ _tag: Schema.Literal('Placed'), carried: InventoryCarriedSlotSchema }),
+  Schema.Struct({ _tag: Schema.Literal('Merged'), carried: InventoryCarriedSlotSchema }),
+  Schema.Struct({ _tag: Schema.Literal('Swapped'), carried: InventoryCarriedStackSchema }),
+  Schema.Struct({ _tag: Schema.Literal('NoChange'), carried: InventoryCarriedSlotSchema }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidSlot'), carried: InventoryCarriedSlotSchema }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidCount'), carried: InventoryCarriedSlotSchema }),
+])
+
+export const InventorySetSlotResultSchema: AnySchema = Schema.Union([
+  Schema.Struct({ _tag: Schema.Literal('Updated'), slot: InventoryCarriedSlotSchema }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidSlot') }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidStack') }),
+])
+
+export const InventoryMoveResultSchema: AnySchema = Schema.Union([
+  Schema.Struct({
+    _tag: Schema.Literals(['Moved', 'Merged', 'Swapped']),
+    moved: PositiveIntegerSchema,
+    source: InventoryCarriedSlotSchema,
+    target: InventoryCarriedSlotSchema,
+  }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidSlot') }),
+  Schema.Struct({ _tag: Schema.Literal('EmptySlot') }),
+  Schema.Struct({ _tag: Schema.Literal('NoChange') }),
+])
+
+export const InventoryQuickMoveResultSchema: AnySchema = Schema.Union([
+  Schema.Struct({
+    _tag: Schema.Literal('Moved'),
+    moved: PositiveIntegerSchema,
+    source: InventoryCarriedSlotSchema,
+  }),
+  Schema.Struct({ _tag: Schema.Literal('InvalidSlot') }),
+  Schema.Struct({ _tag: Schema.Literal('EmptySlot') }),
+  Schema.Struct({ _tag: Schema.Literal('NoChange') }),
+])
+
+const RecipeIngredientCountSchema: AnySchema = Schema.declare<Recipe.RecipeIngredientCount>(
+  (value): value is Recipe.RecipeIngredientCount =>
+    typeof value === 'number' && Result.isSuccess(Recipe.RecipeIngredientCount.result(value)),
+)
+const RecipePrioritySchema: AnySchema = Schema.declare<Recipe.RecipePriority>(
+  (value): value is Recipe.RecipePriority =>
+    typeof value === 'number' && Result.isSuccess(Recipe.RecipePriority.result(value)),
+)
+const RecipeGridDimensionSchema: AnySchema = Schema.declare<Recipe.RecipeGridDimension>(
+  (value): value is Recipe.RecipeGridDimension =>
+    typeof value === 'number' && Result.isSuccess(Recipe.RecipeGridDimension.result(value)),
+)
+const RecipeGroupSchema: AnySchema = Schema.declare<RecipeGroupValue>(
+  (value): value is RecipeGroupValue =>
+    typeof value === 'string' && Result.isSuccess(RecipeGroup.result(value)),
+)
+const RecipeTagSchema: AnySchema = Schema.declare<Recipe.RecipeStationTag>(
+  (value): value is Recipe.RecipeStationTag =>
+    typeof value === 'string' && Result.isSuccess(Recipe.RecipeStationTag.result(value)),
+)
+const RecipeItemTagSchema: AnySchema = Schema.declare<Recipe.RecipeItemTag>(
+  (value): value is Recipe.RecipeItemTag =>
+    typeof value === 'string' && Result.isSuccess(TagLocation.result(value)),
+)
+
+const ExactIngredientSchema = Schema.Struct({
+  _tag: Schema.Literal('Exact'),
+  item: ItemTypeSchema,
+  count: RecipeIngredientCountSchema,
+})
+
+const ItemTagIngredientSchema = Schema.Struct({
+  _tag: Schema.Literal('ItemTag'),
+  tag: RecipeItemTagSchema,
+  count: RecipeIngredientCountSchema,
+})
+
+const IngredientSchema = Schema.Union([ExactIngredientSchema, ItemTagIngredientSchema])
+
+const AnyOfIngredientSchema = Schema.Struct({
+  _tag: Schema.Literal('AnyOf'),
+  options: Schema.Array(IngredientSchema),
+  count: RecipeIngredientCountSchema,
+})
+
+const CraftingIngredientSchema = Schema.Union([IngredientSchema, AnyOfIngredientSchema])
+
+const RecipeCategorySchema = Schema.Literals(['building', 'equipment', 'misc', 'redstone'])
+
+const RecipeSchema: AnySchema = Schema.Union([
+  Schema.Struct({
+    _tag: Schema.Literal('Shaped'),
+    id: ResourceLocationSchema,
+    pattern: Schema.Struct({
+      width: RecipeGridDimensionSchema,
+      height: RecipeGridDimensionSchema,
+      cells: Schema.Array(Schema.Union([CraftingIngredientSchema, Schema.Undefined])),
+    }),
+    output: Inv.ItemStackSchema,
+    assumeSymmetry: Schema.Boolean,
+    category: Schema.optional(RecipeCategorySchema),
+    group: Schema.optional(RecipeGroupSchema),
+    priority: RecipePrioritySchema,
+    showNotification: Schema.optional(Schema.Boolean),
+    tags: Schema.Array(RecipeTagSchema),
+  }),
+  Schema.Struct({
+    _tag: Schema.Literal('Shapeless'),
+    id: ResourceLocationSchema,
+    ingredients: Schema.Array(CraftingIngredientSchema),
+    output: Inv.ItemStackSchema,
+    category: Schema.optional(RecipeCategorySchema),
+    group: Schema.optional(RecipeGroupSchema),
+    priority: RecipePrioritySchema,
+    showNotification: Schema.optional(Schema.Boolean),
+    tags: Schema.Array(RecipeTagSchema),
+  }),
+])
+
+export const RecipeMatchSchema: AnySchema = Schema.Union([
+  Schema.Struct({ _tag: Schema.Literal('Match'), recipe: RecipeSchema, output: Inv.ItemStackSchema }),
+  Schema.Struct({ _tag: Schema.Literal('NoMatch') }),
+])
+
+export const CraftResultSchema: AnySchema = Schema.Union([
+  Schema.Struct({
+    _tag: Schema.Literal('Crafted'),
+    recipeId: ResourceLocationSchema,
+    output: Inv.ItemStackSchema,
+  }),
+  Schema.Struct({ _tag: Schema.Literal('NoMatch') }),
+  Schema.Struct({
+    _tag: Schema.Literal('MissingIngredients'),
+    missing: Schema.Array(Schema.Struct({ item: ItemTypeSchema, short: PositiveIntegerSchema })),
+  }),
+  Schema.Struct({ _tag: Schema.Literal('NoRoom') }),
+])
+
+export const InventoryMutationErrorSchema: AnySchema = Schema.Union([
+  Inv.ItemStackFailureSchema,
+  PlayerStorageFailureSchema,
+])
+
+export const InventoryServiceConstructorErrorSchema: AnySchema = Schema.Union([
+  InventoryMutationErrorSchema,
+  RecipeFailureSchema,
+])
+
+export const InventoryRestoreStorageErrorSchema: AnySchema = Schema.Union([
+  PlayerStorageValidationErrorSchema,
+  Inv.ItemStackFailureSchema,
+])
+
+export const InventoryConsumeAndDamageErrorSchema: AnySchema = Inv.ItemStackFailureSchema
+
+export const InventoryCraftErrorSchema: AnySchema = Schema.Union([
+  Inv.ItemStackFailureSchema,
+  PlayerStorageFailureSchema,
+])
 
 const InventoryServiceBase: Context.ServiceClass<
   InventoryService,
@@ -312,6 +646,8 @@ type InventoryServiceState = {
   readonly player: Storage.PlayerStorage
   readonly containers: Container.ContainerStorage
 }
+
+type InventoryServiceMutationFailure = Inv.ItemStackFailure | Storage.PlayerStorageFailure
 
 /**
  * Build an InventoryService over a fresh Ref.
@@ -327,8 +663,11 @@ type InventoryServiceState = {
 export const makeInventoryService = (
   initial: Inv.Inventory = Inv.emptyInventory(),
   recipeTableInput?: Recipe.RecipeTable,
-): Effect.Effect<InventoryServiceApi, Inv.ItemStackFailure> =>
-  Effect.flatMap(Effect.fromResult(Inv.normaliseInventory(initial)), (normalised) =>
+): Effect.Effect<InventoryServiceApi, Inv.ItemStackFailure | Recipe.RecipeFailure | Storage.PlayerStorageFailure> => {
+  if (!isRecord(initial) || !Array.isArray(initial['slots'])) {
+    return Effect.fail(invalidInventoryInput('initial'))
+  }
+  return Effect.flatMap(Effect.fromResult(Inv.normaliseInventory(initial)), (normalised) =>
     Effect.flatMap(
       Effect.fromResult(recipeTableInput === undefined ? STARTER_RECIPES : Result.succeed(recipeTableInput)),
       (recipeTable) =>
@@ -353,15 +692,23 @@ export const makeInventoryService = (
               : [Result.succeed(result), { ...current, player: player.success }]
           }
 
+          const stateWithInventory = <A>(
+            current: InventoryServiceState,
+            inventory: Inv.Inventory,
+            result: A,
+          ): readonly [Result.Result<A, Storage.PlayerStorageFailure>, InventoryServiceState] => {
+            const player = Storage.withInventory(current.player, inventory)
+            return Result.isFailure(player)
+              ? [Result.fail(player.failure), current]
+              : [Result.succeed(result), { ...current, player: player.success }]
+          }
+
           return {
     add: (item, count) =>
-      modifyResult<number, Inv.ItemStackFailure>((current) => {
+      modifyResult<number, InventoryServiceMutationFailure>((current) => {
         const outcome = Inv.addItem(current.player.inventory, item, count)
         if (Result.isFailure(outcome)) return [Result.fail(outcome.failure), current]
-        return [Result.succeed(outcome.success.leftover), {
-          ...current,
-          player: Storage.withInventory(current.player, outcome.success.inventory),
-        }]
+        return stateWithInventory(current, outcome.success.inventory, outcome.success.leftover)
       }),
     addStoredStack: (stack) =>
       Ref.modify(state, (current) => {
@@ -369,35 +716,45 @@ export const makeInventoryService = (
         return [outcome.result, { ...current, player: outcome.storage }]
       }),
     remove: (item, count) =>
-      modifyResult<number, Inv.ItemStackFailure>((current) => {
+      modifyResult<number, InventoryServiceMutationFailure>((current) => {
         const outcome = Inv.removeItem(current.player.inventory, item, count)
         if (Result.isFailure(outcome)) return [Result.fail(outcome.failure), current]
-        return [Result.succeed(outcome.success.removed), {
-          ...current,
-          player: Storage.withInventory(current.player, outcome.success.inventory),
-        }]
+        return stateWithInventory(current, outcome.success.inventory, outcome.success.removed)
       }),
     removeAt: (slotIndex, expectedItem, count) =>
-      modifyResult<Inv.RemoveAtResult, Inv.ItemStackFailure>((current) => {
+      modifyResult<Inv.RemoveAtResult, InventoryServiceMutationFailure>((current) => {
         const outcome = Inv.removeItemAt(current.player.inventory, slotIndex, expectedItem, count)
         if (Result.isFailure(outcome)) return [Result.fail(outcome.failure), current]
-        return [Result.succeed(outcome.success.result), {
-          ...current,
-          player: Storage.withInventory(current.player, outcome.success.inventory),
-        }]
+        return stateWithInventory(current, outcome.success.inventory, outcome.success.result)
       }),
-    click: (click) =>
-      modifyResult<InventoryClickResult, Inv.ItemStackFailure>((current) => {
-        const beforeDurability = current.player.inventoryDurability[click.slotIndex]
-        const outcome = clickInventory(current.player.inventory, click)
+    click: (click) => {
+      const clickValue: unknown = click
+      if (!isRecord(clickValue)) {
+        return Effect.fail(invalidInventoryInput('click'))
+      }
+      const tag = clickValue['_tag']
+      const slotIndex = clickValue['slotIndex']
+      if ((tag !== 'LeftClick' && tag !== 'RightClick') || typeof slotIndex !== 'number') {
+        return Effect.fail(invalidInventoryInput('click'))
+      }
+      const carried = clickValue['carried']
+      if (!validCarried(carried)) {
+        return Effect.fail(invalidInventoryInput('click.carried'))
+      }
+      const validClick: InventoryClick = { _tag: tag, slotIndex, carried }
+      return modifyResult<InventoryClickResult, InventoryServiceMutationFailure>((current) => {
+        const beforeDurability = current.player.inventoryDurability[validClick.slotIndex]
+        const outcome = clickInventory(current.player.inventory, validClick)
         if (Result.isFailure(outcome)) return [Result.fail(outcome.failure), current]
-        let next = Storage.withInventory(current.player, outcome.success.inventory)
+        const updatedPlayer = Storage.withInventory(current.player, outcome.success.inventory)
+        if (Result.isFailure(updatedPlayer)) return [Result.fail(updatedPlayer.failure), current]
+        let next = updatedPlayer.success
         if ((outcome.success.result._tag === 'Placed' || outcome.success.result._tag === 'Swapped' ||
-             outcome.success.result._tag === 'Merged') && click.carried !== undefined &&
-            Eq.isDamageableItemType(click.carried.item)) {
-          const durability = click.carried.durability ?? Eq.durabilityForItem(click.carried.item)
+             outcome.success.result._tag === 'Merged') && validClick.carried !== undefined &&
+            Eq.isDamageableItemType(validClick.carried.item)) {
+          const durability = validClick.carried.durability ?? Eq.durabilityForItem(validClick.carried.item)
           const values = [...next.inventoryDurability]
-          values[click.slotIndex] = { ...durability }
+          values[validClick.slotIndex] = { ...durability }
           next = { ...next, inventoryDurability: values }
         }
         const result = (outcome.success.result._tag === 'PickedUp' || outcome.success.result._tag === 'Swapped') &&
@@ -407,7 +764,8 @@ export const makeInventoryService = (
           ? { ...outcome.success.result, carried: { ...outcome.success.result.carried, durability: beforeDurability } }
           : outcome.success.result
         return [Result.succeed(result), { ...current, player: next }]
-      }),
+      })
+    },
     getSlot: (slotIndex) => Ref.get(state).pipe(
       Effect.map((current) => isValidSlotIndex(slotIndex) ? carriedAt(current.player, slotIndex) : undefined),
     ),
@@ -421,6 +779,9 @@ export const makeInventoryService = (
       modifyResult<InventorySetSlotResult, Inv.ItemStackFailure>((current) => {
         if (!isValidSlotIndex(slotIndex)) {
           return [Result.succeed({ _tag: 'InvalidSlot' }), current]
+        }
+        if (slot !== undefined && !isRecord(slot)) {
+          return [Result.succeed({ _tag: 'InvalidStack' }), current]
         }
         if (!validCarried(slot)) {
           return [Result.succeed({ _tag: 'InvalidStack' }), current]
@@ -549,11 +910,21 @@ export const makeInventoryService = (
         const outcome = Storage.damageAt(current.player, location, amount)
         return [outcome.result, { ...current, player: outcome.storage }]
       }),
-    consumeAndDamageAt: (request) =>
-      Ref.modify(state, (current) => {
+    consumeAndDamageAt: (request) => {
+      if (!isRecord(request) ||
+          !isRecord(request['consume']) ||
+          !isRecord(request['damage']) ||
+          typeof request['consume']['count'] !== 'number' ||
+          !Number.isFinite(request['consume']['count']) ||
+          typeof request['damage']['amount'] !== 'number' ||
+          !Number.isFinite(request['damage']['amount'])) {
+        return Effect.fail(invalidInventoryInput('consumeAndDamageAt'))
+      }
+      return Ref.modify(state, (current) => {
         const outcome = Storage.consumeAndDamageAt(current.player, request)
         return [outcome.result, { ...current, player: outcome.storage }]
-      }),
+      })
+    },
     createContainer: (id, kind) =>
       Ref.modify(state, (current) => {
         const outcome = Container.createContainer(current.containers, id, kind)
@@ -640,15 +1011,18 @@ export const makeInventoryService = (
         const outcome = Container.drainContainer(current.containers, id)
         return [outcome.result, { ...current, containers: outcome.storage }]
       }),
-    restore: (inventory) =>
-      modifyResult((current) => {
+    restore: (inventory) => {
+      if (!isRecord(inventory) ||
+          !Array.isArray(inventory['slots']) ||
+          !inventory['slots'].every((slot) => slot === undefined || isRecord(slot))) {
+        return Effect.fail(invalidInventoryInput('inventory'))
+      }
+      return modifyResult<number, InventoryServiceMutationFailure>((current) => {
         const outcome = Inv.normaliseInventory(inventory)
         if (Result.isFailure(outcome)) return [Result.fail(outcome.failure), current]
-        return [Result.succeed(outcome.success.leftover), {
-          ...current,
-          player: Storage.withInventory(current.player, outcome.success.inventory),
-        }]
-      }),
+        return stateWithInventory(current, outcome.success.inventory, outcome.success.leftover)
+      })
+    },
     reset: Ref.set(state, {
       player: Storage.emptyPlayerStorage(),
       containers: Container.emptyContainerStorage(),
@@ -656,22 +1030,20 @@ export const makeInventoryService = (
     recipes: Effect.succeed(recipeTable),
     previewCraft: (grid) => Effect.sync(() => Recipe.matchRecipe(recipeTable, grid)),
     craft: (grid) =>
-      modifyResult<Craft.CraftResult, Craft.CraftFailure>((current) => {
+      modifyResult<Craft.CraftResult, Craft.CraftFailure | Storage.PlayerStorageFailure>((current) => {
         const outcome = Craft.craftFromGrid(current.player.inventory, recipeTable, grid)
         if (Result.isFailure(outcome)) return [Result.fail(outcome.failure), current]
-        return [Result.succeed(outcome.success.result), {
-          ...current,
-          player: Storage.withInventory(current.player, outcome.success.inventory),
-        }]
+        return stateWithInventory(current, outcome.success.inventory, outcome.success.result)
       }),
           }
         },
       ),
     ),
   )
+}
 
 export const InventoryServiceLayer = (
   initial: Inv.Inventory = Inv.emptyInventory(),
   recipeTable?: Recipe.RecipeTable,
-): Layer.Layer<InventoryService, Inv.ItemStackFailure> =>
+): Layer.Layer<InventoryService, Inv.ItemStackFailure | Recipe.RecipeFailure | Storage.PlayerStorageFailure> =>
   Layer.effect(InventoryService, makeInventoryService(initial, recipeTable))

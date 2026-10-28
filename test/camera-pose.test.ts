@@ -11,13 +11,13 @@
  * camera is computable HERE, in Node, with no renderer in the process.
  */
 import { describe, expect, it } from '@effect/vitest'
-import { Effect } from 'effect'
+import { Effect, Result } from 'effect'
 import {
   applyLook,
-  cameraPoseOf,
+  cameraPoseOf as cameraPoseOfResult,
   clampPitch,
   EYE_LEVEL_OFFSET,
-  forwardVector,
+  forwardVector as forwardVectorResult,
   INITIAL_PLAYER_POSE,
   PITCH_EPSILON,
   PITCH_MAX_RADIANS,
@@ -30,6 +30,14 @@ import { MonotonicTimeSecs, PositionAxis, position as coordinatePosition } from 
 const AT = MonotonicTimeSecs(500)
 const position = (x: number, y: number, z: number) =>
   coordinatePosition(PositionAxis(x), PositionAxis(y), PositionAxis(z))
+const success = <A, E>(result: Result.Result<A, E>): A => {
+  if (Result.isFailure(result)) throw new Error('expected a valid camera pose result')
+  return result.success
+}
+const cameraPoseOf = (pose: Parameters<typeof cameraPoseOfResult>[0], capturedAtSecs: Parameters<typeof cameraPoseOfResult>[1]) =>
+  success(cameraPoseOfResult(pose, capturedAtSecs))
+const forwardVector = (orientation: Parameters<typeof forwardVectorResult>[0]) =>
+  success(forwardVectorResult(orientation))
 
 describe('pitch clamping', () => {
   it.effect('stops just short of vertical, so yaw never becomes unrecoverable', () =>
@@ -44,16 +52,52 @@ describe('pitch clamping', () => {
 
   it.effect('clamps both directions and leaves in-range pitches alone', () =>
     Effect.sync(() => {
-      expect(clampPitch(Math.PI)).toBe(PITCH_MAX_RADIANS)
-      expect(clampPitch(-Math.PI)).toBe(PITCH_MIN_RADIANS)
-      expect(clampPitch(Math.PI / 2)).toBe(PITCH_MAX_RADIANS)
-      expect(clampPitch(0.3)).toBe(0.3)
+      expect(success(clampPitch(Math.PI))).toBe(PITCH_MAX_RADIANS)
+      expect(success(clampPitch(-Math.PI))).toBe(PITCH_MIN_RADIANS)
+      expect(success(clampPitch(Math.PI / 2))).toBe(PITCH_MAX_RADIANS)
+      expect(success(clampPitch(0.3))).toBe(0.3)
+    }),
+  )
+
+  it.effect('returns typed failures for non-finite angle inputs', () =>
+    Effect.sync(() => {
+      expect(Result.isFailure(clampPitch(Number.NaN))).toBe(true)
+      expect(Result.isFailure(applyLook(INITIAL_PLAYER_POSE, Number.NaN, 0))).toBe(true)
+    }),
+  )
+
+  it.effect('returns typed failures for malformed pose fields and delta types', () =>
+    Effect.sync(() => {
+      const malformedPoses: ReadonlyArray<readonly [unknown, string]> = [
+        [null, 'pose'],
+        [{ ...INITIAL_PLAYER_POSE, feetPosition: null }, 'pose.feetPosition'],
+        [{ ...INITIAL_PLAYER_POSE, feetPosition: { x: '0', y: 0, z: 0 } }, 'pose.feetPosition.x'],
+        [{ ...INITIAL_PLAYER_POSE, feetPosition: { x: 0, y: '0', z: 0 } }, 'pose.feetPosition.y'],
+        [{ ...INITIAL_PLAYER_POSE, feetPosition: { x: 0, y: 0, z: '0' } }, 'pose.feetPosition.z'],
+        [{ ...INITIAL_PLAYER_POSE, yawRadians: '0' }, 'pose.yawRadians'],
+        [{ ...INITIAL_PLAYER_POSE, pitchRadians: '0' }, 'pose.pitchRadians'],
+      ]
+      for (const [pose, field] of malformedPoses) {
+        const result = applyLook(pose as never, 0, 0)
+        expect(result).toMatchObject({
+          _tag: 'Failure',
+          failure: { _tag: 'CameraPoseInputError', field },
+        })
+      }
+      expect(applyLook(INITIAL_PLAYER_POSE, null as never, 0)).toMatchObject({
+        _tag: 'Failure',
+        failure: { _tag: 'CameraPoseInputError', field: 'deltaYaw' },
+      })
+      expect(applyLook(INITIAL_PLAYER_POSE, 0, null as never)).toMatchObject({
+        _tag: 'Failure',
+        failure: { _tag: 'CameraPoseInputError', field: 'deltaPitch' },
+      })
     }),
   )
 
   it.effect('repeatedly looking up saturates rather than wrapping the view upside down', () =>
     Effect.sync(() => {
-      const looked = [1, 2, 3, 4, 5].reduce((pose) => applyLook(pose, 0, 1), INITIAL_PLAYER_POSE)
+      const looked = [1, 2, 3, 4, 5].reduce((pose) => success(applyLook(pose, 0, 1)), INITIAL_PLAYER_POSE)
 
       expect(looked.pitchRadians).toBe(PITCH_MAX_RADIANS)
     }),
@@ -61,7 +105,7 @@ describe('pitch clamping', () => {
 
   it.effect('yaw is NOT wrapped, so turn deltas stay measurable across the seam', () =>
     Effect.sync(() => {
-      const spun = [1, 2, 3].reduce((pose) => applyLook(pose, Math.PI, 0), INITIAL_PLAYER_POSE)
+      const spun = [1, 2, 3].reduce((pose) => success(applyLook(pose, Math.PI, 0)), INITIAL_PLAYER_POSE)
 
       expect(spun.yawRadians).toBeCloseTo(3 * Math.PI, 12)
       expect(spun.yawRadians).toBeGreaterThan(2 * Math.PI)
@@ -70,6 +114,38 @@ describe('pitch clamping', () => {
 })
 
 describe('CameraPoseSnapshot production', () => {
+  it.effect('returns typed failures for malformed pose field and capture-time types', () =>
+    Effect.sync(() => {
+      const malformedPoses: ReadonlyArray<readonly [unknown, string]> = [
+        [null, 'pose'],
+        [{ ...INITIAL_PLAYER_POSE, feetPosition: null }, 'pose.feetPosition'],
+        [{ ...INITIAL_PLAYER_POSE, feetPosition: { x: '0', y: 0, z: 0 } }, 'pose.feetPosition.x'],
+        [{ ...INITIAL_PLAYER_POSE, feetPosition: { x: 0, y: '0', z: 0 } }, 'pose.feetPosition.y'],
+        [{ ...INITIAL_PLAYER_POSE, feetPosition: { x: 0, y: 0, z: '0' } }, 'pose.feetPosition.z'],
+        [{ ...INITIAL_PLAYER_POSE, yawRadians: '0' }, 'pose.yawRadians'],
+        [{ ...INITIAL_PLAYER_POSE, pitchRadians: '0' }, 'pose.pitchRadians'],
+      ]
+      for (const [pose, field] of malformedPoses) {
+        expect(cameraPoseOfResult(pose as never, AT)).toMatchObject({
+          _tag: 'Failure',
+          failure: { _tag: 'CameraPoseInputError', field },
+        })
+      }
+      expect(cameraPoseOfResult(INITIAL_PLAYER_POSE, null as never)).toMatchObject({
+        _tag: 'Failure',
+        failure: { _tag: 'CameraPoseInputError', field: 'capturedAtSecs' },
+      })
+    }),
+  )
+
+  it.effect('returns a typed failure for invalid runtime pose values', () =>
+    Effect.sync(() => {
+      const invalid = cameraPoseOfResult({ ...INITIAL_PLAYER_POSE, yawRadians: Number.NaN }, AT)
+
+      expect(Result.isFailure(invalid)).toBe(true)
+    }),
+  )
+
   it.effect('applies the eye offset HERE, not in the renderer', () =>
     Effect.sync(() => {
       // If the renderer applied it, "which block am I targeting" and "which
@@ -91,7 +167,7 @@ describe('CameraPoseSnapshot production', () => {
   it.effect('is a value: producing a second snapshot cannot mutate the first', () =>
     Effect.sync(() => {
       const first = cameraPoseOf(INITIAL_PLAYER_POSE, AT)
-      const moved = applyLook(withFeetPosition(INITIAL_PLAYER_POSE, position(9, 9, 9)), 1, 1)
+      const moved = success(applyLook(withFeetPosition(INITIAL_PLAYER_POSE, position(9, 9, 9)), 1, 1))
       const second = cameraPoseOf(moved, MonotonicTimeSecs(501))
 
       expect(first.position).toStrictEqual(position(0, EYE_LEVEL_OFFSET, 0))
@@ -102,6 +178,14 @@ describe('CameraPoseSnapshot production', () => {
 })
 
 describe('forwardVector — the sanctioned replacement for camera.getWorldDirection()', () => {
+  it.effect('returns a typed failure for invalid runtime angles', () =>
+    Effect.sync(() => {
+      const invalid = forwardVectorResult({ yawRadians: Number.NaN, pitchRadians: 0 })
+
+      expect(Result.isFailure(invalid)).toBe(true)
+    }),
+  )
+
   it.effect('yaw 0 looks down -Z', () =>
     Effect.sync(() => {
       const forward = forwardVector(cameraPoseOf(INITIAL_PLAYER_POSE, AT))
@@ -114,7 +198,7 @@ describe('forwardVector — the sanctioned replacement for camera.getWorldDirect
 
   it.effect('yaw pi/2 looks down -X, matching the YXZ Euler order the renderer will mirror', () =>
     Effect.sync(() => {
-      const forward = forwardVector(cameraPoseOf(applyLook(INITIAL_PLAYER_POSE, Math.PI / 2, 0), AT))
+      const forward = forwardVector(cameraPoseOf(success(applyLook(INITIAL_PLAYER_POSE, Math.PI / 2, 0)), AT))
 
       expect(forward.x).toBeCloseTo(-1, 12)
       expect(forward.z).toBeCloseTo(0, 12)
@@ -123,7 +207,7 @@ describe('forwardVector — the sanctioned replacement for camera.getWorldDirect
 
   it.effect('positive pitch looks up', () =>
     Effect.sync(() => {
-      const forward = forwardVector(cameraPoseOf(applyLook(INITIAL_PLAYER_POSE, 0, 0.5), AT))
+      const forward = forwardVector(cameraPoseOf(success(applyLook(INITIAL_PLAYER_POSE, 0, 0.5)), AT))
 
       expect(forward.y).toBeCloseTo(Math.sin(0.5), 12)
       expect(forward.y).toBeGreaterThan(0)
@@ -134,7 +218,7 @@ describe('forwardVector — the sanctioned replacement for camera.getWorldDirect
     Effect.sync(() => {
       const pitches = [PITCH_MIN_RADIANS, -1, -0.01, 0, 0.01, 1, PITCH_MAX_RADIANS]
       for (const pitch of pitches) {
-        const forward = forwardVector(cameraPoseOf(applyLook(INITIAL_PLAYER_POSE, 2.3, pitch), AT))
+        const forward = forwardVector(cameraPoseOf(success(applyLook(INITIAL_PLAYER_POSE, 2.3, pitch)), AT))
         const length = Math.hypot(forward.x, forward.y, forward.z)
         expect(length).toBeCloseTo(1, 12)
       }

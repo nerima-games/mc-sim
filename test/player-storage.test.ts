@@ -1,4 +1,5 @@
 import { describe, expect, it } from '@effect/vitest'
+import { vi } from 'vitest'
 import { Effect, Result } from 'effect'
 import { makeInventoryService } from '../src/application/inventory-service'
 import type { ContainerStoredStack } from '../src/domain/container-storage'
@@ -14,11 +15,18 @@ import {
   storageFromInventory,
   unequipToInventory,
   validatePlayerStorageSnapshot,
+  withInventory,
 } from '../src/domain/player-storage'
 import type { PlayerStorage, StorageLocation } from '../src/domain/player-storage'
 
 const itemStack = (...args: Parameters<typeof itemStackResult>): ItemStack => {
   const result = itemStackResult(...args)
+  if (Result.isFailure(result)) throw result.failure
+  return result.success
+}
+
+const equipmentItem = (...args: Parameters<typeof Eq.equipmentItem>): Eq.EquipmentItem => {
+  const result = Eq.equipmentItem(...args)
   if (Result.isFailure(result)) throw result.failure
   return result.success
 }
@@ -42,7 +50,11 @@ describe('player storage', () => {
       consume: { item: 'stone', count: 1 },
       damage: { location, expectedItem: 'bow', amount: 1 },
     })
-    expect(outcome.result._tag).toBe('NotDamageable')
+    expect(outcome.result).toStrictEqual({
+      _tag: 'DamageRejected',
+      damage: { _tag: 'InvalidLocation' },
+    })
+    expect(outcome.storage).toBe(storage)
   })
 
   it('rejects a malformed inventory slot at the persistence boundary', () => {
@@ -71,6 +83,102 @@ describe('player storage', () => {
       inventory: { slots: [{ ...itemStack('stone', 1), components: {} }, ...Array.from({ length: 35 }, () => undefined)] },
     })).toMatchObject({ _tag: 'Invalid', error: { path: 'storage.inventory.slots.0' } })
   })
+
+  it('returns storage and equipment constructor failures without repairing corrupt state', () => {
+    const stack = { ...itemStack('stone', 1) }
+    const storage = storageFromInventory({ slots: [stack, ...Array.from({ length: 35 }, () => undefined)] })
+    const corrupt = {
+      ...storage,
+      inventoryDurability: [{ current: 1, max: 1 }, ...storage.inventoryDurability.slice(1)],
+    }
+
+    expect(withInventory(corrupt, corrupt.inventory)).toMatchObject({
+      _tag: 'Failure', failure: { _tag: 'InvalidInventoryDurability', slotIndex: 0, item: 'stone' },
+    })
+
+    const invalidComponents = {
+      ...itemStack('flint_and_steel', 1), components: {},
+    } as unknown as ItemStack
+    const invalidStorage = storageFromInventory({
+      slots: [invalidComponents, ...Array.from({ length: 35 }, () => undefined)],
+    })
+    expect(equipFromInventory(invalidStorage, 0, 'offhand')).toMatchObject({
+      result: { _tag: 'EquipmentFailure', error: { _tag: 'EquipmentValidationError' } },
+    })
+    expect(damageAt(invalidStorage, { _tag: 'Inventory', slotIndex: 0 }, 1)).toMatchObject({
+      result: { _tag: 'EquipmentFailure', error: { _tag: 'EquipmentValidationError' } },
+    })
+  })
+
+  it('keeps consumed items untouched when an unrelated stored durability is invalid', () => {
+    const inventory = {
+      slots: [itemStack('bow', 1), itemStack('arrow', 1), itemStack('stone', 1),
+        ...Array.from({ length: 33 }, () => undefined)],
+    }
+    const storage = storageFromInventory(inventory)
+    const corrupt = {
+      ...storage,
+      inventoryDurability: [
+        ...storage.inventoryDurability.slice(0, 2),
+        { current: 1, max: 1 },
+        ...storage.inventoryDurability.slice(3),
+      ],
+    }
+
+    expect(consumeAndDamageAt(corrupt, {
+      consume: { item: 'arrow', count: 1 },
+      damage: { location: { _tag: 'Inventory', slotIndex: 0 }, expectedItem: 'bow', amount: 1 },
+    })).toMatchObject({
+      storage: corrupt,
+      result: { _tag: 'StorageFailure', error: { _tag: 'InvalidInventoryDurability', slotIndex: 2 } },
+    })
+    expect(corrupt.inventory.slots[1]).toStrictEqual(itemStack('arrow', 1))
+  })
+
+  it('returns the second equipment constructor failure instead of keeping stale durability', () => {
+    const base = itemStack('bow', 1)
+    let componentReads = 0
+    const changingStack = {
+      ...base,
+      get components() {
+        componentReads += 1
+        return componentReads === 1 ? base.components : {}
+      },
+    } as unknown as ItemStack
+    const storage = storageFromInventory({
+      slots: [changingStack, ...Array.from({ length: 35 }, () => undefined)],
+    })
+
+    expect(damageAt(storage, { _tag: 'Inventory', slotIndex: 0 }, 1)).toMatchObject({
+      storage,
+      result: { _tag: 'EquipmentFailure', error: { _tag: 'EquipmentValidationError' } },
+    })
+    expect(storage.inventoryDurability[0]).toStrictEqual(Eq.durabilityForItem('bow'))
+  })
+
+  it('returns the first equipment constructor failure from damageAt without changing storage', () => {
+    const storage = storageFromInventory({
+      slots: [itemStack('bow', 1), ...Array.from({ length: 35 }, () => undefined)],
+    })
+    const stack = storage.inventory.slots[0]
+    const durability = storage.inventoryDurability[0]
+    if (stack === undefined || durability === null) throw new Error('damageable stack is missing its durability')
+    expect(Eq.isValidDurabilityForItem(stack.item, durability)).toBe(true)
+
+    const failure = Eq.equipmentItem(itemStack('stone', 1), null)
+    if (Result.isSuccess(failure)) throw new Error('non-damageable equipment unexpectedly passed')
+
+    const equipmentItemSpy = vi.spyOn(Eq, 'equipmentItem').mockReturnValue(failure)
+    try {
+      const outcome = damageAt(storage, { _tag: 'Inventory', slotIndex: 0 }, 1)
+      expect(outcome.result).toStrictEqual({ _tag: 'EquipmentFailure', error: failure.failure })
+      expect(outcome.storage).toBe(storage)
+      expect(equipmentItemSpy).toHaveBeenCalledTimes(1)
+    } finally {
+      equipmentItemSpy.mockRestore()
+    }
+  })
+
   it('adds a damaged tool with its exact durability and copies the input', () => {
     const durability = { current: 17, max: FLINT_AND_STEEL_MAX_DURABILITY }
     const outcome = addStoredStack(emptyPlayerStorage(), {
@@ -239,13 +347,17 @@ describe('player storage', () => {
       expect(yield* service.damageAt({ _tag: 'Inventory', slotIndex: 1 }, 1)).toMatchObject({
         _tag: 'NotDamageable',
       })
-      expect(yield* service.click({
+      const invalidClick = yield* Effect.result(service.click({
         _tag: 'LeftClick', slotIndex: 2,
         carried: {
           ...itemStack('iron_boots', 1),
           durability: { current: 1, max: 64 },
         },
-      })).toMatchObject({ _tag: 'InvalidCount' })
+      }))
+      expect(invalidClick._tag).toBe('Failure')
+      if (invalidClick._tag === 'Failure') {
+        expect(invalidClick.failure).toMatchObject({ _tag: 'ItemValidationFailure', field: 'click.carried' })
+      }
       expect(bytes(yield* service.storageSnapshot)).toBe(before)
     }),
   )
@@ -535,7 +647,7 @@ describe('player storage', () => {
     expect(outcome.storage).toBe(withSecondHelmet)
   })
 
-  it('equips with fresh full durability when the stored durability entry is invalid', () => {
+  it('rejects equip when the stored durability entry is invalid without resetting it', () => {
     const base = addStoredStack(emptyPlayerStorage(), {
       ...itemStack('iron_helmet', 1),
       durability: { current: 165, max: 165 },
@@ -546,13 +658,34 @@ describe('player storage', () => {
     }
 
     const outcome = equipFromInventory(corrupted, 0, 'head')
-    expect(outcome.result).toStrictEqual({
-      _tag: 'Equipped',
-      item: { ...itemStack('iron_helmet', 1), durability: { current: 165, max: 165 } },
+    expect(outcome.result).toStrictEqual({ _tag: 'InvalidDurability', item: itemStack('iron_helmet', 1) })
+    expect(outcome.storage).toBe(corrupted)
+  })
+
+  it('keeps invalid stored durability typed through damage and inventory updates', () => {
+    const base = storageFromInventory({
+      slots: [itemStack('bow', 1), itemStack('stone', 1), ...Array.from({ length: 34 }, () => undefined)],
     })
-    expect(outcome.storage.equipment.slots.head).toStrictEqual({
-      ...itemStack('iron_helmet', 1), durability: { current: 165, max: 165 },
+    const corrupted: PlayerStorage = {
+      ...base,
+      inventoryDurability: base.inventoryDurability.map((value, index) => index === 0 ? null : value),
+    }
+    const damaged = damageAt(corrupted, { _tag: 'Inventory', slotIndex: 0 }, 1)
+    expect(damaged.result).toStrictEqual({ _tag: 'InvalidDurability', item: itemStack('bow', 1) })
+    expect(damaged.storage).toBe(corrupted)
+
+    const updated = withInventory(corrupted, corrupted.inventory)
+    expect(Result.isFailure(updated)).toBe(true)
+    if (Result.isFailure(updated)) expect(updated.failure).toMatchObject({
+      _tag: 'InvalidInventoryDurability', slotIndex: 0, item: 'bow',
     })
+
+    const consumed = consumeAndDamageAt(corrupted, {
+      consume: { item: 'stone', count: 1 },
+      damage: { location: { _tag: 'Inventory', slotIndex: 0 }, expectedItem: 'bow', amount: 1 },
+    })
+    expect(consumed.result).toStrictEqual({ _tag: 'InvalidDurability', item: itemStack('bow', 1) })
+    expect(consumed.storage).toBe(corrupted)
   })
 
   it('rejects unequip from an invalid equipment slot string and leaves storage untouched', () => {
@@ -590,7 +723,7 @@ describe('player storage', () => {
         ...full.equipment,
         slots: {
           ...full.equipment.slots,
-          head: Eq.equipmentItem(itemStack('iron_helmet', 1), { current: 165, max: 165 }),
+          head: equipmentItem(itemStack('iron_helmet', 1), { current: 165, max: 165 }),
         },
       },
     }
@@ -700,11 +833,19 @@ describe('player storage', () => {
       yield* service.add('arrow', 1)
       const before = yield* service.storageSnapshot
 
-      for (const count of [0, -1, 1.5, Number.NaN]) {
+      for (const count of [0, -1, 1.5]) {
         expect(yield* service.consumeAndDamageAt({
           consume: { item: 'arrow', count },
           damage: { location: { _tag: 'Inventory', slotIndex: 0 }, expectedItem: 'bow', amount: 1 },
         })).toStrictEqual({ _tag: 'InvalidConsumableCount', count })
+      }
+      const nonFiniteCount = yield* Effect.result(service.consumeAndDamageAt({
+        consume: { item: 'arrow', count: Number.NaN },
+        damage: { location: { _tag: 'Inventory', slotIndex: 0 }, expectedItem: 'bow', amount: 1 },
+      }))
+      expect(nonFiniteCount._tag).toBe('Failure')
+      if (nonFiniteCount._tag === 'Failure') {
+        expect(nonFiniteCount.failure).toMatchObject({ _tag: 'ItemValidationFailure', reason: 'invalid-type' })
       }
       expect(yield* service.storageSnapshot).toStrictEqual(before)
     }),
@@ -717,11 +858,19 @@ describe('player storage', () => {
       yield* service.add('arrow', 1)
       const before = yield* service.storageSnapshot
 
-      for (const amount of [0, -1, 1.5, Number.NaN]) {
+      for (const amount of [0, -1, 1.5]) {
         expect(yield* service.consumeAndDamageAt({
           consume: { item: 'arrow', count: 1 },
           damage: { location: { _tag: 'Inventory', slotIndex: 0 }, expectedItem: 'bow', amount },
         })).toStrictEqual({ _tag: 'InvalidDamageAmount', amount })
+      }
+      const nonFiniteAmount = yield* Effect.result(service.consumeAndDamageAt({
+        consume: { item: 'arrow', count: 1 },
+        damage: { location: { _tag: 'Inventory', slotIndex: 0 }, expectedItem: 'bow', amount: Number.NaN },
+      }))
+      expect(nonFiniteAmount._tag).toBe('Failure')
+      if (nonFiniteAmount._tag === 'Failure') {
+        expect(nonFiniteAmount.failure).toMatchObject({ _tag: 'ItemValidationFailure', reason: 'invalid-type' })
       }
       expect(yield* service.storageSnapshot).toStrictEqual(before)
     }),

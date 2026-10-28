@@ -12,10 +12,18 @@
  * stamp is what lets a renderer running ahead of or behind the simulation
  * measure the gap instead of silently drawing a stale pose.
  */
-import { Context, Effect, Layer, Ref, Schema } from 'effect'
+import { Context, Effect, Layer, Ref, Result, Schema } from 'effect'
 import * as Camera from '../domain/camera-pose.js'
-import type { CameraPoseSnapshot, Dimension, DimensionRevision, Position, WorldRevision } from "@nerima-games/mc-kernel"
-import { ClockPort, monotonicSecs } from "@nerima-games/mc-kernel"
+import type {
+  AngleRadians,
+  CameraPoseSnapshot,
+  Dimension,
+  DimensionRevision,
+  Position,
+  PositionAxis,
+  WorldRevision,
+} from '@nerima-games/mc-kernel'
+import { ClockPort, DimensionIdSchema, monotonicSecs } from "@nerima-games/mc-kernel"
 import {
   PLAYER_REPLICATED_OWNER_ID,
   PlayerServiceSnapshotSchema,
@@ -95,9 +103,9 @@ export type PlayerServiceApi = {
    * `test/player-service.test.ts` pins that both orders leave the same state, so
    * a caller doing them in either order is safe.
    */
-  readonly setDimension: (dimension: Dimension) => Effect.Effect<void>
+  readonly setDimension: (dimension: Dimension) => Effect.Effect<void, PlayerServiceInputError>
   /** Build the render pose using the supplied simulation clock. */
-  readonly cameraPose: Effect.Effect<CameraPoseSnapshot, never, ClockPort>
+  readonly cameraPose: Effect.Effect<CameraPoseSnapshot, Camera.CameraPoseError, ClockPort>
   /**
    * THE WORLD-LOAD PATH. Both halves of the player's location, together.
    *
@@ -147,9 +155,59 @@ export class PlayerService extends PlayerServiceBase {}
 
 export type PlayerServiceInputError = Readonly<{
   _tag: 'PlayerServiceInputError'
-  reason: 'invalid-look' | 'invalid-pose' | 'invalid-position'
-  field: 'pose' | 'deltaYaw' | 'deltaPitch' | 'yawRadians' | 'pitchRadians' | 'feetPosition' | 'feetPosition.x' | 'feetPosition.y' | 'feetPosition.z'
+  reason: 'invalid-look' | 'invalid-pose' | 'invalid-position' | 'invalid-dimension'
+  field: 'pose' | 'deltaYaw' | 'deltaPitch' | 'yawRadians' | 'pitchRadians' | 'feetPosition' | 'feetPosition.x' | 'feetPosition.y' | 'feetPosition.z' | 'dimension'
 }>
+
+export const PlayerServiceInputErrorSchema: Schema.Codec<PlayerServiceInputError, PlayerServiceInputError> = Schema.Struct({
+  _tag: Schema.Literal('PlayerServiceInputError'),
+  reason: Schema.Literals(['invalid-look', 'invalid-pose', 'invalid-position', 'invalid-dimension']),
+  field: Schema.Literals([
+    'pose',
+    'deltaYaw',
+    'deltaPitch',
+    'yawRadians',
+    'pitchRadians',
+    'feetPosition',
+    'feetPosition.x',
+    'feetPosition.y',
+    'feetPosition.z',
+    'dimension',
+  ]),
+})
+
+const PlayerServiceLookPositionAxisSchema: Schema.Codec<PositionAxis, number> =
+  Schema.Finite.pipe(Schema.brand('PositionAxis'))
+
+const PlayerServiceLookAngleRadiansSchema: Schema.Codec<AngleRadians, number> =
+  Schema.Finite.pipe(Schema.brand('AngleRadians'))
+
+const PlayerServiceLookFeetPositionSchema: Schema.Struct<{
+  readonly x: typeof PlayerServiceLookPositionAxisSchema
+  readonly y: typeof PlayerServiceLookPositionAxisSchema
+  readonly z: typeof PlayerServiceLookPositionAxisSchema
+}> = Schema.Struct({
+  x: PlayerServiceLookPositionAxisSchema,
+  y: PlayerServiceLookPositionAxisSchema,
+  z: PlayerServiceLookPositionAxisSchema,
+})
+
+type PlayerServiceLookSuccessEncoded = Readonly<{
+  feetPosition: Readonly<{ x: number; y: number; z: number }>
+  yawRadians: number
+  pitchRadians: number
+}>
+
+/** Success contract for `look`, retaining the kernel's finite coordinate and angle brands. */
+export const PlayerServiceLookSuccessSchema: Schema.Codec<Camera.PlayerPose, PlayerServiceLookSuccessEncoded> = Schema.Struct({
+  feetPosition: PlayerServiceLookFeetPositionSchema,
+  yawRadians: PlayerServiceLookAngleRadiansSchema,
+  pitchRadians: PlayerServiceLookAngleRadiansSchema,
+})
+
+/** Declared failure contract for `look`. */
+export const PlayerServiceLookErrorSchema: Schema.Codec<PlayerServiceInputError, PlayerServiceInputError> =
+  PlayerServiceInputErrorSchema
 
 const inputError = (
   reason: PlayerServiceInputError['reason'],
@@ -185,6 +243,8 @@ export const makePlayerService = (
   Effect.gen(function* () {
     const initialError = invalidPoseError(initial, 'invalid-pose')
     if (initialError !== undefined) return yield* Effect.fail(initialError)
+    if (!Schema.is(DimensionIdSchema)(initialDimension))
+      return yield* Effect.fail(inputError('invalid-dimension', 'dimension'))
 
     const state = yield* Ref.make<PlayerState>({ pose: initial, dimension: initialDimension })
     const modify = <A>(f: (current: PlayerState) => readonly [Effect.Effect<A, PlayerServiceInputError>, PlayerState]) =>
@@ -202,7 +262,14 @@ export const makePlayerService = (
         if (!Number.isFinite(deltaPitch))
           return [Effect.fail(inputError('invalid-look', 'deltaPitch')), current]
 
-        const next = Camera.applyLook(current.pose, deltaYaw, deltaPitch)
+        const result = Camera.applyLook(current.pose, deltaYaw, deltaPitch)
+        if (Result.isFailure(result)) {
+          const field = Number.isFinite(current.pose.yawRadians + deltaYaw)
+            ? 'pitchRadians'
+            : 'yawRadians'
+          return [Effect.fail(inputError('invalid-look', field)), current]
+        }
+        const next = result.success
         const nextError = invalidPoseError(next, 'invalid-look')
         return nextError === undefined
           ? [Effect.succeed(next), { ...current, pose: next }]
@@ -214,9 +281,12 @@ export const makePlayerService = (
           return [Effect.fail(inputError('invalid-position', positionField)), current]
         return [Effect.void, { ...current, pose: Camera.withFeetPosition(current.pose, feetPosition) }]
       }),
-      setDimension: (dimension) => Ref.update(state, (current) => ({ ...current, dimension })),
+      setDimension: (dimension) =>
+        Schema.is(DimensionIdSchema)(dimension)
+          ? Effect.map(Ref.update(state, (current) => ({ ...current, dimension })), () => undefined)
+          : Effect.fail(inputError('invalid-dimension', 'dimension')),
       cameraPose: Effect.flatMap(monotonicSecs, (now) =>
-        Effect.map(Ref.get(state), (current) => Camera.cameraPoseOf(current.pose, now)),
+        Effect.flatMap(Ref.get(state), (current) => Effect.fromResult(Camera.cameraPoseOf(current.pose, now))),
       ),
       snapshot: Effect.flatMap(WorldCommitCoordinator, (coordinator) =>
         coordinator.snapshot(PLAYER_REPLICATED_OWNER_ID, PlayerServiceSnapshotSchema),
@@ -258,9 +328,15 @@ export const makePlayerService = (
         ),
       restore: (pose, dimension) => {
         const error = invalidPoseError(pose, 'invalid-pose')
-        return error === undefined ? Ref.set(state, { pose, dimension }) : Effect.fail(error)
+        if (error !== undefined) return Effect.fail(error)
+        return Schema.is(DimensionIdSchema)(dimension)
+          ? Effect.map(Ref.set(state, { pose, dimension }), () => undefined)
+          : Effect.fail(inputError('invalid-dimension', 'dimension'))
       },
-      reset: Ref.set(state, { pose: Camera.INITIAL_PLAYER_POSE, dimension: INITIAL_PLAYER_DIMENSION }),
+      reset: Effect.map(
+        Ref.set(state, { pose: Camera.INITIAL_PLAYER_POSE, dimension: INITIAL_PLAYER_DIMENSION }),
+        () => undefined,
+      ),
     }
   })
 

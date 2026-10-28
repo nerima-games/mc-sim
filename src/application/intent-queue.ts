@@ -21,6 +21,7 @@ import type {
 } from '@nerima-games/mc-kernel'
 import { Brand, Context, Effect, Layer, Ref, Schema } from 'effect'
 import type { YieldableError } from 'effect/Cause'
+import { SchemaErrorSchema } from '../schema-errors.js'
 
 export type IntentSequence = number & Brand.Brand<'IntentSequence'>
 export type IntentQueueCapacity = number & Brand.Brand<'IntentQueueCapacity'>
@@ -222,9 +223,17 @@ const IntentQueueFullBase: new (args: { readonly capacity: IntentQueueCapacity }
 
 export class IntentQueueFull extends IntentQueueFullBase {}
 
+export const IntentQueueEnqueueFailureSchema: Schema.Codec<
+  IntentQueueFull | Schema.SchemaError,
+  unknown
+> = Schema.Union([
+  Schema.instanceOf(IntentQueueFull),
+  SchemaErrorSchema,
+])
+
 export type IntentQueueApi = {
-  readonly enqueue: (intent: Intent) => Effect.Effect<IntentSequence, IntentQueueFull>
-  readonly takeReady: (tick: SimulationTick) => Effect.Effect<ReadonlyArray<QueuedIntent>>
+  readonly enqueue: (intent: Intent) => Effect.Effect<IntentSequence, IntentQueueFull | Schema.SchemaError>
+  readonly takeReady: (tick: SimulationTick) => Effect.Effect<ReadonlyArray<QueuedIntent>, Schema.SchemaError>
 }
 
 const IntentQueueBase: Context.ServiceClass<
@@ -253,46 +262,54 @@ const compareQueuedIntents = (left: QueuedIntent, right: QueuedIntent): number =
 
 export const IntentQueueLayer = (config: {
   readonly capacity: IntentQueueCapacity
-}): Layer.Layer<IntentQueue> =>
+}): Layer.Layer<IntentQueue, Schema.SchemaError> =>
   Layer.effect(
     IntentQueue,
-    Effect.map(
-      Ref.make<IntentQueueState>({ nextSequence: 0, pending: [] }),
-      (state) => ({
-        enqueue: (intent) =>
-          Effect.flatMap(
-            Ref.modify(state, (current): readonly [IntentAdmission, IntentQueueState] => {
-              if (current.pending.length >= config.capacity) {
-                return [{ _tag: 'Full' }, current]
+    Effect.gen(function* () {
+      const capacity = yield* Schema.decodeUnknownEffect(IntentQueueCapacitySchema)(config.capacity)
+      const state = yield* Ref.make<IntentQueueState>({ nextSequence: 0, pending: [] })
+
+      return {
+        enqueue: (intent) => Schema.decodeUnknownEffect(IntentSchema)(intent).pipe(
+          Effect.flatMap((validIntent) =>
+            Effect.flatMap(
+              Ref.modify(state, (current): readonly [IntentAdmission, IntentQueueState] => {
+                if (current.pending.length >= capacity) {
+                  return [{ _tag: 'Full' }, current]
+                }
+
+                const sequence = makeIntentSequence(current.nextSequence)
+                const queued = { sequence, intent: validIntent }
+                return [
+                  { _tag: 'Accepted', sequence },
+                  {
+                    nextSequence: current.nextSequence + 1,
+                    pending: [...current.pending, queued],
+                  },
+                ]
+              }),
+              (admission) =>
+                admission._tag === 'Full'
+                  ? Effect.fail(new IntentQueueFull({ capacity }))
+                  : Effect.succeed(admission.sequence),
+            ),
+          ),
+        ),
+        takeReady: (tick) => Schema.decodeUnknownEffect(SimulationTickSchema)(tick).pipe(
+          Effect.flatMap((validTick) =>
+            Ref.modify(state, (current) => {
+              const ready: Array<QueuedIntent> = []
+              const pending: Array<QueuedIntent> = []
+
+              for (const queued of current.pending) {
+                if (queued.intent.targetTick <= validTick) ready.push(queued)
+                else pending.push(queued)
               }
 
-              const sequence = makeIntentSequence(current.nextSequence)
-              const queued = { sequence, intent }
-              return [
-                { _tag: 'Accepted', sequence },
-                {
-                  nextSequence: current.nextSequence + 1,
-                  pending: [...current.pending, queued],
-                },
-              ]
+              return [ready.sort(compareQueuedIntents), { ...current, pending }]
             }),
-            (admission) =>
-              admission._tag === 'Full'
-                ? Effect.fail(new IntentQueueFull({ capacity: config.capacity }))
-                : Effect.succeed(admission.sequence),
           ),
-        takeReady: (tick) =>
-          Ref.modify(state, (current) => {
-            const ready: Array<QueuedIntent> = []
-            const pending: Array<QueuedIntent> = []
-
-            for (const queued of current.pending) {
-              if (queued.intent.targetTick <= tick) ready.push(queued)
-              else pending.push(queued)
-            }
-
-            return [ready.sort(compareQueuedIntents), { ...current, pending }]
-          }),
-      }),
-    ),
+        ),
+      }
+    }),
   )

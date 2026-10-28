@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Ref } from 'effect'
+import { Context, Effect, Layer, Ref, Schema } from 'effect'
 import * as Equipment from '../domain/equipment.js'
 
 export type EquipmentServiceApi = {
@@ -24,6 +24,21 @@ export type EquipmentServiceApi = {
   ) => Effect.Effect<void, Equipment.EquipmentValidationError>
   readonly reset: Effect.Effect<void>
 }
+
+export const EquipmentServiceEquipSuccessSchema: Schema.Codec<Equipment.EquipmentItem | null, unknown> =
+  Schema.NullOr(Equipment.EquipmentItemSchema)
+export const EquipmentServiceUnequipSuccessSchema: Schema.Codec<Equipment.EquipmentItem | null, unknown> =
+  Schema.NullOr(Equipment.EquipmentItemSchema)
+export const EquipmentServiceSwapSuccessSchema: Schema.Codec<void, undefined> = Schema.Undefined
+export const EquipmentServiceDamageSuccessSchema: Schema.Codec<Equipment.DamageEquipmentResult, unknown> =
+  Equipment.DamageEquipmentResultSchema
+export const EquipmentServiceSnapshotSuccessSchema: Schema.Codec<Equipment.Equipment, unknown> =
+  Equipment.EquipmentSchema
+export const EquipmentServiceRestoreSuccessSchema: Schema.Codec<void, undefined> = Schema.Undefined
+export const EquipmentServiceResetSuccessSchema: Schema.Codec<void, undefined> = Schema.Undefined
+export const EquipmentServiceValidationErrorSchema: Schema.Codec<Equipment.EquipmentValidationError, unknown> =
+  Equipment.EquipmentValidationErrorSchema
+export const EquipmentServiceNoFailureSchema: Schema.Codec<never, never> = Schema.Never
 
 const validationError = (path: string, reason: string): Equipment.EquipmentValidationError => ({
   _tag: 'EquipmentValidationError',
@@ -62,7 +77,7 @@ export const makeEquipmentService = (): Effect.Effect<EquipmentServiceApi> =>
         : Effect.fail(validationError('slot', 'expected an equipment slot')),
     swap: (first, second) =>
       Equipment.isEquipmentSlot(first) && Equipment.isEquipmentSlot(second)
-        ? Ref.update(state, (current) => Equipment.swapEquipment(current, first, second))
+        ? Effect.map(Ref.update(state, (current) => Equipment.swapEquipment(current, first, second)), () => undefined)
         : Effect.fail(validationError('slot', 'expected two equipment slots')),
     damage: (slot, amount) =>
       Equipment.isEquipmentSlot(slot)
@@ -75,10 +90,10 @@ export const makeEquipmentService = (): Effect.Effect<EquipmentServiceApi> =>
     restore: (snapshot) => {
       const validated = Equipment.validateEquipmentSnapshot(snapshot)
       return validated._tag === 'Valid'
-        ? Ref.set(state, validated.equipment)
+        ? Effect.map(Ref.set(state, validated.equipment), () => undefined)
         : Effect.fail(validated.error)
     },
-    reset: Ref.set(state, Equipment.emptyEquipment()),
+    reset: Effect.map(Ref.set(state, Equipment.emptyEquipment()), () => undefined),
   }))
 
 export const EquipmentServiceLayer: Layer.Layer<EquipmentService> = Layer.effect(

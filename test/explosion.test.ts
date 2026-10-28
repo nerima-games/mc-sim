@@ -1,15 +1,23 @@
 import { describe, expect, it, vi } from '@effect/vitest'
+import { Result } from 'effect'
 import {
   applyExplosionPlan,
   DEFAULT_EXPLOSION_LIMITS,
-  planExplosion,
+  planExplosion as planExplosionResult,
   type ExplosionBlockPosition,
 } from '../src/domain/explosion'
-import { EntityId, EntityKind, type Entity } from '../src/domain/entity'
+import { EntityHealthPoints, EntityId, EntityKind, type Entity } from '../src/domain/entity'
 import { PositionAxis, position as coordinatePosition } from '@nerima-games/mc-kernel'
 
 const position = (x: number, y: number, z: number) =>
   coordinatePosition(PositionAxis(x), PositionAxis(y), PositionAxis(z))
+
+const unwrap = <A, E>(result: Result.Result<A, E>): A => {
+  if (Result.isFailure(result)) throw result.failure
+  return result.success
+}
+const planExplosion = (request: Parameters<typeof planExplosionResult>[0]) =>
+  unwrap(planExplosionResult(request))
 
 const key = ({ x, y, z }: ExplosionBlockPosition): string => `${x},${y},${z}`
 const air = () => ({ resistance: 0, destructible: false })
@@ -26,7 +34,7 @@ const entity = (id: string, x: number, y: number, z: number): Entity<null> => ({
   id: EntityId(id),
   kind: EntityKind('test'),
   feetPosition: position(x, y, z),
-  healthPoints: 20,
+  healthPoints: EntityHealthPoints(20),
   behaviour: null,
 })
 
@@ -159,16 +167,229 @@ describe('planExplosion', () => {
     expect(shielded.destroyedBlocks).not.toContainEqual({ x: 8, y: 0, z: 0 })
   })
 
-  it('treats a non-finite center, radius, or seed as zero instead of propagating NaN', () => {
+  it('returns typed validation failures for invalid center, radius, seed, and damage', () => {
+    const request = {
+      center: position(0.5, 0.5, 0.5),
+      radius: 4,
+      seed: 1,
+      blocks: world([]),
+      entities: [],
+    }
     const center = JSON.parse('{"x":0.5,"y":0.5,"z":0.5}')
     center.x = Number.NaN
-    const plan = planExplosion({
-      center, radius: Number.NaN, seed: Number.NaN,
-      blocks: world([]), entities: [],
+    expect(Result.isFailure(planExplosionResult({ ...request, center }))).toBe(true)
+    expect(planExplosionResult({ ...request, center: null as never })).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'ExplosionValidationFailure', path: 'center', reason: 'expected a position' },
     })
-    expect(plan.center).toStrictEqual({ x: 0, y: 0.5, z: 0.5 })
-    expect(plan.radius).toBe(0)
-    expect(plan.seed).toBe(0)
+    expect(Result.isFailure(planExplosionResult({ ...request, radius: -1 }))).toBe(true)
+    expect(Result.isFailure(planExplosionResult({ ...request, radius: Number.POSITIVE_INFINITY }))).toBe(true)
+    expect(Result.isFailure(planExplosionResult({ ...request, radius: 65 }))).toBe(true)
+    expect(Result.isFailure(planExplosionResult({ ...request, seed: Number.NaN }))).toBe(true)
+
+    const entityAtCenter = entity('center', 0, -0.9, 0)
+    const boundedDamage = planExplosionResult({
+      ...request,
+      center: position(0, 0, 0),
+      radius: 64,
+      entities: [entityAtCenter],
+    })
+    expect(Result.isSuccess(boundedDamage)).toBe(true)
+    if (Result.isFailure(boundedDamage)) throw boundedDamage.failure
+    expect(boundedDamage.success.entityEffects[0]?.damage).toBe(449)
+  })
+
+  it('rejects malformed block resistance and entity coordinates with typed failures', () => {
+    const request = {
+      center: position(0.5, 0.5, 0.5),
+      radius: 2,
+      seed: 1,
+      blocks: () => ({ resistance: Number.NaN, destructible: true }),
+      entities: [],
+    }
+    expect(planExplosionResult(request)).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'ExplosionValidationFailure', path: expect.stringContaining('.resistance') },
+    })
+    expect(planExplosionResult({
+      ...request,
+      blocks: () => null as never,
+    })).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'ExplosionValidationFailure', reason: 'expected a block snapshot' },
+    })
+    expect(planExplosionResult({
+      ...request,
+      blocks: () => ({ resistance: 0, destructible: 'true' }) as never,
+    })).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'ExplosionValidationFailure', reason: 'must be a boolean' },
+    })
+    expect(planExplosionResult({
+      ...request,
+      blocks: () => ({ resistance: -1, destructible: true }),
+    })).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'ExplosionValidationFailure', path: expect.stringContaining('.resistance') },
+    })
+    expect(planExplosionResult({
+      ...request,
+      blocks: () => ({ resistance: Number.MAX_VALUE, destructible: true }),
+    })).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'ExplosionValidationFailure', path: expect.stringContaining('.resistance') },
+    })
+    expect(planExplosionResult(null as never)).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'ExplosionValidationFailure', path: 'request' },
+    })
+    expect(planExplosionResult({ ...request, seed: Number.MAX_VALUE })).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'ExplosionValidationFailure', path: 'seed' },
+    })
+    expect(planExplosionResult({ ...request, entities: [null] as never })).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'ExplosionValidationFailure', path: 'entities[0]' },
+    })
+    expect(planExplosionResult({
+      ...request,
+      blocks: world([]),
+      entities: [{ ...entity('valid-id', 0, 0, 0), id: '' }] as never,
+    })).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'ExplosionValidationFailure', path: 'entities[0]' },
+    })
+    expect(planExplosionResult({ ...request, limits: { maxVisitedBlocks: Number.NaN } })).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'ExplosionValidationFailure', path: 'limits.maxVisitedBlocks' },
+    })
+    expect(planExplosionResult({ ...request, limits: { maxRaySteps: -1 } })).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'ExplosionValidationFailure', path: 'limits.maxRaySteps' },
+    })
+    expect(planExplosionResult({ ...request, limits: null as never })).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'ExplosionValidationFailure', path: 'limits' },
+    })
+    expect(planExplosionResult({ ...request, blocks: null as never })).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'ExplosionValidationFailure', path: 'blocks' },
+    })
+    expect(planExplosionResult({ ...request, entities: null as never })).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'ExplosionValidationFailure', path: 'entities' },
+    })
+    expect(planExplosionResult({ ...request, limits: { maxAffectedEntities: -1 } })).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'ExplosionValidationFailure', path: 'limits.maxAffectedEntities' },
+    })
+    expect(planExplosionResult({
+      ...request,
+      center: { x: Number.MAX_SAFE_INTEGER, y: 0.5, z: 0.5 } as never,
+    })).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'ExplosionValidationFailure', path: 'center.x' },
+    })
+    expect(planExplosionResult({
+      ...request,
+      center: { x: 0.5, y: Number.NaN, z: 0.5 } as never,
+    })).toMatchObject({ _tag: 'Failure', failure: { path: 'center.y' } })
+    expect(planExplosionResult({
+      ...request,
+      center: { x: 0.5, y: 0.5, z: Number.POSITIVE_INFINITY } as never,
+    })).toMatchObject({ _tag: 'Failure', failure: { path: 'center.z' } })
+
+    const nonFiniteEntity = {
+      ...entity('non-finite-entity', 0, 0, 0),
+      feetPosition: { x: Number.NaN, y: 0, z: 0 },
+    } as never
+    expect(planExplosionResult({ ...request, blocks: world([]), entities: [nonFiniteEntity] })).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'ExplosionValidationFailure', path: 'entities[0].feetPosition.x' },
+    })
+    expect(planExplosionResult({
+      ...request,
+      entities: [{ ...entity('missing-position', 0, 0, 0), feetPosition: null }] as never,
+    })).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'ExplosionValidationFailure', path: 'entities[0].feetPosition' },
+    })
+    expect(planExplosionResult({
+      ...request,
+      entities: [{
+        ...entity('invalid-coordinate', 0, 0, 0),
+        feetPosition: { x: '0', y: 0, z: 0 },
+      }] as never,
+    })).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'ExplosionValidationFailure', path: 'entities[0].feetPosition.x' },
+    })
+
+    const overflowingDistanceEntity = {
+      ...entity('overflowing-distance-entity', 0, 0, 0),
+      feetPosition: { x: Number.MAX_VALUE, y: Number.MAX_VALUE, z: 0 },
+    } as never
+    expect(planExplosionResult({
+      ...request,
+      blocks: world([]),
+      entities: [overflowingDistanceEntity],
+    })).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'ExplosionValidationFailure', reason: 'distance from center must be finite' },
+    })
+  })
+
+  it('returns the second limits normalization failure before reading any blocks', () => {
+    let limitsReads = 0
+    let blockReads = 0
+    const result = planExplosionResult({
+      center: position(0.5, 0.5, 0.5),
+      radius: 1,
+      seed: 1,
+      blocks: () => {
+        blockReads += 1
+        return air()
+      },
+      entities: [],
+      limits: {
+        get maxVisitedBlocks() {
+          limitsReads += 1
+          return limitsReads === 1 ? 4 : -1
+        },
+      },
+    })
+
+    expect(result).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'ExplosionValidationFailure', path: 'limits.maxVisitedBlocks' },
+    })
+    expect(limitsReads).toBe(2)
+    expect(blockReads).toBe(0)
+  })
+
+  it('returns a block-reader failure from entity exposure after block planning skips reads', () => {
+    let blockReads = 0
+    const result = planExplosionResult({
+      center: position(0.5, 0.5, 0.5),
+      radius: 2,
+      seed: 1,
+      blocks: () => {
+        blockReads += 1
+        return null as never
+      },
+      entities: [entity('exposure-target', 0.5, 0, 0.5)],
+      limits: { maxVisitedBlocks: 0 },
+    })
+
+    expect(result).toMatchObject({
+      _tag: 'Failure',
+      failure: {
+        _tag: 'ExplosionValidationFailure',
+        path: 'blocks[0,0,0]',
+        reason: 'expected a block snapshot',
+      },
+    })
+    expect(blockReads).toBe(3)
   })
 
   it('never crosses an unloaded cell when a large explosion shares radial traces', () => {
@@ -189,15 +410,17 @@ describe('planExplosion', () => {
     expect(plan.truncated).toBe(true)
   })
 
-  it('skips a hole in a sparse entities array instead of throwing', () => {
+  it('returns a typed failure for a hole in a sparse entities array', () => {
     const entities: Array<Entity<null>> = [entity('e:1', 1, 0, 0)]
     entities.length = 2 // introduces a hole at index 1: entities[1] is undefined, unlike a missing tail element
-    const plan = planExplosion({
+    const result = planExplosionResult({
       center: position(0.5, 0.5, 0.5), radius: 4, seed: 12, blocks: world([]),
       entities,
     })
-    expect(plan.entityEffects).toHaveLength(1)
-    expect(plan.entityEffects[0]?.id).toBe('e:1')
+    expect(result).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'ExplosionValidationFailure', path: 'entities[1]' },
+    })
   })
 
   it('does not let an entity standing exactly at the blast center divide by zero', () => {

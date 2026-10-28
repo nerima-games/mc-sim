@@ -1,212 +1,461 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { Result } from 'effect'
-
+import { FixedDurationSecs } from '@nerima-games/mc-kernel'
 import {
   BREWING_FUEL_CHARGES,
   BREWING_FUEL_ITEM,
+  BREWING_MAX_FUEL_CHARGES,
   BREWING_TIME_SECS,
   STARTER_BREWING_RECIPES,
-} from '../src/domain/brewing-data'
+  VANILLA_BREWING_RECIPES,
+} from '../src/domain/brewing-data.js'
 import {
   activeBrewingRecipe,
   addBrewingFuel,
-  advanceBrewing as advanceBrewingResult,
+  advanceBrewing,
+  brewOnce,
   brewingRecipeFor,
+  brewingState,
   emptyBrewingState,
+  matchBrewingRecipe,
   setBrewingBottle,
   setBrewingIngredient,
-} from '../src/domain/brewing'
-import { itemStack as itemStackResult, type ItemStack } from '../src/domain/inventory'
+  validateBrewingSnapshot,
+  type BrewingState,
+} from '../src/domain/brewing.js'
+import { itemStack as itemStackResult, type ItemStack } from '../src/domain/inventory.js'
+import * as inventoryModule from '../src/domain/inventory.js'
+import * as itemStackModule from '../src/domain/item-stack.js'
 
-const requireSuccess = <A, E>(result: Result.Result<A, E>): A => {
+const must = <A, E>(result: Result.Result<A, E>): A => {
   if (Result.isFailure(result)) throw result.failure
   return result.success
 }
 
 const itemStack = (...args: Parameters<typeof itemStackResult>): ItemStack =>
-  requireSuccess(itemStackResult(...args))
-const advanceBrewing = (...args: Parameters<typeof advanceBrewingResult>) =>
-  requireSuccess(advanceBrewingResult(...args))
+  must(itemStackResult(...args))
 
-describe('brewing', () => {
-  it('defines the starter brewing chain using kernel item identities', () => {
+const withFuel = (state: BrewingState, count = 1) =>
+  must(addBrewingFuel(must(brewingState({ ...state, fuel: itemStack(BREWING_FUEL_ITEM, count) }))))
+
+describe('brewing domain', () => {
+  it('uses kernel brewing recipes and retains the sim starter table', () => {
     expect(STARTER_BREWING_RECIPES).toHaveLength(4)
     expect(STARTER_BREWING_RECIPES[0]).toMatchObject({
+      id: 'mc-sim:awkward-potion',
       ingredient: 'nether_wart',
       input: 'water_bottle',
       output: 'awkward_potion',
     })
+    expect(VANILLA_BREWING_RECIPES).toHaveLength(4)
+    expect(VANILLA_BREWING_RECIPES[0]?._tag).toBe('Brewing')
     expect(BREWING_FUEL_ITEM).toBe('blaze_powder')
-    expect(BREWING_FUEL_CHARGES).toBe(20)
+    expect(BREWING_FUEL_CHARGES).toBe(BREWING_MAX_FUEL_CHARGES)
     expect(BREWING_TIME_SECS).toBe(20)
   })
 
-  it('loads bottles and fuel without mutating the prior state', () => {
-    const initial = emptyBrewingState()
-    const bottleResult = setBrewingBottle(initial, 1, itemStack('water_bottle', 1))
-    expect(bottleResult).toMatchObject({ ok: true })
-    if (!bottleResult.ok) throw new Error('expected a valid bottle slot')
-
-    const withIngredient = setBrewingIngredient(
-      bottleResult.state,
-      itemStack('nether_wart', 2),
-    )
-    const withFuel = addBrewingFuel(withIngredient, 'blaze_powder', 1)
-
-    expect(initial).toEqual(emptyBrewingState())
-    expect(withFuel).toMatchObject({ accepted: 1, leftover: 0 })
-    expect(withFuel.state.fuelCharges).toBe(BREWING_FUEL_CHARGES)
-    expect(withFuel.state.bottles[1]).toEqual(itemStack('water_bottle', 1))
-    expect(withFuel.state.ingredient).toEqual(itemStack('nether_wart', 2))
+  it('creates complete branded state and preserves validation failures', () => {
+    const empty = must(emptyBrewingState())
+    expect(empty).toMatchObject({ bottles: [undefined, undefined, undefined], fuelCharges: 0, brewProgressSecs: 0 })
+    expect(brewingState({ fuelCharges: -1 })).toMatchObject({ _tag: 'Failure' })
+    expect(brewingState({ fuelCharges: 1.5 })).toMatchObject({ _tag: 'Failure' })
+    expect(brewingState({ brewProgressSecs: Number.NaN })).toMatchObject({ _tag: 'Failure' })
+    expect(brewingState({ brewProgressSecs: BREWING_TIME_SECS + 1 })).toMatchObject({ _tag: 'Failure' })
+    expect(brewingState({ bottles: [] })).toMatchObject({ _tag: 'Failure' })
+    expect(brewingState({ bottles: [undefined, undefined, 'water_bottle'] })).toMatchObject({ _tag: 'Failure' })
+    expect(brewingState(null)).toMatchObject({ _tag: 'Failure' })
   })
 
-  it('rejects invalid bottle indexes and fuel inputs', () => {
-    const state = emptyBrewingState()
-    expect(setBrewingBottle(state, -1, undefined)).toEqual({
-      ok: false,
-      reason: 'invalid-index',
-    })
-    expect(setBrewingBottle(state, 3, undefined)).toEqual({
-      ok: false,
-      reason: 'invalid-index',
-    })
-    expect(addBrewingFuel(state, 'sugar', 1)).toMatchObject({
-      accepted: 0,
-      leftover: 1,
-    })
-    expect(addBrewingFuel(state, 'blaze_powder', 0)).toMatchObject({
-      accepted: 0,
-      leftover: 0,
-    })
-    expect(addBrewingFuel(state, 'blaze_powder', Number.NaN)).toMatchObject({
-      accepted: 0,
-      leftover: 0,
-    })
+  it('updates bottle and ingredient slots without mutating the original state', () => {
+    const empty = must(emptyBrewingState())
+    const withBottle = must(setBrewingBottle(empty, 1, itemStack('water_bottle', 1)))
+    const withIngredient = must(setBrewingIngredient(withBottle, itemStack('nether_wart', 2)))
+    expect(empty.bottles[1]).toBeUndefined()
+    expect(withIngredient.bottles[1]).toEqual(itemStack('water_bottle', 1))
+    expect(withIngredient.ingredient).toEqual(itemStack('nether_wart', 2))
+    expect(setBrewingBottle(empty, -1, undefined)).toMatchObject({ _tag: 'Failure' })
+    expect(setBrewingBottle(empty, 3, undefined)).toMatchObject({ _tag: 'Failure' })
+    expect(setBrewingBottle(empty, 0, 'water_bottle' as never)).toMatchObject({ _tag: 'Failure' })
+    expect(setBrewingIngredient(empty, 'nether_wart' as never)).toMatchObject({ _tag: 'Failure' })
   })
 
-  it('finds only matching recipes', () => {
-    const recipe = STARTER_BREWING_RECIPES[0]
-    expect(
-      brewingRecipeFor(itemStack(recipe.ingredient, 1), itemStack(recipe.input, 1)),
-    ).toEqual(recipe)
-    expect(brewingRecipeFor(undefined, itemStack(recipe.input, 1))).toBeUndefined()
-    expect(brewingRecipeFor(itemStack(recipe.ingredient, 1), undefined)).toBeUndefined()
-    expect(
-      brewingRecipeFor(itemStack('sugar', 1), itemStack('water_bottle', 1)),
-    ).toBeUndefined()
+  it('matches recipes across the vanilla table and the retained starter table', () => {
+    const recipe = VANILLA_BREWING_RECIPES[0]
+    const bottle = itemStack('water_bottle', 1)
+    const ingredient = itemStack('nether_wart', 1)
+    expect(recipe).toBeDefined()
+    expect(must(brewingRecipeFor(ingredient, bottle))).toBe(recipe)
+    expect(must(brewingRecipeFor(undefined, bottle))).toBeUndefined()
+    expect(must(brewingRecipeFor(ingredient, undefined))).toBeUndefined()
+    expect(must(brewingRecipeFor(itemStack('sugar', 1), bottle))).toBeUndefined()
+    expect(must(matchBrewingRecipe([bottle, undefined, undefined], ingredient))).toBe(recipe)
+    expect(must(matchBrewingRecipe([bottle, undefined, undefined], ingredient, STARTER_BREWING_RECIPES))).toMatchObject({
+      id: 'mc-sim:awkward-potion',
+    })
+    expect(must(matchBrewingRecipe([undefined, undefined, undefined], ingredient))).toBeUndefined()
+    expect(brewingRecipeFor('bad' as never, bottle)).toMatchObject({ _tag: 'Failure' })
+    expect(matchBrewingRecipe([bottle, undefined, undefined], ingredient, [{}] as never)).toMatchObject({ _tag: 'Failure' })
   })
 
-  it('brews all eligible bottles and keeps partial progress', () => {
-    const firstBottle = setBrewingBottle(
-      emptyBrewingState(),
-      0,
-      itemStack('water_bottle', 1),
-    )
-    if (!firstBottle.ok) throw new Error('expected a valid bottle slot')
+  it('adds bounded fuel only from a blaze powder slot', () => {
+    const empty = must(emptyBrewingState())
+    expect(must(addBrewingFuel(empty))).toEqual(empty)
+    const wrongFuel = must(brewingState({ ...empty, fuel: itemStack('coal', 1) }))
+    expect(must(addBrewingFuel(wrongFuel))).toEqual(wrongFuel)
+    const loaded = withFuel(empty, 2)
+    expect(loaded.fuelCharges).toBe(BREWING_MAX_FUEL_CHARGES)
+    expect(loaded.fuel).toEqual(itemStack(BREWING_FUEL_ITEM, 1))
+  })
 
-    const loaded = addBrewingFuel(
-      setBrewingIngredient(firstBottle.state, itemStack('nether_wart', 2)),
-      'blaze_powder',
-      2,
-    )
-    const secondBottle = setBrewingBottle(
-      loaded.state,
-      1,
-      itemStack('water_bottle', 1),
-    )
-    if (!secondBottle.ok) throw new Error('expected a valid bottle slot')
-    const allBottles = setBrewingBottle(
-      secondBottle.state,
-      2,
-      itemStack('water_bottle', 1),
-    )
-    if (!allBottles.ok) throw new Error('expected a valid bottle slot')
+  it('brews every matching bottle, consumes one ingredient and fuel charge, and keeps partial progress', () => {
+    let state = must(emptyBrewingState())
+    state = must(setBrewingBottle(state, 0, itemStack('water_bottle', 1)))
+    state = must(setBrewingBottle(state, 1, itemStack('water_bottle', 1)))
+    state = must(setBrewingBottle(state, 2, itemStack('water_bottle', 1)))
+    state = must(setBrewingIngredient(state, itemStack('nether_wart', 2)))
+    state = withFuel(state, 2)
+    expect(must(activeBrewingRecipe(state))?.id).toBe('minecraft:awkward_potion')
 
-    const first = advanceBrewing(allBottles.state, BREWING_TIME_SECS + 5)
+    const first = must(advanceBrewing(state, BREWING_TIME_SECS + 5))
+    expect(first.brewedCount).toBe(1)
     expect(first.brewed).toBe(1)
-    expect(first.state.brewTimeSecs).toBe(5)
+    expect(first.state.brewProgressSecs).toBe(0)
     expect(first.state.ingredient).toEqual(itemStack('nether_wart', 1))
-    expect(first.state.fuelCharges).toBe(BREWING_FUEL_CHARGES * 2 - 1)
+    expect(first.state.fuelCharges).toBe(BREWING_MAX_FUEL_CHARGES - 1)
     expect(first.state.bottles).toEqual([
       itemStack('awkward_potion', 1),
       itemStack('awkward_potion', 1),
       itemStack('awkward_potion', 1),
     ])
 
-    const second = advanceBrewing(
-      setBrewingIngredient(first.state, itemStack('sugar', 1)),
-      BREWING_TIME_SECS,
-    )
-    expect(second.brewed).toBe(1)
+    const sugar = must(setBrewingIngredient(first.state, itemStack('sugar', 1)))
+    const second = must(advanceBrewing(sugar, BREWING_TIME_SECS))
+    expect(second.brewedCount).toBe(1)
     expect(second.state.ingredient).toBeUndefined()
-    expect(second.state.fuelCharges).toBe(BREWING_FUEL_CHARGES * 2 - 2)
-    expect(second.state.bottles).toEqual([
-      itemStack('potion_of_swiftness', 1),
-      itemStack('potion_of_swiftness', 1),
-      itemStack('potion_of_swiftness', 1),
-    ])
+    expect(second.state.fuelCharges).toBe(BREWING_MAX_FUEL_CHARGES - 2)
+    expect(second.state.bottles.every((bottle) => bottle?.item === 'potion_of_swiftness')).toBe(true)
   })
 
-  it('leaves empty and mismatched bottles untouched', () => {
-    const firstBottle = setBrewingBottle(
-      emptyBrewingState(),
-      0,
-      itemStack('water_bottle', 1),
-    )
-    if (!firstBottle.ok) throw new Error('expected a valid bottle slot')
-    const secondBottle = setBrewingBottle(firstBottle.state, 1, itemStack('sugar', 1))
-    if (!secondBottle.ok) throw new Error('expected a valid bottle slot')
-    const loaded = addBrewingFuel(
-      setBrewingIngredient(secondBottle.state, itemStack('nether_wart', 1)),
-      'blaze_powder',
-      1,
-    )
+  it('does not brew mismatched bottles or advance without fuel', () => {
+    const mixed = must(brewingState({
+      bottles: [itemStack('sugar', 1), itemStack('water_bottle', 1), undefined],
+      ingredient: itemStack('nether_wart', 1),
+      fuelCharges: 5,
+      brewProgressSecs: 7,
+    }))
+    expect(must(activeBrewingRecipe(mixed))?.id).toBe('minecraft:awkward_potion')
+    const unmatched = must(advanceBrewing(mixed, BREWING_TIME_SECS))
+    expect(unmatched.brewedCount).toBe(1)
+    expect(unmatched.state.bottles[0]?.item).toBe('sugar')
+    expect(unmatched.state.bottles[1]?.item).toBe('awkward_potion')
+    expect(unmatched.state.brewProgressSecs).toBe(0)
 
-    const result = advanceBrewing(loaded.state, BREWING_TIME_SECS)
-
-    expect(result.brewed).toBe(1)
-    expect(result.state.bottles).toEqual([
-      itemStack('awkward_potion', 1),
-      itemStack('sugar', 1),
-      undefined,
-    ])
+    const ready = must(brewingState({
+      bottles: [itemStack('water_bottle', 1), undefined, undefined],
+      ingredient: itemStack('nether_wart', 1),
+      brewProgressSecs: 4,
+    }))
+    expect(must(activeBrewingRecipe(ready))).toBeUndefined()
+    expect(must(advanceBrewing(ready, 6)).state.brewProgressSecs).toBe(4)
   })
 
-  it('does not advance when the stand cannot brew', () => {
-    const bottleOnly = setBrewingBottle(
-      emptyBrewingState(),
-      0,
-      itemStack('water_bottle', 1),
-    )
-    if (!bottleOnly.ok) throw new Error('expected a valid bottle slot')
-    const noFuel = setBrewingIngredient(
-      bottleOnly.state,
-      itemStack('nether_wart', 1),
-    )
-    expect(activeBrewingRecipe(noFuel)).toBeUndefined()
-    expect(advanceBrewing(noFuel, BREWING_TIME_SECS)).toEqual({
-      state: { ...noFuel, brewTimeSecs: BREWING_TIME_SECS },
-      brewed: 0,
-    })
+  it('fails invalid elapsed values and invalid recipes without replacing the Result', () => {
+    const state = withFuel(must(brewingState({
+      bottles: [itemStack('water_bottle', 1), undefined, undefined],
+      ingredient: itemStack('nether_wart', 1),
+    })))
+    expect(advanceBrewing(state, -1)).toMatchObject({ _tag: 'Failure' })
+    expect(advanceBrewing(state, Number.NaN)).toMatchObject({ _tag: 'Failure' })
+    expect(advanceBrewing(state, Number.POSITIVE_INFINITY)).toMatchObject({ _tag: 'Failure' })
+    expect(advanceBrewing(state, 1, [{}] as never)).toMatchObject({ _tag: 'Failure' })
+  })
 
-    const noBottle = addBrewingFuel(
-      setBrewingIngredient(emptyBrewingState(), itemStack('nether_wart', 1)),
-      'blaze_powder',
-      1,
-    )
-    expect(activeBrewingRecipe(noBottle.state)).toBeUndefined()
-    expect(advanceBrewing(noBottle.state, BREWING_TIME_SECS).brewed).toBe(0)
-    expect(advanceBrewing(noBottle.state, -1)).toEqual({ state: noBottle.state, brewed: 0 })
-    expect(advanceBrewing(noBottle.state, Number.POSITIVE_INFINITY)).toEqual({
-      state: noBottle.state,
-      brewed: 0,
-    })
+  it('validates complete persisted snapshots and rejects malformed state', () => {
+    const state = must(brewingState({
+      bottles: [itemStack('water_bottle', 1), undefined, undefined],
+      ingredient: itemStack('nether_wart', 1),
+      fuel: itemStack('blaze_powder', 1),
+      fuelCharges: 2,
+      brewProgressSecs: 3,
+    }))
+    expect(validateBrewingSnapshot(state)).toStrictEqual({ _tag: 'Valid', state })
+    expect(validateBrewingSnapshot({ ...state, extra: true })).toMatchObject({ _tag: 'Invalid' })
+    expect(validateBrewingSnapshot({ ...state, fuelCharges: -1 })).toMatchObject({ _tag: 'Failure' })
+    expect(validateBrewingSnapshot(null)).toMatchObject({ _tag: 'Invalid' })
+  })
 
-    const noIngredient = {
-      ...noBottle.state,
-      brewTimeSecs: BREWING_TIME_SECS,
-      ingredient: undefined,
+  it('brews a starter recipe once and returns its output', () => {
+    const recipe = VANILLA_BREWING_RECIPES[0]
+    if (recipe === undefined) throw new Error('vanilla brewing recipe missing')
+    const state = withFuel(must(brewingState({
+      bottles: [itemStack(recipe.input, 1), undefined, undefined],
+      ingredient: itemStack(recipe.ingredient, 1),
+    })))
+    const result = brewOnce(state, state.ingredient!, recipe)
+    expect(Result.isSuccess(result)).toBe(true)
+    if (Result.isFailure(result)) throw result.failure
+    expect(result.success.bottles[0]?.item).toBe(recipe.output)
+  })
+
+  it('returns output stack construction failures from a single brew', () => {
+    const recipe = STARTER_BREWING_RECIPES[0]
+    if (recipe === undefined) throw new Error('starter brewing recipe missing')
+    const ingredient = itemStack(recipe.ingredient, 1)
+    const state = withFuel(must(brewingState({
+      bottles: [itemStack(recipe.input, 1), undefined, undefined],
+      ingredient,
+      fuelCharges: 1,
+    })))
+    const outputFailure = itemStackResult('water_bottle', 0)
+    if (Result.isSuccess(outputFailure)) throw new Error('invalid stack count unexpectedly passed')
+
+    const originalItemStack = inventoryModule.itemStack
+    const outputSpy = vi.spyOn(inventoryModule, 'itemStack').mockImplementation((item, count, options) =>
+      item === recipe.output && count === 1
+        ? outputFailure
+        : originalItemStack(item, count, options),
+    )
+    let result: ReturnType<typeof brewOnce>
+    try {
+      result = brewOnce(state, ingredient, recipe)
+    } finally {
+      outputSpy.mockRestore()
     }
-    expect(advanceBrewing(noIngredient, 0)).toEqual({ state: noIngredient, brewed: 0 })
+
+    expect(result!).toMatchObject({ _tag: 'Failure', failure: outputFailure.failure })
+  })
+
+  it('uses the output returned by a dynamic recipe getter after validation', () => {
+    const recipe = STARTER_BREWING_RECIPES[0]
+    if (recipe === undefined) throw new Error('starter brewing recipe missing')
+    let outputReads = 0
+    const dynamicRecipe = {
+      id: recipe.id,
+      input: recipe.input,
+      ingredient: recipe.ingredient,
+      get output() {
+        outputReads += 1
+        return outputReads === 1 ? recipe.output : 'potion_of_swiftness'
+      },
+    }
+    const ingredient = itemStack(recipe.ingredient, 1)
+    const state = withFuel(must(brewingState({
+      bottles: [itemStack(recipe.input, 1), undefined, undefined],
+      ingredient,
+      fuelCharges: 1,
+    })))
+
+    const result = brewOnce(state, ingredient, dynamicRecipe)
+    expect(Result.isSuccess(result)).toBe(true)
+    if (Result.isFailure(result)) throw result.failure
+    expect(outputReads).toBe(2)
+    expect(result.success.bottles[0]?.item).toBe('potion_of_swiftness')
+  })
+
+  it('rejects an undefined direct brew ingredient', () => {
+    const recipe = STARTER_BREWING_RECIPES[0]
+    if (recipe === undefined) throw new Error('starter brewing recipe missing')
+    const state = withFuel(must(brewingState({
+      bottles: [itemStack(recipe.input, 1), undefined, undefined],
+      fuelCharges: 1,
+    })))
+
+    expect(brewOnce(state, undefined as never, recipe)).toMatchObject({
+      _tag: 'Failure',
+      failure: {
+        _tag: 'BrewingValidationFailure',
+        path: 'ingredient',
+        reason: 'expected an ItemStack',
+      },
+    })
+  })
+
+  it('returns ingredient consumption helper failures from a single brew', () => {
+    const recipe = STARTER_BREWING_RECIPES[0]
+    if (recipe === undefined) throw new Error('starter brewing recipe missing')
+    const ingredient = itemStack(recipe.ingredient, 2)
+    const state = withFuel(must(brewingState({
+      bottles: [itemStack(recipe.input, 1), undefined, undefined],
+      ingredient,
+      fuelCharges: 1,
+    })))
+    const consumeFailure = itemStackModule.itemStackWithCount(ingredient, 0)
+    if (Result.isSuccess(consumeFailure)) throw new Error('invalid stack count unexpectedly passed')
+
+    const consumeSpy = vi.spyOn(itemStackModule, 'itemStackWithCount').mockReturnValue(consumeFailure)
+    let result: ReturnType<typeof brewOnce>
+    try {
+      result = brewOnce(state, ingredient, recipe)
+    } finally {
+      consumeSpy.mockRestore()
+    }
+
+    expect(result!).toMatchObject({ _tag: 'Failure', failure: consumeFailure.failure })
+  })
+
+  it('returns reset-duration failures from a single brew', () => {
+    const recipe = STARTER_BREWING_RECIPES[0]
+    if (recipe === undefined) throw new Error('starter brewing recipe missing')
+    const ingredient = itemStack(recipe.ingredient, 1)
+    const state = withFuel(must(brewingState({
+      bottles: [itemStack(recipe.input, 1), undefined, undefined],
+      ingredient,
+      fuelCharges: 1,
+    })))
+    const durationFailure = FixedDurationSecs.result(-1)
+    if (Result.isSuccess(durationFailure)) throw new Error('invalid duration unexpectedly passed')
+
+    const originalDuration = FixedDurationSecs.result
+    let zeroCalls = 0
+    const durationSpy = vi.spyOn(FixedDurationSecs, 'result').mockImplementation((value) => {
+      if (value === 0 && ++zeroCalls === 2) return Result.fail(durationFailure.failure)
+      return originalDuration(value)
+    })
+    let result: ReturnType<typeof brewOnce>
+    try {
+      result = brewOnce(state, ingredient, recipe)
+    } finally {
+      durationSpy.mockRestore()
+    }
+
+    expect(zeroCalls).toBe(2)
+    expect(result!).toMatchObject({ _tag: 'Failure', failure: durationFailure.failure })
+  })
+
+  it('covers persisted aliases, malformed slots, and Result failures without substituting state', () => {
+    const validSnapshot = {
+      bottles: [null, null, null],
+      ingredient: null,
+      fuel: null,
+      fuelCharges: 0,
+      brewProgressSecs: 0,
+    }
+    expect(validateBrewingSnapshot(validSnapshot)).toMatchObject({ _tag: 'Valid' })
+    expect(validateBrewingSnapshot({ ...validSnapshot, bottles: null })).toMatchObject({ _tag: 'Valid' })
+    expect(validateBrewingSnapshot({ ...validSnapshot, fuelCharges: -1 })).toMatchObject({ _tag: 'Failure' })
+    expect(validateBrewingSnapshot({ ...validSnapshot, bottles: 'invalid' })).toMatchObject({ _tag: 'Invalid' })
+
+    expect(brewingState({ ingredient: { item: 'nether_wart', count: 1 } })).toMatchObject({ _tag: 'Failure' })
+    expect(brewingState({ ingredient: { item: 'nether_wart', count: 0, components: {} } })).toMatchObject({ _tag: 'Failure' })
+    expect(matchBrewingRecipe([null, undefined, undefined] as never, itemStack('nether_wart', 1))).toMatchObject({ _tag: 'Failure' })
+    expect(matchBrewingRecipe([undefined, undefined, undefined], undefined)).toMatchObject({ _tag: 'Success', success: undefined })
+    expect(matchBrewingRecipe([undefined, undefined, undefined], itemStack('nether_wart', 1), null as never)).toMatchObject({ _tag: 'Failure' })
+    expect(brewingRecipeFor(itemStack('nether_wart', 1), 'bad' as never)).toMatchObject({ _tag: 'Failure' })
+
+    const empty = must(emptyBrewingState())
+    const bottles = must(setBrewingBottle(empty, 0, itemStack('water_bottle', 1)))
+    expect(setBrewingBottle(bottles, 2, itemStack('water_bottle', 1))).toMatchObject({ _tag: 'Success' })
+    const invalidState = { fuelCharges: -1 } as never
+    expect(setBrewingBottle(invalidState, 0, undefined)).toMatchObject({ _tag: 'Failure' })
+    expect(setBrewingIngredient(invalidState, undefined)).toMatchObject({ _tag: 'Failure' })
+    expect(activeBrewingRecipe(invalidState)).toMatchObject({ _tag: 'Failure' })
+    expect(addBrewingFuel(invalidState)).toMatchObject({ _tag: 'Failure' })
+
+    const state = must(brewingState({
+      bottles: [itemStack('water_bottle', 1), undefined, undefined],
+      ingredient: itemStack('nether_wart', 2),
+      fuelCharges: 1,
+    }))
+    const starter = STARTER_BREWING_RECIPES[0]
+    const vanilla = VANILLA_BREWING_RECIPES[0]
+    const ingredient = state.ingredient
+    expect(starter).toBeDefined()
+    expect(vanilla).toBeDefined()
+    if (starter === undefined || vanilla === undefined || ingredient === undefined) throw new Error('brewing recipe missing')
+    expect(Result.isSuccess(brewOnce(state, ingredient, starter))).toBe(true)
+    expect(Result.isSuccess(brewOnce(state, ingredient, vanilla))).toBe(true)
+    expect(Result.isFailure(brewOnce(state, ingredient, {
+      id: 'invalid', input: 'water_bottle', ingredient: 'nether_wart', output: 'unknown_item',
+    } as never))).toBe(true)
+    expect(Result.isFailure(brewOnce(state, { item: 'nether_wart', count: 0 } as never, starter))).toBe(true)
+    const emptyCharges = must(brewingState({ ...state, fuelCharges: 0 }))
+    expect(Result.isFailure(brewOnce(emptyCharges, ingredient, starter))).toBe(true)
+    expect(Result.isFailure(advanceBrewing(state, 1, null as never))).toBe(true)
+    expect(Result.isFailure(advanceBrewing(invalidState, 1))).toBe(true)
+    expect(Result.isFailure(advanceBrewing(state, -1))).toBe(true)
+    expect(advanceBrewing({ ...state, brewProgressSecs: BREWING_TIME_SECS }, 1)).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'BrewingValidationFailure', path: 'brewProgressSecs' },
+    })
+    expect(Result.isFailure(brewingState({ fuelCharges: null }))).toBe(true)
+    expect(Result.isFailure(brewingState({ brewProgressSecs: null }))).toBe(true)
+    expect(validateBrewingSnapshot({ ...validSnapshot, fuelCharges: null })).toMatchObject({ _tag: 'Invalid' })
+    expect(validateBrewingSnapshot({ ...validSnapshot, brewProgressSecs: BREWING_TIME_SECS })).toMatchObject({ _tag: 'Invalid' })
+  })
+
+  it('validates custom starter and kernel recipe tables', () => {
+    const starter = STARTER_BREWING_RECIPES[0]
+    const vanilla = VANILLA_BREWING_RECIPES[0]
+    if (starter === undefined || vanilla === undefined) throw new Error('brewing recipe missing')
+    const state = must(brewingState({
+      bottles: [itemStack('water_bottle', 1), undefined, undefined],
+      ingredient: itemStack('nether_wart', 2),
+      fuelCharges: 2,
+    }))
+
+    expect(Result.isSuccess(advanceBrewing(state, 1, [...STARTER_BREWING_RECIPES]))).toBe(true)
+    expect(Result.isSuccess(advanceBrewing(state, 1, [...VANILLA_BREWING_RECIPES]))).toBe(true)
+    for (const recipe of [
+      { ...starter, id: '' },
+      { ...starter, input: 'invalid_item' },
+      { ...starter, ingredient: 'invalid_item' },
+      { ...starter, output: 'invalid_item' },
+      { ...starter, _tag: 'Unexpected' },
+    ]) {
+      expect(Result.isFailure(matchBrewingRecipe(state.bottles, state.ingredient, [recipe] as never))).toBe(true)
+    }
+  })
+
+  it('returns failures from branded duration and item stack operations', () => {
+    const durationFailure = FixedDurationSecs.result(-1)
+    const stackFailure = itemStackModule.itemStackWithCount(itemStack(BREWING_FUEL_ITEM, 2), 0)
+    if (Result.isSuccess(durationFailure) || Result.isSuccess(stackFailure)) throw new Error('invalid test values unexpectedly passed')
+    const active = must(brewingState({
+      bottles: [itemStack('water_bottle', 1), undefined, undefined],
+      ingredient: itemStack('nether_wart', 2),
+      fuelCharges: 2,
+    }))
+    const empty = must(emptyBrewingState())
+    const fuelState = must(brewingState({ fuel: itemStack(BREWING_FUEL_ITEM, 2) }))
+
+    const originalDuration = FixedDurationSecs.result
+    const elapsedSpy = vi.spyOn(FixedDurationSecs, 'result').mockImplementation((value) =>
+      value === 7 ? Result.fail(durationFailure.failure) : originalDuration(value),
+    )
+    const elapsedFailure = advanceBrewing(active, 7)
+    elapsedSpy.mockRestore()
+    expect(Result.isFailure(elapsedFailure)).toBe(true)
+
+    let zeroCalls = 0
+    const resetSpy = vi.spyOn(FixedDurationSecs, 'result').mockImplementation((value) => {
+      if (value === 0 && ++zeroCalls === 2) return Result.fail(durationFailure.failure)
+      return originalDuration(value)
+    })
+    const resetFailure = advanceBrewing(empty, 1)
+    resetSpy.mockRestore()
+    expect(Result.isFailure(resetFailure)).toBe(true)
+
+    let oneCalls = 0
+    const progressSpy = vi.spyOn(FixedDurationSecs, 'result').mockImplementation((value) => {
+      if (value === 1 && ++oneCalls === 2) return Result.fail(durationFailure.failure)
+      return originalDuration(value)
+    })
+    const progressFailure = advanceBrewing(active, 1)
+    progressSpy.mockRestore()
+    expect(Result.isFailure(progressFailure)).toBe(true)
+
+    let brewZeroCalls = 0
+    const brewSpy = vi.spyOn(FixedDurationSecs, 'result').mockImplementation((value) => {
+      if (value === 0 && ++brewZeroCalls === 2) return Result.fail(durationFailure.failure)
+      return originalDuration(value)
+    })
+    const brewFailure = advanceBrewing(active, BREWING_TIME_SECS)
+    brewSpy.mockRestore()
+    expect(Result.isFailure(brewFailure)).toBe(true)
+
+    const stackSpy = vi.spyOn(itemStackModule, 'itemStackWithCount').mockReturnValue(stackFailure)
+    const fuelFailure = addBrewingFuel(fuelState)
+    stackSpy.mockRestore()
+    expect(Result.isFailure(fuelFailure)).toBe(true)
   })
 })

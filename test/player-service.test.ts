@@ -1,7 +1,14 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Effect, Layer, Schema } from 'effect'
-import { INITIAL_PLAYER_DIMENSION, makePlayerService } from '../src/application/player-service'
+import { Effect, Layer, Result, Schema } from 'effect'
+import { vi } from 'vitest'
+import {
+  INITIAL_PLAYER_DIMENSION,
+  makePlayerService,
+  PlayerServiceInputErrorSchema,
+  type PlayerServiceInputError,
+} from '../src/application/player-service'
 import { PLAYER_REPLICATED_OWNER_ID, PlayerServiceSnapshotSchema } from '../src/application/replicated-state'
+import * as Camera from '../src/domain/camera-pose'
 import { INITIAL_PLAYER_POSE } from '../src/domain/camera-pose'
 import {
   DimensionRevisionSchema,
@@ -54,6 +61,41 @@ describe('the dimension is state, and it is the player’s', () => {
       const player = yield* makePlayerService()
       yield* player.setDimension('end')
       expect(yield* player.dimension).toBe('end')
+    }),
+  )
+
+  it.effect('a runtime dimension outside the kernel union fails without poisoning player state', () =>
+    Effect.gen(function* () {
+      const player = yield* makePlayerService()
+      const outcome = yield* Effect.result(
+        Reflect.apply(player.setDimension, undefined, [null]) as Effect.Effect<void, PlayerServiceInputError>,
+      )
+
+      expect(Result.isFailure(outcome)).toBe(true)
+      if (Result.isFailure(outcome)) {
+        expect(outcome.failure).toStrictEqual({
+          _tag: 'PlayerServiceInputError',
+          reason: 'invalid-dimension',
+          field: 'dimension',
+        })
+      }
+      expect(yield* player.dimension).toBe(INITIAL_PLAYER_DIMENSION)
+      const candidate = yield* player.replicatedCandidate
+      expect(Result.isSuccess(Schema.decodeUnknownResult(PlayerServiceSnapshotSchema)(candidate))).toBe(true)
+    }),
+  )
+
+  it.effect('construction rejects a runtime dimension outside the kernel union', () =>
+    Effect.gen(function* () {
+      const invalidDimension = 'moon' as Dimension
+      const failure = yield* Effect.flip(makePlayerService(INITIAL_PLAYER_POSE, invalidDimension))
+
+      expect(failure).toStrictEqual({
+        _tag: 'PlayerServiceInputError',
+        reason: 'invalid-dimension',
+        field: 'dimension',
+      })
+      expect(Schema.is(PlayerServiceInputErrorSchema)(failure)).toBe(true)
     }),
   )
 })
@@ -129,6 +171,26 @@ describe('REGRESSION: restore carries both halves of a location', () => {
       yield* player.restore(INITIAL_PLAYER_POSE, 'overworld')
 
       expect(yield* player.dimension).toBe('overworld')
+    }),
+  )
+
+  it.effect('restore rejects a runtime dimension and preserves both state fields', () =>
+    Effect.gen(function* () {
+      const player = yield* makePlayerService()
+      const beforePose = { ...INITIAL_PLAYER_POSE, feetPosition: position(14, 63, -9) }
+      yield* player.restore(beforePose, 'end')
+      const invalidDimension = 'moon' as Dimension
+
+      const failure = yield* Effect.flip(player.restore(INITIAL_PLAYER_POSE, invalidDimension))
+
+      expect(failure).toStrictEqual({
+        _tag: 'PlayerServiceInputError',
+        reason: 'invalid-dimension',
+        field: 'dimension',
+      })
+      expect(Schema.is(PlayerServiceInputErrorSchema)(failure)).toBe(true)
+      expect(yield* player.pose).toStrictEqual(beforePose)
+      expect(yield* player.dimension).toBe('end')
     }),
   )
 })
@@ -299,6 +361,37 @@ describe('REGRESSION: invalid runtime poses do not enter player state', () => {
       ])
       expect(failures.every((failure) => failure.reason === 'invalid-position')).toBe(true)
       expect(yield* player.pose).toStrictEqual(before)
+    }),
+  )
+
+  it.effect('reports camera failures and rejects invalid poses returned by the camera boundary', () =>
+    Effect.gen(function* () {
+      const player = yield* makePlayerService()
+      const cameraFailure = Result.fail({ _tag: 'CameraPoseInputError', field: 'pose' } as const)
+      const failedApply = vi.spyOn(Camera, 'applyLook').mockReturnValue(cameraFailure)
+      try {
+        const failure = yield* Effect.flip(player.look(0, 0))
+        expect(failure).toMatchObject({
+          _tag: 'PlayerServiceInputError',
+          reason: 'invalid-look',
+          field: 'pitchRadians',
+        })
+      } finally {
+        failedApply.mockRestore()
+      }
+
+      const invalidPose = { ...INITIAL_PLAYER_POSE, yawRadians: Number.NaN }
+      const invalidApply = vi.spyOn(Camera, 'applyLook').mockReturnValue(Result.succeed(invalidPose))
+      try {
+        const failure = yield* Effect.flip(player.look(0, 0))
+        expect(failure).toMatchObject({
+          _tag: 'PlayerServiceInputError',
+          reason: 'invalid-look',
+          field: 'yawRadians',
+        })
+      } finally {
+        invalidApply.mockRestore()
+      }
     }),
   )
 })

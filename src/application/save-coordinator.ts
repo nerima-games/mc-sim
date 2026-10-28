@@ -23,7 +23,7 @@
  */
 import { chunkSnapshotOf, type Chunk } from '@nerima-games/mc-worldgen'
 import type { Dimension } from '@nerima-games/mc-kernel'
-import { Data, Deferred, Effect, Ref } from 'effect'
+import { Brand, Data, Deferred, Effect, Ref, Schema, SchemaIssue } from 'effect'
 import type { YieldableError } from 'effect/Cause'
 
 /** One chunk plus the dimension it belongs to — the unit `retainChunk` and the save manifest exchange. */
@@ -57,6 +57,16 @@ const SaveSnapshotConsistencyErrorBase: new (args: {
 
 export class SaveSnapshotConsistencyError extends SaveSnapshotConsistencyErrorBase {}
 
+export const SaveCoordinatorRequestSaveSuccessSchema: Schema.Codec<void, undefined> = Schema.Undefined
+
+export const SaveSnapshotConsistencyErrorSchema: Schema.Codec<SaveSnapshotConsistencyError, unknown> =
+  Schema.instanceOf(SaveSnapshotConsistencyError)
+
+export const saveCoordinatorRequestSaveErrorSchema = <E, Encoded, DecodingServices, EncodingServices>(
+  publishErrorSchema: Schema.Codec<E, Encoded, DecodingServices, EncodingServices>,
+): Schema.Codec<E | SaveSnapshotConsistencyError, unknown, DecodingServices, EncodingServices> =>
+  Schema.Union([publishErrorSchema, SaveSnapshotConsistencyErrorSchema])
+
 export type SaveCoordinatorOptions<State, E> = {
   readonly initialKnownChunks: Iterable<DimensionChunk>
   /** Chunks the host currently has resident (loaded), read fresh on every snapshot attempt. */
@@ -79,6 +89,12 @@ export type SaveCoordinatorApi<E> = {
 }
 
 const MAX_SNAPSHOT_ATTEMPTS = 8
+
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const invalidSaveCoordinatorOptions = (value: unknown): Brand.BrandError =>
+  new Brand.BrandError(new SchemaIssue.InvalidType(Schema.Struct({}).ast, value))
 
 const coordId = ({ dimension, chunk }: DimensionChunk): string =>
   `${dimension}:${String(chunk.coord.cx)},${String(chunk.coord.cz)}`
@@ -110,8 +126,9 @@ type DrainState<E> = {
  */
 export const makeSaveCoordinator = <State, E>(
   options: SaveCoordinatorOptions<State, E>,
-): Effect.Effect<SaveCoordinatorApi<E>> =>
-  Effect.gen(function* () {
+): Effect.Effect<SaveCoordinatorApi<E>, Brand.BrandError> => {
+  if (!isRecord(options)) return Effect.fail(invalidSaveCoordinatorOptions(options))
+  return Effect.gen(function* () {
     const coordinator = yield* Ref.make<CoordinatorState>({
       knownChunks: new Map(
         [...options.initialKnownChunks].map((chunk) => [coordId(chunk), dimensionChunkSnapshotOf(chunk)]),
@@ -244,3 +261,4 @@ export const makeSaveCoordinator = <State, E>(
       retainedChunkCount: Ref.get(coordinator).pipe(Effect.map((state) => state.retainedChunks.size)),
     }
   })
+}

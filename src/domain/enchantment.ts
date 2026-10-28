@@ -1,6 +1,5 @@
 import type { ItemType } from '@nerima-games/mc-kernel'
 import {
-  AnvilEnchantmentId,
   applyAnvil,
   isAnvilEnchantmentId,
   planAnvil,
@@ -29,8 +28,10 @@ export const SUPPORTED_VANILLA_ANVIL_RULE_SET: AnvilRuleSet = {
   enchantments: SUPPORTED_VANILLA_ENCHANTMENT_RULES,
 } as const
 
-const RULES_BY_ID = new Map(
-  SUPPORTED_VANILLA_ENCHANTMENT_RULES.map((rule) => [rule.id, rule]),
+const RULES_BY_ID: ReadonlyMap<string, AnvilEnchantmentRule> = new Map(
+  SUPPORTED_VANILLA_ENCHANTMENT_RULES.map(
+    (rule): readonly [string, AnvilEnchantmentRule] => [rule.id, rule],
+  ),
 )
 
 export const isSupportedVanillaEnchantmentId = (
@@ -40,7 +41,7 @@ export const isSupportedVanillaEnchantmentId = (
 
 export const enchantmentRuleFor = (value: unknown): AnvilEnchantmentRule | undefined =>
   isSupportedVanillaEnchantmentId(value)
-    ? RULES_BY_ID.get(AnvilEnchantmentId(value))
+    ? RULES_BY_ID.get(value)
     : undefined
 
 export const enchantmentAppliesTo = (enchantment: unknown, item: ItemType): boolean =>

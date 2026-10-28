@@ -107,6 +107,18 @@ describe('clickInventory', () => {
     expect(result.result).toStrictEqual({ _tag: 'Swapped', carried: stored })
     expect(result.inventory.slots[0]).toStrictEqual(carried)
   })
+
+  it('returns InvalidCount for a carried stack with an invalid count', () => {
+    const inventory = emptyInventory()
+    const result = clickInventory(inventory, {
+      _tag: 'LeftClick',
+      slotIndex: 0,
+      carried: { ...itemStack('stone', 1), count: 0 },
+    } as unknown as InventoryClick)
+
+    expect(result.result._tag).toBe('InvalidCount')
+    expect(result.inventory).toBe(inventory)
+  })
 })
 
 describe('legacy stack fallback', () => {
@@ -115,6 +127,75 @@ describe('legacy stack fallback', () => {
     Reflect.deleteProperty(legacy, 'components')
     const result = addItemStack(emptyInventory(), legacy)
     expect(result.inventory.slots[0]?.count).toBe(1)
+  })
+
+  it('returns a typed failure for malformed present components', () => {
+    const original = emptyInventory()
+    const malformed = { ...itemStack('stone', 1), components: {} } as unknown as ItemStack
+    const result = addItemStackResult(original, malformed)
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) expect(result.failure).toMatchObject({ _tag: 'ItemValidationFailure' })
+
+    const undefinedComponents = { ...itemStack('stone', 1), components: undefined } as unknown as ItemStack
+    const undefinedResult = addItemStackResult(original, undefinedComponents)
+    expect(undefinedResult).toMatchObject({
+      _tag: 'Failure', failure: { _tag: 'ItemValidationFailure', reason: 'invalid-type' },
+    })
+    expect(original).toStrictEqual(emptyInventory())
+  })
+
+  it('rejects explicitly undefined components when normalising a saved slot', () => {
+    expect(normaliseInventoryResult({
+      slots: [{ item: 'stone', count: 1, components: undefined }],
+    })).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'ItemValidationFailure', field: 'components', reason: 'invalid-type' },
+    })
+  })
+
+  it('propagates malformed stored components from every inventory transition', () => {
+    const malformed = { ...itemStack('stone', 1), components: {} } as unknown as ItemStack
+    const inventory: Inventory = { slots: [malformed, ...emptyInventory().slots.slice(1)] }
+
+    expect(addItemResult(inventory, 'stone', 1)).toMatchObject({
+      _tag: 'Failure', failure: { _tag: 'ItemValidationFailure' },
+    })
+    expect(removeItemAtResult(inventory, 0, 'stone', 1)).toMatchObject({
+      _tag: 'Failure', failure: { _tag: 'ItemValidationFailure' },
+    })
+    expect(removeItemResult(inventory, 'stone', 1)).toMatchObject({
+      _tag: 'Failure', failure: { _tag: 'ItemValidationFailure' },
+    })
+    expect(normaliseInventoryResult(inventory)).toMatchObject({
+      _tag: 'Failure', failure: { _tag: 'ItemValidationFailure' },
+    })
+  })
+
+  it('propagates component failures if a caller changes a stack during a transition', () => {
+    const components = itemStack('stone', 1).components
+    const changingStack = (validReads: number): ItemStack => {
+      let reads = 0
+      return {
+        ...itemStack('stone', 1),
+        get components() {
+          reads += 1
+          return reads <= validReads ? components : undefined
+        },
+      } as unknown as ItemStack
+    }
+    const overflowSlots = [...emptyInventory().slots, undefined]
+
+    const outcomes = Array.from({ length: 24 }, (_, index) => {
+      const validReads = index + 1
+      return [
+        addItemResult({ slots: [changingStack(validReads), ...emptyInventory().slots.slice(1)] }, 'stone', 1),
+        addItemStackResult(emptyInventory(), changingStack(validReads)),
+        normaliseInventoryResult({ slots: [changingStack(validReads), ...emptyInventory().slots.slice(1)] }),
+        normaliseInventoryResult({ slots: [...overflowSlots, changingStack(validReads)] }),
+      ]
+    }).flat()
+
+    expect(outcomes.some(Result.isFailure)).toBe(true)
   })
 })
 
@@ -454,19 +535,20 @@ describe('REGRESSION: normaliseInventory re-establishes the slot count without l
 
   it.effect('what genuinely does not fit is REPORTED, in the same currency as add', () =>
     Effect.sync(() => {
-      // A save whose every slot is over-full cannot be made to fit. The excess
-      // becomes dropped-item entities on the ground, which is what the caller
-      // does with `add`'s leftover — so it must not be swallowed here either.
+      // A corrupt stack beyond total inventory capacity must surface its excess
+      // as dropped-item entities, matching what the caller does with `add`'s
+      // leftover.
+      const capacity = INVENTORY_SLOT_COUNT * maxStackCountForItem('dirt')
       const crammed: Inventory = {
-        slots: Array.from({ length: INVENTORY_SLOT_COUNT }, () => ({
+        slots: [{
           ...itemStack('dirt', 1),
-          count: 100 as StackCount,
-        })),
+          count: (capacity + 1) as StackCount,
+        }],
       }
       const repaired = normaliseInventory(crammed)
 
-      expect(countOf(repaired.inventory, 'dirt')).toBe(INVENTORY_SLOT_COUNT * maxStackCountForItem('dirt'))
-      expect(repaired.leftover).toBe(INVENTORY_SLOT_COUNT * (100 - maxStackCountForItem('dirt')))
+      expect(countOf(repaired.inventory, 'dirt')).toBe(capacity)
+      expect(repaired.leftover).toBe(1)
     }),
   )
 
@@ -575,18 +657,29 @@ describe('REGRESSION: InventoryService.restore is the guarded path, and reports 
     }),
   )
 
+  it.effect('a null constructor envelope returns the declared typed failure', () =>
+    Effect.gen(function* () {
+      const outcome = yield* Effect.result(makeInventoryService(null as never))
+
+      expect(Result.isFailure(outcome)).toBe(true)
+      if (Result.isFailure(outcome)) expect(outcome.failure._tag).toBeDefined()
+    }),
+  )
+
   it.effect('restore resolves to the leftover, which the caller drops on the ground', () =>
     Effect.gen(function* () {
       const service = yield* makeInventoryService()
+      const capacity = INVENTORY_SLOT_COUNT * maxStackCountForItem('dirt')
+      const totalItems = INVENTORY_SLOT_COUNT * 100
       const crammed: Inventory = {
-        slots: Array.from({ length: INVENTORY_SLOT_COUNT }, () => ({
+        slots: [{
           ...itemStack('dirt', 1),
-          count: 100 as StackCount,
-        })),
+          count: totalItems as StackCount,
+        }],
       }
 
-      expect(yield* service.restore(crammed)).toBe(INVENTORY_SLOT_COUNT * 36)
-      expect(yield* service.countOf('dirt')).toBe(INVENTORY_SLOT_COUNT * maxStackCountForItem('dirt'))
+      expect(yield* service.restore(crammed)).toBe(totalItems - capacity)
+      expect(yield* service.countOf('dirt')).toBe(capacity)
     }),
   )
 
@@ -610,6 +703,16 @@ describe('REGRESSION: InventoryService.restore is the guarded path, and reports 
 })
 
 describe('InventoryService slot operations', () => {
+  it.effect('rejects a non-record click envelope as a typed service failure', () =>
+    Effect.gen(function* () {
+      const service = yield* makeInventoryService()
+      const failure = yield* Effect.flip(service.click(null as never))
+
+      expect(failure).toMatchObject({ _tag: 'ItemValidationFailure', field: 'click' })
+      expect(yield* service.snapshot).toStrictEqual(emptyInventory())
+    }),
+  )
+
   it.effect('gets and sets a slot without losing tool durability', () =>
     Effect.gen(function* () {
       const service = yield* makeInventoryService()
@@ -904,6 +1007,39 @@ describe('InventoryService concurrency', () => {
     }),
   )
 
+  it.effect('does not default invalid storage results in add or click transitions', () =>
+    Effect.gen(function* () {
+      const addService = yield* makeInventoryService()
+      yield* addService.add('stone', 65)
+      const addStorage = yield* addService.storageSnapshot
+      ;(addStorage.inventoryDurability as Array<{ readonly current: number; readonly max: number } | null>)[0] = {
+        current: 1,
+        max: 1,
+      }
+
+      const addFailure = yield* Effect.result(addService.add('dirt', 1))
+      expect(addFailure).toMatchObject({
+        _tag: 'Failure', failure: { _tag: 'InvalidInventoryDurability', slotIndex: 0, item: 'stone' },
+      })
+
+      const clickService = yield* makeInventoryService()
+      yield* clickService.add('stone', 65)
+      const clickStorage = yield* clickService.storageSnapshot
+      ;(clickStorage.inventoryDurability as Array<{ readonly current: number; readonly max: number } | null>)[0] = {
+        current: 1,
+        max: 1,
+      }
+
+      const clickFailure = yield* Effect.result(clickService.click({
+        _tag: 'LeftClick', slotIndex: 1, carried: undefined,
+      }))
+      expect(clickFailure).toMatchObject({
+        _tag: 'Failure', failure: { _tag: 'InvalidInventoryDurability', slotIndex: 0, item: 'stone' },
+      })
+      expect(slotAt(yield* clickService.snapshot, 1)).toStrictEqual(itemStack('stone', 1))
+    }),
+  )
+
   it.effect('right-click picks up the larger half and places exactly one item', () =>
     Effect.gen(function* () {
       const service = yield* makeInventoryService()
@@ -1032,10 +1168,15 @@ describe('InventoryService concurrency', () => {
         _tag: 'InvalidSlot',
         carried: undefined,
       })
-      expect(yield* service.click(invalidCount)).toStrictEqual({
-        _tag: 'InvalidCount',
-        carried: invalidCount.carried,
-      })
+      const invalidClick = yield* Effect.result(service.click(invalidCount))
+      expect(Result.isFailure(invalidClick)).toBe(true)
+      if (Result.isFailure(invalidClick)) {
+        expect(invalidClick.failure).toMatchObject({
+          _tag: 'ItemValidationFailure',
+          field: 'click.carried',
+          reason: 'invalid-type',
+        })
+      }
       expect(yield* service.snapshot).toBe(before)
     }),
   )

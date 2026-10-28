@@ -76,13 +76,15 @@
  * breaking change to a published surface, so it should be taken when there is a
  * host to measure it against rather than now.
  */
-import { Context, Effect, Layer, Ref } from 'effect'
+import { Context, Effect, Layer, Ref, Result } from 'effect'
+import { EntityCount } from '../domain/entity.js'
 import type {
   BehaviourRepair,
   Entity,
   EntityId,
   EntityKind,
   EntityRoster,
+  EntitySerialExhausted,
   EntityStep,
   RosterRepair,
   SpawnRequest,
@@ -98,7 +100,7 @@ export type EntityManagerApi<S> = {
    * the population cap and the cadence as things that 「arrive with mc-sim」 —
    * they arrive as `countOfKind` beside this call, not as a rule inside it.
    */
-  readonly spawn: (request: SpawnRequest<S>) => Effect.Effect<Entity<S>>
+  readonly spawn: (request: SpawnRequest<S>) => Effect.Effect<Entity<S>, EntitySerialExhausted>
   /** Remove one. Resolves to `false` when nothing had that id — not an error. */
   readonly despawn: (id: EntityId) => Effect.Effect<boolean>
   /**
@@ -117,9 +119,9 @@ export type EntityManagerApi<S> = {
    */
   readonly entities: Effect.Effect<ReadonlyArray<Entity<S>>>
   readonly find: (id: EntityId) => Effect.Effect<Entity<S> | undefined>
-  readonly count: Effect.Effect<number>
+  readonly count: Effect.Effect<EntityCount>
   /** The census a spawn cap needs. See `spawn`. */
-  readonly countOfKind: (kind: EntityKind) => Effect.Effect<number>
+  readonly countOfKind: (kind: EntityKind) => Effect.Effect<EntityCount>
   /**
    * Advance every entity by one step, atomically, and collect what the rules
    * produced.
@@ -149,11 +151,10 @@ export type EntityManagerApi<S> = {
    * the same decision `restore` makes about `leftover` — a host that is told
    * nothing cannot tell a clean load from one that renamed half the world.
    *
-   * NO ERROR CHANNEL, on purpose. Failing a world load over a repairable field
-   * turns a repairable save into an unopenable one. A host that wants to decide
-   * for itself calls `normaliseRoster` first: it is public, pure and idempotent.
+   * Repairable fields are normalised. Restore fails only when no never-used
+   * entity serial remains for repairing a duplicate id.
    */
-  readonly restore: (roster: EntityRoster<S>) => Effect.Effect<RosterRepair>
+  readonly restore: (roster: EntityRoster<S>) => Effect.Effect<RosterRepair, EntitySerialExhausted>
   /**
    * Empty the roster, counter and all. A NEW world, not a reloaded one — a
    * reload is `restore`.
@@ -219,13 +220,19 @@ export const entityManagerTag = <S>(): Context.Service<EntityManager, EntityMana
 export const makeEntityManager = <S>(
   initial: EntityRoster<S> = emptyRoster<S>(),
   repairBehaviour?: BehaviourRepair<S>,
-): Effect.Effect<EntityManagerApi<S>> =>
-  Effect.map(Ref.make(normaliseRoster(initial, repairBehaviour).roster), (state) => ({
+): Effect.Effect<EntityManagerApi<S>, EntitySerialExhausted> => {
+  const normalized = normaliseRoster(initial, repairBehaviour)
+  if (Result.isFailure(normalized)) return Effect.fail(normalized.failure)
+  return Effect.map(Ref.make(normalized.success.roster), (state) => ({
     spawn: (request) =>
-      Ref.modify(state, (current) => {
+      Ref.modify(state, (current): readonly [Result.Result<Entity<S>, EntitySerialExhausted>, EntityRoster<S>] => {
         const outcome = spawnEntity(current, request)
-        return [outcome.entity, outcome.roster]
-      }),
+        return Result.isSuccess(outcome)
+          ? [Result.succeed(outcome.success.entity), outcome.success.roster]
+          : [Result.fail(outcome.failure), current]
+      }).pipe(Effect.flatMap((outcome) =>
+        Result.isSuccess(outcome) ? Effect.succeed(outcome.success) : Effect.fail(outcome.failure),
+      )),
     despawn: (id) =>
       Ref.modify(state, (current) => {
         const outcome = despawnEntity(current, id)
@@ -233,7 +240,7 @@ export const makeEntityManager = <S>(
       }),
     entities: Ref.get(state).pipe(Effect.map((current) => current.entities)),
     find: (id) => Ref.get(state).pipe(Effect.map((current) => findEntity(current, id))),
-    count: Ref.get(state).pipe(Effect.map((current) => current.entities.length)),
+    count: Ref.get(state).pipe(Effect.map((current) => EntityCount(current.entities.length))),
     countOfKind: (kind) => Ref.get(state).pipe(Effect.map((current) => countOfKind(current, kind))),
     sweep: (step) =>
       Ref.modify(state, (current) => {
@@ -242,12 +249,17 @@ export const makeEntityManager = <S>(
       }),
     snapshot: Ref.get(state),
     restore: (roster) =>
-      Ref.modify(state, () => {
+      Ref.modify(state, (current): readonly [Result.Result<RosterRepair, EntitySerialExhausted>, EntityRoster<S>] => {
         const outcome = normaliseRoster(roster, repairBehaviour)
-        return [{ discarded: outcome.discarded, reidentified: outcome.reidentified }, outcome.roster]
-      }),
+        return Result.isSuccess(outcome)
+          ? [Result.succeed({ discarded: outcome.success.discarded, reidentified: outcome.success.reidentified }), outcome.success.roster]
+          : [Result.fail(outcome.failure), current]
+      }).pipe(Effect.flatMap((outcome) =>
+        Result.isSuccess(outcome) ? Effect.succeed(outcome.success) : Effect.fail(outcome.failure),
+      )),
     reset: Ref.set(state, emptyRoster<S>()),
   }))
+}
 
 /**
  * The roster as a Layer, at the host's behaviour type.
@@ -266,5 +278,5 @@ export const makeEntityManager = <S>(
 export const EntityManagerLayer = <S>(
   initial: EntityRoster<S> = emptyRoster<S>(),
   repairBehaviour?: BehaviourRepair<S>,
-): Layer.Layer<EntityManager> =>
+): Layer.Layer<EntityManager, EntitySerialExhausted> =>
   Layer.effect(entityManagerTag<S>(), makeEntityManager(initial, repairBehaviour))

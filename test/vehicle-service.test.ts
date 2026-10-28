@@ -1,11 +1,16 @@
 import { Effect } from 'effect'
 import { describe, expect, it } from 'vitest'
 import { makeVehicleService, VehicleService, VehicleServiceLayer } from '../src/application/vehicle-service'
-import { PositionAxis, position as coordinatePosition } from '@nerima-games/mc-kernel'
+import { AngleRadians, PositionAxis, VehicleVelocityComponent, position as coordinatePosition } from '@nerima-games/mc-kernel'
 import { OccupantId, validateVehicleSnapshot, VehicleId } from '../src/domain/vehicle'
 
 const position = (x: number, y: number, z: number) =>
   coordinatePosition(PositionAxis(x), PositionAxis(y), PositionAxis(z))
+const velocity = (x: number, y: number, z: number) => ({
+  x: VehicleVelocityComponent(x),
+  y: VehicleVelocityComponent(y),
+  z: VehicleVelocityComponent(z),
+})
 
 const baseVehicleItem = {
   id: 'v:0',
@@ -32,16 +37,16 @@ describe('VehicleService lifecycle', () => {
   it('spawns, updates, mounts, dismounts, and despawns vehicles', async () => {
     await Effect.runPromise(Effect.gen(function* () {
       const service = yield* makeVehicleService()
-      const vehicle = yield* service.spawn('boat', 'overworld', position(1, 64, 2), Math.PI / 2)
+      const vehicle = yield* service.spawn('boat', 'overworld', position(1, 64, 2), AngleRadians(Math.PI / 2))
       const secondVehicle = yield* service.spawn('minecart', 'overworld', position(2, 64, 2))
       expect(vehicle.id).toBe('v:0')
-      yield* service.updateVelocity(vehicle.id, { x: 1, y: 0, z: -1 })
-      yield* service.updateTransform(vehicle.id, 'nether', position(3, 70, 4), Math.PI)
+      yield* service.updateVelocity(vehicle.id, velocity(1, 0, -1))
+      yield* service.updateTransform(vehicle.id, 'nether', position(3, 70, 4), AngleRadians(Math.PI))
       yield* service.updateState(vehicle.id, {
         dimension: 'end',
         position: position(5, 71, 6),
-        velocity: { x: 0, y: 0, z: 0.5 },
-        yawRadians: 0.25,
+        velocity: velocity(0, 0, 0.5),
+        yawRadians: AngleRadians(0.25),
       })
       yield* service.mount(vehicle.id, OccupantId('player:1'))
       expect((yield* service.vehicles)[0]).toMatchObject({ dimension: 'end', position: position(5, 71, 6), yawRadians: 0.25, occupant: 'player:1' })
@@ -95,8 +100,8 @@ describe('VehicleService lifecycle', () => {
   it('round-trips a strict snapshot and preserves the id counter', async () => {
     await Effect.runPromise(Effect.gen(function* () {
       const first = yield* makeVehicleService()
-      const vehicle = yield* first.spawn('minecart', 'end', position(8, 9, 10), 45)
-      yield* first.updateVelocity(vehicle.id, { x: 0.5, y: -1, z: 2 })
+      const vehicle = yield* first.spawn('minecart', 'end', position(8, 9, 10), AngleRadians(45))
+      yield* first.updateVelocity(vehicle.id, velocity(0.5, -1, 2))
       yield* first.mount(vehicle.id, OccupantId('rider'))
       const snapshot = yield* first.snapshot
       const second = yield* makeVehicleService()
@@ -132,9 +137,40 @@ describe('VehicleService lifecycle', () => {
         vehicle.id,
         'invalid' as 'overworld',
         position(1, 2, 3),
-        90,
+        AngleRadians(90),
       ))
       expect(error.reason).toBe('invalid-transform')
+      expect(yield* service.snapshot).toBe(before)
+    }))
+  })
+
+  it('atomically rejects invalid update-state coordinates and blank occupants', async () => {
+    await Effect.runPromise(Effect.gen(function* () {
+      const service = yield* makeVehicleService()
+      const vehicle = yield* service.spawn('boat', 'overworld', position(0, 0, 0))
+      const before = yield* service.snapshot
+
+      const invalidPosition = position(1, 2, 3)
+      expect(Reflect.set(invalidPosition, 'x', Number.POSITIVE_INFINITY)).toBe(true)
+      const positionError = yield* Effect.flip(service.updateState(vehicle.id, {
+        dimension: 'overworld',
+        position: invalidPosition,
+        velocity: velocity(0, 0, 0),
+        yawRadians: AngleRadians(0),
+      }))
+      expect(positionError.reason).toBe('invalid-transform')
+      expect(yield* service.snapshot).toBe(before)
+
+      const invalidOccupantState = {
+        dimension: 'overworld' as const,
+        position: position(1, 2, 3),
+        velocity: velocity(0, 0, 0),
+        yawRadians: AngleRadians(0),
+        occupant: OccupantId('rider'),
+      }
+      expect(Reflect.set(invalidOccupantState, 'occupant', '   ')).toBe(true)
+      const occupantError = yield* Effect.flip(service.updateState(vehicle.id, invalidOccupantState))
+      expect(occupantError.reason).toBe('invalid-transform')
       expect(yield* service.snapshot).toBe(before)
     }))
   })
@@ -162,12 +198,12 @@ describe('VehicleService lifecycle', () => {
     await Effect.runPromise(Effect.gen(function* () {
       const service = yield* makeVehicleService()
       const missing = VehicleId('missing')
-      const velocityError = yield* Effect.flip(service.updateVelocity(missing, { x: 0, y: 0, z: 0 }))
+      const velocityError = yield* Effect.flip(service.updateVelocity(missing, velocity(0, 0, 0)))
       expect(velocityError.reason).toBe('not-found')
-      const transformError = yield* Effect.flip(service.updateTransform(missing, 'overworld', position(0, 0, 0), 0))
+      const transformError = yield* Effect.flip(service.updateTransform(missing, 'overworld', position(0, 0, 0), AngleRadians(0)))
       expect(transformError.reason).toBe('not-found')
       const stateError = yield* Effect.flip(service.updateState(missing, {
-        dimension: 'overworld', position: position(0, 0, 0), velocity: { x: 0, y: 0, z: 0 }, yawRadians: 0,
+        dimension: 'overworld', position: position(0, 0, 0), velocity: velocity(0, 0, 0), yawRadians: AngleRadians(0),
       }))
       expect(stateError.reason).toBe('not-found')
     }))
@@ -232,6 +268,20 @@ describe('validateVehicleSnapshot rejects each malformed field', () => {
     expect(validateVehicleSnapshot({ vehicles: [{ ...baseVehicleItem, id: '  ' }], nextSerial: 1 })).toStrictEqual({
       _tag: 'Invalid',
       error: { _tag: 'VehicleValidationError', path: 'snapshot.vehicles[0].id', reason: 'must be non-blank' },
+    })
+  })
+
+  it('rejects an unsafe serial encoded in a vehicle id at the id path', () => {
+    expect(validateVehicleSnapshot({
+      vehicles: [{ ...baseVehicleItem, id: 'v:9007199254740992' }],
+      nextSerial: Number.MAX_SAFE_INTEGER,
+    })).toStrictEqual({
+      _tag: 'Invalid',
+      error: {
+        _tag: 'VehicleValidationError',
+        path: 'snapshot.vehicles[0].id',
+        reason: 'must contain a safe serial',
+      },
     })
   })
 

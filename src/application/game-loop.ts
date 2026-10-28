@@ -291,7 +291,9 @@ export const makeGameLoop = (initialTick: SimulationTick = SimulationTick(0)): E
     })
 
     const start = (handler: FrameHandler): Effect.Effect<void, Brand.BrandError> => {
-      const validInitialTick = SimulationTick.result(initialTick)
+      const validInitialTick = typeof initialTick === 'number'
+        ? SimulationTick.result(initialTick)
+        : SimulationTick.result(Number.NaN)
       if (Result.isFailure(validInitialTick)) return Effect.fail(validInitialTick.failure)
 
       return Effect.gen(function* () {

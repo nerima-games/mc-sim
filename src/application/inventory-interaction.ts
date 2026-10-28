@@ -3,7 +3,7 @@ import * as Eq from '../domain/equipment.js'
 import * as Inv from '../domain/inventory.js'
 import { itemStackWithCount } from '../domain/item-stack.js'
 import * as Storage from '../domain/player-storage.js'
-import { isItemStack, itemStackEqualsIgnoringCount } from '@nerima-games/mc-kernel'
+import { isItemStack, isItemType, itemStackEqualsIgnoringCount } from '@nerima-games/mc-kernel'
 
 export type InventoryCarriedStack = Inv.ItemStack & {
   readonly durability?: Eq.Durability | undefined
@@ -36,13 +36,23 @@ export type InventoryClickOutcome = {
   readonly result: InventoryClickResult
 }
 
-export const validCarried = (carried: InventoryCarriedSlot): boolean =>
-  carried === undefined ||
-  (isItemStack({ item: carried.item, count: carried.count, components: carried.components }) &&
-    (Eq.isDamageableItemType(carried.item)
-      ? carried.durability === undefined ||
-        Eq.isValidDurabilityForItem(carried.item, carried.durability)
-      : carried.durability === undefined))
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+export const validCarried = (carried: unknown): carried is InventoryCarriedSlot => {
+  if (carried === undefined) return true
+  if (!isRecord(carried)) return false
+
+  const item = carried['item']
+  const count = carried['count']
+  if (!isItemType(item) || typeof count !== 'number') return false
+  if (!isItemStack({ item, count, components: carried['components'] })) return false
+
+  const durability = carried['durability']
+  return Eq.isDamageableItemType(item)
+    ? durability === undefined || Eq.isValidDurabilityForItem(item, durability)
+    : durability === undefined
+}
 
 export const sameDurability = (
   left: Eq.Durability | null | undefined,

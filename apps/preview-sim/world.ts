@@ -14,7 +14,7 @@
  *    read. This app backs it with a `Ref<number>` the operator advances.
  *
  * 2. Effect's own `Clock` — what `Schedule.spaced` sleeps on.
- *    `startAutoSaveDaemon` is typed `Effect<Fiber.Fiber<number, never>>`
+ *    `startAutoSaveDaemon` is typed `Effect<Fiber.Fiber<number, never>, InvalidAutoSaveInterval>`
  *    with NO `ClockPort` requirement, because it does not use one. This app
  *    backs it with `TestClock.layer()`, so a five-second autosave
  *    interval costs zero real seconds and the schedule is as reproducible as
@@ -44,6 +44,7 @@
  * persist exactly as they do in a real session.
  */
 import {
+  Brand,
   Cause,
   Duration,
   Effect,
@@ -52,6 +53,7 @@ import {
   ManagedRuntime,
   Ref,
   Result,
+  Schema,
 } from 'effect'
 import { TestClock } from 'effect/testing'
 import { startAutoSaveDaemon, type AutoSaveStatus } from '../../src/application/autosave'
@@ -62,7 +64,8 @@ import { makeSettingsService } from '../../src/application/settings-service'
 import { makeStatisticsService } from '../../src/application/statistics-service'
 import { makeTimeService } from '../../src/application/time-service'
 import { itemStack, type ItemStackFailure } from '../../src/domain/inventory'
-import { makeVitalsService } from '../../src/application/vitals-service'
+import type { PlayerStorageFailure } from '../../src/domain/player-storage'
+import { makeVitalsService, type DamageOutcome } from '../../src/application/vitals-service'
 import * as Camera from '../../src/domain/camera-pose'
 import {
   INVENTORY_SLOT_COUNT,
@@ -73,8 +76,12 @@ import {
 import * as Statistics from '../../src/domain/statistics'
 import * as Vitals from '../../src/domain/vitals'
 import {
+  AchievementIdSchema,
   ClockPort,
   EpochMillis,
+  FixedDurationSecs,
+  FoodNutrition,
+  InterpolationFraction,
   MonotonicTimeSecs,
   normaliseSettings,
   PositionAxis,
@@ -95,6 +102,20 @@ import { scenarioFor, stepsAt, type ScenarioName, type ScriptedAction } from './
  */
 const FROZEN_WALL_CLOCK = EpochMillis(1_700_000_000_000)
 
+const dayLengthResult = (seconds: number) =>
+  FixedDurationSecs.result(
+    Number.isNaN(seconds)
+      ? Time.DEFAULT_DAY_LENGTH_SECS
+      : Math.max(Time.MIN_DAY_LENGTH_SECS, Math.min(Time.MAX_DAY_LENGTH_SECS, seconds)),
+  )
+
+const timeFractionResult = (fraction: number) =>
+  InterpolationFraction.result(
+    Number.isNaN(fraction)
+      ? 0
+      : Math.max(0, Math.min(Time.MAX_TIME_FRACTION, fraction)),
+  )
+
 export type SlotView = {
   readonly index: number
   readonly item: string
@@ -109,6 +130,8 @@ export type LogLine = {
   readonly text: string
   readonly severity: 'note' | 'event' | 'fault'
 }
+
+type InventoryActionFailure = ItemStackFailure | PlayerStorageFailure
 
 export type WorldView = {
   readonly frame: number
@@ -294,7 +317,10 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
     Effect.gen(function* () {
       const clockSecs = yield* Ref.make(0)
       const clockLayer = Layer.succeed(ClockPort, {
-        monotonicSecs: Ref.get(clockSecs).pipe(Effect.map((value) => MonotonicTimeSecs(value))),
+        monotonicSecs: Ref.get(clockSecs).pipe(
+          Effect.flatMap((value) => Effect.fromResult(MonotonicTimeSecs.result(value))),
+          Effect.orDie,
+        ),
         wallClockEpochMillis: Effect.succeed(FROZEN_WALL_CLOCK),
       } satisfies ClockService)
 
@@ -327,7 +353,7 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
       book.lastDeltaSecs = dt
       book.simulatedSecs += dt
     }).pipe(
-      Effect.andThen(time.advance(dt)),
+      Effect.andThen(Effect.orDie(time.advance(dt))),
       // The food timer takes THE SAME delta the world clock does, and this app
       // is the only place the two are visibly one number. The signal is counted
       // and DELIBERATELY NOT ACTED ON: `'starve'` means mx-gameplay would now
@@ -368,7 +394,11 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
   )
 
   await runtime.runPromise(loop.start(frameHandler))
-  await runtime.runPromise(time.configureDay(config.dayLengthSecs, config.timeOfDay))
+  await runtime.runPromise(
+    Effect.fromResult(
+      Result.all([dayLengthResult(config.dayLengthSecs), timeFractionResult(config.timeOfDay)]),
+    ).pipe(Effect.flatMap(([seconds, fraction]) => time.configureDay(seconds, fraction))),
+  )
 
   const scenario = scenarioFor(config.scenario)
 
@@ -395,7 +425,7 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
   /** Movement and inventory actions. `undefined` means "not one of mine". */
   const applyMovementAction = (
     action: ScriptedAction,
-  ): Effect.Effect<void, ItemStackFailure | PlayerServiceInputError> | undefined => {
+  ): Effect.Effect<void, InventoryActionFailure | PlayerServiceInputError | Brand.BrandError> | undefined => {
     switch (action.kind) {
       case 'look':
         return guarded('look', player.look(action.deltaYaw, action.deltaPitch))
@@ -448,20 +478,31 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
   }
 
   /** Time-of-day actions. `undefined` means "not one of mine". */
-  const applyTimeAction = (action: ScriptedAction): Effect.Effect<void> | undefined => {
+  const applyTimeAction = (action: ScriptedAction): Effect.Effect<void, Brand.BrandError> | undefined => {
     switch (action.kind) {
       case 'setDayLength':
-        return guarded('setDayLength', time.setDayLength(action.seconds)).pipe(
+        return guarded(
+          'setDayLength',
+          Effect.fromResult(dayLengthResult(action.seconds)).pipe(Effect.flatMap(time.setDayLength)),
+        ).pipe(
           Effect.andThen(note(`setDayLength(${String(action.seconds)}) ALONE — watch the clock face`, 'fault')),
         )
 
       case 'setTimeOfDay':
-        return guarded('setTimeOfDay', time.setTimeOfDay(action.fraction)).pipe(
+        return guarded(
+          'setTimeOfDay',
+          Effect.fromResult(timeFractionResult(action.fraction)).pipe(Effect.flatMap(time.setTimeOfDay)),
+        ).pipe(
           Effect.andThen(note(`setTimeOfDay(${String(action.fraction)})`, 'event')),
         )
 
       case 'configureDay':
-        return guarded('configureDay', time.configureDay(action.seconds, action.fraction)).pipe(
+        return guarded(
+          'configureDay',
+          Effect.fromResult(
+            Result.all([dayLengthResult(action.seconds), timeFractionResult(action.fraction)]),
+          ).pipe(Effect.flatMap(([seconds, fraction]) => time.configureDay(seconds, fraction))),
+        ).pipe(
           Effect.andThen(
             note(`configureDay(${String(action.seconds)} s, ${String(action.fraction)})`, 'event'),
           ),
@@ -497,7 +538,7 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
   /** Save-restore and world-lifecycle actions. `undefined` means "not one of mine". */
   const applyRestoreAction = (
     action: ScriptedAction,
-  ): Effect.Effect<void, ItemStackFailure> | undefined => {
+  ): Effect.Effect<void, InventoryActionFailure> | undefined => {
     switch (action.kind) {
       case 'restoreInventory': {
         const restoreInventoryResult = Result.map(
@@ -588,7 +629,9 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
   }
 
   /** Vitals and progression actions. `undefined` means "not one of mine". */
-  const applyVitalsAction = (action: ScriptedAction): Effect.Effect<void> | undefined => {
+  const applyVitalsAction = (
+    action: ScriptedAction,
+  ): Effect.Effect<void, Brand.BrandError | Statistics.StatisticsRecordFailure> | undefined => {
     switch (action.kind) {
       case 'damage': {
         // Counted HERE, at the call, because a blow that did nothing is by
@@ -596,6 +639,12 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
         // panels can only show that mc-sim absorbed a `NaN` if the app records
         // having thrown one.
         const withoutMagnitude = Number.isNaN(action.amount)
+        const amount = Vitals.DamageAmount.result(action.amount)
+        const damage: Effect.Effect<DamageOutcome, Brand.BrandError> = Result.isFailure(amount)
+          ? withoutMagnitude
+            ? vitals.snapshot.pipe(Effect.map((current) => ({ vitals: current, died: false })))
+            : Effect.fail(amount.failure)
+          : vitals.damage({ amount: amount.success, cause: action.cause })
         return Effect.sync(() => {
           if (withoutMagnitude) {
             book.blowsWithoutMagnitude += 1
@@ -604,8 +653,7 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
           Effect.andThen(
             guarded(
               'vitals.damage',
-              vitals
-                .damage({ amount: action.amount, cause: action.cause })
+              damage
                 .pipe(
                   Effect.tap((outcome) =>
                     Effect.sync(() => {
@@ -631,12 +679,20 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
       }
 
       case 'heal':
-        return guarded('vitals.heal', vitals.heal(action.amount)).pipe(
+        return guarded(
+          'vitals.heal',
+          Effect.fromResult(Vitals.HealthAmount.result(action.amount)).pipe(Effect.flatMap(vitals.heal)),
+        ).pipe(
           Effect.andThen(note(`heal ${String(action.amount)}`, 'event')),
         )
 
       case 'exhaust':
-        return guarded('vitals.addExhaustion', vitals.addExhaustion(action.amount)).pipe(
+        return guarded(
+          'vitals.addExhaustion',
+          Effect.fromResult(Vitals.ExhaustionAmount.result(action.amount)).pipe(
+            Effect.flatMap(vitals.addExhaustion),
+          ),
+        ).pipe(
           Effect.andThen(
             note(`exhaustion +${String(action.amount)} (the COST is mx-gameplay's)`, 'event'),
           ),
@@ -645,7 +701,12 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
       case 'eat':
         return guarded(
           'vitals.eat',
-          vitals.eat(action.foodPoints, action.saturationModifier),
+          Effect.fromResult(
+            Result.all([
+              FoodNutrition.result(action.foodPoints),
+              Vitals.SaturationModifier.result(action.saturationModifier),
+            ]),
+          ).pipe(Effect.flatMap(([food, saturationModifier]) => vitals.eat(food, saturationModifier))),
         ).pipe(
           Effect.andThen(
             note(
@@ -656,7 +717,12 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
         )
 
       case 'award':
-        return guarded('vitals.addExperience', vitals.addExperience(action.experience)).pipe(
+        return guarded(
+          'vitals.addExperience',
+          Effect.fromResult(Vitals.ExperienceDelta.result(action.experience)).pipe(
+            Effect.flatMap(vitals.addExperience),
+          ),
+        ).pipe(
           Effect.andThen(note(`experience ${action.experience >= 0 ? '+' : ''}${String(action.experience)}`, 'event')),
         )
 
@@ -689,10 +755,12 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
   }
 
   /** Statistics, settings, and loop-control actions. `undefined` means "not one of mine". */
-  const applyMiscAction = (action: ScriptedAction): Effect.Effect<void> | undefined => {
+  const applyMiscAction = (action: ScriptedAction): Effect.Effect<void, Schema.SchemaError> | undefined => {
     switch (action.kind) {
       case 'unlock':
-        return guarded('statistics.unlock', statistics.unlock(action.id)).pipe(
+        return Effect.fromResult(Schema.decodeUnknownResult(AchievementIdSchema)(action.id)).pipe(
+          Effect.flatMap((achievementId) => guarded('statistics.unlock', statistics.unlock(achievementId))),
+        ).pipe(
           Effect.andThen(note(`unlock ${action.id} (mc-sim holds no registry)`, 'event')),
         )
 
@@ -734,7 +802,16 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
     }
   }
 
-  const applyAction = (action: ScriptedAction): Effect.Effect<void, ItemStackFailure | PlayerServiceInputError> =>
+  const applyAction = (
+    action: ScriptedAction,
+  ): Effect.Effect<
+    void,
+    | InventoryActionFailure
+    | PlayerServiceInputError
+    | Brand.BrandError
+    | Statistics.StatisticsRecordFailure
+    | Schema.SchemaError
+  > =>
     applyMovementAction(action) ??
     applyTimeAction(action) ??
     applyRestoreAction(action) ??
@@ -763,7 +840,9 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
 
     book.lastRawDeltaSecs = book.framesSubmitted === 0 ? undefined : book.clockPortSecs - previous
     book.framesSubmitted += 1
-    yield* loop.submitFrame(MonotonicTimeSecs(book.clockPortSecs))
+    yield* Effect.fromResult(MonotonicTimeSecs.result(book.clockPortSecs)).pipe(
+      Effect.flatMap(loop.submitFrame),
+    )
 
     // Let the loop's daemon take the frame and run the handler before the next
     // frame is scripted. Without this the frames would queue up and then be
@@ -791,6 +870,7 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
         const inventorySnapshot = yield* inventory.snapshot
         const slots = slotViews(inventorySnapshot.slots)
         const snapshot = yield* player.cameraPose.pipe(Effect.provide(clockLayer))
+        const clockPortNow = yield* Effect.fromResult(MonotonicTimeSecs.result(book.clockPortSecs))
         const timeState = yield* time.snapshot
         const vitalsSnapshot = yield* vitals.snapshot
 
@@ -808,8 +888,8 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
           lastDeltaSecs: book.lastDeltaSecs,
           pose: yield* player.pose,
           cameraPose: snapshot,
-          forward: Camera.forwardVector(snapshot),
-          poseSnapshotAgeSecs: Camera.snapshotAgeSecs(snapshot, MonotonicTimeSecs(book.clockPortSecs)),
+          forward: yield* Effect.fromResult(Camera.forwardVector(snapshot)),
+          poseSnapshotAgeSecs: Camera.snapshotAgeSecs(snapshot, clockPortNow),
           timeState,
           timeOfDay: Time.timeOfDay(timeState),
           dayLengthSecs: Time.dayLengthSecs(timeState),

@@ -32,6 +32,8 @@ import {
   InventoryServiceLayer,
 } from '../src/application/inventory-service'
 import type { ItemStackFailure } from '../src/domain/inventory'
+import type { PlayerStorageFailure } from '../src/domain/player-storage'
+import type { RecipeFailure } from '../src/domain/recipe'
 import { PlayerService, PlayerServiceLayer, type PlayerServiceInputError } from '../src/application/player-service'
 import { TimeService, TimeServiceLayer } from '../src/application/time-service'
 import {
@@ -58,12 +60,14 @@ import {
   type LandingImpact,
   type MovementIntent,
   type SimPhysicsConfig,
+  type SimPhysicsConfigError,
 } from '../src/stages/registration'
 import * as PublicApi from '../src/index'
 import type {
   LandingImpact as PublicLandingImpact,
   MovementIntent as PublicMovementIntent,
   SimPhysicsConfig as PublicSimPhysicsConfig,
+  SimPhysicsConfigError as PublicSimPhysicsConfigError,
 } from '../src/index'
 import {
   EXPERIENCE_MODULE_STAGE_PREFIXES,
@@ -154,6 +158,26 @@ describe('§2.3-1 zero edges between experience modules', () => {
   )
 })
 
+describe('physics configuration validation', () => {
+  it.effect('returns typed failures for non-finite speeds before building a stage', () =>
+    Effect.gen(function* () {
+      const walkFailure: SimPhysicsConfigError = yield* Effect.flip(
+        makeControllableSimStagesWithPhysics({ ...AirPhysicsConfig, walkSpeed: Number.NaN }),
+      )
+      const jumpFailure: SimPhysicsConfigError = yield* Effect.flip(
+        makeSimStagesWithPhysics({ ...AirPhysicsConfig, jumpSpeed: Number.POSITIVE_INFINITY }),
+      )
+      const resolveFailure: SimPhysicsConfigError = yield* Effect.flip(
+        makeSimStagesWithPhysics({ ...AirPhysicsConfig, resolve: null as never }),
+      )
+
+      expect(walkFailure).toStrictEqual({ _tag: 'SimPhysicsConfigError', field: 'walkSpeed' })
+      expect(jumpFailure).toStrictEqual({ _tag: 'SimPhysicsConfigError', field: 'jumpSpeed' })
+      expect(resolveFailure).toStrictEqual({ _tag: 'SimPhysicsConfigError', field: 'resolve' })
+    }).pipe(Effect.provide(SimulationLayer)),
+  )
+})
+
 describe('§2.3-3 the total order belongs to mc-compose', () => {
   it.effect('registers exactly `sim:physics`, the id four repositories already name', () =>
     Effect.gen(function* () {
@@ -216,7 +240,7 @@ describe('the stage works through the services, and keeps no copy of what they o
       // holding its own accumulator could make `after.ticks` move and this
       // equality would still hold — but only if it wrote the result back, which
       // is the property that matters.
-      expect(after).toStrictEqual(Time.advance(before, DeltaTimeSecs(0.5)))
+      expect(after).toStrictEqual(Result.getOrThrow(Time.advance(before, DeltaTimeSecs(0.5))))
       expect(after.ticks).toBeGreaterThan(before.ticks)
     }).pipe(Effect.provide(SimulationLayer), Effect.provide(FrozenClockLayer)),
   )
@@ -237,7 +261,9 @@ describe('the stage works through the services, and keeps no copy of what they o
       const after = yield* time.snapshot
 
       expect(after).toStrictEqual(
-        Time.advance(Time.advance(before, DeltaTimeSecs(0.25)), DeltaTimeSecs(0.25)),
+        Result.getOrThrow(
+          Time.advance(Result.getOrThrow(Time.advance(before, DeltaTimeSecs(0.25))), DeltaTimeSecs(0.25)),
+        ),
       )
     }).pipe(Effect.provide(SimulationLayer), Effect.provide(FrozenClockLayer)),
   )
@@ -637,7 +663,7 @@ describe('mc-sim is a real GameModule', () => {
       // (mx-gameplay) and the reader (mx-ui) end up with two instances.
       const module: GameModule<
         InventoryService | PlayerService | TimeService | CropService,
-        ItemStackFailure | PlayerServiceInputError,
+        ItemStackFailure | PlayerServiceInputError | RecipeFailure | PlayerStorageFailure,
         never,
         PlayerService | TimeService | CropService
       > = simModule
@@ -670,12 +696,12 @@ describe('mc-sim is a real GameModule', () => {
       > = simModule.frameStages
       const physicsNeedsBoth: Effect.Effect<
         ReadonlyArray<StageRegistration>,
-        never,
+        SimPhysicsConfigError,
         PlayerService | TimeService | CropService
       > = makeSimStagesWithPhysics(AirPhysicsConfig)
       const controllableNeedsBoth: Effect.Effect<
         { readonly state: unknown; readonly stages: ReadonlyArray<StageRegistration> },
-        never,
+        SimPhysicsConfigError,
         PlayerService | TimeService | CropService
       > = makeControllableSimStagesWithPhysics(AirPhysicsConfig)
 
@@ -689,6 +715,7 @@ describe('mc-sim is a real GameModule', () => {
   it('exports physical factories and their config types from the package root', () => {
     const intent: PublicMovementIntent = { forward: 1, strafe: 0 }
     const config: PublicSimPhysicsConfig = AirPhysicsConfig
+    const configError: PublicSimPhysicsConfigError = { _tag: 'SimPhysicsConfigError', field: 'walkSpeed' }
     const registrationIntent: MovementIntent = intent
     const impact: PublicLandingImpact = { fallDistance: 3, impactVelocityY: -4 }
     const registrationImpact: LandingImpact = impact
@@ -699,6 +726,7 @@ describe('mc-sim is a real GameModule', () => {
     )
     expect(PublicApi.resetLandingImpact).toBe(resetLandingImpact)
     expect(config).toBe(AirPhysicsConfig)
+    expect(configError.field).toBe('walkSpeed')
     expect(registrationIntent).toStrictEqual(intent)
     expect(registrationImpact).toStrictEqual(impact)
   })
