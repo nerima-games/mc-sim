@@ -2,6 +2,7 @@ import { Arbitrary, Brand, Duration, Effect, Option, Result, Schedule, Schema, S
 import { SaveDecodeError } from '@nerima-games/mc-save'
 import { expect, it } from 'vitest'
 import * as PublicApi from '../src/index.js'
+import * as Vitals from '../src/domain/vitals.js'
 import { assertResultContract } from './public-property-helpers.js'
 
 const TransferSuccessSchema = Schema.Union([
@@ -32,6 +33,8 @@ const schemaFactoryExports = [
   'replicatedWorldDeltaSchema',
   'saveCoordinatorRequestSaveErrorSchema',
   'simulationSaveV3MigrationErrorSchema',
+  'worldCommitPlanFragmentSchema',
+  'worldCommitPlanSnapshotSchema',
 ] as const
 
 type DecodableSchema = Schema.Codec<unknown, unknown, never, never>
@@ -98,6 +101,10 @@ const opaqueSchemaInputProviders: Readonly<Record<string, () => unknown>> = {
   BrewingRecipeOptionSchema: () => undefined,
   ContainerStoredStackSchema: () => ({ ...sampleItemStack, durability: null }),
   DomainEventBusErrorSchema: () => schemaError,
+  EnchantmentTableApplyStateSchema: () => ({
+    playerStorage: PublicApi.emptyPlayerStorage(),
+    vitals: Vitals.SPAWN_VITALS,
+  }),
   FishingFailureSchema: () => construct(PublicApi.FishingInvalidState, {
     actor: 'entity',
     operation: 'cast',
@@ -117,12 +124,23 @@ const opaqueSchemaInputProviders: Readonly<Record<string, () => unknown>> = {
   LegacyItemStackSchema: () => sampleItemStack,
   LoadSimulationSuccessSchema: () => Option.none(),
   PlayerStorageSnapshotSchema: () => PublicApi.emptyPlayerStorage(),
+  PotionDrinkInventorySnapshotSchema: () => ({
+    world: 'world',
+    expectedRevision: 0,
+    expectedDimensions: [],
+    state: PublicApi.emptyPlayerStorage(),
+  }),
   ProjectileServiceFailureSchema: () => new PublicApi.ProjectileServiceFailure({ reason: 'invalid-launch' }),
   SaveSnapshotConsistencyErrorSchema: () => new PublicApi.SaveSnapshotConsistencyError({ attempts: 1 }),
   SchemaErrorSchema: () => schemaError,
   SimulationSaveErrorSchema: () => new SaveDecodeError({ format: 'sample', version: 3, reason: 'invalid save' }),
   SimPhysicsStagesSchema: () => [{ id: PublicApi.SIM_STAGE_IDS.physics, run: () => Effect.void }],
   TntServiceFailureSchema: () => new PublicApi.TntServiceFailure({ reason: 'invalid-input' }),
+  WorldCommitPlanMergeResultSchema: () => Result.succeed({
+    expectedRevision: 0,
+    expectedDimensions: [],
+    changes: [],
+  }),
   WorldCommitCoordinatorErrorSchema: () => construct(PublicApi.WorldRevisionConflict, {
     expected: 0,
     actual: 1,
@@ -405,6 +423,23 @@ const arbitrarySamples = (schema: DecodableSchema): ReadonlyArray<unknown> => {
   }))
 }
 
+const PUBLIC_SCHEMA_GROUP_SIZE = 8
+const publicSchemaNames = publicSchemas().map(({ name }) => name)
+const publicSchemaGroups: ReadonlyArray<ReadonlyArray<string>> = (() => {
+  const groups: Array<ReadonlyArray<string>> = []
+  for (let index = 0; index < publicSchemaNames.length; index += PUBLIC_SCHEMA_GROUP_SIZE) {
+    groups.push(publicSchemaNames.slice(index, index + PUBLIC_SCHEMA_GROUP_SIZE))
+  }
+  const groupedNames = groups.flat()
+  expect(groupedNames).toHaveLength(publicSchemaNames.length)
+  expect(new Set(groupedNames).size).toBe(publicSchemaNames.length)
+  expect([...groupedNames].sort()).toStrictEqual([...publicSchemaNames].sort())
+  expect(Object.keys(opaqueSchemaInputProviders).sort()).toStrictEqual(
+    publicSchemaNames.filter((name) => opaqueSchemaInputProviders[name] !== undefined).sort(),
+  )
+  return groups
+})()
+
 const rootSamples = (name: string, schema: DecodableSchema): ReadonlyArray<unknown> => {
   const typeAst = SchemaAST.toType(schema.ast)
   if (typeAst._tag === 'Never') {
@@ -656,23 +691,34 @@ const mutateSample = (
   return root
 }
 
-let generatedCasesCache: ReadonlyArray<RequiredFieldCase> | undefined
+let generatedCasesCache: Map<string, ReadonlyArray<RequiredFieldCase>> = new Map()
 
-const generatedCases = (): ReadonlyArray<RequiredFieldCase> => {
-  if (generatedCasesCache !== undefined) return generatedCasesCache
+const generatedCases = (schemaNames: ReadonlyArray<string>): ReadonlyArray<RequiredFieldCase> => {
+  const requestedNames = new Set(schemaNames)
   const allCases: Array<RequiredFieldCase> = []
   const usedProviders = new Set<string>()
   for (const { name, schema } of publicSchemas()) {
-    const samples = rootSamples(name, schema)
+    if (!requestedNames.has(name)) continue
+    requestedNames.delete(name)
     if (opaqueSchemaInputProviders[name] !== undefined) usedProviders.add(name)
-    for (const sample of samples) {
-      expect(decodes(schema, sample), `${name} valid sample`).toBe(true)
-      collectRequiredFields(name, schema, sample, schema.ast, sample, name, [], new Set(), allCases)
+    const cachedCases = generatedCasesCache.get(name)
+    if (cachedCases !== undefined) {
+      allCases.push(...cachedCases)
+      continue
     }
+    const schemaCases: Array<RequiredFieldCase> = []
+    for (const sample of rootSamples(name, schema)) {
+      expect(decodes(schema, sample), `${name} valid sample`).toBe(true)
+      collectRequiredFields(name, schema, sample, schema.ast, sample, name, [], new Set(), schemaCases)
+    }
+    generatedCasesCache.set(name, schemaCases)
+    allCases.push(...schemaCases)
   }
-  expect([...usedProviders].sort()).toStrictEqual(Object.keys(opaqueSchemaInputProviders).sort())
-  generatedCasesCache = allCases
-  return generatedCasesCache
+  expect(requestedNames.size).toBe(0)
+  expect([...usedProviders].sort()).toStrictEqual(
+    schemaNames.filter((name) => opaqueSchemaInputProviders[name] !== undefined).sort(),
+  )
+  return allCases
 }
 
 const valueAtPath = (root: unknown, path: ReadonlyArray<MutationSegment>): unknown => {
@@ -689,8 +735,11 @@ const valueAtPath = (root: unknown, path: ReadonlyArray<MutationSegment>): unkno
   return current
 }
 
-const mutationCandidatesBySchema = (mutation: 'missing' | 'null'): ReadonlyMap<string, RequiredFieldCase> => {
-  const cases = generatedCases()
+const mutationCandidatesBySchema = (
+  mutation: 'missing' | 'null',
+  schemaNames: ReadonlyArray<string>,
+): ReadonlyMap<string, RequiredFieldCase> => {
+  const cases = generatedCases(schemaNames)
   const selected = new Map<string, RequiredFieldCase>()
   const requiredNames = [...new Set(cases.map((field) => field.schemaName))].sort()
   const noNullTargetNames = new Set<string>()
@@ -707,7 +756,6 @@ const mutationCandidatesBySchema = (mutation: 'missing' | 'null'): ReadonlyMap<s
       continue
     }
 
-    // generatedCases validates every root sample before collecting its fields.
     for (const field of eligibleCases) {
       if (!decodes(field.rootSchema, mutateSample(field.sample, field.inputPath, mutation))) {
         selected.set(schemaName, field)
@@ -728,33 +776,34 @@ const mutationCandidatesBySchema = (mutation: 'missing' | 'null'): ReadonlyMap<s
     expect([...selected.keys(), ...noNullTargetNames].sort(), 'null-target and nullable-only classifications cover required Schemas')
       .toStrictEqual(requiredNames)
   }
-  expect(selected.size).toBeGreaterThan(0)
   return selected
 }
 
-it('public barrel Schemas reject an omitted required property from a valid sample', () => {
-  const selected = mutationCandidatesBySchema('missing')
+for (const [index, schemaNames] of publicSchemaGroups.entries()) {
+  it(`public barrel Schemas reject omitted required properties (group ${index + 1})`, () => {
+    const selected = mutationCandidatesBySchema('missing', schemaNames)
 
-  for (const field of selected.values()) {
-    expect(decodes(field.rootSchema, field.sample), `${field.schemaName} original sample`).toBe(true)
-    expect(
-      decodes(field.rootSchema, mutateSample(field.sample, field.inputPath, 'missing')),
-      `${field.path} missing required field`,
-    ).toBe(false)
-  }
-})
+    for (const field of selected.values()) {
+      expect(decodes(field.rootSchema, field.sample), `${field.schemaName} original sample`).toBe(true)
+      expect(
+        decodes(field.rootSchema, mutateSample(field.sample, field.inputPath, 'missing')),
+        `${field.path} missing required field`,
+      ).toBe(false)
+    }
+  })
 
-it('public barrel Schemas reject null for a required non-null field from a valid sample', () => {
-  const selected = mutationCandidatesBySchema('null')
+  it(`public barrel Schemas reject null required properties (group ${index + 1})`, () => {
+    const selected = mutationCandidatesBySchema('null', schemaNames)
 
-  for (const field of selected.values()) {
-    expect(decodes(field.rootSchema, field.sample), `${field.schemaName} original sample`).toBe(true)
-    expect(
-      decodes(field.rootSchema, mutateSample(field.sample, field.inputPath, 'null')),
-      `${field.path} non-null required field`,
-    ).toBe(false)
-  }
-})
+    for (const field of selected.values()) {
+      expect(decodes(field.rootSchema, field.sample), `${field.schemaName} original sample`).toBe(true)
+      expect(
+        decodes(field.rootSchema, mutateSample(field.sample, field.inputPath, 'null')),
+        `${field.path} non-null required field`,
+      ).toBe(false)
+    }
+  })
+}
 
 it('accepts declared successes and failures only when their schemas match', () => {
   expect(() => assertResultContract(

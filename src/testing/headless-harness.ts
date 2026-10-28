@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { Brand, Clock, Context, Duration, Effect, Layer, Random, Ref, Schema, Semaphore } from 'effect'
+import { Brand, Clock, Context, Duration, Effect, Layer, Random, Ref, Result, Schema, Semaphore } from 'effect'
 import type { YieldableError } from 'effect/Cause'
 import { TestClock } from 'effect/testing'
 import { SaveSliceIdSchema, tickDuration } from '@nerima-games/mc-kernel'
@@ -131,11 +131,11 @@ const serializeArray = (
   ancestors: ReadonlySet<object>,
   serialize: JsonSerializer,
 ): JsonSerialization => {
-  try {
-    if (Object.getPrototypeOf(value) !== Array.prototype) return invalidJson(path)
-  } catch {
-    return invalidJson(path)
-  }
+  const prototype = Result.try({
+    try: () => Object.getPrototypeOf(value),
+    catch: () => undefined,
+  })
+  if (Result.isFailure(prototype) || prototype.success !== Array.prototype) return invalidJson(path)
 
   const invalidKey = validateArrayKeys(value, path)
   if (invalidKey !== undefined) return invalidKey
@@ -160,13 +160,12 @@ const serializeObject = (
   ancestors: ReadonlySet<object>,
   serialize: JsonSerializer,
 ): JsonSerialization => {
-  let prototype: object | null
-  try {
-    prototype = Object.getPrototypeOf(value)
-  } catch {
-    return invalidJson(path)
-  }
-  if (prototype !== Object.prototype && prototype !== null) return invalidJson(path)
+  const prototype = Result.try({
+    try: () => Object.getPrototypeOf(value),
+    catch: () => undefined,
+  })
+  if (Result.isFailure(prototype)) return invalidJson(path)
+  if (prototype.success !== Object.prototype && prototype.success !== null) return invalidJson(path)
 
   const ownKeys = Reflect.ownKeys(value)
   if (ownKeys.some((key) => typeof key === 'symbol')) return invalidJson(path)

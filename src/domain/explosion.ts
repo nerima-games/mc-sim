@@ -131,13 +131,15 @@ const keyOf = ({ x, y, z }: ExplosionBlockPosition): string => `${x},${y},${z}`
 const checkedBlockReader = (reader: ExplosionBlockReader) => {
   let failure: ExplosionValidationFailure | undefined
   const read: ExplosionBlockReader = (blockPosition) => {
-    let value: unknown
-    try {
-      value = reader(blockPosition)
-    } catch {
-      failure ??= validationFailure(`blocks[${keyOf(blockPosition)}]`, 'block reader threw')
-      return undefined
-    }
+    const attemptedRead = Result.try({
+      try: (): unknown => reader(blockPosition),
+      catch: () => {
+        failure ??= validationFailure(`blocks[${keyOf(blockPosition)}]`, 'block reader threw')
+        return undefined
+      },
+    })
+    if (Result.isFailure(attemptedRead)) return undefined
+    const value = attemptedRead.success
     if (value === undefined) return undefined
     if (!isRecord(value)) {
       failure ??= validationFailure(`blocks[${keyOf(blockPosition)}]`, 'expected a block snapshot')

@@ -156,6 +156,184 @@ describe('ContainerStorageService', () => {
     ),
   )
 
+  it.effect('plans each stateful operation from supplied snapshots without observing or committing', () =>
+    Effect.flatMap(makeFixture(playerWithStack('stone', 5)), ({ coordinator, service }) =>
+      Effect.gen(function* () {
+        const sourceAddress = addressAt(12)
+        const destinationAddress = addressAt(13)
+        expect(yield* service.createContainerAt(sourceAddress)).toMatchObject({ _tag: 'Created' })
+        expect(yield* service.createContainerAt(destinationAddress)).toMatchObject({ _tag: 'Created' })
+        expect(yield* service.transferContainerItem({
+          playerOwnerId,
+          address: sourceAddress,
+          direction: 'PlayerToContainer',
+          playerSlot: 0,
+          containerSlot: 0,
+          count: 4,
+        })).toMatchObject({ _tag: 'Transferred' })
+
+        const container = yield* coordinator.snapshot(
+          CONTAINER_STORAGE_REPLICATED_OWNER_ID,
+          ContainerStorageSnapshotSchema,
+        )
+        const player = yield* coordinator.snapshot(playerOwnerId, PlayerStorageSnapshotSchema)
+        const expectedDimensions = [{
+          dimension: sourceAddress.dimension,
+          expectedRevision: yield* coordinator.dimensionRevision(sourceAddress.dimension),
+        }]
+        const containerPlanSnapshot = {
+          world: container.world,
+          expectedRevision: container.revision,
+          expectedDimensions,
+          state: container.state,
+        }
+        const playerPlanSnapshot = {
+          world: player.world,
+          expectedRevision: player.revision,
+          expectedDimensions,
+          state: player.state,
+        }
+        let snapshotCalls = 0
+        const countedSnapshot: WorldCommitCoordinatorApi['snapshot'] = (ownerId, schema) =>
+          Effect.map(coordinator.snapshot(ownerId, schema), (value) => {
+            snapshotCalls += 1
+            return value
+          })
+        const countingCoordinator: WorldCommitCoordinatorApi = {
+          ...coordinator,
+          snapshot: countedSnapshot,
+        }
+        const planner = yield* makeContainerStorageService().pipe(
+          Effect.provideService(WorldCommitCoordinator, countingCoordinator),
+        )
+
+        const create = yield* planner.planCreateContainerAt(containerPlanSnapshot, addressAt(14), 'chest')
+        const transfer = yield* planner.planTransferContainerItem(containerPlanSnapshot, playerPlanSnapshot, {
+          playerOwnerId,
+          address: sourceAddress,
+          direction: 'PlayerToContainer',
+          playerSlot: 0,
+          containerSlot: 1,
+          count: 1,
+        })
+        const extract = yield* planner.planExtractContainerItem(containerPlanSnapshot, {
+          address: sourceAddress,
+          containerSlot: 0,
+          count: 1,
+        })
+        const move = yield* planner.planMoveContainerItem(containerPlanSnapshot, {
+          sourceAddress,
+          sourceSlot: 0,
+          destinationAddress,
+          destinationSlot: 0,
+          count: 2,
+        })
+
+        expect(create.result._tag).toBe('Created')
+        expect(create.changes.map(({ ownerId }) => ownerId)).toEqual([CONTAINER_STORAGE_REPLICATED_OWNER_ID])
+        expect(transfer.result._tag).toBe('Transferred')
+        expect(transfer.changes.map(({ ownerId }) => ownerId)).toEqual([
+          CONTAINER_STORAGE_REPLICATED_OWNER_ID,
+          playerOwnerId,
+        ])
+        expect(extract.result._tag).toBe('Extracted')
+        expect(extract.changes.map(({ ownerId }) => ownerId)).toEqual([CONTAINER_STORAGE_REPLICATED_OWNER_ID])
+        expect(move.result._tag).toBe('Moved')
+        expect(move.changes.map(({ ownerId }) => ownerId)).toEqual([CONTAINER_STORAGE_REPLICATED_OWNER_ID])
+        expect(snapshotCalls).toBe(0)
+        expect(yield* coordinator.revision).toBe(container.revision)
+      }),
+    ),
+  )
+
+  it.effect('reports missing dimension revisions and mismatched plan worlds', () =>
+    Effect.flatMap(makeFixture(playerWithStack('stone', 1)), ({ coordinator, service }) =>
+      Effect.gen(function* () {
+        const address = addressAt(14)
+        const container = yield* coordinator.snapshot(
+          CONTAINER_STORAGE_REPLICATED_OWNER_ID,
+          ContainerStorageSnapshotSchema,
+        )
+        const player = yield* coordinator.snapshot(playerOwnerId, PlayerStorageSnapshotSchema)
+        const expectedDimensions = [{
+          dimension: address.dimension,
+          expectedRevision: yield* coordinator.dimensionRevision(address.dimension),
+        }]
+        const containerPlanSnapshot = {
+          world: container.world,
+          expectedRevision: container.revision,
+          expectedDimensions,
+          state: container.state,
+        }
+        const playerPlanSnapshot = {
+          world: Schema.decodeUnknownSync(WorldIdSchema)('other-container-plan-world'),
+          expectedRevision: player.revision,
+          expectedDimensions,
+          state: player.state,
+        }
+        const missingDimension = yield* Effect.result(service.planCreateContainerAt({
+          ...containerPlanSnapshot,
+          expectedDimensions: [],
+        }, address, 'chest'))
+        const mismatchedWorld = yield* Effect.result(service.planTransferContainerItem(
+          containerPlanSnapshot,
+          playerPlanSnapshot,
+          {
+            playerOwnerId,
+            address,
+            direction: 'PlayerToContainer',
+            playerSlot: 0,
+            containerSlot: 0,
+            count: 1,
+          },
+        ))
+
+        expect(Result.isFailure(missingDimension)).toBe(true)
+        if (Result.isFailure(missingDimension)) {
+          expect(missingDimension.failure._tag).toBe('WorldCommitPlanDimensionRevisionMissing')
+        }
+        expect(Result.isFailure(mismatchedWorld)).toBe(true)
+        if (Result.isFailure(mismatchedWorld)) expect(mismatchedWorld.failure._tag).toBe('WorldCommitPlanWorldConflict')
+        expect(yield* coordinator.revision).toBe(container.revision)
+      }),
+    ),
+  )
+
+  it.effect('rejects overlapping owner candidates and block edits instead of overwriting them', () =>
+    Effect.flatMap(makeFixture(), ({ coordinator, service }) =>
+      Effect.gen(function* () {
+        const revision = yield* coordinator.revision
+        const expectedDimensionRevision = yield* coordinator.dimensionRevision('overworld')
+        const position = addressAt(15).position
+        const duplicateBlockWrite = Schema.decodeUnknownSync(WorldWriteBatchSchema)({
+          world,
+          expectedWorldRevision: revision,
+          dimension: 'overworld',
+          expectedDimensionRevision,
+          edits: [
+            { position, block: Schema.decodeUnknownSync(BlockIdSchema)(1) },
+            { position, block: Schema.decodeUnknownSync(BlockIdSchema)(2) },
+          ],
+        })
+        const duplicateOwner = yield* Effect.result(service.createContainerAt(addressAt(16), 'chest', {
+          additionalChanges: [{
+            ownerId: CONTAINER_STORAGE_REPLICATED_OWNER_ID,
+            state: containerStorageOwnerRegistration().initialState,
+          }],
+        }))
+        const duplicateBlock = yield* Effect.result(service.createContainerAt(addressAt(17), 'chest', {
+          blockWrite: duplicateBlockWrite,
+        }))
+
+        expect(Result.isFailure(duplicateOwner)).toBe(true)
+        if (Result.isFailure(duplicateOwner)) expect(duplicateOwner.failure._tag).toBe('WorldCommitPlanOwnerConflict')
+        expect(Result.isFailure(duplicateBlock)).toBe(true)
+        if (Result.isFailure(duplicateBlock)) expect(duplicateBlock.failure._tag).toBe('WorldCommitPlanBlockConflict')
+        expect(yield* coordinator.revision).toBe(revision)
+      }),
+    ),
+  )
+
   it.effect('leaves every owner unchanged and publishes no event after a rejected multi-owner commit', () =>
     Effect.flatMap(makeFixture(playerWithStack('stone', 3)), ({ coordinator, published, service }) =>
       Effect.gen(function* () {

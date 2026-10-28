@@ -1,4 +1,5 @@
 import { describe, expect, it } from '@effect/vitest'
+import * as fc from 'fast-check'
 import {
   EntityIdSchema,
   ProjectileIdSchema,
@@ -23,9 +24,32 @@ import { ReplicatedOwnerIdSchema } from '../src/application/replicated-state.js'
 import {
   FishingService,
   FishingServiceLayer,
+  FishingAdvanceIntentSchema,
+  FishingAdvancePlanSchema,
+  FishingBiteIntentSchema,
+  FishingCancelIntentSchema,
+  FishingCancelPlanSchema,
+  FishingCastIntentSchema,
+  FishingLootSampleSchema,
+  FishingReelIntentSchema,
+  FishingServicePlanSnapshotSchema,
   fishingOwnerRegistration,
 } from '../src/application/fishing-service.js'
 import {
+  FISHING_APPROACH_MAX_TICKS,
+  FISHING_APPROACH_MIN_TICKS,
+  FISHING_BITE_WINDOW_MAX_TICKS,
+  FISHING_BITE_WINDOW_MIN_TICKS,
+  FISHING_WAIT_MAX_TICKS,
+  FISHING_WAIT_MIN_TICKS,
+  FishingApproachTicksSchema,
+  FishingBiteWindowTicksSchema,
+  FishingElapsedTicksSchema,
+  FishingProgressOutcomeSchema,
+  FishingCancelOutcomeSchema,
+  FishingWaitTicksSchema,
+  advanceFishingRod,
+  cancelFishingRod,
   castFishingRod,
   emptyFishingState,
   fishingLootForSample,
@@ -48,6 +72,20 @@ const tick = Schema.decodeUnknownSync(SimulationTickSchema)(7)
 const must = <A, E>(result: Result.Result<A, E>): A => {
   if (Result.isFailure(result)) throw result.failure
   return result.success
+}
+
+const expectRequiredFields = (
+  decode: (input: unknown) => unknown,
+  example: Readonly<Record<string, unknown>>,
+  fields: ReadonlyArray<string>,
+) => {
+  expect(() => decode(example)).not.toThrow()
+  for (const field of fields) {
+    const missing = { ...example }
+    delete missing[field]
+    expect(() => decode(missing), `missing ${field}`).toThrow()
+    expect(() => decode({ ...example, [field]: null }), `null ${field}`).toThrow()
+  }
 }
 
 const eventRecorder = (published: DomainEvent[]) =>
@@ -180,10 +218,52 @@ describe('FishingService', () => {
     if (Result.isFailure(result)) expect(result.failure._tag).toBe('FishingInvalidLootRoll')
   });
 
-  it('returns typed invalid-state outcomes for illegal domain transitions', () => {
-    const noRod = reelFishingRod(emptyFishingState(), actor)
+  it('covers fishing rod cancellation and timed progression outcomes', () => {
+    const initial = emptyFishingState()
+    const noRod = reelFishingRod(initial, actor)
     expect(Result.isFailure(noRod)).toBe(true)
     if (Result.isFailure(noRod)) expect(noRod.failure._tag).toBe('FishingInvalidState')
+    const noCancel = cancelFishingRod(initial, actor)
+    expect(Result.isFailure(noCancel)).toBe(true)
+    if (Result.isFailure(noCancel)) expect(noCancel.failure.reason).toBe('rod-not-active')
+
+    const waitTicks = Schema.decodeUnknownSync(FishingWaitTicksSchema)(100)
+    const approachTicks = Schema.decodeUnknownSync(FishingApproachTicksSchema)(20)
+    const biteWindowTicks = Schema.decodeUnknownSync(FishingBiteWindowTicksSchema)(20)
+    const elapsed = (ticks: number) => Schema.decodeUnknownSync(FishingElapsedTicksSchema)(ticks)
+    const cast = must(castFishingRod(initial, actor, bobber))
+    expect(cancelFishingRod(cast, actor)).toEqual(Result.succeed({
+      state: initial,
+      outcome: { _tag: 'Cancelled', actor, bobber },
+    }))
+    expect(Result.isFailure(advanceFishingRod(
+      initial, actor, elapsed(0), waitTicks, approachTicks, biteWindowTicks, true,
+    ))).toBe(true)
+
+    expect(must(advanceFishingRod(
+      cast, actor, elapsed(0), waitTicks, approachTicks, biteWindowTicks, false,
+    )).outcome).toEqual({ _tag: 'Cancelled', reason: 'LostWater', bobber })
+    expect(must(advanceFishingRod(
+      cast, actor, elapsed(2), waitTicks, approachTicks, biteWindowTicks, true,
+    )).outcome).toEqual({ _tag: 'Waiting', remainingTicks: 98 })
+    expect(must(advanceFishingRod(
+      cast, actor, elapsed(115), waitTicks, approachTicks, biteWindowTicks, true,
+    )).outcome).toEqual({ _tag: 'Approaching', remainingTicks: 5 })
+    expect(must(advanceFishingRod(
+      cast, actor, elapsed(120), waitTicks, approachTicks, biteWindowTicks, true,
+    )).outcome).toEqual({ _tag: 'Bite', bobber })
+    expect(must(advanceFishingRod(
+      cast, actor, elapsed(140), waitTicks, approachTicks, biteWindowTicks, true,
+    )).outcome).toEqual({ _tag: 'Escaped', bobber })
+
+    const bitten = must(registerFishingBite(cast, actor))
+    for (const ticks of [elapsed(1), elapsed(101)]) {
+      const regressed = advanceFishingRod(
+        bitten, actor, ticks, waitTicks, approachTicks, biteWindowTicks, true,
+      )
+      expect(Result.isFailure(regressed)).toBe(true)
+      if (Result.isFailure(regressed)) expect(regressed.failure.reason).toBe('time-regressed')
+    }
 
     const sample = fishingLootForSample(0.1633802591287037)
     expect(sample).toEqual(Result.succeed('cod'))
@@ -259,5 +339,143 @@ describe('FishingService', () => {
     for (const { sample, item } of cases) {
       expect(fishingLootForSample(sample)).toEqual(Result.succeed(item))
     }
+  });
+
+  it.effect('builds fishing plans from supplied snapshots without reading or committing state', () => {
+    const published: DomainEvent[] = []
+    const cast = must(castFishingRod(emptyFishingState(), actor, bobber))
+    return Effect.gen(function* () {
+      const fishing = yield* FishingService
+      const snapshot = {
+        world,
+        expectedRevision: Schema.decodeUnknownSync(WorldRevisionSchema)(0),
+        expectedDimensions: [],
+        state: cast,
+      }
+      const cancelled = yield* fishing.planCancel(snapshot, { actor })
+      expect(cancelled.result).toEqual({ _tag: 'Cancelled', actor, bobber })
+      expect(cancelled.changes).toEqual([{ ownerId, state: emptyFishingState() }])
+      expect(cancelled.expectedRevision).toBe(snapshot.expectedRevision)
+
+      const advance = (elapsedTicks: number) => Schema.decodeUnknownSync(FishingAdvanceIntentSchema)({
+        actor,
+        elapsedTicks,
+        waitTicks: 100,
+        approachTicks: 20,
+        biteWindowTicks: 20,
+        hasWater: true,
+      })
+      const waiting = yield* fishing.planAdvance(snapshot, advance(0))
+      const approaching = yield* fishing.planAdvance(snapshot, advance(100))
+      const bite = yield* fishing.planAdvance(snapshot, advance(120))
+      const escaped = yield* fishing.planAdvance(snapshot, advance(140))
+
+      expect(waiting.result).toEqual({ _tag: 'Waiting', remainingTicks: 100 })
+      expect(approaching.result).toEqual({ _tag: 'Approaching', remainingTicks: 20 })
+      expect(bite.result).toEqual({ _tag: 'Bite', bobber })
+      expect(bite.changes[0]?.state).toEqual({ rods: [{ actor, bobber, phase: 'bite' }] })
+      expect(escaped.result).toEqual({ _tag: 'Escaped', bobber })
+      expect(escaped.changes[0]?.state).toEqual(cast)
+      expect(yield* fishing.snapshot).toEqual(cast)
+      expect(published).toEqual([])
+    }).pipe(Effect.provide(fishingLayer(published, cast)))
+  });
+
+  it.effect('commits cancellation and elapsed-time progression through the coordinator', () => {
+    const published: DomainEvent[] = []
+    return Effect.gen(function* () {
+      const fishing = yield* FishingService
+      yield* fishing.cast(actor, bobber)
+      const cancelled = yield* fishing.cancel(actor)
+      expect(cancelled).toEqual({ _tag: 'Cancelled', actor, bobber })
+      expect(yield* fishing.snapshot).toEqual(emptyFishingState())
+
+      yield* fishing.cast(actor, bobber)
+      const progress = yield* fishing.advance(Schema.decodeUnknownSync(FishingAdvanceIntentSchema)({
+        actor,
+        elapsedTicks: 120,
+        waitTicks: 100,
+        approachTicks: 20,
+        biteWindowTicks: 20,
+        hasWater: true,
+      }))
+      expect(progress).toEqual({ _tag: 'Bite', bobber })
+      expect((yield* fishing.snapshot).rods).toEqual([{ actor, bobber, phase: 'bite' }])
+      expect(published).toEqual([])
+    }).pipe(Effect.provide(fishingLayer(published)))
+  });
+
+  it('decodes all new fishing schemas and rejects missing or null required fields', () => {
+    const revision = Schema.decodeUnknownSync(WorldRevisionSchema)(0)
+    const fishingSnapshot = { world, expectedRevision: revision, expectedDimensions: [], state: emptyFishingState() }
+    const cancel = { _tag: 'Cancelled', actor, bobber }
+    const waiting = { _tag: 'Waiting', remainingTicks: 1 }
+    const fragment = {
+      world,
+      expectedRevision: revision,
+      expectedDimensions: [],
+      changes: [{ ownerId, state: emptyFishingState() }],
+      result: cancel,
+      postCommitEvents: [],
+    }
+    const advanceFragment = { ...fragment, result: waiting }
+    const decode = <A>(schema: Schema.Codec<A, unknown>) => (value: unknown) =>
+      Schema.decodeUnknownSync(schema)(value)
+
+    expectRequiredFields(decode(FishingCastIntentSchema), { actor, bobber }, ['actor', 'bobber'])
+    expectRequiredFields(decode(FishingBiteIntentSchema), { actor }, ['actor'])
+    expectRequiredFields(decode(FishingReelIntentSchema), { actor, tick, sample: 0.5 }, ['actor', 'tick', 'sample'])
+    expectRequiredFields(decode(FishingCancelIntentSchema), { actor }, ['actor'])
+    expectRequiredFields(decode(FishingAdvanceIntentSchema), {
+      actor, elapsedTicks: 100, waitTicks: 100, approachTicks: 20, biteWindowTicks: 20, hasWater: true,
+    }, ['actor', 'elapsedTicks', 'waitTicks', 'approachTicks', 'biteWindowTicks', 'hasWater'])
+    expectRequiredFields(decode(FishingCancelOutcomeSchema), cancel, ['_tag', 'actor', 'bobber'])
+    expectRequiredFields(decode(FishingProgressOutcomeSchema), waiting, ['_tag', 'remainingTicks'])
+    expectRequiredFields(decode(FishingProgressOutcomeSchema), { _tag: 'Approaching', remainingTicks: 1 }, ['_tag', 'remainingTicks'])
+    expectRequiredFields(decode(FishingProgressOutcomeSchema), { _tag: 'Bite', bobber }, ['_tag', 'bobber'])
+    expectRequiredFields(decode(FishingProgressOutcomeSchema), { _tag: 'Escaped', bobber }, ['_tag', 'bobber'])
+    expectRequiredFields(decode(FishingProgressOutcomeSchema), {
+      _tag: 'Cancelled', reason: 'LostWater', bobber,
+    }, ['_tag', 'reason', 'bobber'])
+    expectRequiredFields(decode(FishingServicePlanSnapshotSchema), fishingSnapshot, [
+      'world', 'expectedRevision', 'expectedDimensions', 'state',
+    ])
+    expectRequiredFields(decode(FishingCancelPlanSchema), fragment, [
+      'world', 'expectedRevision', 'expectedDimensions', 'changes', 'result', 'postCommitEvents',
+    ])
+    expectRequiredFields(decode(FishingAdvancePlanSchema), advanceFragment, [
+      'world', 'expectedRevision', 'expectedDimensions', 'changes', 'result', 'postCommitEvents',
+    ])
+  });
+
+  it('checks fishing tick and loot-sample schema boundaries with fast-check', () => {
+    // Minecraft Java Edition 1.21.4: wait is 5–30 seconds, approach is 1–4 seconds,
+    // and the reel window is 1–2 seconds. Source: https://minecraft.wiki/w/Fishing
+    fc.assert(fc.property(fc.integer({ min: 0, max: Number.MAX_SAFE_INTEGER }), (value) =>
+      Result.isSuccess(Schema.decodeUnknownResult(FishingElapsedTicksSchema)(value)),
+    ))
+    fc.assert(fc.property(fc.integer({ min: 0, max: FISHING_WAIT_MAX_TICKS }), (value) =>
+      Result.isSuccess(Schema.decodeUnknownResult(FishingWaitTicksSchema)(value)),
+    ))
+    fc.assert(fc.property(fc.integer({ min: FISHING_APPROACH_MIN_TICKS, max: FISHING_APPROACH_MAX_TICKS }), (value) =>
+      Result.isSuccess(Schema.decodeUnknownResult(FishingApproachTicksSchema)(value)),
+    ))
+    fc.assert(fc.property(fc.integer({ min: FISHING_BITE_WINDOW_MIN_TICKS, max: FISHING_BITE_WINDOW_MAX_TICKS }), (value) =>
+      Result.isSuccess(Schema.decodeUnknownResult(FishingBiteWindowTicksSchema)(value)),
+    ))
+    fc.assert(fc.property(fc.double({ min: 0, max: 1, noNaN: true, noDefaultInfinity: true }), (sample) => {
+      const decoded = Schema.decodeUnknownResult(FishingLootSampleSchema)(sample)
+      return sample < 1 ? Result.isSuccess(decoded) : Result.isFailure(decoded)
+    }))
+
+    expect(FISHING_WAIT_MIN_TICKS).toBe(100)
+    expect(FISHING_WAIT_MAX_TICKS).toBe(600)
+    expect(FISHING_APPROACH_MIN_TICKS).toBe(20)
+    expect(FISHING_APPROACH_MAX_TICKS).toBe(80)
+    expect(FISHING_BITE_WINDOW_MIN_TICKS).toBe(20)
+    expect(FISHING_BITE_WINDOW_MAX_TICKS).toBe(40)
+    expect(Result.isFailure(Schema.decodeUnknownResult(FishingWaitTicksSchema)(FISHING_WAIT_MAX_TICKS + 1))).toBe(true)
+    expect(Result.isFailure(Schema.decodeUnknownResult(FishingApproachTicksSchema)(FISHING_APPROACH_MIN_TICKS - 1))).toBe(true)
+    expect(Result.isFailure(Schema.decodeUnknownResult(FishingBiteWindowTicksSchema)(FISHING_BITE_WINDOW_MAX_TICKS + 1))).toBe(true)
   });
 })

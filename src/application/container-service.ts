@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Schema } from 'effect'
+import { Context, Effect, Layer, Result, Schema } from 'effect'
 import {
   ITEM_TYPES,
   type BlockAddress,
@@ -13,10 +13,17 @@ import * as Eq from '../domain/equipment.js'
 import { SchemaErrorSchema } from '../schema-errors.js'
 import { ContainerStoredStackSchema } from './inventory-service.js'
 import {
+  WorldCommitPlanConflictSchema,
+  mergeWorldCommitPlans,
+  type WorldCommitPlanConflict,
+} from './world-commit-plan.js'
+import {
   makeReplicatedOwnerId,
   type ReplicatedOwnerId,
 } from './replicated-state.js'
+import type { WorldCommitPlanFragment, WorldCommitPlanSnapshot } from './world-commit-plan.js'
 import {
+  type DimensionRevisionExpectation,
   WorldCommitCoordinator,
   WorldRevisionConflict,
   WorldCommitCoordinatorErrorSchema,
@@ -156,6 +163,7 @@ export const ContainerMoveResultSchema: Schema.Codec<Container.ContainerMoveResu
 
 export const ContainerStorageServiceErrorSchema: Schema.Codec<ContainerStorageServiceFailure, unknown> = Schema.Union([
   SchemaErrorSchema,
+  WorldCommitPlanConflictSchema,
   WorldCommitCoordinatorErrorSchema,
 ])
 
@@ -182,7 +190,10 @@ export const playerStorageOwnerRegistration = (
   initialState,
 })
 
-export type ContainerStorageServiceFailure = Schema.SchemaError | WorldCommitCoordinatorError
+export type ContainerStorageServiceFailure = Schema.SchemaError | WorldCommitPlanConflict | WorldCommitCoordinatorError
+
+export type ContainerStoragePlanSnapshot = WorldCommitPlanSnapshot<Container.ContainerStorageSnapshot>
+export type PlayerStoragePlanSnapshot = WorldCommitPlanSnapshot<PlayerStorage.PlayerStorage>
 
 export type ContainerStorageCommitOptions = Readonly<{
   expectedRevision?: WorldRevision
@@ -221,6 +232,24 @@ export type ContainerStorageServiceApi = Readonly<{
   containerSnapshotAt: (
     address: BlockAddress,
   ) => Effect.Effect<Container.Container | null, ContainerStorageServiceFailure>
+  planCreateContainerAt: (
+    snapshot: ContainerStoragePlanSnapshot,
+    address: BlockAddress,
+    kind?: Container.ContainerKind,
+  ) => Effect.Effect<WorldCommitPlanFragment<Container.CreateContainerResult>, ContainerStorageServiceFailure>
+  planTransferContainerItem: (
+    snapshot: ContainerStoragePlanSnapshot,
+    playerSnapshot: PlayerStoragePlanSnapshot,
+    request: ContainerStorageTransferRequest,
+  ) => Effect.Effect<WorldCommitPlanFragment<Container.ContainerTransferResult>, ContainerStorageServiceFailure>
+  planExtractContainerItem: (
+    snapshot: ContainerStoragePlanSnapshot,
+    request: ContainerStorageExtractRequest,
+  ) => Effect.Effect<WorldCommitPlanFragment<Container.ContainerExtractResult>, ContainerStorageServiceFailure>
+  planMoveContainerItem: (
+    snapshot: ContainerStoragePlanSnapshot,
+    request: ContainerStorageMoveRequest,
+  ) => Effect.Effect<WorldCommitPlanFragment<Container.ContainerMoveResult>, ContainerStorageServiceFailure>
   createContainerAt: (
     address: BlockAddress,
     kind?: Container.ContainerKind,
@@ -257,6 +286,17 @@ const storageOf = (
 const dimensionsOf = (addresses: ReadonlyArray<BlockAddress>): ReadonlyArray<Dimension> =>
   [...new Set(addresses.map((address) => address.dimension))]
 
+const expectedDimensionsFor = (
+  dimensions: ReadonlyArray<Dimension>,
+  expectedDimensions: ReadonlyArray<DimensionRevisionExpectation>,
+): Effect.Effect<ReadonlyArray<DimensionRevisionExpectation>, WorldCommitPlanConflict> =>
+  Effect.forEach(dimensions, (dimension) => {
+    const expectation = expectedDimensions.find((candidate) => candidate.dimension === dimension)
+    return expectation === undefined
+      ? Effect.fail({ _tag: 'WorldCommitPlanDimensionRevisionMissing', dimension } as const)
+      : Effect.succeed(expectation)
+  })
+
 export const makeContainerStorageService = (): Effect.Effect<
   ContainerStorageServiceApi,
   never,
@@ -268,43 +308,229 @@ export const makeContainerStorageService = (): Effect.Effect<
     const currentSnapshot = () =>
       coordinator.snapshot(CONTAINER_STORAGE_REPLICATED_OWNER_ID, ContainerStorageSnapshotSchema)
 
-    const commitStorage = (
-      currentRevision: WorldRevision,
-      state: Container.ContainerStorageSnapshot,
+    const readExpectedDimensions = (
       addresses: ReadonlyArray<BlockAddress>,
-      options: ContainerStorageCommitOptions,
-      additionalChanges: ReadonlyArray<ReplicatedOwnerCandidate> = [],
-    ): Effect.Effect<void, ContainerStorageServiceFailure> =>
-      Effect.gen(function* () {
-        const blockWriteDimension = options.blockWrite?.dimension
-        const commitDimensions = [...dimensionsOf(addresses)]
-        if (blockWriteDimension !== undefined && !commitDimensions.includes(blockWriteDimension)) {
-          commitDimensions.push(blockWriteDimension)
+      blockWrite: WorldWriteBatch | undefined,
+    ): Effect.Effect<ReadonlyArray<DimensionRevisionExpectation>> => {
+      const dimensions = [...dimensionsOf(addresses)]
+      if (blockWrite !== undefined && !dimensions.includes(blockWrite.dimension)) dimensions.push(blockWrite.dimension)
+      return Effect.forEach(dimensions, (dimension) => {
+        if (blockWrite?.dimension === dimension) {
+          return Effect.succeed({ dimension, expectedRevision: blockWrite.expectedDimensionRevision })
         }
-        const expectedDimensions = yield* Effect.forEach(
-          commitDimensions,
-          (dimension) => {
-            if (dimension === blockWriteDimension && options.blockWrite !== undefined) {
-              return Effect.succeed({ dimension, expectedRevision: options.blockWrite.expectedDimensionRevision })
-            }
-            return Effect.map(coordinator.dimensionRevision(dimension), (expectedRevision) => ({
-              dimension,
-              expectedRevision,
-            }))
-          },
-        )
-        const changes: [ReplicatedOwnerCandidate, ...ReadonlyArray<ReplicatedOwnerCandidate>] = [
-          { ownerId: CONTAINER_STORAGE_REPLICATED_OWNER_ID, state },
-          ...(options.additionalChanges ?? []),
-          ...additionalChanges,
-        ]
-        yield* coordinator.commit({
-          expectedRevision: options.expectedRevision ?? options.blockWrite?.expectedWorldRevision ?? currentRevision,
-          expectedDimensions,
-          changes,
-          ...(options.blockWrite === undefined ? {} : { blockWrite: options.blockWrite }),
-        })
+        return Effect.map(coordinator.dimensionRevision(dimension), (expectedRevision) => ({ dimension, expectedRevision }))
       })
+    }
+
+    const planSnapshot = (
+      snapshot: Readonly<{ world: ContainerStoragePlanSnapshot['world']; revision: WorldRevision; state: Container.ContainerStorageSnapshot }>,
+      addresses: ReadonlyArray<BlockAddress>,
+      blockWrite: WorldWriteBatch | undefined,
+    ): Effect.Effect<ContainerStoragePlanSnapshot> =>
+      Effect.map(readExpectedDimensions(addresses, blockWrite), (expectedDimensions) => ({
+        world: snapshot.world,
+        expectedRevision: snapshot.revision,
+        expectedDimensions,
+        state: snapshot.state,
+      }))
+
+    const planPlayerSnapshot = (
+      snapshot: Readonly<{ world: PlayerStoragePlanSnapshot['world']; revision: WorldRevision; state: PlayerStorage.PlayerStorage }>,
+      expectedDimensions: ReadonlyArray<DimensionRevisionExpectation>,
+    ): PlayerStoragePlanSnapshot => ({
+      world: snapshot.world,
+      expectedRevision: snapshot.revision,
+      expectedDimensions,
+      state: snapshot.state,
+    })
+
+    const planCreateContainerAt: ContainerStorageServiceApi['planCreateContainerAt'] = (snapshot, address, kind) =>
+      Effect.flatMap(decodeContainerKind(kind), (validKind) =>
+        Effect.gen(function* () {
+          const outcome = Container.createContainer(
+            storageOf(snapshot.state),
+            Container.worldContainerIdAt(address),
+            validKind,
+          )
+          if (outcome.result._tag !== 'Created') {
+            return {
+              world: snapshot.world,
+              expectedRevision: snapshot.expectedRevision,
+              expectedDimensions: [],
+              changes: [],
+              result: outcome.result,
+              postCommitEvents: [],
+            } satisfies WorldCommitPlanFragment<Container.CreateContainerResult>
+          }
+          const expectedDimensions = yield* expectedDimensionsFor([address.dimension], snapshot.expectedDimensions)
+          return {
+            world: snapshot.world,
+            expectedRevision: snapshot.expectedRevision,
+            expectedDimensions,
+            changes: [{
+              ownerId: CONTAINER_STORAGE_REPLICATED_OWNER_ID,
+              state: Container.snapshotContainerStorage(outcome.storage),
+            }],
+            result: outcome.result,
+            postCommitEvents: [],
+          } satisfies WorldCommitPlanFragment<Container.CreateContainerResult>
+        }),
+      )
+
+    const planTransferContainerItem: ContainerStorageServiceApi['planTransferContainerItem'] = (
+      snapshot,
+      playerSnapshot,
+      request,
+    ) => Effect.gen(function* () {
+      if (snapshot.world !== playerSnapshot.world) {
+        return yield* Effect.fail({
+          _tag: 'WorldCommitPlanWorldConflict',
+          expected: snapshot.world,
+          actual: playerSnapshot.world,
+        } as const)
+      }
+      if (snapshot.expectedRevision !== playerSnapshot.expectedRevision) {
+        return yield* Effect.fail(new WorldRevisionConflict({
+          expected: snapshot.expectedRevision,
+          actual: playerSnapshot.expectedRevision,
+        }))
+      }
+      const outcome = Container.transferContainerItem(
+        playerSnapshot.state,
+        storageOf(snapshot.state),
+        {
+          direction: request.direction,
+          containerId: Container.worldContainerIdAt(request.address),
+          playerSlot: request.playerSlot,
+          containerSlot: request.containerSlot,
+          count: request.count,
+        },
+      )
+      if (outcome.result._tag !== 'Transferred') {
+        return {
+          world: snapshot.world,
+          expectedRevision: snapshot.expectedRevision,
+          expectedDimensions: [],
+          changes: [],
+          result: outcome.result,
+          postCommitEvents: [],
+        } satisfies WorldCommitPlanFragment<Container.ContainerTransferResult>
+      }
+      const expectedDimensions = yield* expectedDimensionsFor([request.address.dimension], snapshot.expectedDimensions)
+      return {
+        world: snapshot.world,
+        expectedRevision: snapshot.expectedRevision,
+        expectedDimensions,
+        changes: [
+          {
+            ownerId: CONTAINER_STORAGE_REPLICATED_OWNER_ID,
+            state: Container.snapshotContainerStorage(outcome.containerStorage),
+          },
+          { ownerId: request.playerOwnerId, state: outcome.playerStorage },
+        ],
+        result: outcome.result,
+        postCommitEvents: [],
+      } satisfies WorldCommitPlanFragment<Container.ContainerTransferResult>
+    })
+
+    const planExtractContainerItem: ContainerStorageServiceApi['planExtractContainerItem'] = (snapshot, request) =>
+      Effect.gen(function* () {
+        const outcome = Container.extractContainerItem(storageOf(snapshot.state), {
+          containerId: Container.worldContainerIdAt(request.address),
+          containerSlot: request.containerSlot,
+          count: request.count,
+        })
+        if (outcome.result._tag !== 'Extracted') {
+          return {
+            world: snapshot.world,
+            expectedRevision: snapshot.expectedRevision,
+            expectedDimensions: [],
+            changes: [],
+            result: outcome.result,
+            postCommitEvents: [],
+          } satisfies WorldCommitPlanFragment<Container.ContainerExtractResult>
+        }
+        const expectedDimensions = yield* expectedDimensionsFor([request.address.dimension], snapshot.expectedDimensions)
+        return {
+          world: snapshot.world,
+          expectedRevision: snapshot.expectedRevision,
+          expectedDimensions,
+          changes: [{
+            ownerId: CONTAINER_STORAGE_REPLICATED_OWNER_ID,
+            state: Container.snapshotContainerStorage(outcome.storage),
+          }],
+          result: outcome.result,
+          postCommitEvents: [],
+        } satisfies WorldCommitPlanFragment<Container.ContainerExtractResult>
+      })
+
+    const planMoveContainerItem: ContainerStorageServiceApi['planMoveContainerItem'] = (snapshot, request) =>
+      Effect.gen(function* () {
+        const outcome = Container.moveContainerItem(storageOf(snapshot.state), {
+          sourceContainerId: Container.worldContainerIdAt(request.sourceAddress),
+          sourceSlot: request.sourceSlot,
+          destinationContainerId: Container.worldContainerIdAt(request.destinationAddress),
+          destinationSlot: request.destinationSlot,
+          count: request.count,
+        })
+        if (outcome.result._tag !== 'Moved') {
+          return {
+            world: snapshot.world,
+            expectedRevision: snapshot.expectedRevision,
+            expectedDimensions: [],
+            changes: [],
+            result: outcome.result,
+            postCommitEvents: [],
+          } satisfies WorldCommitPlanFragment<Container.ContainerMoveResult>
+        }
+        const expectedDimensions = yield* expectedDimensionsFor(
+          dimensionsOf([request.sourceAddress, request.destinationAddress]),
+          snapshot.expectedDimensions,
+        )
+        return {
+          world: snapshot.world,
+          expectedRevision: snapshot.expectedRevision,
+          expectedDimensions,
+          changes: [{
+            ownerId: CONTAINER_STORAGE_REPLICATED_OWNER_ID,
+            state: Container.snapshotContainerStorage(outcome.storage),
+          }],
+          result: outcome.result,
+          postCommitEvents: [],
+        } satisfies WorldCommitPlanFragment<Container.ContainerMoveResult>
+      })
+
+    const commitFragment = <Result>(
+      fragment: WorldCommitPlanFragment<Result>,
+      options: ContainerStorageCommitOptions,
+      expectedRevision: WorldRevision,
+      blockWriteExpectedRevision: boolean,
+      expectedDimensions: ReadonlyArray<DimensionRevisionExpectation>,
+    ): Effect.Effect<void, ContainerStorageServiceFailure> => {
+      if (fragment.changes.length === 0) return Effect.void
+      const merged = mergeWorldCommitPlans([fragment, {
+        world: fragment.world,
+        expectedRevision: fragment.expectedRevision,
+        expectedDimensions,
+        changes: options.additionalChanges ?? [],
+        ...(options.blockWrite === undefined ? {} : {
+          blockEdits: {
+            dimension: options.blockWrite.dimension,
+            edits: options.blockWrite.edits,
+          },
+        }),
+        result: undefined,
+        postCommitEvents: [],
+      }])
+      if (Result.isFailure(merged)) return Effect.fail(merged.failure)
+      return coordinator.commit({
+        ...merged.success,
+        expectedRevision: options.expectedRevision
+          ?? (blockWriteExpectedRevision ? options.blockWrite?.expectedWorldRevision : undefined)
+          ?? expectedRevision,
+        ...(options.blockWrite === undefined ? {} : { blockWrite: options.blockWrite }),
+      }).pipe(Effect.asVoid)
+    }
 
     return {
       snapshot: Effect.map(currentSnapshot(), (snapshot) =>
@@ -316,113 +542,65 @@ export const makeContainerStorageService = (): Effect.Effect<
         Effect.map(currentSnapshot(), (snapshot) =>
           Container.findContainer(storageOf(snapshot.state), Container.worldContainerIdAt(address)) ?? null,
         ),
+      planCreateContainerAt,
+      planTransferContainerItem,
+      planExtractContainerItem,
+      planMoveContainerItem,
       createContainerAt: (address, kind, options = {}) =>
-        Effect.flatMap(decodeContainerKind(kind), (validKind) =>
-          Effect.flatMap(currentSnapshot(), (current): Effect.Effect<
-            Container.CreateContainerResult,
-            ContainerStorageServiceFailure
-          > => {
-            const outcome = Container.createContainer(
-              storageOf(current.state),
-              Container.worldContainerIdAt(address),
-              validKind,
-            )
-            if (outcome.result._tag !== 'Created') return Effect.succeed(outcome.result)
-            const state = Container.snapshotContainerStorage(outcome.storage)
-            return Effect.as(
-              commitStorage(current.revision, state, [address], options),
-              outcome.result,
-            )
-          }),
+        Effect.flatMap(currentSnapshot(), (current) =>
+          Effect.flatMap(planSnapshot(current, [address], options.blockWrite), (snapshot) =>
+            Effect.flatMap(planCreateContainerAt(snapshot, address, kind), (fragment) =>
+              Effect.as(
+                commitFragment(fragment, options, current.revision, true, snapshot.expectedDimensions),
+                fragment.result,
+              ),
+            ),
+          ),
         ),
       transferContainerItem: (request, options = {}) =>
         Effect.flatMap(currentSnapshot(), (containerSnapshot): Effect.Effect<
           Container.ContainerTransferResult,
           ContainerStorageServiceFailure
         > => {
-          const id = Container.worldContainerIdAt(request.address)
           return Effect.flatMap(
             coordinator.snapshot(request.playerOwnerId, PlayerStorageSnapshotSchema),
             (playerSnapshot): Effect.Effect<
               Container.ContainerTransferResult,
               ContainerStorageServiceFailure
             > => {
-              if (playerSnapshot.revision !== containerSnapshot.revision) {
-                return Effect.fail(new WorldRevisionConflict({
-                  expected: containerSnapshot.revision,
-                  actual: playerSnapshot.revision,
-                }))
-              }
-              const outcome = Container.transferContainerItem(
-                playerSnapshot.state,
-                storageOf(containerSnapshot.state),
-                {
-                  direction: request.direction,
-                  containerId: id,
-                  playerSlot: request.playerSlot,
-                  containerSlot: request.containerSlot,
-                  count: request.count,
-                },
-              )
-              if (outcome.result._tag !== 'Transferred') return Effect.succeed(outcome.result)
-              const state = Container.snapshotContainerStorage(outcome.containerStorage)
-              return Effect.as(
-                commitStorage(
-                  options.expectedRevision ?? containerSnapshot.revision,
-                  state,
-                  [request.address],
-                  options,
-                  [{ ownerId: request.playerOwnerId, state: outcome.playerStorage }],
+              return Effect.flatMap(planSnapshot(containerSnapshot, [request.address], options.blockWrite), (snapshot) =>
+                Effect.flatMap(
+                    planTransferContainerItem(
+                      snapshot,
+                      planPlayerSnapshot(playerSnapshot, snapshot.expectedDimensions),
+                      request,
+                    ),
+                    (fragment) => Effect.as(
+                      commitFragment(fragment, options, containerSnapshot.revision, false, snapshot.expectedDimensions),
+                      fragment.result,
+                    ),
                 ),
-                outcome.result,
               )
             },
           )
         }),
       extractContainerItem: (request, options = {}) =>
-        Effect.flatMap(currentSnapshot(), (current): Effect.Effect<
-          Container.ContainerExtractResult,
-          ContainerStorageServiceFailure
-        > => {
-          const id = Container.worldContainerIdAt(request.address)
-          const outcome = Container.extractContainerItem(storageOf(current.state), {
-            containerId: id,
-            containerSlot: request.containerSlot,
-            count: request.count,
-          })
-          if (outcome.result._tag !== 'Extracted') return Effect.succeed(outcome.result)
-          const state = Container.snapshotContainerStorage(outcome.storage)
-          return Effect.as(
-            commitStorage(current.revision, state, [request.address], options),
-            outcome.result,
-          )
-        }),
-      moveContainerItem: (request, options = {}) =>
-        Effect.flatMap(currentSnapshot(), (current): Effect.Effect<
-          Container.ContainerMoveResult,
-          ContainerStorageServiceFailure
-        > => {
-          const sourceId = Container.worldContainerIdAt(request.sourceAddress)
-          const destinationId = Container.worldContainerIdAt(request.destinationAddress)
-          const outcome = Container.moveContainerItem(storageOf(current.state), {
-            sourceContainerId: sourceId,
-            sourceSlot: request.sourceSlot,
-            destinationContainerId: destinationId,
-            destinationSlot: request.destinationSlot,
-            count: request.count,
-          })
-          if (outcome.result._tag !== 'Moved') return Effect.succeed(outcome.result)
-          const state = Container.snapshotContainerStorage(outcome.storage)
-          return Effect.as(
-            commitStorage(
-              current.revision,
-              state,
-              [request.sourceAddress, request.destinationAddress],
-              options,
+        Effect.flatMap(currentSnapshot(), (current) =>
+          Effect.flatMap(planSnapshot(current, [request.address], options.blockWrite), (snapshot) =>
+            Effect.flatMap(planExtractContainerItem(snapshot, request), (fragment) =>
+              Effect.as(commitFragment(fragment, options, current.revision, true, snapshot.expectedDimensions), fragment.result),
             ),
-            outcome.result,
-          )
-        }),
+          ),
+        ),
+      moveContainerItem: (request, options = {}) =>
+        Effect.flatMap(currentSnapshot(), (current) =>
+          Effect.flatMap(
+            planSnapshot(current, [request.sourceAddress, request.destinationAddress], options.blockWrite),
+            (snapshot) => Effect.flatMap(planMoveContainerItem(snapshot, request), (fragment) =>
+              Effect.as(commitFragment(fragment, options, current.revision, true, snapshot.expectedDimensions), fragment.result),
+            ),
+          ),
+        ),
     }
   })
 
