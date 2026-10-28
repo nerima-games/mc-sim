@@ -1,0 +1,698 @@
+[
+  {
+    "count": 3,
+    "file": "src/application/inventory-interaction.ts",
+    "ruleId": "no-raw-exported-function-parameter",
+    "text": "number"
+  },
+  {
+    "count": 1,
+    "file": "src/application/save-service.ts",
+    "ruleId": "no-raw-exported-function-parameter",
+    "text": "string"
+  },
+  {
+    "count": 2,
+    "file": "src/domain/anvil-primitives.ts",
+    "ruleId": "no-raw-exported-function-parameter",
+    "text": "number"
+  },
+  {
+    "count": 4,
+    "file": "src/domain/anvil-primitives.ts",
+    "ruleId": "no-raw-exported-function-parameter",
+    "text": "string"
+  },
+  {
+    "count": 3,
+    "file": "src/domain/anvil-snapshot-codec.ts",
+    "ruleId": "no-raw-exported-function-parameter",
+    "text": "string"
+  },
+  {
+    "count": 1,
+    "file": "src/domain/anvil-transformation.ts",
+    "ruleId": "no-raw-exported-function-parameter",
+    "text": "number"
+  },
+  {
+    "count": 2,
+    "file": "src/domain/anvil-validation.ts",
+    "ruleId": "no-raw-exported-function-parameter",
+    "text": "string"
+  },
+  {
+    "count": 3,
+    "file": "src/domain/block-interaction.ts",
+    "ruleId": "no-raw-exported-function-parameter",
+    "text": "number"
+  },
+  {
+    "count": 2,
+    "file": "src/domain/block-targeting.ts",
+    "ruleId": "no-raw-exported-function-parameter",
+    "text": "number"
+  },
+  {
+    "count": 2,
+    "file": "src/domain/brewing.ts",
+    "ruleId": "no-raw-exported-function-parameter",
+    "text": "number"
+  },
+  {
+    "count": 3,
+    "file": "src/domain/camera-pose.ts",
+    "ruleId": "no-raw-exported-function-parameter",
+    "text": "number"
+  },
+  {
+    "count": 1,
+    "file": "src/domain/crop.ts",
+    "ruleId": "no-raw-exported-function-parameter",
+    "text": "number"
+  },
+  {
+    "count": 1,
+    "file": "src/domain/enchantment-table-selection.ts",
+    "ruleId": "no-raw-exported-function-parameter",
+    "text": "number"
+  },
+  {
+    "count": 1,
+    "file": "src/domain/enchantment-table.ts",
+    "ruleId": "no-raw-exported-function-parameter",
+    "text": "number"
+  },
+  {
+    "count": 3,
+    "file": "src/domain/equipment.ts",
+    "ruleId": "no-raw-exported-function-parameter",
+    "text": "number"
+  },
+  {
+    "count": 1,
+    "file": "src/domain/fishing.ts",
+    "ruleId": "no-raw-exported-function-parameter",
+    "text": "number"
+  },
+  {
+    "count": 1,
+    "file": "src/domain/fixed-step.ts",
+    "ruleId": "no-raw-exported-function-parameter",
+    "text": "number"
+  },
+  {
+    "count": 2,
+    "file": "src/domain/grindstone.ts",
+    "ruleId": "no-raw-exported-function-parameter",
+    "text": "number"
+  },
+  {
+    "count": 1,
+    "file": "src/domain/grindstone.ts",
+    "ruleId": "no-raw-exported-function-parameter",
+    "text": "string"
+  },
+  {
+    "count": 5,
+    "file": "src/domain/hotbar.ts",
+    "ruleId": "no-raw-exported-function-parameter",
+    "text": "number"
+  },
+  {
+    "count": 6,
+    "file": "src/domain/inventory.ts",
+    "ruleId": "no-raw-exported-function-parameter",
+    "text": "number"
+  },
+  {
+    "count": 1,
+    "file": "src/domain/item-stack.ts",
+    "ruleId": "no-raw-exported-function-parameter",
+    "text": "number"
+  },
+  {
+    "count": 3,
+    "file": "src/domain/player-storage.ts",
+    "ruleId": "no-raw-exported-function-parameter",
+    "text": "number"
+  },
+  {
+    "count": 1,
+    "file": "src/domain/primed-tnt.ts",
+    "ruleId": "no-raw-exported-function-parameter",
+    "text": "number"
+  },
+  {
+    "count": 4,
+    "file": "src/domain/recipe-core.ts",
+    "ruleId": "no-raw-exported-function-parameter",
+    "text": "number"
+  },
+  {
+    "count": 4,
+    "file": "src/domain/recipe-core.ts",
+    "ruleId": "no-raw-exported-function-parameter",
+    "text": "string"
+  },
+  {
+    "count": 1,
+    "file": "src/domain/settings.ts",
+    "ruleId": "no-raw-exported-function-parameter",
+    "text": "string"
+  },
+  {
+    "count": 3,
+    "file": "src/domain/smelting.ts",
+    "ruleId": "no-raw-exported-function-parameter",
+    "text": "number"
+  },
+  {
+    "count": 2,
+    "file": "src/domain/station-recipe-support.ts",
+    "ruleId": "no-raw-exported-function-parameter",
+    "text": "number"
+  },
+  {
+    "count": 6,
+    "file": "src/domain/station-recipe-support.ts",
+    "ruleId": "no-raw-exported-function-parameter",
+    "text": "string"
+  },
+  {
+    "count": 2,
+    "file": "src/domain/time-of-day.ts",
+    "ruleId": "no-raw-exported-function-parameter",
+    "text": "number"
+  },
+  {
+    "count": 7,
+    "file": "src/domain/vitals-number.ts",
+    "ruleId": "no-raw-exported-function-parameter",
+    "text": "number"
+  },
+  {
+    "count": 1,
+    "file": "src/application/autosave.ts",
+    "ruleId": "no-raw-exported-function-return",
+    "text": "number"
+  },
+  {
+    "count": 2,
+    "file": "src/domain/anvil-primitives.ts",
+    "ruleId": "no-raw-exported-function-return",
+    "text": "number"
+  },
+  {
+    "count": 2,
+    "file": "src/domain/anvil-primitives.ts",
+    "ruleId": "no-raw-exported-function-return",
+    "text": "string"
+  },
+  {
+    "count": 1,
+    "file": "src/domain/anvil-transformation.ts",
+    "ruleId": "no-raw-exported-function-return",
+    "text": "number"
+  },
+  {
+    "count": 2,
+    "file": "src/domain/camera-pose.ts",
+    "ruleId": "no-raw-exported-function-return",
+    "text": "number"
+  },
+  {
+    "count": 1,
+    "file": "src/domain/container-storage.ts",
+    "ruleId": "no-raw-exported-function-return",
+    "text": "number"
+  },
+  {
+    "count": 1,
+    "file": "src/domain/crafting.ts",
+    "ruleId": "no-raw-exported-function-return",
+    "text": "number"
+  },
+  {
+    "count": 1,
+    "file": "src/domain/crop.ts",
+    "ruleId": "no-raw-exported-function-return",
+    "text": "number"
+  },
+  {
+    "count": 1,
+    "file": "src/domain/crop.ts",
+    "ruleId": "no-raw-exported-function-return",
+    "text": "string"
+  },
+  {
+    "count": 1,
+    "file": "src/domain/enchantment-table-data.ts",
+    "ruleId": "no-raw-exported-function-return",
+    "text": "number"
+  },
+  {
+    "count": 1,
+    "file": "src/domain/enchantment-table-selection.ts",
+    "ruleId": "no-raw-exported-function-return",
+    "text": "number"
+  },
+  {
+    "count": 2,
+    "file": "src/domain/enchantment-table.ts",
+    "ruleId": "no-raw-exported-function-return",
+    "text": "number"
+  },
+  {
+    "count": 1,
+    "file": "src/domain/grindstone.ts",
+    "ruleId": "no-raw-exported-function-return",
+    "text": "number"
+  },
+  {
+    "count": 3,
+    "file": "src/domain/hotbar.ts",
+    "ruleId": "no-raw-exported-function-return",
+    "text": "number"
+  },
+  {
+    "count": 1,
+    "file": "src/domain/inventory.ts",
+    "ruleId": "no-raw-exported-function-return",
+    "text": "number"
+  },
+  {
+    "count": 1,
+    "file": "src/domain/settings.ts",
+    "ruleId": "no-raw-exported-function-return",
+    "text": "string"
+  },
+  {
+    "count": 1,
+    "file": "src/domain/station-recipe-support.ts",
+    "ruleId": "no-raw-exported-function-return",
+    "text": "number"
+  },
+  {
+    "count": 1,
+    "file": "src/domain/station-recipe-support.ts",
+    "ruleId": "no-raw-exported-function-return",
+    "text": "string"
+  },
+  {
+    "count": 1,
+    "file": "src/domain/statistics.ts",
+    "ruleId": "no-raw-exported-function-return",
+    "text": "number"
+  },
+  {
+    "count": 3,
+    "file": "src/domain/time-of-day.ts",
+    "ruleId": "no-raw-exported-function-return",
+    "text": "number"
+  },
+  {
+    "count": 3,
+    "file": "src/domain/vitals-number.ts",
+    "ruleId": "no-raw-exported-function-return",
+    "text": "number"
+  },
+  {
+    "count": 2,
+    "file": "src/application/brewing-service.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "number"
+  },
+  {
+    "count": 8,
+    "file": "src/application/container-service.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "number"
+  },
+  {
+    "count": 1,
+    "file": "src/application/equipment-service.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "number"
+  },
+  {
+    "count": 1,
+    "file": "src/application/furnace-service.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "number"
+  },
+  {
+    "count": 3,
+    "file": "src/application/game-loop.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "number"
+  },
+  {
+    "count": 3,
+    "file": "src/application/hopper-service.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "number"
+  },
+  {
+    "count": 5,
+    "file": "src/application/hotbar-service.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "number"
+  },
+  {
+    "count": 5,
+    "file": "src/application/intent-queue.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "number"
+  },
+  {
+    "count": 2,
+    "file": "src/application/inventory-interaction.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "number"
+  },
+  {
+    "count": 21,
+    "file": "src/application/inventory-service.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "number"
+  },
+  {
+    "count": 4,
+    "file": "src/application/inventory-service.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "string"
+  },
+  {
+    "count": 2,
+    "file": "src/application/player-service.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "number"
+  },
+  {
+    "count": 4,
+    "file": "src/application/save-coordinator.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "number"
+  },
+  {
+    "count": 3,
+    "file": "src/application/settings-service.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "string"
+  },
+  {
+    "count": 2,
+    "file": "src/application/statistics-service.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "number"
+  },
+  {
+    "count": 1,
+    "file": "src/application/time-service.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "number"
+  },
+  {
+    "count": 7,
+    "file": "src/application/tnt-service.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "number"
+  },
+  {
+    "count": 2,
+    "file": "src/domain/anvil-primitives.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "string"
+  },
+  {
+    "count": 1,
+    "file": "src/domain/anvil-transformation.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "number"
+  },
+  {
+    "count": 2,
+    "file": "src/domain/anvil-validation.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "number"
+  },
+  {
+    "count": 13,
+    "file": "src/domain/anvil.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "number"
+  },
+  {
+    "count": 2,
+    "file": "src/domain/anvil.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "string"
+  },
+  {
+    "count": 1,
+    "file": "src/domain/block-interaction.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "number"
+  },
+  {
+    "count": 1,
+    "file": "src/domain/block-targeting.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "number"
+  },
+  {
+    "count": 1,
+    "file": "src/domain/brewing-data.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "string"
+  },
+  {
+    "count": 1,
+    "file": "src/domain/brewing.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "number"
+  },
+  {
+    "count": 2,
+    "file": "src/domain/brewing.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "string"
+  },
+  {
+    "count": 4,
+    "file": "src/domain/camera-pose.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "number"
+  },
+  {
+    "count": 16,
+    "file": "src/domain/container-storage.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "number"
+  },
+  {
+    "count": 2,
+    "file": "src/domain/container-storage.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "string"
+  },
+  {
+    "count": 1,
+    "file": "src/domain/crafting.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "number"
+  },
+  {
+    "count": 2,
+    "file": "src/domain/crop.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "number"
+  },
+  {
+    "count": 2,
+    "file": "src/domain/crop.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "string"
+  },
+  {
+    "count": 2,
+    "file": "src/domain/enchantment-data.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "number"
+  },
+  {
+    "count": 4,
+    "file": "src/domain/enchantment-table-data.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "number"
+  },
+  {
+    "count": 1,
+    "file": "src/domain/enchantment-table-selection.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "number"
+  },
+  {
+    "count": 6,
+    "file": "src/domain/enchantment-table.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "number"
+  },
+  {
+    "count": 1,
+    "file": "src/domain/enchantment-table.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "string"
+  },
+  {
+    "count": 5,
+    "file": "src/domain/equipment.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "number"
+  },
+  {
+    "count": 2,
+    "file": "src/domain/equipment.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "string"
+  },
+  {
+    "count": 14,
+    "file": "src/domain/explosion.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "number"
+  },
+  {
+    "count": 2,
+    "file": "src/domain/explosion.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "string"
+  },
+  {
+    "count": 1,
+    "file": "src/domain/fixed-step.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "number"
+  },
+  {
+    "count": 3,
+    "file": "src/domain/grindstone.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "number"
+  },
+  {
+    "count": 1,
+    "file": "src/domain/grindstone.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "string"
+  },
+  {
+    "count": 6,
+    "file": "src/domain/inventory.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "number"
+  },
+  {
+    "count": 10,
+    "file": "src/domain/player-storage.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "number"
+  },
+  {
+    "count": 2,
+    "file": "src/domain/player-storage.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "string"
+  },
+  {
+    "count": 4,
+    "file": "src/domain/primed-tnt.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "number"
+  },
+  {
+    "count": 2,
+    "file": "src/domain/primed-tnt.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "string"
+  },
+  {
+    "count": 1,
+    "file": "src/domain/projectile.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "number"
+  },
+  {
+    "count": 1,
+    "file": "src/domain/recipe-matching.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "number"
+  },
+  {
+    "count": 2,
+    "file": "src/domain/recipe-matching.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "string"
+  },
+  {
+    "count": 1,
+    "file": "src/domain/settings.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "number"
+  },
+  {
+    "count": 8,
+    "file": "src/domain/smelting.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "number"
+  },
+  {
+    "count": 5,
+    "file": "src/domain/smelting.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "string"
+  },
+  {
+    "count": 2,
+    "file": "src/domain/station-recipe-support.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "string"
+  },
+  {
+    "count": 1,
+    "file": "src/domain/statistics.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "number"
+  },
+  {
+    "count": 3,
+    "file": "src/domain/statistics.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "string"
+  },
+  {
+    "count": 2,
+    "file": "src/domain/time-of-day.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "number"
+  },
+  {
+    "count": 4,
+    "file": "src/domain/transmute.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "number"
+  },
+  {
+    "count": 1,
+    "file": "src/domain/weather.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "number"
+  },
+  {
+    "count": 7,
+    "file": "src/stages/registration.ts",
+    "ruleId": "no-raw-exported-type-field",
+    "text": "number"
+  }
+]

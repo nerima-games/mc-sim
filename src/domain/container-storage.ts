@@ -320,27 +320,32 @@ export function containerIdAt(
   position: unknown,
 ): ContainerId | ContainerStorageHelperFailure {
   if (!isContainerDimension(dimension)) return { _tag: 'InvalidContainerDimension' }
-  try {
-    if (!isContainerPosition(position)) return { _tag: 'InvalidContainerPosition' }
-    return `${dimension}:${position.x},${position.y},${position.z}`
-  } catch {
-    return { _tag: 'InvalidContainerPosition' }
-  }
+  const result = Result.try({
+    try: (): ContainerId | ContainerStorageHelperFailure => {
+      if (!isContainerPosition(position)) return { _tag: 'InvalidContainerPosition' as const }
+      return `${dimension}:${position.x},${position.y},${position.z}`
+    },
+    catch: () => ({ _tag: 'InvalidContainerPosition' as const }),
+  })
+  return Result.isFailure(result) ? result.failure : result.success
 }
 
 
 export function worldContainerIdAt(address: BlockAddress): WorldContainerId
 export function worldContainerIdAt(address: unknown): WorldContainerId | ContainerStorageHelperFailure
 export function worldContainerIdAt(address: unknown): WorldContainerId | ContainerStorageHelperFailure {
-  try {
-    const decodedAddress = Schema.decodeUnknownResult(BlockAddressSchema)(address)
-    if (Result.isFailure(decodedAddress)) return { _tag: 'InvalidContainerAddress' }
-    const { dimension, position } = decodedAddress.success
-    const id = `${dimension}:${position.x},${position.y},${position.z}`
-    return Schema.decodeUnknownSync(WorldContainerIdSchema)(id)
-  } catch {
-    return { _tag: 'InvalidContainerAddress' }
-  }
+  const result = Result.try({
+    try: (): WorldContainerId | ContainerStorageHelperFailure => {
+      const decodedAddress = Schema.decodeUnknownResult(BlockAddressSchema)(address)
+      if (Result.isFailure(decodedAddress)) return { _tag: 'InvalidContainerAddress' }
+      const { dimension, position } = decodedAddress.success
+      const id = `${dimension}:${position.x},${position.y},${position.z}`
+      const decodedId = worldContainerId(id)
+      return Result.isFailure(decodedId) ? { _tag: 'InvalidContainerAddress' } : decodedId.success
+    },
+    catch: () => ({ _tag: 'InvalidContainerAddress' as const }),
+  })
+  return Result.isFailure(result) ? result.failure : result.success
 }
 
 const isFindableContainerStorage = (value: unknown): value is ContainerStorage => {
@@ -359,14 +364,16 @@ export function findContainer(
   storage: unknown,
   id: unknown,
 ): Container | undefined | ContainerStorageHelperFailure {
-  try {
-    if (!validId(id)) return { _tag: 'InvalidContainerId' }
-    if (!isFindableContainerStorage(storage)) return { _tag: 'InvalidContainerStorage' }
-    const container = storage.containers.find((candidate) => candidate.id === id)
-    return container === undefined ? undefined : copyContainer(container)
-  } catch {
-    return { _tag: 'InvalidContainerStorage' }
-  }
+  const result = Result.try({
+    try: (): Container | undefined | ContainerStorageHelperFailure => {
+      if (!validId(id)) return { _tag: 'InvalidContainerId' }
+      if (!isFindableContainerStorage(storage)) return { _tag: 'InvalidContainerStorage' }
+      const container = storage.containers.find((candidate) => candidate.id === id)
+      return container === undefined ? undefined : copyContainer(container)
+    },
+    catch: () => ({ _tag: 'InvalidContainerStorage' as const }),
+  })
+  return Result.isFailure(result) ? result.failure : result.success
 }
 
 export const createContainer = (
@@ -835,20 +842,22 @@ export function drainContainer(
   storage: unknown,
   id: unknown,
 ): DrainContainerOutcome | ContainerStorageHelperFailure {
-  try {
-    if (!validId(id)) return { _tag: 'InvalidContainerId' }
-    if (!isFindableContainerStorage(storage)) return { _tag: 'InvalidContainerStorage' }
-    const container = storage.containers.find((candidate) => candidate.id === id)
-    if (container === undefined) return { storage, result: { _tag: 'ContainerNotFound' } }
-    const index = storage.containers.indexOf(container)
-    return {
-      storage: { containers: storage.containers.filter((_, candidate) => candidate !== index) },
-      result: {
-        _tag: 'Drained',
-        items: container.slots.flatMap((slot) => slot === null ? [] : [copyStack(slot)]),
-      },
-    }
-  } catch {
-    return { _tag: 'InvalidContainerStorage' }
-  }
+  const result = Result.try({
+    try: (): DrainContainerOutcome | ContainerStorageHelperFailure => {
+      if (!validId(id)) return { _tag: 'InvalidContainerId' }
+      if (!isFindableContainerStorage(storage)) return { _tag: 'InvalidContainerStorage' }
+      const container = storage.containers.find((candidate) => candidate.id === id)
+      if (container === undefined) return { storage, result: { _tag: 'ContainerNotFound' } }
+      const index = storage.containers.indexOf(container)
+      return {
+        storage: { containers: storage.containers.filter((_, candidate) => candidate !== index) },
+        result: {
+          _tag: 'Drained',
+          items: container.slots.flatMap((slot) => slot === null ? [] : [copyStack(slot)]),
+        },
+      }
+    },
+    catch: () => ({ _tag: 'InvalidContainerStorage' as const }),
+  })
+  return Result.isFailure(result) ? result.failure : result.success
 }

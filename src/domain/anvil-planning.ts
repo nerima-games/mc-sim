@@ -3,6 +3,7 @@ import { finalizeAnvilPlan, initialTransformationOf, mergeEnchantments, nextAnvi
 import { compileAnvilRuleSet as compileRuleSet, validateInputEnchantments } from './anvil-validation.js'
 import type { AnvilRuleSetCompilation, CompiledAnvilRuleSet } from './anvil-validation.js'
 import type { AnvilPlan, AnvilRuleInput, AnvilRuleSet, AnvilState, CanonicalAnvilState } from './anvil.js'
+import { Result } from 'effect'
 
 export { ANVIL_REPAIR_BONUS_RATIO, ANVIL_TOO_EXPENSIVE_LEVEL } from './anvil-constants.js'
 export { nextAnvilRepairCost }
@@ -24,12 +25,14 @@ const invalidAnvilRuleSet = (): AnvilRuleSetCompilation => ({
 })
 
 const compileRuleSetInput = (value: unknown): AnvilRuleSetCompilation => {
-  try {
-    if (!isAnvilRuleSetEnvelope(value)) return invalidAnvilRuleSet()
-    return compileRuleSet(value)
-  } catch {
-    return invalidAnvilRuleSet()
-  }
+  const result = Result.try({
+    try: () => {
+      if (!isAnvilRuleSetEnvelope(value)) return invalidAnvilRuleSet()
+      return compileRuleSet(value)
+    },
+    catch: () => invalidAnvilRuleSet(),
+  })
+  return Result.isFailure(result) ? result.failure : result.success
 }
 
 export const compileAnvilRuleSet = (rules: AnvilRuleSet): AnvilRuleSetCompilation =>
@@ -87,13 +90,13 @@ const isCompiledRepairMaterialMap = (value: unknown): boolean => {
 }
 
 const isCompiledAnvilRuleSet = (rules: AnvilRuleInput): rules is CompiledAnvilRuleSet => {
-  try {
-    return isRecord(rules) &&
+  const result = Result.try({
+    try: () => isRecord(rules) &&
       isCompiledEnchantmentMap(rules['enchantments']) &&
-      isCompiledRepairMaterialMap(rules['repairMaterials'])
-  } catch {
-    return false
-  }
+      isCompiledRepairMaterialMap(rules['repairMaterials']),
+    catch: () => false,
+  })
+  return Result.isFailure(result) ? false : result.success
 }
 
 type CanonicalAnvilStateWithLeft = Omit<CanonicalAnvilState, 'left'> & {
