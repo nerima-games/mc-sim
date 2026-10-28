@@ -13,7 +13,7 @@ import {
   type WorldRevision,
   type WorldWriteBatch,
 } from '@nerima-games/mc-kernel'
-import { Brand, Context, Effect, Layer, Result, Schema } from 'effect'
+import { Brand, Context, Effect, Layer, Schema } from 'effect'
 import * as Container from '../domain/container-storage.js'
 import { SchemaErrorSchema } from '../schema-errors.js'
 import {
@@ -409,9 +409,6 @@ export const makeHopperService = (): Effect.Effect<
     intent: HopperTransferTickIntent,
   ): HopperTransferOutcome | undefined => {
     const { hopperAddress, source, destination, blockEdits } = intent
-    if (source._tag === 'Player' && destination._tag === 'Player') {
-      return { _tag: 'InvalidRequest', reason: 'player-to-player' }
-    }
     const dimensions = [
       hopperAddress.dimension,
       endpointDimension(source),
@@ -454,6 +451,38 @@ type HopperTransferPlan =
   | Readonly<{ _tag: 'ContainerMove'; fragment: WorldCommitPlanFragment<Container.ContainerMoveResult> }>
   | Readonly<{ _tag: 'PlayerTransfer'; fragment: WorldCommitPlanFragment<Container.ContainerTransferResult> }>
 
+type HopperPlayerEndpoint = Extract<HopperEndpoint, { readonly _tag: 'Player' }>
+type HopperContainerEndpoint = Extract<HopperEndpoint, { readonly _tag: 'Container' }>
+type HopperPlanTransferIntent =
+  | Readonly<{ _tag: 'PlayerToPlayer' }>
+  | (Pick<HopperTransferTickIntent, 'hopperAddress' | 'blockEdits'> & Readonly<{
+      _tag: 'PlayerToContainer'
+      source: HopperPlayerEndpoint
+      destination: HopperContainerEndpoint
+    }>)
+  | (Pick<HopperTransferTickIntent, 'hopperAddress' | 'blockEdits'> & Readonly<{
+      _tag: 'ContainerToContainer'
+      source: HopperContainerEndpoint
+      destination: HopperContainerEndpoint
+    }>)
+  | (Pick<HopperTransferTickIntent, 'hopperAddress' | 'blockEdits'> & Readonly<{
+      _tag: 'ContainerToPlayer'
+      source: HopperContainerEndpoint
+      destination: HopperPlayerEndpoint
+    }>)
+
+const planTransferIntentFor = (intent: HopperTransferTickIntent): HopperPlanTransferIntent => {
+  const base = { hopperAddress: intent.hopperAddress, blockEdits: intent.blockEdits }
+  if (intent.source._tag === 'Player') {
+    if (intent.destination._tag === 'Player') return { _tag: 'PlayerToPlayer' }
+    return { ...base, _tag: 'PlayerToContainer', source: intent.source, destination: intent.destination }
+  }
+  if (intent.destination._tag === 'Player') {
+    return { ...base, _tag: 'ContainerToPlayer', source: intent.source, destination: intent.destination }
+  }
+  return { ...base, _tag: 'ContainerToContainer', source: intent.source, destination: intent.destination }
+}
+
 const transferDimensionsFor = (intent: HopperTransferTickIntent): Array<Dimension> => [
   intent.hopperAddress.dimension,
   ...(intent.source._tag === 'Container' ? [intent.source.address.dimension] : []),
@@ -473,7 +502,8 @@ const assertTransferPlanSnapshots = (
     ? intent.source
     : intent.destination._tag === 'Player' ? intent.destination : undefined
   if (requiredPlayer === undefined) return true
-  if (state.player._tag === 'None' || state.player.ownerId !== requiredPlayer.ownerId) return false
+  if (state.player._tag === 'None') return true
+  if (state.player.ownerId !== requiredPlayer.ownerId) return false
   yield* assertMatchingPlanBase(planSnapshot, state.player.snapshot)
   yield* assertMatchingDimensions(planSnapshot, state.player.snapshot, dimensions)
   return true
@@ -510,49 +540,49 @@ const cooledDownFragment = (
 
 const planTransferForIntent = (
   state: HopperTransferTickPlanState,
+  intent: Exclude<HopperPlanTransferIntent, { readonly _tag: 'PlayerToPlayer' }>,
 ) => Effect.gen(function* () {
-  const { source, destination } = state.intent
-  if (source._tag === 'Player' && destination._tag === 'Container') {
-    if (state.player._tag === 'None') return undefined
-    return {
-      _tag: 'PlayerTransfer',
-      fragment: yield* storage.planTransferContainerItem(state.containers, state.player.snapshot, {
-        playerOwnerId: source.ownerId,
-        address: destination.address,
-        direction: 'PlayerToContainer',
-        playerSlot: source.slot,
-        containerSlot: destination.slot,
-        count: 1,
-      }),
-    } satisfies HopperTransferPlan
+  switch (intent._tag) {
+    case 'PlayerToContainer': {
+      if (state.player._tag === 'None') return undefined
+      return {
+        _tag: 'PlayerTransfer',
+        fragment: yield* storage.planTransferContainerItem(state.containers, state.player.snapshot, {
+          playerOwnerId: intent.source.ownerId,
+          address: intent.destination.address,
+          direction: 'PlayerToContainer',
+          playerSlot: intent.source.slot,
+          containerSlot: intent.destination.slot,
+          count: 1,
+        }),
+      } satisfies HopperTransferPlan
+    }
+    case 'ContainerToContainer':
+      return {
+        _tag: 'ContainerMove',
+        fragment: yield* storage.planMoveContainerItem(state.containers, {
+          sourceAddress: intent.source.address,
+          sourceSlot: intent.source.slot,
+          destinationAddress: intent.destination.address,
+          destinationSlot: intent.destination.slot,
+          count: 1,
+        }),
+      } satisfies HopperTransferPlan
+    case 'ContainerToPlayer': {
+      if (state.player._tag === 'None') return undefined
+      return {
+        _tag: 'PlayerTransfer',
+        fragment: yield* storage.planTransferContainerItem(state.containers, state.player.snapshot, {
+          playerOwnerId: intent.destination.ownerId,
+          address: intent.source.address,
+          direction: 'ContainerToPlayer',
+          playerSlot: intent.destination.slot,
+          containerSlot: intent.source.slot,
+          count: 1,
+        }),
+      } satisfies HopperTransferPlan
+    }
   }
-  if (source._tag === 'Container' && destination._tag === 'Container') {
-    return {
-      _tag: 'ContainerMove',
-      fragment: yield* storage.planMoveContainerItem(state.containers, {
-        sourceAddress: source.address,
-        sourceSlot: source.slot,
-        destinationAddress: destination.address,
-        destinationSlot: destination.slot,
-        count: 1,
-      }),
-    } satisfies HopperTransferPlan
-  }
-  if (source._tag === 'Container' && destination._tag === 'Player') {
-    if (state.player._tag === 'None') return undefined
-    return {
-      _tag: 'PlayerTransfer',
-      fragment: yield* storage.planTransferContainerItem(state.containers, state.player.snapshot, {
-        playerOwnerId: destination.ownerId,
-        address: source.address,
-        direction: 'ContainerToPlayer',
-        playerSlot: destination.slot,
-        containerSlot: source.slot,
-        count: 1,
-      }),
-    } satisfies HopperTransferPlan
-  }
-  return undefined
 })
 
 const rejectedTransferFragment = (
@@ -639,6 +669,10 @@ const finishTransferPlan = (
       Effect.flatMap(Schema.decodeUnknownEffect(HopperElapsedTicksSchema)(elapsedTicks), (ticks) =>
         Effect.flatMap(Schema.decodeUnknownEffect(Schema.Boolean)(powered), (isPowered) => Effect.gen(function* () {
           const { state } = decodedSnapshot
+          const transferIntent = planTransferIntentFor(state.intent)
+          if (transferIntent._tag === 'PlayerToPlayer') {
+            return emptyFragment(decodedSnapshot, { _tag: 'InvalidRequest', reason: 'player-to-player' })
+          }
           const invalid = invalidTransfer(state.intent)
           if (invalid !== undefined) return emptyFragment(decodedSnapshot, invalid)
 
@@ -651,7 +685,7 @@ const finishTransferPlan = (
           const cooldownFragment = yield* cooledDownFragment(decodedSnapshot, ticks)
           if (cooldownFragment !== undefined) return cooldownFragment
 
-          const transferPlan = yield* planTransferForIntent(state)
+          const transferPlan = yield* planTransferForIntent(state, transferIntent)
           if (transferPlan === undefined) {
             return emptyFragment(decodedSnapshot, { _tag: 'InvalidRequest', reason: 'missing-player-snapshot' })
           }
@@ -667,12 +701,11 @@ const finishTransferPlan = (
   ): Effect.Effect<void, HopperServiceError> => {
     if (fragment.changes.length === 0 && blockWrite === undefined) return Effect.void
     const merged = mergeWorldCommitPlans([fragment])
-    if (Result.isFailure(merged)) return Effect.fail(merged.failure)
-    return coordinator.commit({
-      ...merged.success,
+    return Effect.flatMap(Effect.fromResult(merged), (request) => coordinator.commit({
+      ...request,
       expectedRevision,
       ...(blockWrite === undefined ? {} : { blockWrite }),
-    }).pipe(Effect.asVoid)
+    }).pipe(Effect.asVoid))
   }
 
   const transfer: HopperServiceApi['transfer'] = (request) =>
@@ -683,6 +716,8 @@ const finishTransferPlan = (
         destination: decoded.destination,
         blockEdits: { dimension: decoded.blockWrite.dimension, edits: decoded.blockWrite.edits },
       }
+      const transferIntent = planTransferIntentFor(intent)
+      if (transferIntent._tag === 'PlayerToPlayer') return { _tag: 'InvalidRequest', reason: 'player-to-player' }
       const invalid = invalidTransfer(intent)
       if (invalid !== undefined) return invalid
 
@@ -737,8 +772,20 @@ const finishTransferPlan = (
     Effect.flatMap(Schema.decodeUnknownEffect(HopperCooldownRequestSchema)(request), (decoded) => Effect.gen(function* () {
       const current = yield* snapshot()
       const existing = recordAt(current.state, decoded.address)
-      if (existing === undefined) return { _tag: 'UnknownHopper' } as const
-      if (existing.cooldownTicks === 0) return { _tag: 'NoChange' } as const
+      const planRequest = {
+        address: decoded.address,
+        ticks: yield* Schema.decodeUnknownEffect(HopperCooldownTicksSchema)(decoded.ticks),
+      }
+      if (existing === undefined || existing.cooldownTicks === 0) {
+        const fragment = yield* planAdvanceCooldown({
+          world: current.world,
+          expectedRevision: current.revision,
+          expectedDimensions: [],
+          state: current.state,
+        }, planRequest)
+        yield* commitFragment(fragment)
+        return fragment.result
+      }
       const actualDimensionRevision = yield* coordinator.dimensionRevision(decoded.address.dimension)
       if (current.revision !== decoded.expectedRevision) {
         return yield* Effect.fail(new WorldRevisionConflict({
@@ -758,10 +805,6 @@ const finishTransferPlan = (
         expectedRevision: current.revision,
         expectedDimensions: [{ dimension: decoded.address.dimension, expectedRevision: actualDimensionRevision }],
         state: current.state,
-      }
-      const planRequest = {
-        address: decoded.address,
-        ticks: yield* Schema.decodeUnknownEffect(HopperCooldownTicksSchema)(decoded.ticks),
       }
       const fragment = yield* planAdvanceCooldown(planSnapshot, planRequest)
       yield* commitFragment(fragment)

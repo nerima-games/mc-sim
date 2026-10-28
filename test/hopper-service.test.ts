@@ -190,6 +190,161 @@ describe('HopperService', () => {
         expect(Schema.decodeUnknownSync(HopperTransferOutcomeSchema)(powered.result)).toStrictEqual({ _tag: 'Disabled' })
         expect(powered.changes).toEqual([])
 
+        const cooldownSnapshot = {
+          world,
+          expectedRevision: currentRevision,
+          expectedDimensions,
+          state: hopperSnapshot.state,
+        }
+        const cooldownRequest = Schema.decodeUnknownSync(HopperCooldownPlanRequestSchema)({
+          address: hopperAddress,
+          ticks: 1,
+        })
+        const unknownCooldown = yield* hopperService.planAdvanceCooldown({
+          ...cooldownSnapshot,
+          state: Schema.decodeUnknownSync(HopperServiceSnapshotSchema)({ hoppers: [] }),
+        }, cooldownRequest)
+        const noChangeCooldown = yield* hopperService.planAdvanceCooldown({
+          ...cooldownSnapshot,
+          state: Schema.decodeUnknownSync(HopperServiceSnapshotSchema)({
+            hoppers: [{ address: hopperAddress, cooldownTicks: 0 }],
+          }),
+        }, cooldownRequest)
+        const missingDimension = yield* Effect.result(hopperService.planAdvanceCooldown({
+          ...cooldownSnapshot,
+          expectedDimensions: [],
+        }, cooldownRequest))
+        expect(unknownCooldown.result).toEqual({ _tag: 'UnknownHopper' })
+        expect(noChangeCooldown.result).toEqual({ _tag: 'NoChange' })
+        expect(Result.isFailure(missingDimension)).toBe(true)
+        if (Result.isFailure(missingDimension)) {
+          expect(missingDimension.failure._tag).toBe('WorldCommitPlanDimensionRevisionMissing')
+        }
+
+        const zeroTicks = Schema.decodeUnknownSync(HopperElapsedTicksSchema)(0)
+        const otherWorld = Schema.decodeUnknownSync(WorldIdSchema)('other-hopper-plan-world')
+        const inconsistentSnapshots = [
+          {
+            ...planSnapshot,
+            state: { ...planSnapshot.state, containers: { ...planSnapshot.state.containers, world: otherWorld } },
+          },
+          {
+            ...planSnapshot,
+            state: {
+              ...planSnapshot.state,
+              containers: {
+                ...planSnapshot.state.containers,
+                expectedRevision: Schema.decodeUnknownSync(WorldRevisionSchema)(currentRevision - 1),
+              },
+            },
+          },
+          {
+            ...planSnapshot,
+            state: { ...planSnapshot.state, containers: { ...planSnapshot.state.containers, expectedDimensions: [] } },
+          },
+          {
+            ...planSnapshot,
+            state: {
+              ...planSnapshot.state,
+              containers: {
+                ...planSnapshot.state.containers,
+                expectedDimensions: [{
+                  dimension: 'overworld' as const,
+                  expectedRevision: Schema.decodeUnknownSync(DimensionRevisionSchema)(currentDimensionRevision + 1),
+                }],
+              },
+            },
+          },
+        ]
+        const snapshotConflicts = []
+        for (const inconsistent of inconsistentSnapshots) {
+          snapshotConflicts.push(yield* Effect.result(hopperService.planTransferTick(inconsistent, zeroTicks, false)))
+        }
+        expect(snapshotConflicts.map((result) =>
+          Result.isFailure(result) ? result.failure._tag : undefined,
+        )).toEqual([
+          'WorldCommitPlanWorldConflict',
+          'WorldCommitPlanRevisionConflict',
+          'WorldCommitPlanDimensionRevisionMissing',
+          'WorldCommitPlanDimensionRevisionConflict',
+        ])
+
+        const playerIntent = {
+          ...intent,
+          source: { _tag: 'Player' as const, ownerId: playerOwnerId, slot: 0 },
+          destination: { _tag: 'Container' as const, address: hopperAddress, slot: 0 },
+        }
+        const missingPlayerPlans = [
+          { ...planSnapshot, state: { ...planSnapshot.state, hoppers: { hoppers: [] }, intent: playerIntent } },
+
+          {
+            ...planSnapshot,
+            state: {
+              ...planSnapshot.state,
+              hoppers: { hoppers: [] },
+              intent: { ...playerIntent, source: { _tag: 'Container' as const, address: sourceAddress, slot: 0 }, destination: { _tag: 'Player' as const, ownerId: playerOwnerId, slot: 0 } },
+
+            },
+          },
+        ]
+        const missingPlayerResults = []
+        for (const missingPlayer of missingPlayerPlans) {
+          missingPlayerResults.push(yield* hopperService.planTransferTick(missingPlayer, zeroTicks, false))
+        }
+        expect(missingPlayerResults.map(({ result }) => result)).toEqual([
+          { _tag: 'InvalidRequest', reason: 'missing-player-snapshot' },
+          { _tag: 'InvalidRequest', reason: 'missing-player-snapshot' },
+        ])
+
+        const otherPlayerOwner = Schema.decodeUnknownSync(ReplicatedOwnerIdSchema)('other-hopper-player')
+        const wrongPlayer = yield* hopperService.planTransferTick({
+          ...planSnapshot,
+          state: {
+            ...planSnapshot.state,
+            hoppers: { hoppers: [] },
+            intent: playerIntent,
+            player: {
+              _tag: 'Some',
+              ownerId: otherPlayerOwner,
+              snapshot: {
+                world,
+                expectedRevision: currentRevision,
+                expectedDimensions,
+                state: emptyPlayerStorage(),
+              },
+            },
+          },
+        }, zeroTicks, false)
+        expect(wrongPlayer.result).toEqual({ _tag: 'InvalidRequest', reason: 'missing-player-snapshot' })
+
+        const invalidPlayerPair = yield* hopperService.planTransferTick({
+          ...planSnapshot,
+          state: {
+            ...planSnapshot.state,
+            intent: {
+              ...intent,
+              source: { _tag: 'Player', ownerId: playerOwnerId, slot: 0 },
+              destination: { _tag: 'Player', ownerId: playerOwnerId, slot: 1 },
+            },
+          },
+        }, zeroTicks, false)
+        expect(invalidPlayerPair.result).toEqual({ _tag: 'InvalidRequest', reason: 'player-to-player' })
+
+        const emptySourceIntent = { ...intent, source: { ...intent.source, slot: 4 } }
+        const rejectedWithoutCooldown = yield* hopperService.planTransferTick({
+          ...planSnapshot,
+          state: { ...planSnapshot.state, hoppers: { hoppers: [] }, intent: emptySourceIntent },
+        }, zeroTicks, false)
+        const rejectedWithCooldown = yield* hopperService.planTransferTick({
+          ...planSnapshot,
+          state: { ...planSnapshot.state, intent: emptySourceIntent },
+        }, Schema.decodeUnknownSync(HopperElapsedTicksSchema)(cadenceFixture.cooldownTicks), false)
+        expect(rejectedWithoutCooldown.result).toMatchObject({ _tag: 'TransferRejected' })
+        expect(rejectedWithoutCooldown.changes).toEqual([])
+        expect(rejectedWithCooldown.result).toMatchObject({ _tag: 'TransferRejected' })
+        expect(rejectedWithCooldown.changes).toHaveLength(1)
+        expect(rejectedWithCooldown.changes[0]?.state).toMatchObject({ hoppers: [{ cooldownTicks: 0 }] })
+
         const ready = yield* hopperService.planTransferTick(
           planSnapshot,
           Schema.decodeUnknownSync(HopperElapsedTicksSchema)(cadenceFixture.cooldownTicks),
