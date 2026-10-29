@@ -38,7 +38,7 @@ const worldRevision = Schema.decodeUnknownSync(WorldRevisionSchema)
 const capacity = Schema.decodeUnknownSync(EventSubscriberCapacitySchema)(16)
 const world = worldId('achievement-test-world')
 const request = {
-  achievement: achievementId('first-steps'),
+  achievement: achievementId('minecraft:story/mine_stone'),
   player: playerId('player-1'),
   tick: simulationTick(12),
 }
@@ -101,7 +101,7 @@ describe('AchievementService', () => {
       expect(pending._tag).toBe('PendingAchievementUnlock')
       if (pending._tag === 'PendingAchievementUnlock') {
         expect(pending.candidate.state.counters).toEqual({ 'blocks.mined': 4 })
-        expect(pending.candidate.state.unlocked).toEqual(['first-steps'])
+        expect(pending.candidate.state.unlocked).toEqual(['minecraft:story/mine_stone'])
         expect((yield* statistics.snapshot).unlocked).toEqual([])
 
         const delta = yield* coordinator.commit({
@@ -114,7 +114,7 @@ describe('AchievementService', () => {
 
       expect(yield* statistics.snapshot).toStrictEqual({
         counters: { 'blocks.mined': 4 },
-        unlocked: ['first-steps'],
+        unlocked: ['minecraft:story/mine_stone'],
       })
       yield* bus.publish(probeEvent)
       const events = yield* Fiber.join(collectTwo)
@@ -164,7 +164,7 @@ describe('AchievementService', () => {
 
       yield* core.runTick(simulationTick(1), [])
 
-      expect((yield* statistics.snapshot).unlocked).toEqual(['first-steps'])
+      expect((yield* statistics.snapshot).unlocked).toEqual(['minecraft:story/mine_stone'])
       expect(yield* Fiber.join(collectOne)).toStrictEqual([{
         _tag: 'AchievementUnlocked',
         tick: simulationTick(1),
@@ -241,17 +241,17 @@ describe('AchievementService', () => {
       if (pending._tag === 'PendingAchievementUnlock') {
         expect(pending.candidate.state.counters).toStrictEqual({ 'local.only': 4 })
         expect(pending.candidate.state.unlocked).toStrictEqual([
-          'previously-earned',
-          'persisted-earned',
-          'first-steps',
+          'minecraft:story/obtain_armor',
+          'minecraft:story/form_obsidian',
+          'minecraft:story/mine_stone',
         ])
       }
     }).pipe(Effect.provide(achievementLayer(
       {
         counters: { 'persisted.zero': 0 },
-        unlocked: [achievementId('previously-earned'), achievementId('persisted-earned')],
+        unlocked: [achievementId('minecraft:story/obtain_armor'), achievementId('minecraft:story/form_obsidian')],
       },
-      { counters: { 'local.only': 4 }, unlocked: [achievementId('previously-earned')] },
+      { counters: { 'local.only': 4 }, unlocked: [achievementId('minecraft:story/obtain_armor')] },
     ))),
   )
 
@@ -302,7 +302,7 @@ describe('AchievementService', () => {
 
       yield* service.finalizeCommittedUnlock(pending, delta)
       yield* service.finalizeCommittedUnlock(pending, delta)
-      expect((yield* statistics.snapshot).unlocked).toEqual(['first-steps'])
+      expect((yield* statistics.snapshot).unlocked).toEqual(['minecraft:story/mine_stone'])
       yield* bus.publish(probeEvent)
       const events = yield* Fiber.join(collectTwo)
       expect(events.map((event) => event._tag)).toStrictEqual(['AchievementUnlocked', 'LevelUp'])
@@ -341,7 +341,7 @@ describe('AchievementService', () => {
 
       yield* service.unlock(request)
       yield* service.unlock(request)
-      expect((yield* statistics.snapshot).unlocked).toEqual(['first-steps'])
+      expect((yield* statistics.snapshot).unlocked).toEqual(['minecraft:story/mine_stone'])
 
       yield* bus.publish(probeEvent)
       const events = yield* Fiber.join(collectTwo)

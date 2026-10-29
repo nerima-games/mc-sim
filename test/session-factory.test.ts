@@ -52,7 +52,7 @@ const legacySave = {
   },
   statistics: {
     counters: { mined: 9, jumped: 3 },
-    unlocked: ['first-night'],
+    unlocked: ['minecraft:story/root'],
   },
 }
 
@@ -197,7 +197,7 @@ describe('HeadlessHarnessSessionFactory', () => {
               },
               selectedHotbarSlot: 7,
             },
-            { counters: { mined: 9, jumped: 3 }, unlocked: ['first-night'] },
+            { counters: { mined: 9, jumped: 3 }, unlocked: ['minecraft:story/root'] },
           ])
         }),
         session.close,

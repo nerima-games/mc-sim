@@ -26,7 +26,7 @@ const save = {
   },
   statistics: {
     counters: { mined: 9, jumped: 3 },
-    unlocked: ['first-night'],
+    unlocked: ['minecraft:story/root'],
   },
 }
 
@@ -146,7 +146,7 @@ describe('v3 save migration', () => {
       })
       expect(restored[3]?.[1]).toStrictEqual({
         counters: { mined: 9, jumped: 3 },
-        unlocked: ['first-night'],
+        unlocked: ['minecraft:story/root'],
       })
       expect(session.discarded).toBe(0)
     }),

@@ -44,7 +44,7 @@ const decodeEvents = () =>
       _tag: 'AchievementUnlocked',
       tick: 4,
       player: 'player-1',
-      achievement: 'first_steps',
+      achievement: 'minecraft:story/mine_stone',
     }),
   })
 

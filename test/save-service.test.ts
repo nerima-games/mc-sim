@@ -30,7 +30,7 @@ const save: SimulationSave = {
   },
   statistics: {
     counters: { 'blocks.mined': 12.5 },
-    unlocked: ['getting_wood'],
+    unlocked: ['minecraft:story/mine_stone'],
   },
 }
 
