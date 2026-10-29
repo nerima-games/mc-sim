@@ -1,5 +1,11 @@
 # @nerima-games/mc-sim
 
+## 0.8.0
+
+### Minor Changes
+
+- Pin `@nerima-games/mc-kernel` to 0.14.0 and validate advancement IDs against its vanilla catalog at runtime, returning a typed schema error for unknown IDs.
+
 ## 0.7.1
 
 ### Patch Changes
