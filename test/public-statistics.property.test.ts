@@ -1,11 +1,12 @@
 import fc from 'fast-check'
-import { AchievementIdSchema } from '@nerima-games/mc-kernel'
+import { ACHIEVEMENT_IDS, AchievementIdSchema } from '@nerima-games/mc-kernel'
 import { Result, Schema } from 'effect'
 import { expect, it } from 'vitest'
 import * as Sim from '../src/index.js'
 import { finiteTree, hostileNumber, hostileValue, isRecord, unknownValue } from './public-property-helpers.js'
 
 const checks = { numRuns: 40, seed: 0x53544154 }
+const achievementId = fc.constantFrom(...ACHIEVEMENT_IDS).map(Schema.decodeUnknownSync(AchievementIdSchema))
 
 const hostileStatistics: fc.Arbitrary<unknown> = fc.oneof(
   unknownValue,
@@ -84,11 +85,7 @@ it('counterOf handles hostile string keys with a finite non-negative count', () 
   )
 })
 
-it('isUnlocked and unlock stay valid and idempotent for generated AchievementIds', () => {
-  const achievementId = fc.string({ minLength: 1, maxLength: 48 }).map(
-    Schema.decodeUnknownSync(AchievementIdSchema),
-  )
-
+it('isUnlocked and unlock stay valid and idempotent for generated catalog IDs', () => {
   fc.assert(
     fc.property(fc.tuple(hostileStatistics, achievementId), ([input, id]) => {
       const statistics = Sim.normaliseStatistics(input)

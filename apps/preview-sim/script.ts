@@ -581,7 +581,7 @@ const VITALS: Scenario = {
     }),
     step(760, 'an achievement is RECORDED here and DECIDED somewhere else', {
       kind: 'unlock',
-      id: 'time-to-mine',
+      id: 'minecraft:story/form_obsidian',
     }),
     step(800, 'a settings write the clamp has to move: 400 chunks is not loadable', {
       kind: 'setting',

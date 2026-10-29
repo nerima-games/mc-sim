@@ -26,6 +26,7 @@
  * the inventory has it. Fewer services when the state is shared; separate
  * services when the resets differ.
  */
+import { AchievementIdSchema } from '@nerima-games/mc-kernel'
 import { Context, Effect, Layer, Ref, Result, Schema } from 'effect'
 import * as Statistics from '../domain/statistics.js'
 
@@ -58,8 +59,8 @@ export type StatisticsServiceApi = {
    * (ts-minecraft/packages/entity/domain/achievement/achievement.ts:24-44) is a
    * rule table and stays in the rules tier.
    */
-  readonly unlock: (id: Statistics.AchievementId) => Effect.Effect<void>
-  readonly isUnlocked: (id: Statistics.AchievementId) => Effect.Effect<boolean>
+  readonly unlock: (id: Statistics.AchievementId) => Effect.Effect<void, Schema.SchemaError>
+  readonly isUnlocked: (id: Statistics.AchievementId) => Effect.Effect<boolean, Schema.SchemaError>
   /**
    * THE WORLD-LOAD PATH. Repaired by `normaliseStatistics` on the way in, with
    * no error channel, for the reason `TimeService.restore` has none.
@@ -96,8 +97,16 @@ export const makeStatisticsService = (
           : [Result.fail(next.failure), current]
       }).pipe(Effect.flatMap(Effect.fromResult)),
     counterOf: (key) => Ref.get(state).pipe(Effect.map((current) => Statistics.counterOf(current, key))),
-    unlock: (id) => Ref.update(state, (current) => Statistics.unlock(current, id)),
-    isUnlocked: (id) => Ref.get(state).pipe(Effect.map((current) => Statistics.isUnlocked(current, id))),
+    unlock: (id) =>
+      Schema.decodeUnknownEffect(AchievementIdSchema)(id).pipe(
+        Effect.flatMap((validId) => Ref.update(state, (current) => Statistics.unlock(current, validId))),
+      ),
+    isUnlocked: (id) =>
+      Schema.decodeUnknownEffect(AchievementIdSchema)(id).pipe(
+        Effect.flatMap((validId) =>
+          Ref.get(state).pipe(Effect.map((current) => Statistics.isUnlocked(current, validId))),
+        ),
+      ),
     restore: (next) => Ref.set(state, Statistics.normaliseStatistics(next)),
     reset: Ref.set(state, Statistics.EMPTY_STATISTICS),
   }))

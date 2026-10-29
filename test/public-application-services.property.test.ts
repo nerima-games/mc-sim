@@ -363,25 +363,33 @@ it('AchievementService stageUnlock and unlock reject malformed requests as typed
     Effect.gen(function* () { return yield* App.AchievementService }).pipe(Effect.provide(layer)),
   )
 
-  await fc.assert(
-    fc.asyncProperty(fc.tuple(hostileScalar, hostileScalar), async ([player, tick]) => {
-      const request = { achievement: null, player, tick }
-      const staged = await Effect.runPromise(Effect.result(invokeEffect(service.stageUnlock, [request])))
-      assertEffectOutcome(
-        'AchievementService.stageUnlock',
-        () => staged,
-        App.AchievementUnlockStageSchema,
-        App.AchievementUnlockStageErrorSchema,
-      )
+  const unknownAchievementId = fc.oneof(
+    fc.constant('minecraft:story/obtain_obsidian'),
+    fc.string({ maxLength: 48 }).map((value) => `unknown:${value}`),
+  )
 
-      const unlocked = await Effect.runPromise(Effect.result(invokeEffect(service.unlock, [request])))
-      assertEffectOutcome(
-        'AchievementService.unlock',
-        () => unlocked,
-        Schema.Undefined,
-        App.AchievementServiceErrorSchema,
-      )
-    }),
+  await fc.assert(
+    fc.asyncProperty(
+      fc.tuple(unknownAchievementId, hostileScalar, hostileScalar),
+      async ([achievement, player, tick]) => {
+        const request = { achievement, player, tick }
+        const staged = await Effect.runPromise(Effect.result(invokeEffect(service.stageUnlock, [request])))
+        assertEffectOutcome(
+          'AchievementService.stageUnlock',
+          () => staged,
+          App.AchievementUnlockStageSchema,
+          App.AchievementUnlockStageErrorSchema,
+        )
+
+        const unlocked = await Effect.runPromise(Effect.result(invokeEffect(service.unlock, [request])))
+        assertEffectOutcome(
+          'AchievementService.unlock',
+          () => unlocked,
+          Schema.Undefined,
+          App.AchievementServiceErrorSchema,
+        )
+      },
+    ),
     checks,
   )
 })

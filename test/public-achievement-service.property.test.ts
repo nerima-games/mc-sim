@@ -24,7 +24,7 @@ import {
   invokeEffect,
 } from './public-property-helpers'
 
-const achievementId = Schema.decodeUnknownSync(AchievementIdSchema)('first-steps')
+const achievementId = Schema.decodeUnknownSync(AchievementIdSchema)('minecraft:story/mine_stone')
 const playerId = Schema.decodeUnknownSync(EntityIdSchema)('player-1')
 const simulationTick = Schema.decodeUnknownSync(SimulationTickSchema)(12)
 const worldId = Schema.decodeUnknownSync(WorldIdSchema)('achievement-property-world')

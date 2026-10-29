@@ -534,7 +534,7 @@ const legacySaveFixture = {
   },
   statistics: {
     counters: { mined: 9, jumped: 3 },
-    unlocked: ['first-night'],
+    unlocked: ['minecraft:story/root'],
   },
 }
 

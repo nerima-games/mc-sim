@@ -2,6 +2,7 @@ import fc from 'fast-check'
 import { Effect, Layer, Ref, Result, Schema } from 'effect'
 import { expect, it } from 'vitest'
 import {
+  ACHIEVEMENT_IDS,
   AchievementIdSchema,
   ChunkAxis,
   chunkCoord,
@@ -26,6 +27,7 @@ import {
 const hostileScalar = hostileScalarInput({ numbers: hostileNumber, maxStringLength: 24 })
 
 const checks = { numRuns: 40, seed: 0x4d435349 }
+const achievementId = fc.constantFrom(...ACHIEVEMENT_IDS).map(Schema.decodeUnknownSync(AchievementIdSchema))
 const world = Schema.decodeUnknownSync(WorldIdSchema)('public-application-state-property')
 const hostileDimension: fc.Arbitrary<unknown> = fc.oneof(hostileScalar, fc.constant('moon'), fc.constantFrom(...DIMENSIONS))
 
@@ -437,11 +439,10 @@ it('StatisticsService unlock and restore repair hostile saved counters and achie
     fc.asyncProperty(
       fc.dictionary(fc.string({ maxLength: 16 }), hostileNumber, { maxKeys: 5 }),
       fc.array(hostileScalar, { maxLength: 5 }),
-      fc.integer({ min: 0, max: 10_000 }),
-      async (counters, unlocked, suffix) => {
+      achievementId,
+      async (counters, unlocked, achievement) => {
         const service = await Effect.runPromise(App.makeStatisticsService())
         await Effect.runPromise(invokeEffect(service.restore, [{ counters, unlocked }]))
-        const achievement = Schema.decodeUnknownSync(AchievementIdSchema)(`property-${suffix}`)
         await Effect.runPromise(service.unlock(achievement))
         await Effect.runPromise(service.unlock(achievement))
         const snapshot = await Effect.runPromise(service.snapshot)
@@ -449,6 +450,39 @@ it('StatisticsService unlock and restore repair hostile saved counters and achie
         expect(snapshot.unlocked.filter((id) => id === achievement)).toHaveLength(1)
       },
     ),
+    checks,
+  )
+})
+
+it('StatisticsService returns typed failures for achievement IDs outside the catalog', async () => {
+  const unknownAchievementId = fc.oneof(
+    fc.constant('minecraft:story/obtain_obsidian'),
+    fc.string({ maxLength: 48 }).map((value) => `unknown:${value}`),
+  )
+
+  await fc.assert(
+    fc.asyncProperty(unknownAchievementId, async (id) => {
+      const service = await Effect.runPromise(App.makeStatisticsService())
+      const before = await Effect.runPromise(service.snapshot)
+      const unlocked = await Effect.runPromise(Effect.result(invokeEffect(service.unlock, [id])))
+      assertEffectOutcome(
+        'StatisticsService.unlock',
+        () => unlocked,
+        Schema.Undefined,
+        App.SchemaErrorSchema,
+      )
+      expect(Result.isFailure(unlocked)).toBe(true)
+      expect(await Effect.runPromise(service.snapshot)).toStrictEqual(before)
+
+      const read = await Effect.runPromise(Effect.result(invokeEffect(service.isUnlocked, [id])))
+      assertEffectOutcome(
+        'StatisticsService.isUnlocked',
+        () => read,
+        Schema.Boolean,
+        App.SchemaErrorSchema,
+      )
+      expect(Result.isFailure(read)).toBe(true)
+    }),
     checks,
   )
 })

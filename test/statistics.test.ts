@@ -94,10 +94,10 @@ describe('achievements are recorded, never decided', () => {
       // An achievement stage re-evaluating a registry every frame would append
       // once per frame otherwise, and the first symptom would be a save file
       // growing without bound rather than a wrong screen.
-      const once = unlock(EMPTY_STATISTICS, achievementId('time-to-mine'))
-      const twice = unlock(once, achievementId('time-to-mine'))
+      const once = unlock(EMPTY_STATISTICS, achievementId('minecraft:story/mine_stone'))
+      const twice = unlock(once, achievementId('minecraft:story/mine_stone'))
 
-      expect(twice.unlocked).toEqual(['time-to-mine'])
+      expect(twice.unlocked).toEqual(['minecraft:story/mine_stone'])
       expect(twice).toBe(once)
     }),
   )
@@ -105,13 +105,20 @@ describe('achievements are recorded, never decided', () => {
   it.effect('unlock order is kept, because a toast needs to know what was just earned', () =>
     Effect.sync(() => {
       const earned = unlock(
-        unlock(unlock(EMPTY_STATISTICS, achievementId('a')), achievementId('b')),
-        achievementId('c'),
+        unlock(
+          unlock(EMPTY_STATISTICS, achievementId('minecraft:story/mine_stone')),
+          achievementId('minecraft:story/obtain_armor'),
+        ),
+        achievementId('minecraft:story/form_obsidian'),
       )
 
-      expect(earned.unlocked).toEqual(['a', 'b', 'c'])
-      expect(isUnlocked(earned, achievementId('b'))).toBe(true)
-      expect(isUnlocked(earned, achievementId('d'))).toBe(false)
+      expect(earned.unlocked).toEqual([
+        'minecraft:story/mine_stone',
+        'minecraft:story/obtain_armor',
+        'minecraft:story/form_obsidian',
+      ])
+      expect(isUnlocked(earned, achievementId('minecraft:story/obtain_armor'))).toBe(true)
+      expect(isUnlocked(earned, achievementId('minecraft:story/mine_diamond'))).toBe(false)
     }),
   )
 
@@ -162,18 +169,31 @@ describe('normaliseStatistics is total over what a save can contain', () => {
       // must validate them before they enter the branded application model.
       const repaired = normaliseStatistics({
         counters: {},
-        unlocked: ['', null as unknown as string, 'time-to-mine', 7 as unknown as string],
+        unlocked: [
+          '',
+          null as unknown as string,
+          'minecraft:story/obtain_obsidian',
+          'minecraft:story/form_obsidian',
+          7 as unknown as string,
+        ],
       })
 
-      expect(repaired.unlocked).toEqual(['time-to-mine'])
+      expect(repaired.unlocked).toEqual(['minecraft:story/form_obsidian'])
     }),
   )
 
   it.effect('duplicates that a bad writer produced are collapsed', () =>
     Effect.sync(() => {
-      const repaired = normaliseStatistics({ counters: {}, unlocked: ['a', 'b', 'a'] })
+      const repaired = normaliseStatistics({
+        counters: {},
+        unlocked: [
+          'minecraft:story/form_obsidian',
+          'minecraft:story/obtain_armor',
+          'minecraft:story/form_obsidian',
+        ],
+      })
 
-      expect(repaired.unlocked).toEqual(['a', 'b'])
+      expect(repaired.unlocked).toEqual(['minecraft:story/form_obsidian', 'minecraft:story/obtain_armor'])
     }),
   )
 
@@ -223,11 +243,11 @@ describe('StatisticsService', () => {
 
       yield* statistics.record('blocks.mined')
       yield* statistics.record('blocks.mined', 4)
-      yield* statistics.unlock(achievementId('time-to-mine'))
+      yield* statistics.unlock(achievementId('minecraft:story/mine_stone'))
 
       expect(yield* statistics.counterOf('blocks.mined')).toBe(5)
-      expect(yield* statistics.isUnlocked(achievementId('time-to-mine'))).toBe(true)
-      expect(yield* statistics.isUnlocked(achievementId('acquire-hardware'))).toBe(false)
+      expect(yield* statistics.isUnlocked(achievementId('minecraft:story/mine_stone'))).toBe(true)
+      expect(yield* statistics.isUnlocked(achievementId('minecraft:story/obtain_armor'))).toBe(false)
     }),
   )
 
@@ -253,11 +273,11 @@ describe('StatisticsService', () => {
       const statistics = yield* makeStatisticsService()
 
       yield* Effect.all(
-        Array.from({ length: 100 }, () => statistics.unlock(achievementId('time-to-mine'))),
+        Array.from({ length: 100 }, () => statistics.unlock(achievementId('minecraft:story/mine_stone'))),
         { concurrency: 'unbounded' },
       )
 
-      expect((yield* statistics.snapshot).unlocked).toEqual(['time-to-mine'])
+      expect((yield* statistics.snapshot).unlocked).toEqual(['minecraft:story/mine_stone'])
     }),
   )
 
@@ -282,14 +302,17 @@ describe('StatisticsService', () => {
       const statistics = yield* makeStatisticsService()
 
       yield* statistics.record('deaths', 3)
-      yield* statistics.restore({ counters: { 'blocks.mined': 12 }, unlocked: ['a', 'a'] })
+      yield* statistics.restore({
+        counters: { 'blocks.mined': 12 },
+        unlocked: ['minecraft:story/form_obsidian', 'minecraft:story/form_obsidian'],
+      })
 
       const restored = yield* statistics.snapshot
 
       expect(isValidStatistics(restored)).toBe(true)
       // restore REPLACES the record rather than merging into it.
       expect(restored.counters).toEqual({ 'blocks.mined': 12 })
-      expect(restored.unlocked).toEqual(['a'])
+      expect(restored.unlocked).toEqual(['minecraft:story/form_obsidian'])
     }),
   )
 
@@ -299,13 +322,13 @@ describe('StatisticsService', () => {
         Effect.provide(
           StatisticsServiceLayer({
             counters: { mined: Number.NaN },
-            unlocked: ['a', 'a'],
+            unlocked: ['minecraft:story/form_obsidian', 'minecraft:story/form_obsidian'],
           }),
         ),
       )
 
       expect(isValidStatistics(restored)).toBe(true)
-      expect(restored.unlocked).toEqual(['a'])
+      expect(restored.unlocked).toEqual(['minecraft:story/form_obsidian'])
     }),
   )
 
@@ -314,7 +337,7 @@ describe('StatisticsService', () => {
       const statistics = yield* makeStatisticsService()
 
       yield* statistics.record('deaths', 12)
-      yield* statistics.unlock(achievementId('time-to-mine'))
+      yield* statistics.unlock(achievementId('minecraft:story/mine_stone'))
       yield* statistics.reset
 
       expect(yield* statistics.snapshot).toEqual(EMPTY_STATISTICS)
