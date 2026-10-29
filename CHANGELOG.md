@@ -1,5 +1,11 @@
 # @nerima-games/mc-sim
 
+## 0.9.0
+
+### Minor Changes
+
+- Pin mc-physics 0.5.0, mc-save 0.7.0, and mc-worldgen 0.8.0.
+
 ## 0.8.0
 
 ### Minor Changes
