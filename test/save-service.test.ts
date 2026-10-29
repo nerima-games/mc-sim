@@ -1,8 +1,10 @@
+import fc from 'fast-check'
 import { describe, expect, it } from '@effect/vitest'
 import { Effect, Option, Result, Schema } from 'effect'
 import { itemComponentPatch, itemStack, StackCount } from '@nerima-games/mc-kernel'
 import {
   InMemoryStorageLayer,
+  SaveDecodeError,
   SaveFormatName,
   SaveFormatVersion,
   saveEnvelope,
@@ -40,6 +42,34 @@ const formatVersion2 = Result.getOrThrow(SaveFormatVersion.result(2))
 const formatVersion3 = Result.getOrThrow(SaveFormatVersion.result(3))
 
 describe('simulation save service', () => {
+  it('saves only selected hotbar slots within the inclusive nine-slot boundary', async () => {
+    await fc.assert(
+      fc.asyncProperty(fc.integer({ min: -1, max: 9 }), async (selectedHotbarSlot) => {
+        const key = simulationSaveKey(`world:hotbar-boundary:${selectedHotbarSlot}`)
+        const candidate = {
+          ...save,
+          player: { ...save.player, selectedHotbarSlot },
+        }
+        const result = await Effect.runPromise(Effect.gen(function* () {
+          const storagePort = yield* StoragePort
+          const outcome = yield* Effect.result(saveSimulation(key, candidate))
+          const stored = yield* storagePort.get(key)
+          return { outcome, stored }
+        }).pipe(Effect.provide(storage)))
+
+        if (selectedHotbarSlot >= 0 && selectedHotbarSlot < 9) {
+          expect(Result.isSuccess(result.outcome)).toBe(true)
+          expect(Option.isSome(result.stored)).toBe(true)
+        } else {
+          expect(Result.isFailure(result.outcome)).toBe(true)
+          if (Result.isFailure(result.outcome)) expect(result.outcome.failure).toBeInstanceOf(SaveDecodeError)
+          expect(Option.isNone(result.stored)).toBe(true)
+        }
+      }),
+      { numRuns: 100, examples: [[0], [8], [-1], [9]] },
+    )
+  })
+
   it.effect('round-trips kernel items and worldgen dimensions through mc-save', () =>
     Effect.gen(function* () {
       const key = simulationSaveKey('world:primary')
