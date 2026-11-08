@@ -50,7 +50,7 @@ import { StageId } from "@nerima-games/mc-kernel"
  * Why exactly one
  * ---------------------------------------------------------------------------
  *
- * Three things in this repository plausibly happen "every frame". Only one of
+ * Three things in this repository plausibly happen continuously. Only one of
  * them is a stage:
  *
  * - `application/game-loop.ts` — NOT a stage. It is the thing that CALLS the
@@ -64,16 +64,16 @@ import { StageId } from "@nerima-games/mc-kernel"
  *   DURATION rather than on a frame: `spaced` measures from the end of the
  *   previous save so a backgrounded tab cannot produce a catch-up stampede, and
  *   the first save is due at t = interval rather than on the fork. Making it a
- *   stage would save once per frame, which is not a smaller version of the same
+ *   stage would save once per simulation tick, which is not a smaller version of the same
  *   thing but a different one.
  *
- * - advancing the world by one frame — a stage, and the one below. This is the
- *   work that must happen exactly once per frame, and anything that must happen
- *   exactly once per frame is a stage by definition.
+ * - advancing the world by one simulation tick — a stage, and the one below.
+ *   This is the work that must happen exactly once per tick, and anything that
+ *   must happen exactly once per tick is a stage by definition.
  */
 export const SIM_STAGE_IDS: Readonly<{ physics: StageId }> = {
   /**
-   * Advance the authoritative simulation by one frame.
+   * Advance the authoritative simulation by one tick.
    *
    * The id is not a choice: four repositories already name `sim:physics` in an
    * `after` edge, so this is the id that has to exist and this is the stage

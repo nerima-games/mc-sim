@@ -88,14 +88,10 @@ import {
   type TimeOverflow,
 } from '@nerima-games/mc-kernel'
 import {
-  advance as advanceFixedStep,
-  initialFixedStepAccumulator,
-  pause as pauseFixedStep,
-  resume as resumeFixedStep,
-  type FixedStepAccumulator,
   type FixedStepAdvance,
   type FixedStepFailure,
 } from '../domain/fixed-step.js'
+import { makeTickService, type TickServiceApi } from './tick-service.js'
 
 /**
  * Per-frame work.
@@ -199,7 +195,7 @@ type Generation = {
   readonly frames: Ref.Ref<number>
   readonly dropped: Ref.Ref<number>
   readonly lostSecs: Ref.Ref<number>
-  readonly fixedStep: Ref.Ref<FixedStepAccumulator>
+  readonly tickService: TickServiceApi
 }
 
 const countersOf = (generation: Generation): Effect.Effect<Counters> =>
@@ -314,9 +310,7 @@ export const makeGameLoop = (initialTick: SimulationTick = SimulationTick(0)): E
         const dropped = yield* Ref.make(0)
         const lostSecs = yield* Ref.make(0)
         const lastInstant = yield* Ref.make<MonotonicTimeSecs | undefined>(undefined)
-        const fixedStep = yield* Ref.make(
-          initialFixedStepAccumulator(validInitialTick.success, tickDuration),
-        )
+        const tickService = yield* makeTickService(validInitialTick.success)
 
         const processOneFrame = Queue.take(queue).pipe(
           Effect.flatMap((now) =>
@@ -338,40 +332,34 @@ export const makeGameLoop = (initialTick: SimulationTick = SimulationTick(0)): E
               : Ref.update(lostSecs, (total) => total + frame.lostSecs),
           ),
           Effect.flatMap((frame) =>
-            Ref.get(fixedStep).pipe(
-              Effect.flatMap((current) => {
-                const advanced = advanceFixedStep(current, frame.dt)
-                return Result.match(advanced, {
-                  onFailure: (error) =>
-                    error._tag === 'TimeOverflow'
-                      ? Ref.set(timeOverflowRef, Option.some(error))
-                      : Effect.die(error),
-                  onSuccess: (next) => Effect.andThen(
-                    Ref.set(fixedStep, next.state),
+            Effect.result(tickService.advanceFrame(frame.dt)).pipe(
+              Effect.flatMap((advanced) => Result.match(advanced, {
+                onFailure: (error) =>
+                  error._tag === 'TimeOverflow'
+                    ? Ref.set(timeOverflowRef, Option.some(error))
+                    : Effect.die(error),
+                onSuccess: (next) => Effect.andThen(
+                  Ref.set(simulationTickRef, next.state.tick),
+                  Effect.andThen(
+                    Ref.set(interpolationFractionRef, next.interpolationFraction),
                     Effect.andThen(
-                      Ref.set(simulationTickRef, next.state.tick),
-                      Effect.andThen(
-                        Ref.set(interpolationFractionRef, next.interpolationFraction),
-                        Effect.andThen(
-                          Ref.set(overloadedRef, next.overloaded),
-                          runPhysicsSubsteps(
-                            handler,
-                            frames,
-                            Number(next.state.tick) - Number(next.ticks) + 1,
-                            Number(next.ticks) * PHYSICS_SUBSTEPS_PER_TICK,
-                          ),
-                        ),
+                      Ref.set(overloadedRef, next.overloaded),
+                      runPhysicsSubsteps(
+                        handler,
+                        frames,
+                        Number(next.state.tick) - Number(next.ticks) + 1,
+                        Number(next.ticks) * PHYSICS_SUBSTEPS_PER_TICK,
                       ),
                     ),
                   ),
-                })
-              }),
+                ),
+              })),
             ),
           ),
           Effect.forever,
         )
 
-        yield* Ref.set(generationRef, Option.some({ queue, frames, dropped, lostSecs, fixedStep }))
+        yield* Ref.set(generationRef, Option.some({ queue, frames, dropped, lostSecs, tickService }))
         yield* Ref.set(runningRef, true)
         const fiber = yield* Effect.forkDetach(processOneFrame)
         yield* Ref.set(fiberRef, Option.some(fiber))
@@ -391,25 +379,11 @@ export const makeGameLoop = (initialTick: SimulationTick = SimulationTick(0)): E
         Effect.flatMap(
           Option.match({
             onNone: () => Effect.fail(TIME_OVERFLOW),
-            onSome: (generation) =>
-              Ref.get(generation.fixedStep).pipe(
-                Effect.flatMap((current) =>
-                  Result.match(advanceFixedStep(current, delta), {
-                    onFailure: (error) => Effect.fail(error),
-                    onSuccess: (next) =>
-                      Effect.andThen(
-                        Ref.set(generation.fixedStep, next.state),
-                        Effect.andThen(
-                          Ref.set(simulationTickRef, next.state.tick),
-                          Effect.andThen(
-                            Ref.set(interpolationFractionRef, next.interpolationFraction),
-                            Ref.set(overloadedRef, next.overloaded).pipe(Effect.as(next)),
-                          ),
-                        ),
-                      ),
-                  }),
-                ),
-              ),
+            onSome: (generation) => generation.tickService.advanceFrame(delta).pipe(
+              Effect.tap((next) => Ref.set(simulationTickRef, next.state.tick)),
+              Effect.tap((next) => Ref.set(interpolationFractionRef, next.interpolationFraction)),
+              Effect.tap((next) => Ref.set(overloadedRef, next.overloaded)),
+            ),
           }),
         ),
       )
@@ -419,12 +393,8 @@ export const makeGameLoop = (initialTick: SimulationTick = SimulationTick(0)): E
 
     return {
       start,
-      pause: withGeneration(Effect.void, (generation) =>
-        Ref.update(generation.fixedStep, pauseFixedStep),
-      ),
-      resume: withGeneration(Effect.void, (generation) =>
-        Ref.update(generation.fixedStep, resumeFixedStep),
-      ),
+      pause: withGeneration(Effect.void, (generation) => generation.tickService.pause),
+      resume: withGeneration(Effect.void, (generation) => generation.tickService.resume),
       submitFrame: (at) =>
         withGeneration<void>(Effect.void, (generation) =>
           Effect.flatMap(Queue.offer(generation.queue, at), (accepted) =>

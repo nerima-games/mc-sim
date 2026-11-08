@@ -147,11 +147,17 @@ export const advance = (
 
     const overloaded = available > maximum
     const bounded = Math.min(available, maximum)
-    const ticks = yield* NonNegativeTickCount.result(
-      Math.min(maxCatchUpTicks, Math.floor(bounded / fixedIntervalSecs)),
-    )
+    const wholeTicks = Math.floor(bounded / fixedIntervalSecs)
+    const remainderBeforeBoundary = bounded - wholeTicks * fixedIntervalSecs
+    // Floating-point deltas can leave an exact tick boundary a few ULPs short.
+    const boundaryTolerance = Number.EPSILON * Math.max(Math.abs(bounded), Math.abs(fixedIntervalSecs)) * 4
+    const roundedTicks = remainderBeforeBoundary > 0 &&
+      fixedIntervalSecs - remainderBeforeBoundary <= boundaryTolerance
+      ? wholeTicks + 1
+      : wholeTicks
+    const ticks = yield* NonNegativeTickCount.result(Math.min(maxCatchUpTicks, roundedTicks))
     const nextTick = yield* addTick(tick, ticks)
-    const remainder = yield* FixedDurationSecs.result(bounded - ticks * fixedIntervalSecs)
+    const remainder = yield* FixedDurationSecs.result(Math.max(0, bounded - ticks * fixedIntervalSecs))
     const fraction = yield* InterpolationFraction.result(remainder / fixedIntervalSecs)
     const nextState: FixedStepAccumulator = { ...state, accumulator: remainder, tick: nextTick }
 

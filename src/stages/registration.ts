@@ -20,7 +20,7 @@
  *
  * `stage-ids.ts` argues which of this repository's recurring work is a stage:
  * the game loop is the caller of stages, autosave is a duration-driven daemon,
- * and advancing the world by one frame is the stage. Concretely `sim:physics`
+ * and advancing the world by one simulation tick is the stage. Concretely `sim:physics`
  * does two things, and BOTH are writes through a service that already owns the
  * state rather than into anything this file holds:
  *
@@ -37,17 +37,17 @@
  *        // file. This stage held a second copy of that state until it was
  *        // deleted.
  *
- *    So the clock has to be advanced by mc-sim, exactly once per frame, and the
+ *    So the clock has to be advanced by mc-sim, exactly once per simulation tick, and the
  *    only question left is WHICH mc-sim stage. There is one, and putting the
  *    advance in it is also the placement that is correct by construction — see
  *    the next section, which is the real argument and is not a short one.
  *
  * 2. THE PLAYER'S RESOLVED POSE. Written through `PlayerService.moveTo`.
- *    A one-frame resolved-position mailbox remains the highest-priority
- *    frame-local override. When physics is configured, this stage instead samples
+ *    A resolved-position mailbox remains the highest-priority tick override.
+ *    When physics is configured, this stage instead samples
  *    the current player pose, steps a body through mc-physics and writes the
  *    resolved feet position back through the owning service. The body position
- *    is intentionally reconstructed every frame rather than copied into this
+ *    is intentionally reconstructed every tick rather than copied into this
  *    module's state, so external teleports and restores become the next step's
  *    baseline.
  *
@@ -211,7 +211,7 @@ export type LandingImpact = {
 }
 
 /**
- * Frame-local inputs and integration results for mc-sim's stage.
+ * Inputs and integration results for mc-sim's tick stage.
  *
  * Note what is NOT here, because the absence is the design: no position, no
  * pose, no tick counter, no accumulated time, no frame count. `PlayerService`
@@ -222,11 +222,11 @@ export type LandingImpact = {
  */
 export type SimFrameState = {
   /**
-   * A frame-local override for the resolved feet position for this frame.
+   * An override for the resolved feet position at the next simulation tick.
    *
    * `Option`, and taken with `getAndSet(none)` rather than read with `get`,
-   * because an override belongs to the frame that produced it. A plain
-   * value would be re-applied on every later frame, so a stalled integrator
+   * because an override belongs to the tick that consumes it. A plain
+   * value would be re-applied on every later tick, so a stalled integrator
    * producer would not read as "no override" but would actively overwrite
    * anything else that had legitimately moved them — a teleport, or a world
    * load's `PlayerService.restore`. Draining it is what makes "the integrator
@@ -324,26 +324,22 @@ export const simStages = (
     // server — is still a correct simulation.
     run: (dt) =>
       Effect.gen(function* () {
-        // Landing impact is a one-frame signal. Consumers must read it after
-        // this stage and before the next frame starts.
+        // Landing impact is a one-tick signal. Consumers must read it after
+        // this stage and before the next tick starts.
         yield* Ref.set(state.landingImpact, Option.none<LandingImpact>())
 
-        // The world clock, advanced exactly once per frame. `dt` is supplied by
-        // the frame, never read from a clock: `application/game-loop.ts` has
-        // already clamped it through `@nerima-games/mc-kernel`, so a tab that was
-        // backgrounded for thirty seconds delivers 0.05 here and the simulation
-        // runs slow rather than teleporting the player through a collider.
+        // The world clock advances once per simulation tick. The tick runner
+        // supplies its fixed duration; this stage never reads a clock.
         //
-        // A zero `dt` is legal (kernel's brand admits it, and a frame can be
-        // scheduled twice inside one clock tick), and `Time.advance` handles it
-        // by advancing nothing. Nothing here divides by `dt`.
+        // A zero `dt` is legal and `Time.advance` handles it by advancing
+        // nothing. Nothing here divides by `dt`.
         // `StageRegistration.run` has no typed error channel. Keep the time
         // service's validation failure visible as a defect at this integration
         // boundary; direct callers can still handle the typed BrandError.
         yield* Effect.orDie(time.advance(dt))
         yield* crops.advance(dt)
 
-        // Frame-local overrides win for exactly one frame and skip physics.
+        // Resolved-position overrides win for one tick and skip physics.
         // Draining the mailbox prevents a stale position from being re-applied.
         const resolved = yield* Ref.getAndSet(state.resolvedFeetPosition, Option.none<Position>())
         if (Option.isSome(resolved)) {
@@ -584,7 +580,7 @@ export const makeSimStagesForPreview: Effect.Effect<
 /**
  * Physics-enabled stages together with the input state a production host owns.
  * The host writes movement and jump intent; player position remains owned by
- * `PlayerService` and is sampled afresh by the stage on every frame.
+ * `PlayerService` and is sampled afresh by the stage on every tick.
  */
 export const makeControllableSimStagesWithPhysics = (
   config: SimPhysicsConfig,
