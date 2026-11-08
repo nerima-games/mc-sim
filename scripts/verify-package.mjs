@@ -406,6 +406,7 @@ const expectedExports = [
   'ReplicatedOwnerUnknown',
   'ReplicatedPlayerPoseSchema',
   'RosterRepairSchema',
+  'RunStagesForTicksFailureSchema',
   'SIMULATION_SAVE_FORMAT',
   'SIMULATION_SAVE_SCHEMA',
   'SIM_STAGE_IDS',
@@ -736,6 +737,7 @@ const expectedExports = [
   'makeSimStagesForPreview',
   'makeSimStagesWithPhysics',
   'makeStatisticsService',
+  'makeTickService',
   'makeTimeService',
   'makeTntService',
   'makeVehicleService',
@@ -805,6 +807,7 @@ const expectedExports = [
   'respawn',
   'restoreWither',
   'resumeFixedStep',
+  'runStagesForTicks',
   'saveCoordinatorRequestSaveErrorSchema',
   'saveSimulation',
   'selectFurnaceTransfer',
@@ -937,7 +940,12 @@ try {
     join(consumerDirectory, 'consumer.ts'),
     `import { Effect } from 'effect'
 import { DeltaTimeSecs } from '@nerima-games/mc-kernel'
-import { advanceFixedStep, initialFixedStepAccumulator } from '@nerima-games/mc-sim'
+import {
+  advanceFixedStep,
+  initialFixedStepAccumulator,
+  makeTickService,
+  runStagesForTicks,
+} from '@nerima-games/mc-sim'
 import {
   anyOf,
   buildRecipeIndexes,
@@ -991,6 +999,10 @@ import type {
 } from '@nerima-games/mc-sim'
 
 const frame = advanceFixedStep(initialFixedStepAccumulator(), DeltaTimeSecs(0.01))
+const tickService = await Effect.runPromise(makeTickService())
+const tickFrame = await Effect.runPromise(tickService.advanceFrame(DeltaTimeSecs(0.05)))
+const tickStages = runStagesForTicks([], tickFrame.ticks)
+void tickStages
 const readHash = (harness: HeadlessHarnessApi): HeadlessHarnessApi['stateHash'] => harness.stateHash
 const closeSession = (session: HeadlessHarnessSession): Effect.Effect<void> => session.close
 const saveSliceCodec = (slice: HeadlessSaveSlice): HeadlessSaveSlice['schema'] => slice.schema

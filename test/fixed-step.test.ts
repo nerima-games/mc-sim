@@ -72,6 +72,27 @@ describe('fixed-step accumulator', () => {
     }),
   )
 
+  it.effect('accepts legacy accumulator states without integer units', () =>
+    Effect.sync(() => {
+      const initial = initialFixedStepAccumulator()
+      const legacyState = {
+        accumulator: duration(0.025),
+        tick: initial.tick,
+        tickDuration: initial.tickDuration,
+        maxCatchUpTicks: initial.maxCatchUpTicks,
+        paused: initial.paused,
+      }
+      const result = advance(legacyState, dt(0.025))
+
+      expect(Result.isSuccess(result)).toBe(true)
+      if (Result.isSuccess(result)) {
+        expect(result.success.ticks).toBe(1)
+        expect(result.success.state.accumulator).toBe(duration(0))
+        expect(result.success.state.accumulatorUnits).toBe(0)
+      }
+    }),
+  )
+
   it.effect('calculates the interpolation fraction against a custom fixed duration', () =>
     Effect.sync(() => {
       const state = initialFixedStepAccumulator(SimulationTick(0), duration(0.1))
@@ -208,6 +229,14 @@ describe('fixed-step accumulator', () => {
           state: {
             ...initial,
             tickDuration: Number.MAX_VALUE,
+            maxCatchUpTicks: Number.MAX_SAFE_INTEGER,
+          },
+          expectedTag: 'InvalidFixedStepConfiguration',
+        },
+        {
+          state: {
+            ...initial,
+            tickDuration: duration(1),
             maxCatchUpTicks: Number.MAX_SAFE_INTEGER,
           },
           expectedTag: 'InvalidFixedStepConfiguration',

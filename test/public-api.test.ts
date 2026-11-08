@@ -39,7 +39,7 @@ import {
 import * as PublicApi from '../src/index.js'
 import type * as PublicApiTypes from '../src/index.js'
 import {
-  fixedStepMainParityExpected,
+  fixedStepIntegerUnitsExpected,
   fixedStepMainParityInput,
   fixedStepParityCases,
 } from './fixtures/effect4-parity/fixed-step.js'
@@ -546,7 +546,7 @@ it.effect('preserves fixed-step outputs for Effect 4 parity inputs', () =>
   }),
 )
 
-it.effect('matches fixed-step outputs recorded from the pre-migration main revision', () =>
+it.effect('matches fixed-step integer-unit outputs for the original main inputs', () =>
   Effect.sync(() => {
     let state = initialFixedStepAccumulator(SimulationTick(fixedStepMainParityInput.initialTick))
     const sequence = fixedStepMainParityInput.deltas.map((delta) => {
@@ -570,7 +570,7 @@ it.effect('matches fixed-step outputs recorded from the pre-migration main revis
       ),
     )
 
-    expect({ sequence, pausedAdvance, resumeAdvance, overflow }).toEqual(fixedStepMainParityExpected)
+    expect({ sequence, pausedAdvance, resumeAdvance, overflow }).toEqual(fixedStepIntegerUnitsExpected)
   }),
 )
 

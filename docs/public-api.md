@@ -294,7 +294,7 @@ type GameLoopApi = {
   readonly interpolationFraction: Effect.Effect<InterpolationFraction>
   readonly overloaded: Effect.Effect<boolean>
   readonly timeOverflow: Effect.Effect<Option<TimeOverflow>>
-  readonly advanceFrame: (delta: DeltaTimeSecs) => Effect.Effect<FixedStepAdvance, TimeOverflow>
+  readonly advanceFrame: (delta: DeltaTimeSecs) => Effect.Effect<FixedStepAdvance, FixedStepFailure>
 }
 ```
 
@@ -305,6 +305,30 @@ type GameLoopApi = {
 tick は kernel の `SimulationTick` で管理し、余りから `interpolationFraction` を計算する。pause 中は accumulator
 と tick を進めず、resume は残余を 0 に戻して spiral of death を作らない。既定の catch-up
 上限 5 は 0.05 秒の tick を 0.25 秒まで処理する値である（physics 呼び出しは最大10回）。
+
+### Tick service and ordered stage execution
+
+`makeTickService` owns a fixed-step accumulator and exposes the same 20 TPS, five-tick cap used by `GameLoop`.
+`advanceFrame(delta)` returns `FixedStepAdvance`, including the number of ticks and the interpolation fraction.
+Invalid deltas return the existing typed `FixedStepFailure` values and leave the accumulator unchanged.
+`pause` holds the current remainder; `resume` clears it.
+Elapsed time accumulates in integer units of 1/60,000,000 second; non-negative deltas are truncated to avoid
+crediting time that has not elapsed. The seconds-valued `accumulator` remains available, and callers may omit
+the optional `accumulatorUnits` field when constructing legacy accumulator states.
+
+`runStagesForTicks` runs an already ordered `StageRegistration` list once per tick, in list order, using
+`DEFAULT_TICK_DURATION` for each call. It returns a typed failure for an invalid count or a count above
+`MAX_CATCH_UP_TICKS`. A zero count runs no stages. The kernel `StageRegistration` shape remains unchanged.
+
+```ts
+const tickService = yield* makeTickService()
+const frame = yield* tickService.advanceFrame(delta)
+yield* runStagesForTicks(composed.frameStages, frame.ticks)
+render(frame.interpolationFraction)
+```
+
+The tick-aware host passes the ordered registrations from composition to this helper, then renders with the
+returned fraction. The compose `runFrame` implementation does not change.
 
 ### 3-1. 捨てたものは数える
 

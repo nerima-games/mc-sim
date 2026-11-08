@@ -7,7 +7,7 @@
  *
  *   - plan.md §2.3-1 / §2.3-3 — WHAT is declared: one id, and no `after` edge at
  *     all. `stages/stage-ids.ts` argues why the empty edge set is a decision.
- *   - the stage does its per-frame work THROUGH `TimeService` and
+ *   - the stage does its per-tick work THROUGH `TimeService` and
  *     `PlayerService` rather than keeping a copy of what they own. That is the
  *     failure mx-gameplay described when it deleted its own time-of-day state
  *     (`mx-gameplay/stages/registration.ts:276-284`), and a stage is the easiest
@@ -36,11 +36,16 @@ import type { PlayerStorageFailure } from '../src/domain/player-storage'
 import type { RecipeFailure } from '../src/domain/recipe'
 import { PlayerService, PlayerServiceLayer, type PlayerServiceInputError } from '../src/application/player-service'
 import { TimeService, TimeServiceLayer } from '../src/application/time-service'
+import { DEFAULT_TICK_DURATION } from '../src/domain/fixed-step'
+import type { CropLocation } from '../src/domain/crop'
+import { runStagesForTicks } from '../src/stages/tick-registration'
+import { BlockAxis, blockPosition } from '@nerima-games/mc-kernel/domain/coordinates'
 import {
   DeltaTimeSecs,
   EpochMillis,
   FixedClockLayer,
   MonotonicTimeSecs,
+  NonNegativeTickCount,
   PositionAxis,
   position as kernelPosition,
   StageId,
@@ -225,6 +230,25 @@ describe('§2.3-3 the total order belongs to mc-compose', () => {
 })
 
 describe('the stage works through the services, and keeps no copy of what they own', () => {
+  it.effect('advances crop growth by one fixed duration for each tick in a frame', () =>
+    Effect.gen(function* () {
+      const crops = yield* CropService
+      const cropLocation: CropLocation = {
+        dimension: 'overworld',
+        position: blockPosition(BlockAxis(0), BlockAxis(64), BlockAxis(0)),
+      }
+      expect(yield* crops.plant(cropLocation, 'potato_crop', 'farmland')).toBe(true)
+      const before = yield* crops.cropAt(cropLocation)
+      const stages = yield* makeSimStages
+
+      yield* runStagesForTicks(stages, NonNegativeTickCount(3))
+
+      const after = yield* crops.cropAt(cropLocation)
+      expect(before?.growthSecs).toBe(0)
+      expect(after?.growthSecs).toBeCloseTo(3 * Number(DEFAULT_TICK_DURATION))
+    }).pipe(Effect.provide(SimulationLayer), Effect.provide(FrozenClockLayer)),
+  )
+
   it.effect('REGRESSION: `sim:physics` advances the world clock through TimeService', () =>
     Effect.gen(function* () {
       const time = yield* TimeService

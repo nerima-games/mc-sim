@@ -86,6 +86,7 @@ export * from './application/equipment-service.js'
 export * from './application/fishing-service.js'
 export * from './application/furnace-service.js'
 export * from './application/game-loop.js'
+export * from './application/tick-service.js'
 export * from './application/inventory-service.js'
 export * from './application/hotbar-service.js'
 export * from './application/player-service.js'
@@ -105,6 +106,7 @@ export * from './application/weather-service.js'
 // what a host merges, and `SIM_STAGE_IDS` is what a consumer names.
 export * from './stages/registration.js'
 export * from './stages/stage-ids.js'
+export * from './stages/tick-registration.js'
 
 export {
   FIRST_FRAME_DELTA_SECS,
