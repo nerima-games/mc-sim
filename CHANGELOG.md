@@ -1,5 +1,13 @@
 # @nerima-games/mc-sim
 
+## 0.10.0
+
+### Minor Changes
+
+- Add a reusable fixed-step 20 TPS tick service. Each registered stage receives a 0.05-second delta in registration order on every tick.
+- Set the fresh-world day length to 1,200 seconds. Emit regeneration every 0.5 seconds when the player is injured, hunger is full, and saturation is positive; otherwise use the 4-second food tick. Strictly validate difficulty, FOV, render distance, UI scale, reduced motion, and color vision correction, defaulting only omitted fields.
+- Add deterministic, budgeted A* mob pathfinding and fixed 20 Hz movement through `mc-physics`, with hazard-aware routes and bounded replanning.
+
 ## 0.9.0
 
 ### Minor Changes
