@@ -536,14 +536,10 @@ const planMovementPaths = (
 
   searchesPerformed = plan.searchesPerformed
   expandedNodes = plan.expandedNodes
-  let nextSearchCursor = normalizedCursor
-  if (searchesPerformed > 0 && mobCount > 0) {
-    const lastSearchedRequestIndex = (Number(plan.nextSearchCursor) + orderedRequests.length - 1) % orderedRequests.length
-    const lastSearchedRequest = orderedRequests[lastSearchedRequestIndex]
-    if (lastSearchedRequest !== undefined) {
-      nextSearchCursor = (Number(lastSearchedRequest.index) + 1) % mobCount
-    }
-  }
+  const lastSearchedRequest = orderedRequests
+    .slice(0, Number(plan.searchesPerformed))
+    .reduce((_previous, request) => request)
+  const nextSearchCursor = (Number(lastSearchedRequest.index) + 1) % mobCount
   for (const { source: parsed, outcome } of plan.outcomes) {
     if (outcome._tag === 'PathFound') {
       pathByIndex.set(parsed.index, [...outcome.path])

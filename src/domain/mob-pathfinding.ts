@@ -533,10 +533,12 @@ const planValidatedEntries = <A>(
   let expandedNodes = 0
   let lastSearchedIndex: number | undefined
 
-  for (let offset = 0; offset < entries.length; offset += 1) {
-    const index = (normalizedCursor + offset) % entries.length
-    const entry = entries[index]
-    if (entry === undefined) continue
+  const orderedEntries = [
+    ...entries.slice(normalizedCursor).map((entry, offset) => ({ index: normalizedCursor + offset, entry })),
+    ...entries.slice(0, normalizedCursor).map((entry, index) => ({ index, entry })),
+  ]
+
+  for (const { index, entry } of orderedEntries) {
     if (entry._tag === 'Outcome') {
       outcomes[index] = { source: entry.source, outcome: entry.outcome }
       continue

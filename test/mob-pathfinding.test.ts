@@ -98,6 +98,56 @@ it('finds a deterministic route and keeps the fixed tie order', () => {
   decodePlan(result)
 })
 
+it('returns a zero next-search cursor for an empty request batch', () => {
+  const result = planMobPathsForTick({
+    requests: [],
+    world: world(),
+    searchCursor: NonNegativeTickCount(3),
+  })
+
+  decodePlan(result)
+  expect(result).toEqual({
+    _tag: 'MobPathsPlanned',
+    outcomes: [],
+    searchesPerformed: NonNegativeTickCount(0),
+    expandedNodes: NonNegativeTickCount(0),
+    nextSearchCursor: NonNegativeTickCount(0),
+  })
+})
+
+it('starts domain searches at a non-zero cursor and keeps outcomes in request order', () => {
+  const attemptedStarts: Array<number> = []
+  const blockedWorld: MobPathWorldPort = {
+    isPassable: ({ x, y }) => {
+      if (y === 1) attemptedStarts.push(x)
+      return false
+    },
+    hasSupport: () => false,
+    hazardAt: () => null,
+  }
+  const result = planMobPathsForTick({
+    requests: [
+      { start: cell(0, 1, 0), goal: cell(2, 1, 0), profile: ground() },
+      { start: cell(1, 1, 0), goal: cell(3, 1, 0), profile: ground() },
+    ],
+    world: blockedWorld,
+    settings: { ...DEFAULT_MOB_PATHFINDING_SETTINGS, maxSearchesPerTick: NonNegativeTickCount(1) },
+    searchCursor: NonNegativeTickCount(1),
+  })
+
+  decodePlan(result)
+  expect(result).toMatchObject({
+    _tag: 'MobPathsPlanned',
+    outcomes: [
+      { _tag: 'PathFailed', failure: { _tag: 'TickBudgetExhausted' } },
+      { _tag: 'PathFailed', failure: { _tag: 'NoPath' } },
+    ],
+    searchesPerformed: NonNegativeTickCount(1),
+    nextSearchCursor: NonNegativeTickCount(0),
+  })
+  expect(attemptedStarts).toEqual([1])
+})
+
 it('steps up exactly one grid block and rejects a two-block grid rise', () => {
   const limits = { minX: 0, maxX: 1, minY: 0, maxY: 4, minZ: 0, maxZ: 0 }
   const oneBlockRise = { targetY: 2, solids: [cell(1, 1, 0)] }
