@@ -339,6 +339,21 @@ const validStarterRecipe = (
   isFinitePositive(value['cookDurationSecs']) &&
   (value['experience'] === undefined || isFiniteNonNegative(value['experience']))
 
+const validateCookTimeSecsByStation = (
+  value: unknown,
+): Result.Result<KernelSmeltingRecipe['cookTimeSecsByStation'], FurnaceFailure> => {
+  if (!isRecord(value)) return Result.fail(smeltingFailure('recipe', 'expected cooking station durations'))
+  const durations: Partial<Record<CookingStation, FixedDurationSecsValue>> = {}
+  for (const [station, duration] of Object.entries(value)) {
+    if (!isCookingStation(station)) return Result.fail(smeltingFailure('recipe', 'unknown cooking station duration'))
+    if (!isFinitePositive(duration)) return Result.fail(smeltingFailure('recipe', 'invalid cooking station duration'))
+    const fixedDuration = FixedDurationSecs.result(duration)
+    if (Result.isFailure(fixedDuration)) return Result.fail(fixedDuration.failure)
+    durations[station] = fixedDuration.success
+  }
+  return Result.succeed(durations)
+}
+
 const validateRecipe = (
   value: unknown,
 ): Result.Result<SmeltingRecipeInput, FurnaceFailure> => {
@@ -353,6 +368,7 @@ const validateRecipe = (
   const output = value['output']
   const stations = value['stations']
   const cookTimeSecs = value['cookTimeSecs']
+  const cookTimeSecsByStation = value['cookTimeSecsByStation']
   const experience = value['experience']
   if (
     typeof id !== 'string' ||
@@ -361,11 +377,14 @@ const validateRecipe = (
     !isItemStack(output) ||
     !isCookingStationTable(stations) ||
     stations.length === 0 ||
+    !isRecord(cookTimeSecsByStation) ||
     !isFinitePositive(cookTimeSecs) ||
     !isFiniteNonNegative(experience)
   ) {
     return Result.fail(smeltingFailure('recipe', 'invalid kernel smelting recipe'))
   }
+  const validatedCookTimes = validateCookTimeSecsByStation(cookTimeSecsByStation)
+  if (Result.isFailure(validatedCookTimes)) return Result.fail(validatedCookTimes.failure)
   return Result.map(
     Result.all([
       RecipeId.result(id),
@@ -378,6 +397,7 @@ const validateRecipe = (
       input,
       output,
       cookTimeSecs: validDuration,
+      cookTimeSecsByStation: validatedCookTimes.success,
       experience: validExperience,
       stations,
     }),
@@ -405,6 +425,11 @@ const KernelSmeltingRecipeSchema: Schema.Codec<KernelSmeltingRecipe, unknown> = 
   input: ItemTypeSchema,
   output: CanonicalItemStackSchema,
   cookTimeSecs: FixedDurationSecsSchema.check(Schema.isGreaterThan(0)),
+  cookTimeSecsByStation: Schema.Struct({
+    furnace: Schema.optionalKey(FixedDurationSecsSchema.check(Schema.isGreaterThan(0))),
+    blast_furnace: Schema.optionalKey(FixedDurationSecsSchema.check(Schema.isGreaterThan(0))),
+    smoker: Schema.optionalKey(FixedDurationSecsSchema.check(Schema.isGreaterThan(0))),
+  }),
   experience: RecipeExperienceSchema,
   stations: Schema.Array(Schema.Literals(COOKING_STATIONS)).check(Schema.makeFilter((stations) => stations.length > 0)),
 })

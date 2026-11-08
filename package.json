@@ -63,7 +63,7 @@
     "prepublishOnly": "pnpm verify && pnpm package:verify"
   },
   "dependencies": {
-    "@nerima-games/mc-kernel": "0.14.0",
+    "@nerima-games/mc-kernel": "0.15.0",
     "@nerima-games/mc-physics": "0.5.0",
     "@nerima-games/mc-save": "0.7.0",
     "@nerima-games/mc-worldgen": "0.8.0",
