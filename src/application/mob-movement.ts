@@ -7,7 +7,7 @@ import {
   MobPathFailureSchema,
   MobPathProfileSchema,
   MobPathStepSchema,
-  planMobPathsForTick,
+  planValidatedMobPathsForMovement,
   type MobPathCell,
   type MobPathFailure,
   type MobPathProfile,
@@ -182,9 +182,12 @@ export const MobMovementTickResultSchema: Schema.Codec<MobMovementTickResult, un
 
 type EffectiveSettings = Required<MobMovementSettings>
 type ParsedRequest = Readonly<{ index: NonNegativeTickCount; request: MobMovementRequest; start: MobPathCell }>
+type PreparedMob =
+  | Readonly<{ index: NonNegativeTickCount; request: MobMovementRequest }>
+  | Readonly<{ index: NonNegativeTickCount; failure: MobMovementFailure }>
 type PreparedMovementRequests = Readonly<{
   requests: ReadonlyArray<ParsedRequest>
-  statesByIndex: ReadonlyMap<number, MobMovementRequest>
+  mobs: ReadonlyArray<PreparedMob>
   failures: Map<number, MobMovementFailure>
 }>
 type PlannedMovementPaths = Readonly<{
@@ -231,10 +234,6 @@ const isSupportedProfile = (profile: MobPathProfile): profile is Extract<MobPath
 
 const isValidRequest = (request: MobMovementRequest): boolean => {
   if (request.body.kind !== 'dynamic') return false
-  if (!Number.isFinite(request.body.x) || !Number.isFinite(request.body.y) || !Number.isFinite(request.body.z)) return false
-  if (!Number.isFinite(request.body.vx) || !Number.isFinite(request.body.vy) || !Number.isFinite(request.body.vz)) return false
-  if (!Number.isFinite(request.profile.width) || request.profile.width <= 0) return false
-  if (!Number.isFinite(request.profile.height) || request.profile.height <= 0) return false
   if (request.path.length === 0) return request.pathIndex === 0
   return request.pathIndex >= 1 && request.pathIndex <= request.path.length
 }
@@ -278,12 +277,10 @@ const horizontalDistanceToStep = (body: Physics.Body, step: MobPathStep): number
 
 const advancePathIndex = (request: MobMovementRequest): NonNegativeTickCount => {
   let index = request.pathIndex
-  while (index < request.path.length) {
-    const step = request.path[index]
-    if (step === undefined || !isNearStep(request.body, request.profile, step)) break
-    const next = NonNegativeTickCount.result(index + 1)
-    if (Result.isFailure(next)) break
-    index = next.success
+  for (const [stepIndex, step] of request.path.entries()) {
+    if (stepIndex < index) continue
+    if (!isNearStep(request.body, request.profile, step)) break
+    index = NonNegativeTickCount(index + 1)
   }
   return index
 }
@@ -307,16 +304,14 @@ const velocityFor = (
   request: MobMovementRequest,
   step: MobPathStep | undefined,
   settings: EffectiveSettings,
-): Result.Result<Physics.Body, Brand.BrandError> => {
+): Physics.Body => {
   if (step === undefined) {
-    return Result.map(
-      Result.all([
-        Physics.BlocksPerSecond.result(0),
-        Physics.BlocksPerSecond.result(request.body.vy),
-        Physics.BlocksPerSecond.result(0),
-      ]),
-      ([vx, vy, vz]) => ({ ...request.body, vx, vy, vz }),
-    )
+    return {
+      ...request.body,
+      vx: Physics.BlocksPerSecond(0),
+      vy: Physics.BlocksPerSecond(request.body.vy),
+      vz: Physics.BlocksPerSecond(0),
+    }
   }
 
   const differenceX = step.x + 0.5 - request.body.x
@@ -338,18 +333,16 @@ const velocityFor = (
       ? settings.jumpImpulse
       : request.body.vy
 
-  return Result.map(
-    Result.all([
-      Physics.BlocksPerSecond.result(vxValue),
-      Physics.BlocksPerSecond.result(vyValue),
-      Physics.BlocksPerSecond.result(vzValue),
-    ]),
-    ([vx, vy, vz]) => ({ ...request.body, vx, vy, vz }),
-  )
+  return {
+    ...request.body,
+    vx: Physics.BlocksPerSecond(vxValue),
+    vy: Physics.BlocksPerSecond(vyValue),
+    vz: Physics.BlocksPerSecond(vzValue),
+  }
 }
 
 const hasReachedGoal = (request: MobMovementRequest): boolean => {
-  const end = request.path[request.path.length - 1]
+  const end = request.path.at(-1)
   return (
     end !== undefined &&
     sameCell(end, request.goal) &&
@@ -367,12 +360,6 @@ const moveOne = (
   const pathIndex = advancePathIndex(request)
   const nextStep = request.path[pathIndex]
   const velocity = velocityFor(request, nextStep, settings)
-  if (Result.isFailure(velocity)) {
-    return {
-      _tag: 'MobStepFailed',
-      failure: failureForIndex(index, 'invalid-body'),
-    }
-  }
 
   const options = resolveOptionsFor(world, request)
   if (Result.isFailure(options)) {
@@ -382,7 +369,7 @@ const moveOne = (
     }
   }
 
-  const stepped = Physics.stepBody(velocity.success, Physics.DeltaTimeSecs(0.05), options.success)
+  const stepped = Physics.stepBody(velocity, Physics.DeltaTimeSecs(0.05), options.success)
   if (Result.isFailure(stepped)) {
     return {
       _tag: 'MobStepFailed',
@@ -397,8 +384,7 @@ const moveOne = (
     : horizontalDistanceToStep(body, nextStep) + 1e-9 < horizontalDistanceToStep(request.body, nextStep))
   const stuckValue = reachedGoal || madeProgress ? 0 : request.stuckTicks + 1
   const stuckTicks = NonNegativeTickCount.result(stuckValue)
-  const nextIndex = NonNegativeTickCount.result(pathIndex)
-  if (Result.isFailure(stuckTicks) || Result.isFailure(nextIndex)) {
+  if (Result.isFailure(stuckTicks)) {
     return {
       _tag: 'MobStepFailed',
       failure: failureForIndex(index, 'invalid-body'),
@@ -411,7 +397,7 @@ const moveOne = (
     state: {
       ...request,
       body,
-      pathIndex: nextIndex.success,
+      pathIndex,
       stuckTicks: stuckTicks.success,
       isGrounded: stepped.success.isGrounded,
     },
@@ -441,13 +427,6 @@ const settingsFor = (
     spiderClimbSpeed: settings.spiderClimbSpeed ?? DEFAULT_MOB_MOVEMENT_SETTINGS.spiderClimbSpeed,
     stuckThresholdTicks: settings.stuckThresholdTicks ?? DEFAULT_MOB_MOVEMENT_SETTINGS.stuckThresholdTicks,
   }
-  if (
-    effective.maxNodesPerSearch <= 0 || effective.maxSearchesPerTick <= 0 || effective.maxFallDistance <= 0 ||
-    effective.movementSpeed <= 0 || effective.jumpImpulse <= 0 || effective.spiderClimbSpeed <= 0 ||
-    effective.stuckThresholdTicks <= 0
-  ) {
-    return Result.fail('invalid-settings')
-  }
   return Result.succeed(effective)
 }
 
@@ -455,8 +434,7 @@ const requestNeedsPath = (
   request: MobMovementRequest,
   settings: EffectiveSettings,
 ): boolean => {
-  const lastPathStep = request.path[request.path.length - 1]
-  const goalMatches = request.path.length > 0 && pathEndsAtGoal(request) && lastPathStep !== undefined && sameCell(request.goal, lastPathStep)
+  const goalMatches = pathEndsAtGoal(request)
   const atGoal = request.path.length > 0 && hasReachedGoal(request)
   return !goalMatches || (!atGoal && request.stuckTicks >= settings.stuckThresholdTicks)
 }
@@ -464,44 +442,48 @@ const requestNeedsPath = (
 const prepareMovementRequests = (
   rawMobs: ReadonlyArray<unknown>,
   settings: EffectiveSettings,
-  zeroIndex: NonNegativeTickCount,
-): Result.Result<PreparedMovementRequests, MobMovementFailure> => {
+): PreparedMovementRequests => {
   const requests: Array<ParsedRequest> = []
-  const statesByIndex = new Map<number, MobMovementRequest>()
+  const mobs: Array<PreparedMob> = []
   const failures = new Map<number, MobMovementFailure>()
 
-  for (let index = 0; index < rawMobs.length; index += 1) {
-    const indexValue = NonNegativeTickCount.result(index)
-    if (Result.isFailure(indexValue)) return Result.fail(inputFailure(zeroIndex, 'invalid-batch'))
-    const decoded = Schema.decodeUnknownResult(MobMovementStateSchema, { onExcessProperty: 'error' })(rawMobs[index])
+  for (const [index, rawMob] of rawMobs.entries()) {
+    const indexValue = NonNegativeTickCount(index)
+    const decoded = Schema.decodeUnknownResult(MobMovementStateSchema, { onExcessProperty: 'error' })(rawMob)
     if (Result.isFailure(decoded) || !isValidRequest(decoded.success)) {
-      failures.set(index, inputFailure(indexValue.success, 'invalid-request'))
+      const failure = inputFailure(indexValue, 'invalid-request')
+      failures.set(index, failure)
+      mobs.push({ index: indexValue, failure })
       continue
     }
 
     const request = decoded.success
     if (!isSupportedProfile(request.profile)) {
-      failures.set(index, {
+      const failure: MobMovementFailure = {
         _tag: 'MobMovementPathFailure',
-        index: indexValue.success,
+        index: indexValue,
         failure: { _tag: 'UnsupportedProfile', kind: request.profile.kind },
-      })
+      }
+      failures.set(index, failure)
+      mobs.push({ index: indexValue, failure })
       continue
     }
 
     const currentCell = cellForBody(request)
     if (Result.isFailure(currentCell)) {
-      failures.set(index, failureForIndex(indexValue.success, 'invalid-body'))
+      const failure = failureForIndex(indexValue, 'invalid-body')
+      failures.set(index, failure)
+      mobs.push({ index: indexValue, failure })
       continue
     }
 
-    statesByIndex.set(index, request)
+    mobs.push({ index: indexValue, request })
     if (requestNeedsPath(request, settings)) {
-      requests.push({ index: indexValue.success, request, start: currentCell.success })
+      requests.push({ index: indexValue, request, start: currentCell.success })
     }
   }
 
-  return Result.succeed({ requests, statesByIndex, failures })
+  return { requests, mobs, failures }
 }
 
 const planMovementPaths = (
@@ -509,34 +491,30 @@ const planMovementPaths = (
   failures: Map<number, MobMovementFailure>,
   world: MobMovementWorldPort,
   settings: EffectiveSettings,
-  zeroIndex: NonNegativeTickCount,
-): Result.Result<PlannedMovementPaths, MobMovementFailure> => {
+): PlannedMovementPaths => {
   const pathByIndex = new Map<number, ReadonlyArray<MobPathStep>>()
   let searchesPerformed = NonNegativeTickCount(0)
   let expandedNodes = NonNegativeTickCount(0)
   if (requests.length === 0) {
-    return Result.succeed({ pathByIndex, searchesPerformed, expandedNodes })
+    return { pathByIndex, searchesPerformed, expandedNodes }
   }
 
-  const plan = planMobPathsForTick({
-    requests: requests.map(({ request, start }) => ({ start, goal: request.goal, profile: request.profile })),
+  const plan = planValidatedMobPathsForMovement(
+    requests.map((source) => ({
+      source,
+      request: { start: source.start, goal: source.request.goal, profile: source.request.profile },
+    })),
     world,
-    settings: {
+    {
       maxNodesPerSearch: settings.maxNodesPerSearch,
       maxSearchesPerTick: settings.maxSearchesPerTick,
       maxFallDistance: settings.maxFallDistance,
     },
-  })
-  if (plan._tag !== 'MobPathsPlanned') {
-    return Result.fail(inputFailure(zeroIndex, 'invalid-settings'))
-  }
+  )
 
   searchesPerformed = plan.searchesPerformed
   expandedNodes = plan.expandedNodes
-  for (let resultIndex = 0; resultIndex < plan.outcomes.length; resultIndex += 1) {
-    const parsed = requests[resultIndex]
-    const outcome = plan.outcomes[resultIndex]
-    if (parsed === undefined || outcome === undefined) continue
+  for (const { source: parsed, outcome } of plan.outcomes) {
     if (outcome._tag === 'PathFound') {
       pathByIndex.set(parsed.index, [...outcome.path])
       continue
@@ -548,32 +526,25 @@ const planMovementPaths = (
     })
   }
 
-  return Result.succeed({ pathByIndex, searchesPerformed, expandedNodes })
+  return { pathByIndex, searchesPerformed, expandedNodes }
 }
 
 type MovementStepContext = Readonly<{
-  statesByIndex: ReadonlyMap<number, MobMovementRequest>
   failures: ReadonlyMap<number, MobMovementFailure>
   pathByIndex: ReadonlyMap<number, ReadonlyArray<MobPathStep>>
   world: MobMovementWorldPort
   settings: EffectiveSettings
 }>
 
-const stepMobAtIndex = (index: number, context: MovementStepContext): MobMovementOutcome => {
-  const zeroIndex = NonNegativeTickCount(0)
-  const indexValue = NonNegativeTickCount.result(index)
-  if (Result.isFailure(indexValue)) {
-    return { _tag: 'MobStepFailed', failure: inputFailure(zeroIndex, 'invalid-batch') }
-  }
-  const failure = context.failures.get(index)
+const stepMobAtIndex = (entry: PreparedMob, context: MovementStepContext): MobMovementOutcome => {
+  if ('failure' in entry) return { _tag: 'MobStepFailed', failure: entry.failure }
+
+  const failure = context.failures.get(entry.index)
   if (failure !== undefined) return { _tag: 'MobStepFailed', failure }
 
-  const original = context.statesByIndex.get(index)
-  if (original === undefined) {
-    return { _tag: 'MobStepFailed', failure: inputFailure(indexValue.success, 'invalid-request') }
-  }
+  const original = entry.request
 
-  const selectedPath = context.pathByIndex.get(index)
+  const selectedPath = context.pathByIndex.get(entry.index)
   const path = selectedPath ?? [...original.path]
   const pathIndex = selectedPath === undefined ? original.pathIndex : NonNegativeTickCount(1)
   const movementRequest: MobMovementRequest = {
@@ -582,30 +553,22 @@ const stepMobAtIndex = (index: number, context: MovementStepContext): MobMovemen
     pathIndex,
     stuckTicks: selectedPath === undefined ? original.stuckTicks : NonNegativeTickCount(0),
   }
-  const currentCell = cellForBody(movementRequest)
-  const shouldStep = Result.isSuccess(currentCell) && path.length > 0
-  if (!shouldStep && !hasReachedGoal(movementRequest)) {
-    return { _tag: 'MobStepFailed', failure: inputFailure(indexValue.success, 'invalid-request') }
-  }
-
-  return moveOne(indexValue.success, movementRequest, context.world, context.settings)
+  return moveOne(entry.index, movementRequest, context.world, context.settings)
 }
 
 const stepPreparedMobs = (
-  mobCount: number,
   prepared: PreparedMovementRequests,
   planned: PlannedMovementPaths,
   world: MobMovementWorldPort,
   settings: EffectiveSettings,
 ): Array<MobMovementOutcome> => {
   const context: MovementStepContext = {
-    statesByIndex: prepared.statesByIndex,
     failures: prepared.failures,
     pathByIndex: planned.pathByIndex,
     world,
     settings,
   }
-  return Array.from({ length: mobCount }, (_, index) => stepMobAtIndex(index, context))
+  return prepared.mobs.map((entry) => stepMobAtIndex(entry, context))
 }
 
 /** Advance each requested mob by exactly one 20 Hz simulation tick. */
@@ -622,15 +585,13 @@ export const stepMobMovementsForTick = (input: MobMovementTickInput): MobMovemen
   if (Result.isFailure(settingsResult)) return rejected(inputFailure(zeroIndex, 'invalid-settings'))
   const settings = settingsResult.success
 
-  const prepared = prepareMovementRequests(rawMobs, settings, zeroIndex)
-  if (Result.isFailure(prepared)) return rejected(prepared.failure)
-  const planned = planMovementPaths(prepared.success.requests, prepared.success.failures, worldValue, settings, zeroIndex)
-  if (Result.isFailure(planned)) return rejected(planned.failure)
+  const prepared = prepareMovementRequests(rawMobs, settings)
+  const planned = planMovementPaths(prepared.requests, prepared.failures, worldValue, settings)
 
   return {
     _tag: 'MobMovementCompleted',
-    outcomes: stepPreparedMobs(rawMobs.length, prepared.success, planned.success, worldValue, settings),
-    searchesPerformed: planned.success.searchesPerformed,
-    expandedNodes: planned.success.expandedNodes,
+    outcomes: stepPreparedMobs(prepared, planned, worldValue, settings),
+    searchesPerformed: planned.searchesPerformed,
+    expandedNodes: planned.expandedNodes,
   }
 }

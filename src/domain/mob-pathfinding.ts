@@ -170,12 +170,14 @@ export const MobPathTickPlanSchema: Schema.Codec<MobPathTickPlan, unknown> = Sch
 type SearchSettings = MobPathfindingSettings
 type PositionKey = string
 
+type PathNode = Readonly<{ step: MobPathStep; parent: PathNode | undefined }>
+
 type QueueEntry = Readonly<{
   cell: MobPathCell
   key: PositionKey
   g: number
   h: number
-  order: number
+  path: PathNode
 }>
 
 type Transition = MobPathStep
@@ -244,51 +246,57 @@ const compareEntries = (left: QueueEntry, right: QueueEntry): number =>
   left.h - right.h ||
   left.cell.z - right.cell.z ||
   left.cell.x - right.cell.x ||
-  left.cell.y - right.cell.y ||
-  left.order - right.order
+  left.cell.y - right.cell.y
+
+type HeapNode = {
+  entry: QueueEntry
+  left: HeapNode | undefined
+  right: HeapNode | undefined
+  rank: number
+}
+
+const heapRank = (node: HeapNode | undefined): number => node?.rank ?? 0
+
+const mergeHeaps = (left: HeapNode | undefined, right: HeapNode | undefined): HeapNode | undefined => {
+  if (left === undefined) return right
+  if (right === undefined) return left
+
+  let first = left
+  let second = right
+  if (compareEntries(first.entry, second.entry) > 0) {
+    first = right
+    second = left
+  }
+
+  first.right = mergeHeaps(first.right, second)
+  if (heapRank(first.left) < heapRank(first.right)) {
+    const previousLeft = first.left
+    first.left = first.right
+    first.right = previousLeft
+  }
+  first.rank = heapRank(first.right) + 1
+  return first
+}
 
 class MinHeap {
-  private readonly values: Array<QueueEntry> = []
+  private root: HeapNode | undefined
+  private sizeValue = 0
 
   public get length(): number {
-    return this.values.length
+    return this.sizeValue
   }
 
   public push(value: QueueEntry): void {
-    this.values.push(value)
-    let index = this.values.length - 1
-    while (index > 0) {
-      const parent = Math.floor((index - 1) / 2)
-      const parentValue = this.values[parent]
-      if (parentValue === undefined || compareEntries(parentValue, value) <= 0) break
-      this.values[index] = parentValue
-      index = parent
-    }
-    this.values[index] = value
+    this.root = mergeHeaps(this.root, { entry: value, left: undefined, right: undefined, rank: 1 })
+    this.sizeValue += 1
   }
 
   public pop(): QueueEntry | undefined {
-    const first = this.values[0]
-    const last = this.values.pop()
-    if (first === undefined || last === undefined || this.values.length === 0) return first
-
-    let index = 0
-    while (true) {
-      const left = index * 2 + 1
-      const right = left + 1
-      if (left >= this.values.length) break
-      const leftValue = this.values[left]
-      if (leftValue === undefined) break
-      let child = left
-      const rightValue = this.values[right]
-      if (rightValue !== undefined && compareEntries(rightValue, leftValue) < 0) child = right
-      const childValue = this.values[child]
-      if (childValue === undefined || compareEntries(childValue, last) >= 0) break
-      this.values[index] = childValue
-      index = child
-    }
-    this.values[index] = last
-    return first
+    const first = this.root
+    if (first === undefined) return undefined
+    this.root = mergeHeaps(first.left, first.right)
+    this.sizeValue -= 1
+    return first.entry
   }
 }
 
@@ -437,60 +445,31 @@ const transitionsFrom = (
   return transitions
 }
 
-const reconstructPath = (
-  goalKey: PositionKey,
-  startKey: PositionKey,
-  parents: ReadonlyMap<PositionKey, PositionKey>,
-  steps: ReadonlyMap<PositionKey, MobPathStep>,
-): ReadonlyArray<MobPathStep> => {
-  const path: Array<MobPathStep> = []
-  let key = goalKey
-  while (key !== startKey) {
-    const step = steps.get(key)
-    const parent = parents.get(key)
-    if (step === undefined || parent === undefined) return []
-    path.push(step)
-    key = parent
-  }
-  const start = steps.get(startKey)
-  if (start !== undefined) path.push(start)
-  path.reverse()
-  return path
-}
-
 const searchPath = (
   request: MobPathRequest,
   world: MobPathWorldPort,
   settings: SearchSettings,
 ): MobPathOutcome => {
   const { start, goal, profile } = request
-  if (!isCell(start)) return { _tag: 'PathFailed', failure: { _tag: 'InvalidInput', field: 'start' } }
-  if (!isCell(goal)) return { _tag: 'PathFailed', failure: { _tag: 'InvalidInput', field: 'goal' } }
-  if (!isValidProfile(profile)) return { _tag: 'PathFailed', failure: { _tag: 'InvalidInput', field: 'profile' } }
-  if (profile.kind === 'swimmer' || profile.kind === 'flyer') {
-    return { _tag: 'PathFailed', failure: { _tag: 'UnsupportedProfile', kind: profile.kind } }
-  }
   if (!isBodyClear(start, profile, world)) return { _tag: 'PathFailed', failure: { _tag: 'NoPath' } }
 
   const startKey = keyOf(start)
   const goalKey = keyOf(goal)
-  const startStep = pathStep(start, 'start')
+  const startPath = { step: pathStep(start, 'start'), parent: undefined }
   const open = new MinHeap()
-  const parents = new Map<PositionKey, PositionKey>()
-  const steps = new Map<PositionKey, MobPathStep>([[startKey, startStep]])
   const bestG = new Map<PositionKey, number>([[startKey, 0]])
   const closed = new Set<PositionKey>()
-  let order = 0
-  open.push({ cell: start, key: startKey, g: 0, h: heuristic(start, goal, settings.maxFallDistance), order })
+  open.push({ cell: start, key: startKey, g: 0, h: heuristic(start, goal, settings.maxFallDistance), path: startPath })
   let expandedNodes = 0
 
-  while (open.length > 0 && expandedNodes < settings.maxNodesPerSearch) {
+  while (expandedNodes < settings.maxNodesPerSearch) {
     const current = open.pop()
-    if (current === undefined || closed.has(current.key)) continue
-    const knownG = bestG.get(current.key)
-    if (knownG !== current.g) continue
+    if (current === undefined) break
+    if (closed.has(current.key)) continue
     if (current.key === goalKey) {
-      const path = reconstructPath(goalKey, startKey, parents, steps)
+      const path: Array<MobPathStep> = []
+      for (let node: PathNode | undefined = current.path; node !== undefined; node = node.parent) path.push(node.step)
+      path.reverse()
       return { _tag: 'PathFound', path, expandedNodes: NonNegativeTickCount(expandedNodes + 1) }
     }
 
@@ -503,15 +482,12 @@ const searchPath = (
       const previousG = bestG.get(nextKey)
       if (previousG !== undefined && previousG <= nextG) continue
       bestG.set(nextKey, nextG)
-      parents.set(nextKey, current.key)
-      steps.set(nextKey, next)
-      order += 1
       open.push({
         cell: { x: next.x, y: next.y, z: next.z },
         key: nextKey,
         g: nextG,
         h: heuristic(next, goal, settings.maxFallDistance),
-        order,
+        path: { step: next, parent: current.path },
       })
     }
   }
@@ -528,6 +504,78 @@ const searchPath = (
   }
   return { _tag: 'PathFailed', failure: { _tag: 'NoPath' } }
 }
+
+type ValidatedPathEntry<A> =
+  | Readonly<{ _tag: 'Request'; source: A; request: MobPathRequest }>
+  | Readonly<{ _tag: 'Outcome'; source: A; outcome: Extract<MobPathOutcome, { _tag: 'PathFailed' }> }>
+
+type PlannedPathEntry<A> = Readonly<{ source: A; outcome: MobPathOutcome }>
+type PlannedMobPaths<A> = Readonly<{
+  outcomes: ReadonlyArray<PlannedPathEntry<A>>
+  searchesPerformed: NonNegativeTickCount
+  expandedNodes: NonNegativeTickCount
+}>
+
+const planValidatedEntries = <A>(
+  entries: ReadonlyArray<ValidatedPathEntry<A>>,
+  world: MobPathWorldPort,
+  settings: SearchSettings,
+): PlannedMobPaths<A> => {
+  const outcomes: Array<PlannedPathEntry<A>> = []
+  let searchesPerformed = 0
+  let expandedNodes = 0
+
+  for (const entry of entries) {
+    if (entry._tag === 'Outcome') {
+      outcomes.push({ source: entry.source, outcome: entry.outcome })
+      continue
+    }
+
+    const request = entry.request
+    if (request.profile.kind === 'swimmer' || request.profile.kind === 'flyer') {
+      outcomes.push({
+        source: entry.source,
+        outcome: { _tag: 'PathFailed', failure: { _tag: 'UnsupportedProfile', kind: request.profile.kind } },
+      })
+      continue
+    }
+    if (searchesPerformed >= settings.maxSearchesPerTick) {
+      outcomes.push({
+        source: entry.source,
+        outcome: {
+          _tag: 'PathFailed',
+          failure: { _tag: 'TickBudgetExhausted', maxSearches: settings.maxSearchesPerTick },
+        },
+      })
+      continue
+    }
+
+    searchesPerformed += 1
+    const outcome = searchPath(request, world, settings)
+    if (outcome._tag === 'PathFound') expandedNodes += outcome.expandedNodes
+    if (outcome._tag === 'PathFailed' && outcome.failure._tag === 'NodeBudgetExhausted') {
+      expandedNodes += outcome.failure.expandedNodes
+    }
+    outcomes.push({ source: entry.source, outcome })
+  }
+
+  return {
+    outcomes,
+    searchesPerformed: NonNegativeTickCount(searchesPerformed),
+    expandedNodes: NonNegativeTickCount(expandedNodes),
+  }
+}
+
+/** Shared with movement after the caller has decoded each request and setting. */
+export const planValidatedMobPathsForMovement = <A>(
+  requests: ReadonlyArray<Readonly<{ source: A; request: MobPathRequest }>>,
+  world: MobPathWorldPort,
+  settings: MobPathfindingSettings,
+): PlannedMobPaths<A> => planValidatedEntries(
+  requests.map(({ source, request }): ValidatedPathEntry<A> => ({ _tag: 'Request', source, request })),
+  world,
+  settings,
+)
 
 export const planMobPathsForTick = (input: MobPathTickInput): MobPathTickPlan => {
   if (!isRecord(input)) return { _tag: 'InvalidMobPathfindingInput', field: 'input' }
@@ -551,64 +599,63 @@ export const planMobPathsForTick = (input: MobPathTickInput): MobPathTickPlan =>
     return { _tag: 'InvalidMobPathfindingSettings', field: badField ?? 'settings' }
   }
   const settings: SearchSettings = decodedSettings.success
-  const outcomes: Array<MobPathOutcome> = []
-  let searchesPerformed = 0
-  let expandedNodes = 0
+  const entries: Array<ValidatedPathEntry<unknown>> = []
 
   for (const rawRequest of requests) {
     if (!isRecord(rawRequest)) {
-      outcomes.push({ _tag: 'PathFailed', failure: { _tag: 'InvalidInput', field: 'request' } })
+      entries.push({
+        _tag: 'Outcome',
+        source: rawRequest,
+        outcome: { _tag: 'PathFailed', failure: { _tag: 'InvalidInput', field: 'request' } },
+      })
       continue
     }
     const start = rawRequest['start']
     const goal = rawRequest['goal']
     const profile = rawRequest['profile']
     if (!isCell(start)) {
-      outcomes.push({ _tag: 'PathFailed', failure: { _tag: 'InvalidInput', field: 'start' } })
+      entries.push({
+        _tag: 'Outcome',
+        source: rawRequest,
+        outcome: { _tag: 'PathFailed', failure: { _tag: 'InvalidInput', field: 'start' } },
+      })
       continue
     }
     if (!isCell(goal)) {
-      outcomes.push({ _tag: 'PathFailed', failure: { _tag: 'InvalidInput', field: 'goal' } })
+      entries.push({
+        _tag: 'Outcome',
+        source: rawRequest,
+        outcome: { _tag: 'PathFailed', failure: { _tag: 'InvalidInput', field: 'goal' } },
+      })
       continue
     }
     if (!isValidProfile(profile)) {
-      outcomes.push({ _tag: 'PathFailed', failure: { _tag: 'InvalidInput', field: 'profile' } })
+      entries.push({
+        _tag: 'Outcome',
+        source: rawRequest,
+        outcome: { _tag: 'PathFailed', failure: { _tag: 'InvalidInput', field: 'profile' } },
+      })
       continue
     }
     const decodedRequest = Schema.decodeUnknownResult(MobPathRequestSchema, {
       onExcessProperty: 'error',
     })(rawRequest)
     if (Result.isFailure(decodedRequest)) {
-      outcomes.push({ _tag: 'PathFailed', failure: { _tag: 'InvalidInput', field: 'request' } })
-      continue
-    }
-    const request = decodedRequest.success
-    const { start: validStart, goal: validGoal, profile: validProfile } = request
-    if (validProfile.kind === 'swimmer' || validProfile.kind === 'flyer') {
-      outcomes.push({ _tag: 'PathFailed', failure: { _tag: 'UnsupportedProfile', kind: validProfile.kind } })
-      continue
-    }
-    if (searchesPerformed >= settings.maxSearchesPerTick) {
-      outcomes.push({
-        _tag: 'PathFailed',
-        failure: { _tag: 'TickBudgetExhausted', maxSearches: settings.maxSearchesPerTick },
+      entries.push({
+        _tag: 'Outcome',
+        source: rawRequest,
+        outcome: { _tag: 'PathFailed', failure: { _tag: 'InvalidInput', field: 'request' } },
       })
       continue
     }
-
-    searchesPerformed += 1
-    const outcome = searchPath({ start: validStart, goal: validGoal, profile: validProfile }, world, settings)
-    if (outcome._tag === 'PathFound') expandedNodes += outcome.expandedNodes
-    if (outcome._tag === 'PathFailed' && outcome.failure._tag === 'NodeBudgetExhausted') {
-      expandedNodes += outcome.failure.expandedNodes
-    }
-    outcomes.push(outcome)
+    entries.push({ _tag: 'Request', source: rawRequest, request: decodedRequest.success })
   }
 
+  const planned = planValidatedEntries(entries, world, settings)
   return {
     _tag: 'MobPathsPlanned',
-    outcomes,
-    searchesPerformed: NonNegativeTickCount(searchesPerformed),
-    expandedNodes: NonNegativeTickCount(expandedNodes),
+    outcomes: planned.outcomes.map(({ outcome }) => outcome),
+    searchesPerformed: planned.searchesPerformed,
+    expandedNodes: planned.expandedNodes,
   }
 }

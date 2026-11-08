@@ -117,6 +117,21 @@ const stepOnce = (
   }
 }
 
+const movementResultFor = (input: unknown): Sim.MobMovementTickResult => {
+  const value = invoke(Sim.stepMobMovementsForTick, [input])
+  const decoded = Schema.decodeUnknownResult(Sim.MobMovementTickResultSchema, { onExcessProperty: 'error' })(value)
+  expect(decoded._tag).toBe('Success')
+  if (decoded._tag !== 'Success') throw new Error('movement result failed its public Schema')
+  return decoded.success
+}
+
+const expectInputFailure = (input: unknown, reason: 'invalid-batch' | 'invalid-world'): void => {
+  expect(movementResultFor(input)).toStrictEqual({
+    _tag: 'MobMovementRejected',
+    failure: { _tag: 'MobMovementInputFailure', index: NonNegativeTickCount(0), reason },
+  })
+}
+
 it('moves a mob through the public API with fixed-tick physics around a hole and across a one-block ledge', () => {
   const world = makeWorld(makePlatform())
   let state = makeMob()
@@ -316,6 +331,181 @@ it('counts horizontal or waypoint progress rather than gravity-only motion as pr
   expect(advanced.state.stuckTicks).toBe(NonNegativeTickCount(1))
 })
 
+it('returns per-mob failures for invalid bodies, path indexes, and unsupported profiles', () => {
+  const world = makeWorld(makePlatform())
+  const dynamic = makeMob('mob-invalid-state')
+  const staticBody = { ...dynamic, body: { ...dynamic.body, kind: 'static' as const } }
+  const invalidPathIndex = { ...dynamic, pathIndex: NonNegativeTickCount(1) }
+  const unrepresentablePosition = {
+    ...dynamic,
+    body: { ...dynamic.body, x: PositionAxis(Number.MAX_SAFE_INTEGER + 1) },
+  }
+  const unrepresentablePhysicsSize = {
+    ...dynamic,
+    profile: { ...dynamic.profile, height: Physics.BlockLength(Number.MIN_VALUE) },
+    goal: cell(1, 1, 0),
+    path: [
+      { ...cell(0, 1, 0), action: 'start' as const },
+      { ...cell(1, 1, 0), action: 'walk' as const },
+    ],
+    pathIndex: NonNegativeTickCount(1),
+  }
+  const swimmer = {
+    ...dynamic,
+    profile: { kind: 'swimmer' as const, width: Physics.BlockLength(0.6), height: Physics.BlockLength(1.8) },
+  }
+
+  for (const mob of [staticBody, invalidPathIndex]) {
+    const result = Sim.stepMobMovementsForTick({ mobs: [mob], world })
+    expect(result).toStrictEqual({
+      _tag: 'MobMovementCompleted',
+      outcomes: [{
+        _tag: 'MobStepFailed',
+        failure: { _tag: 'MobMovementInputFailure', index: NonNegativeTickCount(0), reason: 'invalid-request' },
+      }],
+      searchesPerformed: NonNegativeTickCount(0),
+      expandedNodes: NonNegativeTickCount(0),
+    })
+  }
+
+  const invalidCell = Sim.stepMobMovementsForTick({ mobs: [unrepresentablePosition], world })
+  expect(invalidCell).toStrictEqual({
+    _tag: 'MobMovementCompleted',
+    outcomes: [{
+      _tag: 'MobStepFailed',
+      failure: { _tag: 'MobMovementPhysicsFailure', index: NonNegativeTickCount(0), reason: 'invalid-body' },
+    }],
+    searchesPerformed: NonNegativeTickCount(0),
+    expandedNodes: NonNegativeTickCount(0),
+  })
+
+  const invalidPhysicsSize = Sim.stepMobMovementsForTick({ mobs: [unrepresentablePhysicsSize], world })
+  expect(invalidPhysicsSize).toStrictEqual({
+    _tag: 'MobMovementCompleted',
+    outcomes: [{
+      _tag: 'MobStepFailed',
+      failure: { _tag: 'MobMovementPhysicsFailure', index: NonNegativeTickCount(0), reason: 'invalid-body' },
+    }],
+    searchesPerformed: NonNegativeTickCount(0),
+    expandedNodes: NonNegativeTickCount(0),
+  })
+
+  const unsupported = Sim.stepMobMovementsForTick({ mobs: [swimmer], world })
+  expect(unsupported).toStrictEqual({
+    _tag: 'MobMovementCompleted',
+    outcomes: [{
+      _tag: 'MobStepFailed',
+      failure: {
+        _tag: 'MobMovementPathFailure',
+        index: NonNegativeTickCount(0),
+        failure: { _tag: 'UnsupportedProfile', kind: 'swimmer' },
+      },
+    }],
+    searchesPerformed: NonNegativeTickCount(0),
+    expandedNodes: NonNegativeTickCount(0),
+  })
+})
+
+it('uses spider climb velocity for a cached climb step', () => {
+  const world = makeWorld(new Set([key(0, 0, 0), key(1, 1, 0)]))
+  const initial = makeMob('mob-spider')
+  const spider: Sim.MobMovementState = {
+    ...initial,
+    body: { ...initial.body, y: Physics.CentreY(1.45) },
+    profile: { kind: 'spider', width: Physics.BlockLength(0.6), height: Physics.BlockLength(0.9) },
+    goal: cell(0, 2, 0),
+    path: [
+      { ...cell(0, 1, 0), action: 'start' },
+      { ...cell(0, 2, 0), action: 'climb', wall: { x: 1, z: 0 } },
+    ],
+    pathIndex: NonNegativeTickCount(1),
+  }
+
+  const advanced = stepOnce(spider, world)
+  expect(advanced.searchesPerformed).toBe(NonNegativeTickCount(0))
+  expect(advanced.state.body.x).toBeGreaterThan(spider.body.x)
+  expect(advanced.state.body.y).toBeGreaterThan(spider.body.y)
+  expect(advanced.state.stuckTicks).toBe(NonNegativeTickCount(0))
+})
+
+it('jumps vertically when a mob is already centered over the jump waypoint', () => {
+  const world = makeWorld(new Set([key(0, 0, 0), key(1, 0, 0), key(2, 0, 0)]))
+  const initial = makeMob('mob-vertical-jump')
+  const mob: Sim.MobMovementState = {
+    ...initial,
+    body: { ...initial.body, x: PositionAxis(1.5) },
+    goal: cell(1, 2, 0),
+    path: [
+      { ...cell(0, 1, 0), action: 'start' },
+      { ...cell(1, 2, 0), action: 'jump' },
+    ],
+    pathIndex: NonNegativeTickCount(1),
+  }
+
+  const advanced = stepOnce(mob, world)
+  expect(advanced.state.body.x).toBe(mob.body.x)
+  expect(advanced.state.body.z).toBe(mob.body.z)
+  expect(advanced.state.body.y).toBeGreaterThan(mob.body.y)
+})
+
+it('returns a typed failure if stuck tick count would exceed its brand', () => {
+  const initial = makeMob('mob-stuck-overflow')
+  const mob = {
+    ...initial,
+    goal: cell(0, 1, 0),
+    path: [{ ...cell(0, 1, 0), action: 'start' as const }],
+    pathIndex: NonNegativeTickCount(1),
+    stuckTicks: NonNegativeTickCount(Number.MAX_SAFE_INTEGER),
+  }
+  const result = Sim.stepMobMovementsForTick({ mobs: [mob], world: makeWorld(new Set()) })
+
+  expect(result).toStrictEqual({
+    _tag: 'MobMovementCompleted',
+    outcomes: [{
+      _tag: 'MobStepFailed',
+      failure: { _tag: 'MobMovementPhysicsFailure', index: NonNegativeTickCount(0), reason: 'invalid-body' },
+    }],
+    searchesPerformed: NonNegativeTickCount(0),
+    expandedNodes: NonNegativeTickCount(0),
+  })
+})
+
+it('returns a schema-valid failure when physics block lookup fails', () => {
+  const world = makeWorld(makePlatform())
+  const invalidPosition = PositionAxis.result(Number.NaN)
+  if (Result.isSuccess(invalidPosition)) throw new Error('invalid position fixture unexpectedly decoded')
+  const failingPhysicsWorld: Sim.MobMovementWorldPort = {
+    ...world,
+    physics: {
+      environment: { blockAt: world.physics.environment.blockAt },
+      blockPropertiesAt: () => Result.fail(invalidPosition.failure),
+    },
+  }
+  const initial = makeMob('mob-physics-failure')
+  const mob = {
+    ...initial,
+    goal: cell(1, 1, 0),
+    path: [
+      { ...cell(0, 1, 0), action: 'start' as const },
+      { ...cell(1, 1, 0), action: 'walk' as const },
+    ],
+    pathIndex: NonNegativeTickCount(1),
+  }
+
+  const result = Sim.stepMobMovementsForTick({ mobs: [mob], world: failingPhysicsWorld })
+  expect(result).toStrictEqual({
+    _tag: 'MobMovementCompleted',
+    outcomes: [{
+      _tag: 'MobStepFailed',
+      failure: { _tag: 'MobMovementPhysicsFailure', index: NonNegativeTickCount(0), reason: 'step-body-failed' },
+    }],
+    searchesPerformed: NonNegativeTickCount(0),
+    expandedNodes: NonNegativeTickCount(0),
+  })
+  expect(Schema.decodeUnknownResult(Sim.MobMovementTickResultSchema, { onExcessProperty: 'error' })(result)._tag)
+    .toBe('Success')
+})
+
 it('returns schema-valid failures for invalid values and never throws on generated hostile inputs', () => {
   const world = makeWorld(makePlatform())
   const state = makeMob('mob-invalid')
@@ -323,6 +513,7 @@ it('returns schema-valid failures for invalid values and never throws on generat
     mobs: [{ ...state, body: { ...state.body, x: Number.NaN } }],
     world,
   }])
+  const invalidMobBatch = { mobs: null, world }
   const excessBatchKey = invoke(Sim.stepMobMovementsForTick, [{ mobs: [state], world, _tag: 'unexpected' }])
   const invalidSettingsInputs: ReadonlyArray<unknown> = [
     { mobs: [state], world, settings: undefined },
@@ -331,6 +522,14 @@ it('returns schema-valid failures for invalid values and never throws on generat
     { mobs: [state], world, settings: { maxSearchesPerTick: NonNegativeTickCount(0) } },
   ]
   const invalidPhysicsWorlds: ReadonlyArray<unknown> = [
+    null,
+    { ...world, isPassable: null },
+    { ...world, hasSupport: 1 },
+    { ...world, hazardAt: false },
+    { ...world, physics: null },
+    { ...world, physics: { ...world.physics, environment: null } },
+    { ...world, physics: { ...world.physics, environment: { ...world.physics.environment, blockAt: 1 } } },
+    { ...world, physics: { ...world.physics, blockPropertiesAt: null } },
     {
       ...world,
       physics: {
@@ -343,16 +542,9 @@ it('returns schema-valid failures for invalid values and never throws on generat
   ]
 
   for (const invalidWorld of invalidPhysicsWorlds) {
-    const value = invoke(Sim.stepMobMovementsForTick, [{ mobs: [state], world: invalidWorld }])
-    const decoded = Schema.decodeUnknownResult(Sim.MobMovementTickResultSchema, { onExcessProperty: 'error' })(value)
-    expect(decoded._tag).toBe('Success')
-    if (decoded._tag === 'Success') {
-      expect(decoded.success).toStrictEqual({
-        _tag: 'MobMovementRejected',
-        failure: { _tag: 'MobMovementInputFailure', index: NonNegativeTickCount(0), reason: 'invalid-world' },
-      })
-    }
+    expectInputFailure({ mobs: [state], world: invalidWorld }, 'invalid-world')
   }
+  expectInputFailure(invalidMobBatch, 'invalid-batch')
 
   const invalidNumberDecoded = Schema.decodeUnknownResult(Sim.MobMovementTickResultSchema, { onExcessProperty: 'error' })(invalidNumber)
   expect(invalidNumberDecoded._tag).toBe('Success')
@@ -368,14 +560,7 @@ it('returns schema-valid failures for invalid values and never throws on generat
     })
   }
 
-  const excessBatchKeyDecoded = Schema.decodeUnknownResult(Sim.MobMovementTickResultSchema, { onExcessProperty: 'error' })(excessBatchKey)
-  expect(excessBatchKeyDecoded._tag).toBe('Success')
-  if (excessBatchKeyDecoded._tag === 'Success') {
-    expect(excessBatchKeyDecoded.success).toStrictEqual({
-      _tag: 'MobMovementRejected',
-      failure: { _tag: 'MobMovementInputFailure', index: NonNegativeTickCount(0), reason: 'invalid-batch' },
-    })
-  }
+  expectInputFailure(excessBatchKey, 'invalid-batch')
 
   const explicitlyUndefinedSetting = Schema.decodeUnknownResult(Sim.MobMovementSettingsSchema, { onExcessProperty: 'error' })({
     movementSpeed: undefined,

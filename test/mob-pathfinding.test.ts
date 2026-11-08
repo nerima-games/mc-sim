@@ -68,6 +68,12 @@ const world = (options: {
   }
 }
 
+const uniformWorld: MobPathWorldPort = {
+  isPassable: () => true,
+  hasSupport: () => true,
+  hazardAt: () => null,
+}
+
 const decodePlan = (value: unknown): void => {
   const decoded = Schema.decodeUnknownResult(MobPathTickPlanSchema, { onExcessProperty: 'error' })(value)
   expect(Result.isSuccess(decoded)).toBe(true)
@@ -83,6 +89,7 @@ it('finds a deterministic route and keeps the fixed tie order', () => {
     requests: [{ start: cell(0, 1, 0), goal: cell(1, 1, 1), profile: ground() }],
     world: world({ bounds: { minX: 0, maxX: 1, minY: 0, maxY: 3, minZ: 0, maxZ: 1 } }),
   }))
+  expect(result).toBeDefined()
   if (result === undefined) return
   const outcome = result.outcomes[0]
   expect(outcome?._tag).toBe('PathFound')
@@ -229,6 +236,7 @@ it('lets spiders climb a wall and excludes swimmers and flyers by tagged failure
     requests: [{ start: cell(0, 1, 0), goal: cell(2, 1, 0), profile: spider }],
     world: boundedWorld,
   }))
+  expect(spiderResult).toBeDefined()
   if (spiderResult === undefined) return
   const spiderOutcome = spiderResult.outcomes[0]
   expect(spiderOutcome?._tag).toBe('PathFound')
@@ -371,6 +379,175 @@ it('returns typed failures for NaN coordinates, negative dimensions, zero budget
     _tag: 'PathFailed',
     failure: { _tag: 'InvalidInput', field: 'request' },
   })._tag).toBe('Success')
+})
+
+it('returns typed failures for malformed public input, goal, profile, and aggregate settings', () => {
+  const invalidRoot = invoke(planMobPathsForTick, [{ requests: [], world: world(), extra: true }])
+  decodePlan(invalidRoot)
+  expect(invalidRoot).toEqual({ _tag: 'InvalidMobPathfindingInput', field: 'input' })
+
+  const invalidRequests = invoke(planMobPathsForTick, [{ requests: null, world: world() }])
+  decodePlan(invalidRequests)
+  expect(invalidRequests).toEqual({ _tag: 'InvalidMobPathfindingInput', field: 'requests' })
+
+  const invalidWorld = invoke(planMobPathsForTick, [{
+    requests: [],
+    world: { isPassable: () => true, hasSupport: () => true },
+  }])
+  decodePlan(invalidWorld)
+  expect(invalidWorld).toEqual({ _tag: 'InvalidMobPathfindingInput', field: 'world' })
+
+  const invalidGoal = invoke(planMobPathsForTick, [{
+    requests: [{ start: cell(0, 1, 0), goal: { x: 1, y: 1.5, z: 0 }, profile: ground() }],
+    world: world(),
+  }])
+  decodePlan(invalidGoal)
+  expect(invalidGoal).toEqual({
+    _tag: 'MobPathsPlanned',
+    outcomes: [{ _tag: 'PathFailed', failure: { _tag: 'InvalidInput', field: 'goal' } }],
+    searchesPerformed: 0,
+    expandedNodes: 0,
+  })
+
+  const invalidProfileKind = invoke(planMobPathsForTick, [{
+    requests: [{
+      start: cell(0, 1, 0),
+      goal: cell(1, 1, 0),
+      profile: { kind: 'unknown', width: 0.6, height: 0.9 },
+    }],
+    world: world(),
+  }])
+  decodePlan(invalidProfileKind)
+  expect(invalidProfileKind).toEqual({
+    _tag: 'MobPathsPlanned',
+    outcomes: [{ _tag: 'PathFailed', failure: { _tag: 'InvalidInput', field: 'profile' } }],
+    searchesPerformed: 0,
+    expandedNodes: 0,
+  })
+
+  const aggregateBudgetOverflow = invoke(planMobPathsForTick, [{
+    requests: [],
+    world: world(),
+    settings: {
+      maxNodesPerSearch: Number.MAX_SAFE_INTEGER,
+      maxSearchesPerTick: 2,
+      maxFallDistance: 3,
+    },
+  }])
+  decodePlan(aggregateBudgetOverflow)
+  expect(aggregateBudgetOverflow).toEqual({
+    _tag: 'InvalidMobPathfindingSettings',
+    field: 'maxNodesPerSearch',
+  })
+})
+
+it('handles safe-integer movement bounds with typed no-path results', () => {
+  const overflowingBody = planMobPathsForTick({
+    requests: [{
+      start: cell(0, Number.MAX_SAFE_INTEGER, 0),
+      goal: cell(0, Number.MAX_SAFE_INTEGER, 0),
+      profile: ground(0.6, 1.8),
+    }],
+    world: uniformWorld,
+  })
+  decodePlan(overflowingBody)
+  expect(overflowingBody._tag).toBe('MobPathsPlanned')
+  if (overflowingBody._tag === 'MobPathsPlanned') {
+    expect(overflowingBody.outcomes[0]).toEqual({
+      _tag: 'PathFailed',
+      failure: { _tag: 'NoPath' },
+    })
+  }
+
+  const underflowingLanding = planMobPathsForTick({
+    requests: [{
+      start: cell(0, Number.MIN_SAFE_INTEGER, 0),
+      goal: cell(1, Number.MIN_SAFE_INTEGER, 0),
+      profile: ground(0.6, 0.5, false),
+    }],
+    world: uniformWorld,
+  })
+  decodePlan(underflowingLanding)
+  expect(underflowingLanding._tag).toBe('MobPathsPlanned')
+  if (underflowingLanding._tag === 'MobPathsPlanned') {
+    expect(underflowingLanding.outcomes[0]).toEqual({
+      _tag: 'PathFailed',
+      failure: { _tag: 'NoPath' },
+    })
+  }
+
+  const minimumAxisStep = planMobPathsForTick({
+    requests: [{
+      start: cell(Number.MIN_SAFE_INTEGER, 1, 0),
+      goal: cell(Number.MIN_SAFE_INTEGER + 1, 1, 0),
+      profile: ground(0.6, 0.5, false),
+    }],
+    world: uniformWorld,
+  })
+  decodePlan(minimumAxisStep)
+  expect(minimumAxisStep._tag).toBe('MobPathsPlanned')
+  if (minimumAxisStep._tag === 'MobPathsPlanned') {
+    expect(minimumAxisStep.outcomes[0]?._tag).toBe('PathFound')
+  }
+})
+
+it('keeps spider movement grounded when there is no clearance above its current cell', () => {
+  const overheadBlockedWorld = world({
+    bounds: { minX: 0, maxX: 1, minY: 0, maxY: 3, minZ: 0, maxZ: 0 },
+    solids: [cell(0, 2, 0)],
+  })
+  const result = planned(planMobPathsForTick({
+    requests: [{ start: cell(0, 1, 0), goal: cell(1, 1, 0), profile: spider }],
+    world: overheadBlockedWorld,
+  }))
+  expect(result).toBeDefined()
+  if (result === undefined) return
+  const outcome = result.outcomes[0]
+  expect(outcome?._tag).toBe('PathFound')
+  if (outcome?._tag === 'PathFound') {
+    expect(outcome.path.some((step) => step.action === 'climb')).toBe(false)
+  }
+})
+
+it('compares equal-priority alternatives by X and Y before preserving route order', () => {
+  const rowWorld: MobPathWorldPort = {
+    isPassable: ({ z }) => z === 0,
+    hasSupport: ({ z }) => z === 0,
+    hazardAt: () => null,
+  }
+  const sameRowTie = planned(planMobPathsForTick({
+    requests: [{ start: cell(2, 1, 0), goal: cell(2, 2, 0), profile: ground(0.6, 0.5, true) }],
+    world: rowWorld,
+  }))
+  expect(sameRowTie).toBeDefined()
+  if (sameRowTie === undefined) return
+  decodePlan(sameRowTie)
+  const sameRowOutcome = sameRowTie.outcomes[0]
+  expect(sameRowOutcome?._tag).toBe('PathFound')
+  if (sameRowOutcome?._tag === 'PathFound') {
+    expect(sameRowOutcome.path.map(({ x, y, z, action }) => [x, y, z, action])).toEqual([
+      [2, 1, 0, 'start'],
+      [1, 1, 0, 'walk'],
+      [2, 2, 0, 'jump'],
+    ])
+  }
+
+  const sameColumnTie = planned(planMobPathsForTick({
+    requests: [{ start: cell(2, 2, 0), goal: cell(4, 2, 0), profile: ground(0.6, 0.5, true) }],
+    world: rowWorld,
+  }))
+  expect(sameColumnTie).toBeDefined()
+  if (sameColumnTie === undefined) return
+  decodePlan(sameColumnTie)
+  const sameColumnOutcome = sameColumnTie.outcomes[0]
+  expect(sameColumnOutcome?._tag).toBe('PathFound')
+  if (sameColumnOutcome?._tag === 'PathFound') {
+    expect(sameColumnOutcome.path.map(({ x, y, z, action }) => [x, y, z, action])).toEqual([
+      [2, 2, 0, 'start'],
+      [3, 2, 0, 'walk'],
+      [4, 2, 0, 'walk'],
+    ])
+  }
 })
 
 it('rejects excess request and settings fields and unknown tags at strict schema boundaries', () => {
