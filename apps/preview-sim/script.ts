@@ -316,8 +316,8 @@ const DAY_LENGTH_HAZARD: Scenario = {
     }),
     step(120, 'age the world four in-game days so moonPhase has something to lose', {
       kind: 'restoreTime',
-      ticks: 36000 * 4 + 10800,
-      dayLengthTicks: 36000,
+      ticks: 12000 * 4 + 3600,
+      dayLengthTicks: 12000,
     }),
     step(180, 'the UNSAFE half: a settings slider changing only the day length', {
       kind: 'setDayLength',
@@ -583,7 +583,7 @@ const VITALS: Scenario = {
       kind: 'unlock',
       id: 'minecraft:story/form_obsidian',
     }),
-    step(800, 'a settings write the clamp has to move: 400 chunks is not loadable', {
+    step(800, 'an invalid settings write: 400 chunks is not loadable', {
       kind: 'setting',
       patch: { renderDistance: 400, fovDegrees: Number.NaN },
     }),

@@ -272,19 +272,13 @@ describe('hunger: saturation, exhaustion and the cascade', () => {
   )
 })
 
-/**
- * THE regression test for the tick-rate transcription trap.
- *
- * The reference stores 80 and means four seconds, because it runs at 20 ticks
- * per second. mc-sim runs at 60. Carrying the 80 across would triple the hunger
- * rate while looking like a faithful port, and no test that asserted `80 === 80`
- * would notice.
- */
-describe('REGRESSION: the food tick is FOUR SECONDS, not eighty of mc-sim ticks', () => {
+/** THE slow food timer is four seconds of supplied time. */
+describe('REGRESSION: the slow food timer is four seconds', () => {
   it.effect('a tick fires after 4 s of supplied delta and not before', () =>
     Effect.sync(() => {
       // Nothing at 3.9 s.
-      const [early, waiting] = advanceFoodTimer(withVitals({ healthPoints: 10 }), dt(3.9))
+      const slowRegen = withVitals({ healthPoints: 10, hungerPoints: 19 })
+      const [early, waiting] = advanceFoodTimer(slowRegen, dt(3.9))
       expect(early).toBe('none')
       expect(waiting.foodTimerSecs).toBeCloseTo(3.9, 12)
 
@@ -293,12 +287,10 @@ describe('REGRESSION: the food tick is FOUR SECONDS, not eighty of mc-sim ticks'
     }),
   )
 
-  it.effect('eighty mc-sim ticks is 1.333 s and must NOT fire a tick', () =>
+  it.effect('1.333 seconds does not reach the slow interval', () =>
     Effect.sync(() => {
-      // 80 / TICKS_PER_SECOND, with TICKS_PER_SECOND being 60 here rather than
-      // the reference's 20. If someone "restores" the reference's constant this
-      // goes red.
-      const [signal] = advanceFoodTimer(withVitals({ healthPoints: 10 }), dt(80 / 60))
+      // This is elapsed seconds supplied to the model, not a simulation-tick count.
+      const [signal] = advanceFoodTimer(withVitals({ healthPoints: 10, hungerPoints: 19 }), dt(80 / 60))
 
       expect(signal).toBe('none')
     }),
@@ -319,7 +311,7 @@ describe('the food tick reports, and applies nothing', () => {
 
   it.effect('a regenerating tick charges exhaustion but heals nobody', () =>
     Effect.sync(() => {
-      const hurt = withVitals({ healthPoints: 10 })
+      const hurt = withVitals({ healthPoints: 10, hungerPoints: 19 })
       const [signal, after] = advanceFoodTimer(hurt, dt(4))
 
       expect(signal).toBe('regen')
@@ -358,7 +350,7 @@ describe('the food tick reports, and applies nothing', () => {
       // second period is discarded rather than being carried, so the timer is
       // left below its own period — the invariant `isValidVitals` asserts, and
       // the same "run slow rather than wrong" trade the frame-delta clamp makes.
-      const [signal, after] = advanceFoodTimer(withVitals({ healthPoints: 10 }), dt(10))
+      const [signal, after] = advanceFoodTimer(withVitals({ healthPoints: 10, hungerPoints: 19 }), dt(10))
 
       expect(signal).toBe('regen')
       expect(after.foodTimerSecs).toBeCloseTo(2, 12)
@@ -382,6 +374,55 @@ describe('the food tick reports, and applies nothing', () => {
       expect(after.foodTimerSecs).toBe(0)
       expect(infiniteSignal).toBe('regen')
       expect(afterInfinity.foodTimerSecs).toBe(0)
+    }),
+  )
+})
+
+describe('saturated natural regeneration', () => {
+  it.effect('full hunger and saturation signal one point of healing every 0.5 seconds', () =>
+    Effect.sync(() => {
+      const hurt = withVitals({ healthPoints: 10 })
+      const [early, waiting] = advanceFoodTimer(hurt, dt(0.45))
+      const [regen, after] = advanceFoodTimer(waiting, dt(0.05))
+
+      expect(early).toBe('none')
+      expect(waiting.saturation).toBe(5)
+      expect(regen).toBe('regen')
+      expect(after.healthPoints).toBe(10)
+      expect(after.hungerPoints).toBe(20)
+      expect(after.saturation).toBe(4)
+      expect(after.exhaustion).toBeCloseTo(2, 12)
+    }),
+  )
+
+  it.effect('lack of full hunger or saturation keeps the 4-second regeneration interval', () =>
+    Effect.sync(() => {
+      const almostFull = withVitals({ healthPoints: 10, hungerPoints: 19 })
+      const noSaturation = withVitals({ healthPoints: 10, saturation: 0 })
+
+      const [almostEarly] = advanceFoodTimer(almostFull, dt(0.5))
+      const [almostRegen] = advanceFoodTimer(almostFull, dt(4))
+      const [emptyEarly] = advanceFoodTimer(noSaturation, dt(0.5))
+      const [emptyRegen, emptyAfter] = advanceFoodTimer(noSaturation, dt(4))
+
+      expect(almostEarly).toBe('none')
+      expect(almostRegen).toBe('regen')
+      expect(emptyEarly).toBe('none')
+      expect(emptyRegen).toBe('regen')
+      expect(emptyAfter.hungerPoints).toBe(19)
+      expect(emptyAfter.exhaustion).toBe(2)
+    }),
+  )
+
+  it.effect('zero elapsed time does not trigger when switching to the fast interval', () =>
+    Effect.sync(() => {
+      const slowTimer = withVitals({ healthPoints: 10, hungerPoints: 19, foodTimerSecs: 1 })
+      const fastState = withVitals({ ...slowTimer, hungerPoints: 20, saturation: 5 })
+      const [signal, after] = advanceFoodTimer(fastState, dt(0))
+
+      expect(signal).toBe('none')
+      expect(after.foodTimerSecs).toBe(1)
+      expect(after.saturation).toBe(5)
     }),
   )
 })

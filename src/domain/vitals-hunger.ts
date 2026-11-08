@@ -11,6 +11,7 @@ import {
   FOOD_TICK_SECS,
   MAX_EXHAUSTION,
   REGEN_HUNGER_THRESHOLD,
+  SATURATED_REGEN_TICK_SECS,
   ExhaustionAmount,
   FoodTimerSecs,
   HungerPoints,
@@ -94,9 +95,23 @@ export const advanceFoodTimer = (
 ): readonly [FoodTickSignal, Vitals] => {
   const base = safeVitals(vitals)
   const elapsed = Math.max(0, delta(dt))
-  const crossesTick = base.foodTimerSecs + elapsed >= FOOD_TICK_SECS
+  const fastRegenAvailable =
+    base.healthPoints > 0 &&
+    base.healthPoints < base.maxHealthPoints &&
+    base.hungerPoints === base.maxHungerPoints &&
+    base.saturation > 0
+  const regenInterval = fastRegenAvailable ? SATURATED_REGEN_TICK_SECS : FOOD_TICK_SECS
+  const accumulatedElapsed = base.foodTimerSecs + elapsed
+  const tickTolerance = Number.EPSILON * Math.max(1, regenInterval, accumulatedElapsed)
+  const crossesTick =
+    elapsed > 0 && !Number.isNaN(accumulatedElapsed) && accumulatedElapsed + tickTolerance >= regenInterval
   const elapsedModulo = Number.isFinite(elapsed) ? elapsed % FOOD_TICK_SECS : 0
-  const foodTimerSecs = FoodTimerSecs((base.foodTimerSecs + elapsedModulo) % FOOD_TICK_SECS)
+  const timerWithRemainder = base.foodTimerSecs + elapsedModulo
+  const remainderTolerance = Number.EPSILON * Math.max(1, regenInterval, timerWithRemainder)
+  const completedIntervals = crossesTick
+    ? Math.floor((timerWithRemainder + remainderTolerance) / regenInterval)
+    : 0
+  const foodTimerSecs = FoodTimerSecs(Math.max(0, timerWithRemainder - completedIntervals * regenInterval))
   if (!crossesTick) {
     return ['none', { ...base, foodTimerSecs }]
   }

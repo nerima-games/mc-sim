@@ -249,23 +249,17 @@ describe('the stage works through the services, and keeps no copy of what they o
     }).pipe(Effect.provide(SimulationLayer), Effect.provide(FrozenClockLayer)),
   )
 
-  it.effect('REGRESSION: `sim:physics` advances the world clock through TimeService', () =>
+  it.effect('REGRESSION: SM1 tick counts advance the world clock through TimeService', () =>
     Effect.gen(function* () {
       const time = yield* TimeService
       const stages = yield* makeSimStages
-      const physics = stages.find((stage) => stage.id === SIM_STAGE_IDS.physics)
 
       const before = yield* time.snapshot
-      yield* physics?.run(DeltaTimeSecs(0.5)) ?? Effect.void
+      yield* runStagesForTicks(stages, NonNegativeTickCount(3))
       const after = yield* time.snapshot
 
-      // The strong form of "through the service": the value the SERVICE reports
-      // is exactly what `domain/time-of-day.ts` computes for that delta. A stage
-      // holding its own accumulator could make `after.ticks` move and this
-      // equality would still hold — but only if it wrote the result back, which
-      // is the property that matters.
-      expect(after).toStrictEqual(Result.getOrThrow(Time.advance(before, DeltaTimeSecs(0.5))))
-      expect(after.ticks).toBeGreaterThan(before.ticks)
+      expect(after).toStrictEqual(Result.getOrThrow(Time.advance(before, NonNegativeTickCount(3))))
+      expect(after.ticks).toBe(before.ticks + 3)
     }).pipe(Effect.provide(SimulationLayer), Effect.provide(FrozenClockLayer)),
   )
 
@@ -273,7 +267,7 @@ describe('the stage works through the services, and keeps no copy of what they o
     Effect.gen(function* () {
       // This is the assertion that a private accumulator cannot pass. Two
       // independent `makeSimStages` share nothing of their own, so if the tick
-      // count after running both is the sum of both deltas, the state they moved
+      // count after running both is the sum of both tick advances, the state they moved
       // is the service's and not theirs.
       const time = yield* TimeService
       const first = yield* makeSimStages
@@ -284,11 +278,7 @@ describe('the stage works through the services, and keeps no copy of what they o
       yield* second[0]?.run(DeltaTimeSecs(0.25)) ?? Effect.void
       const after = yield* time.snapshot
 
-      expect(after).toStrictEqual(
-        Result.getOrThrow(
-          Time.advance(Result.getOrThrow(Time.advance(before, DeltaTimeSecs(0.25))), DeltaTimeSecs(0.25)),
-        ),
-      )
+      expect(after).toStrictEqual(Result.getOrThrow(Time.advance(before, NonNegativeTickCount(2))))
     }).pipe(Effect.provide(SimulationLayer), Effect.provide(FrozenClockLayer)),
   )
 
@@ -352,7 +342,7 @@ describe('the stage works through the services, and keeps no copy of what they o
     }).pipe(Effect.provide(SimulationLayer), Effect.provide(FrozenClockLayer)),
   )
 
-  it.effect('a dt of zero advances nothing and fails nothing', () =>
+  it.effect('the frame dt does not affect the one simulation tick this stage represents', () =>
     Effect.gen(function* () {
       const time = yield* TimeService
       const stages = yield* makeSimStages
@@ -360,7 +350,9 @@ describe('the stage works through the services, and keeps no copy of what they o
       const before = yield* time.snapshot
       yield* stages[0]?.run(DeltaTimeSecs(0)) ?? Effect.void
 
-      expect(yield* time.snapshot).toStrictEqual(before)
+      expect(yield* time.snapshot).toStrictEqual(
+        Result.getOrThrow(Time.advance(before, NonNegativeTickCount(1))),
+      )
     }).pipe(Effect.provide(SimulationLayer), Effect.provide(FrozenClockLayer)),
   )
 

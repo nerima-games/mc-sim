@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Cause, Effect, Exit, Result } from 'effect'
+import { Cause, Effect, Exit, Result, Schema } from 'effect'
 import {
   makeSettingsService,
   SettingsService,
@@ -8,14 +8,26 @@ import {
 import {
   applySettings,
   COLOR_VISION_CORRECTIONS,
+  decodeSettings,
   DEFAULT_SETTINGS,
   GRAPHICS_PRESETS,
   isGraphicsQuality,
   isValidSettings,
   keyBindingFor,
+  MAX_FOV_DEGREES,
+  MAX_MOUSE_SENSITIVITY,
+  MAX_RENDER_DISTANCE,
+  MAX_UI_SCALE,
+  MAX_VOLUME,
+  MIN_FOV_DEGREES,
+  MIN_MOUSE_SENSITIVITY,
+  MIN_RENDER_DISTANCE,
+  MIN_UI_SCALE,
+  MIN_VOLUME,
   normaliseSettings,
   REDUCED_MOTION_SETTINGS,
   rebindKey as domainRebindKey,
+  SettingsSchema,
   unbindKey as domainUnbindKey,
 } from '../src/domain/settings'
 import {
@@ -27,16 +39,23 @@ import {
   VolumeLevel,
 } from '@nerima-games/mc-kernel'
 import type { Settings } from '../src/domain/settings'
+import { SchemaErrorSchema } from '../src/schema-errors'
 
 const withSettings = (patch: Partial<Settings>): Settings => ({ ...DEFAULT_SETTINGS, ...patch })
 const rawSettings = (patch: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> => ({
   ...DEFAULT_SETTINGS,
   ...patch,
 })
+const unwrap = <A, E>(result: Result.Result<A, E>): A => {
+  if (Result.isSuccess(result)) return result.success
+  throw new Error('Expected valid settings')
+}
+const normalize = (settings: unknown): Settings => unwrap(normaliseSettings(settings))
+const apply = (current: Settings, patch: Partial<Settings>): Settings => unwrap(applySettings(current, patch))
 const rebindKey = (settings: Settings, action: string, code: string): Settings =>
-  domainRebindKey(settings, InputAction(action), KeyCode(code))
+  unwrap(domainRebindKey(settings, InputAction(action), KeyCode(code)))
 const unbindKey = (settings: Settings, action: string): Settings =>
-  domainUnbindKey(settings, InputAction(action))
+  unwrap(domainUnbindKey(settings, InputAction(action)))
 
 describe('W4-R3 persistent settings ownership', () => {
   it.effect('stores the full presentation and world settings schema', () =>
@@ -51,9 +70,9 @@ describe('W4-R3 persistent settings ownership', () => {
     }),
   )
 
-  it.effect('repairs invalid persisted values for each newly owned field', () =>
+  it.effect('rejects invalid persisted values for each newly owned field', () =>
     Effect.sync(() => {
-      const repaired = normaliseSettings({
+      const invalid = decodeSettings({
         ...DEFAULT_SETTINGS,
         difficulty: 'nightmare',
         uiScale: 3,
@@ -62,21 +81,24 @@ describe('W4-R3 persistent settings ownership', () => {
         graphicsPreset: 'ulra',
       })
 
-      expect(repaired.difficulty).toBe(DEFAULT_SETTINGS.difficulty)
-      expect(repaired.uiScale).toBe(1.5)
-      expect(repaired.reducedMotion).toBe(DEFAULT_SETTINGS.reducedMotion)
-      expect(repaired.colorVisionCorrection).toBe(DEFAULT_SETTINGS.colorVisionCorrection)
-      expect(repaired.graphicsPreset).toBe(DEFAULT_SETTINGS.graphicsPreset)
-      expect(repaired.graphicsQuality).toBe(repaired.graphicsPreset)
+      expect(Result.isFailure(invalid)).toBe(true)
+      if (Result.isFailure(invalid)) expect(Schema.is(SchemaErrorSchema)(invalid.failure)).toBe(true)
     }),
   )
 })
 
-describe('settings normalisation input boundary', () => {
-  it.effect('repairs non-record saves and rejects them as already-valid settings', () =>
+describe('settings decoding input boundary', () => {
+  it.effect('rejects non-record settings and accepts omitted fields as defaults', () =>
     Effect.sync(() => {
-      expect(normaliseSettings(null)).toEqual(DEFAULT_SETTINGS)
-      expect(normaliseSettings([])).toEqual(DEFAULT_SETTINGS)
+      expect(Result.isFailure(normaliseSettings(null))).toBe(true)
+      expect(Result.isFailure(normaliseSettings([]))).toBe(true)
+      expect(normalize({ difficulty: 'hard' })).toMatchObject({
+        difficulty: 'hard',
+        fovDegrees: DEFAULT_SETTINGS.fovDegrees,
+        renderDistance: DEFAULT_SETTINGS.renderDistance,
+        uiScale: DEFAULT_SETTINGS.uiScale,
+      })
+      expect(Result.isFailure(decodeSettings({ uiScale: undefined }))).toBe(true)
       expect(isValidSettings(null)).toBe(false)
       expect(isValidSettings([])).toBe(false)
     }),
@@ -117,16 +139,28 @@ describe('existing defaults stay reconciled with mc-kernel', () => {
 
   it.effect('the defaults are themselves valid, which is not automatic', () =>
     Effect.sync(() => {
-      expect(normaliseSettings(DEFAULT_SETTINGS)).toEqual(DEFAULT_SETTINGS)
+      expect(normalize(DEFAULT_SETTINGS)).toEqual(DEFAULT_SETTINGS)
       expect(isValidSettings(DEFAULT_SETTINGS)).toBe(true)
     }),
   )
 })
 
-describe('locally owned settings API', () => {
-  it.effect('applies a patch and normalises the resulting settings', () =>
+describe('strict settings schema', () => {
+  it.effect('decodes complete values and rejects missing or unknown fields', () =>
     Effect.sync(() => {
-      const updated = applySettings(DEFAULT_SETTINGS, { audioEnabled: false })
+      expect(Result.isSuccess(Schema.decodeUnknownResult(SettingsSchema)(DEFAULT_SETTINGS))).toBe(true)
+      expect(Result.isFailure(Schema.decodeUnknownResult(SettingsSchema)({ ...DEFAULT_SETTINGS, _tag: 'Settings' }))).toBe(true)
+      expect(Result.isFailure(decodeSettings({ ...DEFAULT_SETTINGS, extra: true }))).toBe(true)
+      expect(Result.isFailure(decodeSettings({ ...DEFAULT_SETTINGS, [Symbol('extra')]: true }))).toBe(true)
+      expect(Result.isFailure(decodeSettings(new Date()))).toBe(true)
+    }),
+  )
+})
+
+describe('locally owned settings API', () => {
+  it.effect('applies a valid patch and preserves the remaining values', () =>
+    Effect.sync(() => {
+      const updated = apply(DEFAULT_SETTINGS, { audioEnabled: false })
 
       expect(updated.audioEnabled).toBe(false)
       expect(updated.renderDistance).toBe(DEFAULT_SETTINGS.renderDistance)
@@ -136,29 +170,28 @@ describe('locally owned settings API', () => {
 
   it.effect('keeps the preset and legacy graphics quality patches in sync', () =>
     Effect.sync(() => {
-      const presetPatch = applySettings(DEFAULT_SETTINGS, { graphicsPreset: 'high' })
-      const legacyPatch = applySettings(DEFAULT_SETTINGS, { graphicsQuality: 'low' })
+      const presetPatch = apply(DEFAULT_SETTINGS, { graphicsPreset: 'high' })
+      const legacyPatch = apply(DEFAULT_SETTINGS, { graphicsQuality: 'low' })
+      const presetOnly = normalize({ graphicsPreset: 'high' })
 
       expect(presetPatch.graphicsPreset).toBe('high')
       expect(presetPatch.graphicsQuality).toBe('high')
       expect(legacyPatch.graphicsPreset).toBe('low')
       expect(legacyPatch.graphicsQuality).toBe('low')
+      expect(presetOnly.graphicsPreset).toBe('high')
+      expect(presetOnly.graphicsQuality).toBe('high')
     }),
   )
 
-  it.effect('uses a valid legacy graphics quality when the preset is invalid', () =>
+  it.effect('keeps the graphics aliases aligned and rejects invalid presets', () =>
     Effect.sync(() => {
-      const legacy = normaliseSettings(
-        rawSettings({ graphicsPreset: 'ulra', graphicsQuality: 'high' }),
-      )
-      const fallback = normaliseSettings(
-        rawSettings({ graphicsPreset: 'ulra', graphicsQuality: 'ulra' }),
-      )
+      const legacy = normalize({ graphicsQuality: 'high' })
 
       expect(legacy.graphicsPreset).toBe('high')
       expect(legacy.graphicsQuality).toBe('high')
-      expect(fallback.graphicsPreset).toBe(DEFAULT_SETTINGS.graphicsPreset)
-      expect(fallback.graphicsQuality).toBe(DEFAULT_SETTINGS.graphicsQuality)
+      expect(Result.isFailure(decodeSettings({ graphicsPreset: 'ulra', graphicsQuality: 'high' }))).toBe(true)
+      expect(GRAPHICS_PRESETS).toContain('ultra')
+      expect(GRAPHICS_PRESETS).not.toContain('ulra')
     }),
   )
 
@@ -178,108 +211,54 @@ describe('locally owned settings API', () => {
   )
 })
 
-describe('values are clamped into the reference’s ranges', () => {
-  it.effect('render distance is an integer in [2, 16]', () =>
+describe('settings ranges reject values beyond their bounds', () => {
+  it.effect('accepts each numeric bound and rejects the value immediately outside it', () =>
     Effect.sync(() => {
-      // settings.schema.ts:49.
-      expect(normaliseSettings(rawSettings({ renderDistance: 0 })).renderDistance).toBe(2)
-      expect(normaliseSettings(rawSettings({ renderDistance: 64 })).renderDistance).toBe(16)
-      expect(normaliseSettings(rawSettings({ renderDistance: 7.9 })).renderDistance).toBe(7)
+      const accepted = [
+        { renderDistance: MIN_RENDER_DISTANCE },
+        { renderDistance: MAX_RENDER_DISTANCE },
+        { fovDegrees: MIN_FOV_DEGREES },
+        { fovDegrees: MAX_FOV_DEGREES },
+        { uiScale: MIN_UI_SCALE },
+        { uiScale: MAX_UI_SCALE },
+        { mouseSensitivity: MIN_MOUSE_SENSITIVITY },
+        { mouseSensitivity: MAX_MOUSE_SENSITIVITY },
+        { masterVolume: MIN_VOLUME },
+        { masterVolume: MAX_VOLUME },
+        { musicVolume: MIN_VOLUME },
+        { musicVolume: MAX_VOLUME },
+        { sfxVolume: MIN_VOLUME },
+        { sfxVolume: MAX_VOLUME },
+      ]
+      const rejected = [
+        { renderDistance: MIN_RENDER_DISTANCE - 1 },
+        { renderDistance: MAX_RENDER_DISTANCE + 1 },
+        { fovDegrees: MIN_FOV_DEGREES - 0.01 },
+        { fovDegrees: MAX_FOV_DEGREES + 0.01 },
+        { uiScale: MIN_UI_SCALE - 0.01 },
+        { uiScale: MAX_UI_SCALE + 0.01 },
+        { mouseSensitivity: MIN_MOUSE_SENSITIVITY - 0.01 },
+        { mouseSensitivity: MAX_MOUSE_SENSITIVITY + 0.01 },
+        { masterVolume: MIN_VOLUME - 0.01 },
+        { masterVolume: MAX_VOLUME + 0.01 },
+        { musicVolume: MIN_VOLUME - 0.01 },
+        { musicVolume: MAX_VOLUME + 0.01 },
+        { sfxVolume: MIN_VOLUME - 0.01 },
+        { sfxVolume: MAX_VOLUME + 0.01 },
+      ]
+
+      for (const candidate of accepted) expect(Result.isSuccess(decodeSettings(candidate))).toBe(true)
+      for (const candidate of rejected) expect(Result.isFailure(decodeSettings(candidate))).toBe(true)
     }),
   )
 
-  it.effect('field of view is in [30, 110]', () =>
+  it.effect('rejects fractional render distance, non-finite values, and wrong primitive types', () =>
     Effect.sync(() => {
-      // settings.schema.ts:51-53: 30 'zoom', 110 'Quake Pro'.
-      expect(normaliseSettings(rawSettings({ fovDegrees: 1 })).fovDegrees).toBe(30)
-      expect(normaliseSettings(rawSettings({ fovDegrees: 179 })).fovDegrees).toBe(110)
-    }),
-  )
-
-  it.effect('UI scale falls back for NaN and non-numeric saved values', () =>
-    Effect.sync(() => {
-      expect(normaliseSettings(rawSettings({ uiScale: 1.25 })).uiScale).toBe(1.25)
-      expect(normaliseSettings(rawSettings({ uiScale: Number.NaN })).uiScale).toBe(
-        DEFAULT_SETTINGS.uiScale,
-      )
-      expect(normaliseSettings(rawSettings({ uiScale: 'large' })).uiScale).toBe(
-        DEFAULT_SETTINGS.uiScale,
-      )
-    }),
-  )
-
-  it.effect('mouse sensitivity is in [0.1, 3]', () =>
-    Effect.sync(() => {
-      // settings.schema.ts:50. Zero is refused because a sensitivity of zero is
-      // a camera that cannot turn, which reads as a frozen game.
-      expect(normaliseSettings(rawSettings({ mouseSensitivity: 0 })).mouseSensitivity).toBe(0.1)
-      expect(normaliseSettings(rawSettings({ mouseSensitivity: 99 })).mouseSensitivity).toBe(3)
-    }),
-  )
-
-  it.effect('volumes are in [0, 1]', () =>
-    Effect.sync(() => {
-      // settings.schema.ts:75-77.
-      const loud = normaliseSettings(
-        rawSettings({ masterVolume: 11, musicVolume: -1, sfxVolume: 0.5 }),
-      )
-
-      expect(loud.masterVolume).toBe(1)
-      expect(loud.musicVolume).toBe(0)
-      expect(loud.sfxVolume).toBe(0.5)
-    }),
-  )
-
-  it.effect('an unknown graphics quality falls back rather than reaching a preset lookup', () =>
-    Effect.sync(() => {
-      // A `string` here would let a save carry 'ulra' into mc-render's preset
-      // table, which would answer `undefined` and take the renderer with it.
-      expect(normaliseSettings(rawSettings({ graphicsQuality: 'ulra' })).graphicsQuality).toBe(
-        'medium',
-      )
-      expect(GRAPHICS_PRESETS).toContain('ultra')
-      expect(GRAPHICS_PRESETS).not.toContain('ulra')
-    }),
-  )
-
-  it.effect('an INFINITY lands on the bound it points at; a NaN lands on the default', () =>
-    Effect.sync(() => {
-      // The same rule `domain/time-of-day.ts` states: an infinity has a
-      // direction, a value with no magnitude does not. A cleared field snapping
-      // to the MINIMUM would give a player a fog wall or silence they cannot
-      // explain, so the fresh-user value is the fallback here.
-      expect(normaliseSettings(rawSettings({ fovDegrees: Number.POSITIVE_INFINITY })).fovDegrees).toBe(110)
-      expect(normaliseSettings(rawSettings({ fovDegrees: Number.NaN })).fovDegrees).toBe(75)
-      expect(normaliseSettings(rawSettings({ masterVolume: Number.NaN })).masterVolume).toBe(0.8)
-    }),
-  )
-
-  /**
-   * REVISED under kernel's ruleset. mc-sim's own `normaliseSettings` used to
-   * treat `audioEnabled` specially — `settings.audioEnabled === true`, so ANY
-   * non-`true` value (including a malformed one) became `false`, regardless
-   * of the fresh-user default. Kernel's version does not special-case it: a
-   * malformed `audioEnabled` (any non-boolean) falls back to
-   * `DEFAULT_SETTINGS.audioEnabled` the same way every other malformed field
-   * falls back to its own default — verified against mc-kernel's OWN
-   * `test/settings.test.ts`, which pins `normaliseSettings({ audioEnabled:
-   * 'true', ... })` to `DEFAULT_SETTINGS.audioEnabled`, i.e. the same fallback
-   * for a malformed 'true' as for a malformed 'false'. Since the default is
-   * now `true`, a malformed value of EITHER string now normalises to `true`.
-   * This is kernel's considered, tested behaviour, not an oversight to patch
-   * around locally — re-adding a stricter local rule here is exactly the
-   * "second copy" this whole move exists to close. What still holds, and is
-   * pinned above, is that a WELL-FORMED `false` stays `false` — see
-   * `it.effect('update patches...')` below.
-   */
-  it.effect('a malformed audioEnabled falls back to the default, matching every other malformed field', () =>
-    Effect.sync(() => {
-      const repaired = normaliseSettings(
-        rawSettings({ audioEnabled: 'false' }),
-      )
-
-      expect(repaired.audioEnabled).toBe(DEFAULT_SETTINGS.audioEnabled)
-      expect(repaired.audioEnabled).toBe(true)
+      expect(Result.isFailure(decodeSettings({ renderDistance: 7.9 }))).toBe(true)
+      expect(Result.isFailure(decodeSettings({ uiScale: Number.NaN }))).toBe(true)
+      expect(Result.isFailure(decodeSettings({ fovDegrees: Number.POSITIVE_INFINITY }))).toBe(true)
+      expect(Result.isFailure(decodeSettings({ masterVolume: 'loud' }))).toBe(true)
+      expect(Result.isFailure(decodeSettings({ audioEnabled: 'false' }))).toBe(true)
     }),
   )
 })
@@ -295,12 +274,42 @@ describe('key bindings are overrides, not a roster', () => {
     }),
   )
 
-  it.effect('preserves settings when an untyped caller supplies an invalid action value', () =>
+  it.effect('rejects an invalid runtime action value', () =>
     Effect.sync(() => {
       expect(InputAction.result('')._tag).toBe('Failure')
       expect(
         domainRebindKey(DEFAULT_SETTINGS, '' as InputAction, KeyCode('Space')),
-      ).toBe(DEFAULT_SETTINGS)
+      ).toMatchObject({ _tag: 'Failure' })
+      expect(
+        Reflect.apply(domainRebindKey, undefined, [DEFAULT_SETTINGS, InputAction('jump'), '']),
+      ).toMatchObject({ _tag: 'Failure' })
+    }),
+  )
+
+  it.effect('rejects invalid settings before rebinding', () =>
+    Effect.sync(() => {
+      const invalid = withSettings({ uiScale: MAX_UI_SCALE + 0.01 })
+
+      expect(domainRebindKey(invalid, InputAction('jump'), KeyCode('Space'))).toMatchObject({
+        _tag: 'Failure',
+      })
+    }),
+  )
+
+  it.effect('a no-op rebind leaves valid settings unchanged and decodes partial settings', () =>
+    Effect.sync(() => {
+      const bound = rebindKey(DEFAULT_SETTINGS, 'jump', 'Space')
+      expect(rebindKey(bound, 'jump', 'Space')).toEqual(bound)
+
+      const partial: Record<string, unknown> = {
+        ...DEFAULT_SETTINGS,
+        keyBindings: { jump: 'Space' },
+      }
+      delete partial['uiScale']
+      const decoded = Reflect.apply(domainRebindKey, undefined, [partial, InputAction('jump'), KeyCode('Space')])
+
+      expect(decoded).toMatchObject({ _tag: 'Success', success: { uiScale: DEFAULT_SETTINGS.uiScale } })
+      if (Result.isSuccess(decoded)) expect(isValidSettings(decoded.success)).toBe(true)
     }),
   )
 
@@ -369,29 +378,29 @@ describe('key bindings are overrides, not a roster', () => {
       // Merging would make removal impossible: the map is already the override
       // set, and an absent entry is what "keep the default" means.
       const bound = rebindKey(rebindKey(DEFAULT_SETTINGS, 'jump', 'Space'), 'sneak', 'ShiftLeft')
-      const replaced = normaliseSettings({ ...bound, keyBindings: { jump: 'KeyJ' } })
+      const replaced = normalize({ ...bound, keyBindings: { jump: 'KeyJ' } })
 
       expect(replaced.keyBindings).toEqual({ jump: 'KeyJ' })
     }),
   )
 
-  it.effect('a non-string code is DROPPED, not coerced into a key no keyboard makes', () =>
+  it.effect('rejects malformed key-binding entries rather than dropping them', () =>
     Effect.sync(() => {
-      const repaired = normaliseSettings(
+      const invalid = normaliseSettings(
         rawSettings({ keyBindings: { jump: null, sneak: 'ShiftLeft', '': 'KeyQ' } }),
       )
 
-      expect(repaired.keyBindings).toEqual({ sneak: 'ShiftLeft' })
+      expect(Result.isFailure(invalid)).toBe(true)
     }),
   )
 
-  it.effect('a keyBindings that is not an object at all becomes an empty map', () =>
+  it.effect('rejects a keyBindings value that is not a map', () =>
     Effect.sync(() => {
-      const repaired = normaliseSettings(
+      const invalid = normaliseSettings(
         rawSettings({ keyBindings: null }),
       )
 
-      expect(repaired.keyBindings).toEqual({})
+      expect(Result.isFailure(invalid)).toBe(true)
     }),
   )
 })
@@ -410,15 +419,26 @@ describe('SettingsService', () => {
     }),
   )
 
-  it.effect('update patches some fields and leaves the rest', () =>
+  it.effect('invalid candidates and updates fail with SchemaError and preserve the snapshot', () =>
+    Effect.gen(function* () {
+      const settings = yield* makeSettingsService()
+      const before = yield* settings.snapshot
+      const candidate = yield* Effect.result(settings.candidate({ uiScale: MAX_UI_SCALE + 0.01 }))
+      const update = yield* Effect.result(settings.update({ uiScale: MAX_UI_SCALE + 0.01 }))
+
+      expect(Result.isFailure(candidate)).toBe(true)
+      expect(Result.isFailure(update)).toBe(true)
+      if (Result.isFailure(candidate)) expect(Schema.is(SchemaErrorSchema)(candidate.failure)).toBe(true)
+      if (Result.isFailure(update)) expect(Schema.is(SchemaErrorSchema)(update.failure)).toBe(true)
+      expect(yield* settings.snapshot).toEqual(before)
+    }),
+  )
+
+  it.effect('update patches valid fields and leaves the rest', () =>
     Effect.gen(function* () {
       const settings = yield* makeSettingsService()
 
-      // A WELL-FORMED `false` (not a malformed value — see the "values are
-      // clamped" describe block above for that case) is exactly the thing
-      // `audioEnabled: settings.audioEnabled === true`-style logic exists to
-      // preserve, and kernel's normaliseSettings still does: `typeof x ===
-      // 'boolean' ? x : default` passes a real `false` straight through.
+      // A well-formed `false` must stay false; boolean settings are not truthy flags.
       const next = yield* settings.update({ renderDistance: RenderDistanceChunks(12), audioEnabled: false })
 
       expect(next.renderDistance).toBe(12)
@@ -428,13 +448,13 @@ describe('SettingsService', () => {
     }),
   )
 
-  it.effect('a max-bound branded patch is stored and remains normalised', () =>
+  it.effect('a max-bound branded patch is accepted and remains valid', () =>
     Effect.gen(function* () {
       const settings = yield* makeSettingsService()
 
       expect((yield* settings.update({ renderDistance: RenderDistanceChunks(16) })).renderDistance).toBe(16)
       const saved = yield* settings.snapshot
-      expect(normaliseSettings(saved)).toEqual(saved)
+      expect(normalize(saved)).toEqual(saved)
     }),
   )
 
@@ -448,13 +468,13 @@ describe('SettingsService', () => {
         ),
       )
 
-      expect(normaliseSettings(restored)).toEqual(restored)
+      expect(normalize(restored)).toEqual(restored)
       expect(restored.fovDegrees).toBe(75)
       expect(restored.renderDistance).toBe(16)
     }),
   )
 
-  it.effect('a layer repairs malformed runtime preferences before exposing its snapshot', () =>
+  it.effect('a layer rejects malformed runtime preferences instead of replacing them', () =>
     Effect.gen(function* () {
       const malformed = withSettings({
         fovDegrees: FieldOfViewDegrees(75),
@@ -463,19 +483,21 @@ describe('SettingsService', () => {
       expect(Reflect.set(malformed, 'fovDegrees', Number.NaN)).toBe(true)
       expect(Reflect.set(malformed, 'renderDistance', 400)).toBe(true)
 
-      const restored = yield* Effect.flatMap(SettingsService, (service) => service.snapshot).pipe(
-        Effect.provide(SettingsServiceLayer(malformed)),
+      const restored = yield* Effect.result(
+        Effect.flatMap(SettingsService, (service) => service.snapshot).pipe(
+          Effect.provide(SettingsServiceLayer(malformed)),
+        ),
       )
 
-      expect(restored.fovDegrees).toBe(75)
-      expect(restored.renderDistance).toBe(16)
-      expect(normaliseSettings(restored)).toEqual(restored)
+      expect(Result.isFailure(restored)).toBe(true)
+      if (Result.isFailure(restored)) expect(Schema.is(SchemaErrorSchema)(restored.failure)).toBe(true)
     }),
   )
 
-  it.effect('restores and repairs malformed stored settings', () =>
+  it.effect('restore rejects malformed stored settings and leaves the current state intact', () =>
     Effect.gen(function* () {
       const settings = yield* makeSettingsService()
+      const before = yield* settings.snapshot
       const fromDisk = rawSettings({
         renderDistance: 0,
         fovDegrees: 179,
@@ -484,24 +506,18 @@ describe('SettingsService', () => {
         keyBindings: { jump: 123 },
       })
 
-      yield* settings.restore(fromDisk)
-      const restored = yield* settings.snapshot
-
-      expect(restored.renderDistance).toBe(2)
-      expect(restored.fovDegrees).toBe(110)
-      expect(restored.mouseSensitivity).toBe(3)
-      expect(restored.audioEnabled).toBe(DEFAULT_SETTINGS.audioEnabled)
-      expect(restored.keyBindings).toEqual({})
+      const restored = yield* Effect.result(settings.restore(fromDisk))
+      expect(Result.isFailure(restored)).toBe(true)
+      if (Result.isFailure(restored)) expect(Schema.is(SchemaErrorSchema)(restored.failure)).toBe(true)
+      expect(yield* settings.snapshot).toEqual(before)
     }),
   )
 
-  it.effect('normaliseSettings drops malformed keyBindings entries', () =>
+  it.effect('strictly rejects malformed keyBindings entries', () =>
     Effect.sync(() => {
-      expect(normaliseSettings(rawSettings({ keyBindings: { '': 'KeyA' } })).keyBindings).toEqual({})
-      expect(normaliseSettings(rawSettings({ keyBindings: { jump: '' } })).keyBindings).toEqual({})
-      expect(
-        normaliseSettings(rawSettings({ keyBindings: { jump: 123 } })).keyBindings,
-      ).toEqual({})
+      expect(Result.isFailure(decodeSettings(rawSettings({ keyBindings: { '': 'KeyA' } })))).toBe(true)
+      expect(Result.isFailure(decodeSettings(rawSettings({ keyBindings: { jump: '' } })))).toBe(true)
+      expect(Result.isFailure(decodeSettings(rawSettings({ keyBindings: { jump: 123 } })))).toBe(true)
     }),
   )
 
@@ -514,6 +530,24 @@ describe('SettingsService', () => {
 
       yield* settings.unbindKey('jump')
       expect(keyBindingFor(yield* settings.snapshot, 'jump')).toBeUndefined()
+    }),
+  )
+
+  it.effect('rebindKey and unbindKey preserve an invalid held snapshot on validation failure', () =>
+    Effect.gen(function* () {
+      const settings = yield* makeSettingsService()
+      const held = yield* settings.snapshot
+      expect(Reflect.set(held, 'uiScale', MAX_UI_SCALE + 0.01)).toBe(true)
+      const corrupted = { ...held }
+
+      const rebind = yield* Effect.result(settings.rebindKey('jump', 'Space'))
+      const unbind = yield* Effect.result(settings.unbindKey('jump'))
+
+      expect(Result.isFailure(rebind)).toBe(true)
+      expect(Result.isFailure(unbind)).toBe(true)
+      if (Result.isFailure(rebind)) expect(Schema.is(SchemaErrorSchema)(rebind.failure)).toBe(true)
+      if (Result.isFailure(unbind)) expect(Schema.is(SchemaErrorSchema)(unbind.failure)).toBe(true)
+      expect(yield* settings.snapshot).toEqual(corrupted)
     }),
   )
 

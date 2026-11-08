@@ -17,8 +17,13 @@
  */
 import { describe, expect, it } from '@effect/vitest'
 import { Effect, Result } from 'effect'
-import { DeltaTimeSecs, FixedDurationSecs, InterpolationFraction } from '@nerima-games/mc-kernel'
-import { INITIAL_TIME_STATE } from '../src/domain/time-of-day'
+import {
+  FixedDurationSecs,
+  InterpolationFraction,
+  NonNegativeTickCount,
+  type NonNegativeTickCount as NonNegativeTickCountValue,
+} from '@nerima-games/mc-kernel'
+import { INITIAL_TIME_STATE, TICKS_PER_SECOND } from '../src/domain/time-of-day'
 import { makeTimeService } from '../src/application/time-service'
 
 describe('REGRESSION: restore repairs a corrupt save instead of reporting permanent daylight', () => {
@@ -59,7 +64,7 @@ describe('REGRESSION: restore repairs a corrupt save instead of reporting perman
       yield* time.setTimeOfDay(InterpolationFraction(0.5))
       expect(yield* time.timeOfDay).toBeCloseTo(0.5, 12)
 
-      yield* time.advance(DeltaTimeSecs(30))
+      yield* time.advance(NonNegativeTickCount(30 * TICKS_PER_SECOND))
       expect(yield* time.timeOfDay).toBeCloseTo(0.75, 12)
       expect(yield* time.isNight).toBe(false)
     }),
@@ -69,7 +74,7 @@ describe('REGRESSION: restore repairs a corrupt save instead of reporting perman
     Effect.gen(function* () {
       const time = yield* makeTimeService()
       yield* time.configureDay(FixedDurationSecs(600), InterpolationFraction(0.25))
-      yield* time.advance(DeltaTimeSecs(600 * 4))
+      yield* time.advance(NonNegativeTickCount(600 * 4 * TICKS_PER_SECOND))
       const saved = yield* time.snapshot
 
       const loaded = yield* makeTimeService()
@@ -127,8 +132,8 @@ describe('REGRESSION: world load is restore, not configureDay — the day counte
   it.effect('restore keeps the absolute tick counter, so the moon phase comes back as saved', () =>
     Effect.gen(function* () {
       const time = yield* makeTimeService()
-      // Four in-game days at the fresh-world 400 s day: 7200 + 4 * 24000.
-      yield* time.advance(DeltaTimeSecs(400 * 4))
+      // Four in-game days at the fresh-world 1200 s day: 7200 + 4 * 24000.
+      yield* time.advance(NonNegativeTickCount(1200 * 4 * TICKS_PER_SECOND))
       const saved = yield* time.snapshot
 
       expect(saved.ticks).toBe(103_200)
@@ -149,7 +154,7 @@ describe('REGRESSION: world load is restore, not configureDay — the day counte
       // calling it on the load path, which the doc comment used to invite.
       // Asserting the loss keeps the two paths visibly different.
       const time = yield* makeTimeService()
-      yield* time.advance(DeltaTimeSecs(400 * 4))
+      yield* time.advance(NonNegativeTickCount(1200 * 4 * TICKS_PER_SECOND))
 
       const dayLength = yield* time.dayLengthSecs
       const fraction = yield* time.timeOfDay
@@ -179,7 +184,7 @@ describe('REGRESSION: world load is restore, not configureDay — the day counte
   it.effect('reset-to-fresh is a restore, and lands on the documented fresh-world state', () =>
     Effect.gen(function* () {
       const time = yield* makeTimeService()
-      yield* time.advance(DeltaTimeSecs(4000))
+      yield* time.advance(NonNegativeTickCount(4000 * TICKS_PER_SECOND))
       yield* time.restore(INITIAL_TIME_STATE)
 
       expect(yield* time.snapshot).toStrictEqual({ ticks: 7200, dayLengthTicks: 24000 })
@@ -191,9 +196,9 @@ describe('REGRESSION: world load is restore, not configureDay — the day counte
     Effect.gen(function* () {
       const time = yield* makeTimeService()
       const before = yield* time.snapshot
-      const candidate = yield* time.advanceCandidate(DeltaTimeSecs(60))
+      const candidate = yield* time.advanceCandidate(NonNegativeTickCount(60 * TICKS_PER_SECOND))
 
-      expect(candidate.ticks).toBe(before.ticks + 3600)
+      expect(candidate.ticks).toBe(before.ticks + 60 * TICKS_PER_SECOND)
       expect(yield* time.snapshot).toStrictEqual(before)
       yield* time.restore(candidate)
       expect(yield* time.snapshot).toStrictEqual(candidate)
@@ -204,13 +209,13 @@ describe('REGRESSION: world load is restore, not configureDay — the day counte
     Effect.gen(function* () {
       const time = yield* makeTimeService()
       const before = yield* time.snapshot
-      const hugeDelta = DeltaTimeSecs(Number.MAX_VALUE)
+      const hugeTickCount = Number.MAX_VALUE as NonNegativeTickCountValue
 
-      const candidate = yield* Effect.result(time.advanceCandidate(hugeDelta))
+      const candidate = yield* Effect.result(time.advanceCandidate(hugeTickCount))
       expect(Result.isFailure(candidate)).toBe(true)
       if (Result.isFailure(candidate)) expect(candidate.failure._tag).toBe('BrandError')
 
-      const advance = yield* Effect.result(time.advance(hugeDelta))
+      const advance = yield* Effect.result(time.advance(hugeTickCount))
       expect(Result.isFailure(advance)).toBe(true)
       if (Result.isFailure(advance)) expect(advance.failure._tag).toBe('BrandError')
       expect(yield* time.snapshot).toStrictEqual(before)

@@ -75,8 +75,8 @@ export type VitalsServiceApi = {
   /** Eat. Which foods restore what is a table of items, and not held here. */
   readonly eat: (foodPoints: FoodNutrition, saturationModifier: Vitals.SaturationModifier) => Effect.Effect<void>
   /**
-   * Advance the food timer by a frame's worth of seconds and report what the
-   * tick asks for. The delta is SUPPLIED — no clock is read anywhere here.
+   * Advance the food timer by supplied simulation time and report the resulting
+   * regen or starvation signal. No clock is read here.
    */
   readonly advanceFoodTimer: (dt: DeltaTimeSecs) => Effect.Effect<Vitals.FoodTickSignal>
   /** Award or spend experience. Negative amounts spend; the total floors at zero. */

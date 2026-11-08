@@ -109,7 +109,8 @@ type PlayerServiceApi = {
 
 ```typescript
 type TimeServiceApi = {
-  readonly advance: (dt: DeltaTimeSecs) => Effect.Effect<void>
+  readonly advance: (elapsedTicks: NonNegativeTickCount) => Effect.Effect<void, Brand.BrandError>
+  readonly advanceCandidate: (elapsedTicks: NonNegativeTickCount) => Effect.Effect<TimeState, Brand.BrandError>
   readonly timeOfDay: Effect.Effect<number>          // [0, 1)。0 = 真夜中。§2-0
   readonly dayLengthSecs: Effect.Effect<FixedDurationSecs>
   readonly moonPhase: Effect.Effect<number>          // 0..7
@@ -122,6 +123,8 @@ type TimeServiceApi = {
   readonly restore: (state: TimeState) => Effect.Effect<void>   // ワールド**ロード**。§2-1
 }
 ```
+
+`advance` adds elapsed SM1 simulation ticks at 20 ticks per second. It does not use frame delta time. A fresh world starts with a 1,200-second day at time fraction 0.30, about nine minutes before the night boundary at 0.75.
 
 `domain/time-of-day.ts` 側に純粋な補助が 2 つある。
 
@@ -235,9 +238,7 @@ setDayLength(Number(''))   // 設定欄を空にした
    セーブは別経路だった。永続化とマルチプレイヤー同期の両方が必要とする。
 3. **`getXxx(): Effect<T>` ではなく `xxx: Effect<T>`。** 引数を取らないものを関数にしない。
 
-定数はすべて参照実装と同値（`packages/game/application/time-service-state.ts`）:
-`TICKS_PER_SECOND = 60`、`[MIN, MAX]_DAY_LENGTH_SECS = [120, 1200]`、
-`MAX_TIME_FRACTION = 0.9999`、`INITIAL_TIME_STATE = { ticks: 7200, dayLengthTicks: 24000 }`。
+SM4 uses SM1's fixed tick rate: `TICKS_PER_SECOND = 20`, derived from its 0.05-second tick duration. The day-length bounds remain `[120, 1200]` seconds, while the default increases from 400 to 1,200 seconds. `MAX_TIME_FRACTION` remains `0.9999`, and `INITIAL_TIME_STATE` remains `{ ticks: 7200, dayLengthTicks: 24000 }`.
 
 ## 2.4 CropService
 
@@ -759,6 +760,21 @@ const resetLandingImpact: (state: SimFrameState) => Effect.Effect<void>
 | バケツの fluid write | `BucketService` (`src/application/bucket-service.ts`) | mx-gameplay |
 | primed TNT | `TntService` (`src/application/tnt-service.ts`) | mx-gameplay / mc-compose |
 | `GameModule` | `src/stages/registration.ts` の `simModule` | mc-compose |
+
+### Settings schema and defaults
+
+`SettingsSchema` validates a complete settings value. `decodeSettings` accepts a partial plain record and fills only omitted fields from `DEFAULT_SETTINGS`. Explicit invalid values, unknown keys, accessors, and non-record inputs return a typed `SchemaError`; supplied numbers are never clamped or replaced with defaults. `normaliseSettings` remains as an alias for `decodeSettings` and now has the same `Result` return type.
+
+| Setting | Valid values | Default |
+| --- | --- | --- |
+| `difficulty` | `peaceful`, `easy`, `normal`, `hard` | `normal` |
+| `fovDegrees` | 30–110 degrees | 75 |
+| `renderDistance` | 2–16 chunks, integer | 5 |
+| `uiScale` | 0.75–1.5 | 1 |
+| `reducedMotion` | `system`, `full`, `reduced` | `system` |
+| `colorVisionCorrection` | `off`, `protanopia`, `deuteranopia`, `tritanopia` | `off` |
+
+`SettingsService.candidate` validates without installing the candidate. `update` and `restore` fail with `SchemaError` and leave the current snapshot unchanged when validation fails. The UI is a separate mx-ui responsibility; this service owns the public settings model and validation contract.
 
 ### C4/C7 world transaction と block read
 

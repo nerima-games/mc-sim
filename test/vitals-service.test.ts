@@ -140,7 +140,7 @@ describe('heal and eat go through the same Ref the rest of the service does', ()
 describe('the service reads no clock', () => {
   it.effect('the food timer advances only by the delta it is handed', () =>
     Effect.gen(function* () {
-      const vitals = yield* makeVitalsService({ ...SPAWN_VITALS, healthPoints: 10 })
+      const vitals = yield* makeVitalsService({ ...SPAWN_VITALS, healthPoints: 10, hungerPoints: 19 })
 
       // `it.effect` supplies a TestClock that nothing here touches. Four seconds
       // of world time cost zero seconds of anything, which is what
@@ -148,6 +148,25 @@ describe('the service reads no clock', () => {
       expect(yield* vitals.advanceFoodTimer(dt(2))).toBe('none')
       expect(yield* vitals.advanceFoodTimer(dt(1.9))).toBe('none')
       expect(yield* vitals.advanceFoodTimer(dt(0.1))).toBe('regen')
+    }),
+  )
+
+  it.effect('saturated regeneration reaches the service after ten 20-Hz ticks', () =>
+    Effect.gen(function* () {
+      const vitals = yield* makeVitalsService({ ...SPAWN_VITALS, healthPoints: 10 })
+      const outcomes: string[] = []
+
+      for (let tick = 0; tick < 10; tick++) {
+        outcomes.push(yield* vitals.advanceFoodTimer(dt(0.05)))
+      }
+
+      const after = yield* vitals.snapshot
+      expect(outcomes).toEqual([
+        'none', 'none', 'none', 'none', 'none', 'none', 'none', 'none', 'none', 'regen',
+      ])
+      expect(after.healthPoints).toBe(10)
+      expect(after.saturation).toBe(4)
+      expect(after.exhaustion).toBe(2)
     }),
   )
 

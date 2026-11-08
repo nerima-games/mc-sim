@@ -19,11 +19,11 @@ import { Effect, Layer, Ref, Result } from 'effect'
 import { forwardVector, snapshotAgeSecs } from '../src/domain/camera-pose'
 import {
   AngleRadians,
-  DeltaTimeSecs,
   EpochMillis,
   FixedDurationSecs,
   InterpolationFraction,
   MonotonicTimeSecs,
+  NonNegativeTickCount,
   PositionAxis,
   position as kernelPosition,
 } from '@nerima-games/mc-kernel'
@@ -37,6 +37,7 @@ import {
 } from '../src/application/inventory-service'
 import { PlayerService, PlayerServiceLayer } from '../src/application/player-service'
 import { TimeService, TimeServiceLayer } from '../src/application/time-service'
+import { TICKS_PER_SECOND } from '../src/domain/time-of-day'
 
 const itemStack = (...args: Parameters<typeof itemStackResult>): ItemStack => {
   const result = itemStackResult(...args)
@@ -136,7 +137,7 @@ describe('deterministic scenario: spawn -> look -> mine -> assert', () => {
 
         // --- fast-forward six in-game minutes ----------------------------
         yield* clock.tick(360)
-        yield* time.advance(DeltaTimeSecs(360))
+        yield* time.advance(NonNegativeTickCount(360 * TICKS_PER_SECOND))
 
         // 360 s into a 600 s day, starting at 0.25 -> 0.85. Past dusk.
         expect(yield* time.timeOfDay).toBeCloseTo(0.85, 12)
@@ -194,7 +195,9 @@ describe('deterministic scenario: spawn -> look -> mine -> assert', () => {
         yield* player.moveTo(position(1, 70, 2))
         yield* player.look(0.7, 0.2)
         yield* inventory.add('cobblestone', 130)
-        yield* Effect.forEach([1, 2, 3, 4, 5], (step) => time.advance(DeltaTimeSecs(step * 10)))
+        yield* Effect.forEach([1, 2, 3, 4, 5], (step) =>
+          time.advance(NonNegativeTickCount(step * 10 * TICKS_PER_SECOND)),
+        )
 
         return {
           pose: yield* player.cameraPose,

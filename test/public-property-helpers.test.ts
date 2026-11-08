@@ -133,6 +133,7 @@ const opaqueSchemaInputProviders: Readonly<Record<string, () => unknown>> = {
   ProjectileServiceFailureSchema: () => new PublicApi.ProjectileServiceFailure({ reason: 'invalid-launch' }),
   SaveSnapshotConsistencyErrorSchema: () => new PublicApi.SaveSnapshotConsistencyError({ attempts: 1 }),
   SchemaErrorSchema: () => schemaError,
+  SettingsSchema: () => PublicApi.DEFAULT_SETTINGS,
   SimulationSaveErrorSchema: () => new SaveDecodeError({ format: 'sample', version: 3, reason: 'invalid save' }),
   SimPhysicsStagesSchema: () => [{ id: PublicApi.SIM_STAGE_IDS.physics, run: () => Effect.void }],
   TntServiceFailureSchema: () => new PublicApi.TntServiceFailure({ reason: 'invalid-input' }),

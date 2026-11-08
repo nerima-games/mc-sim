@@ -25,13 +25,14 @@ const blockAxis: BlockAxis = blockPosition(BlockAxis(0), BlockAxis(0), BlockAxis
 const chunkAxis: ChunkAxisValue = ChunkAxis(0)
 
 const gameLoopInput: Parameters<GameLoopApi['submitFrame']>[0] = MonotonicTimeSecs(0)
-const timeAdvanceInput: Parameters<TimeServiceApi['advance']>[0] = delta
+const timeAdvanceInput: Parameters<TimeServiceApi['advance']>[0] = NonNegativeTickCount(1)
 const item: ItemStack = Result.getOrThrow(itemStack('stone', StackCount(1)))
 
 void handler
 void gameLoopInput
 void timeAdvanceInput
 void item
+void timeAdvanceInput
 void addTick(tick, NonNegativeTickCount(1))
 void advanceFixedStep(initialFixedStepAccumulator(), delta)
 void blockAxis
@@ -39,6 +40,9 @@ void chunkAxis
 
 // @ts-expect-error A fixed duration is not a per-frame delta.
 const wrongDelta: DeltaTimeSecs = fixed
+
+// @ts-expect-error A frame delta cannot be used to advance world time.
+const wrongTimeAdvanceInput: Parameters<TimeServiceApi['advance']>[0] = delta
 
 // @ts-expect-error A plain number cannot be used as a simulation tick.
 addTick(1, NonNegativeTickCount(1))
@@ -53,5 +57,6 @@ const wrongAxis: BlockAxis = chunkAxis
 const zeroCount: ItemStack = { item: 'stone', count: 0, components: {} }
 
 void wrongDelta
+void wrongTimeAdvanceInput
 void zeroCount
 void wrongAxis

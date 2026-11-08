@@ -28,6 +28,7 @@ import {
   makeWeatherTransition,
   normaliseRoster,
   normaliseSettings,
+  SettingsSchema,
   normaliseTimeState,
   normaliseWeatherState,
   restoreWither,
@@ -100,7 +101,7 @@ const unknownInput = structuredInput(hostileValue)
 
 const checks = { numRuns: 100 }
 
-it('root settings normalization returns valid finite settings for hostile values', () => {
+it('root settings normalization decodes valid values or returns typed failures for hostile values', () => {
   const settingsInput = fc.oneof(
     unknownInput,
     fc.record({
@@ -122,9 +123,14 @@ it('root settings normalization returns valid finite settings for hostile values
 
   fc.assert(
     fc.property(settingsInput, (input) => {
-      const settings = normaliseSettings(input)
-      expect(isValidSettings(settings)).toBe(true)
-      expect(finiteTree(settings)).toBe(true)
+      const outcome = normaliseSettings(input)
+      if (Result.isFailure(outcome)) {
+        expect(Schema.is(SchemaErrorSchema)(outcome.failure)).toBe(true)
+      } else {
+        expect(isValidSettings(outcome.success)).toBe(true)
+        expect(finiteTree(outcome.success)).toBe(true)
+        expect(Result.isSuccess(Schema.decodeUnknownResult(SettingsSchema)(outcome.success))).toBe(true)
+      }
     }),
     checks,
   )

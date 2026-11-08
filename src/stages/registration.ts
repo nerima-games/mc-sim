@@ -24,13 +24,13 @@
  * does two things, and BOTH are writes through a service that already owns the
  * state rather than into anything this file holds:
  *
- * 1. THE WORLD CLOCK. `TimeService.advance(dt)`. This is not a liberty taken by
+ * 1. THE WORLD CLOCK. `TimeService.advance(ticks)`. This is not a liberty taken by
  *    a stage named "physics" — mx-gameplay looked for somewhere to put it and
  *    concluded it was mc-sim's, in writing:
  *
  *      mx-gameplay/stages/registration.ts:276-284
  *        // FIRST CUT, and deliberately empty rather than "advance the clock".
- *        // ADVANCING the clock is mc-sim's: `TimeService.advance(dt)` over
+ *        // ADVANCING the clock is mc-sim's: `TimeService.advance(ticks)` over
  *        // `mc-sim/domain/time-of-day.ts`, which owns the absolute tick
  *        // counter, the day-length denominator, the `setDayLength ->
  *        // setTimeOfDay` ordering rule and the value that reaches the save
@@ -112,6 +112,7 @@ import { CropService, CropServiceLayer, type CropServiceApi } from '../applicati
 import { PlayerService, PlayerServiceLayer, type PlayerServiceApi, type PlayerServiceInputError } from '../application/player-service.js'
 import { TimeService, TimeServiceLayer, type TimeServiceApi } from '../application/time-service.js'
 import {
+  NonNegativeTickCount,
   PositionAxis,
   position,
   type GameModule,
@@ -328,15 +329,12 @@ export const simStages = (
         // this stage and before the next tick starts.
         yield* Ref.set(state.landingImpact, Option.none<LandingImpact>())
 
-        // The world clock advances once per simulation tick. The tick runner
-        // supplies its fixed duration; this stage never reads a clock.
-        //
-        // A zero `dt` is legal and `Time.advance` handles it by advancing
-        // nothing. Nothing here divides by `dt`.
+        // The tick runner invokes this stage once per simulation tick, so the
+        // world clock advances by one tick without using the frame delta.
         // `StageRegistration.run` has no typed error channel. Keep the time
         // service's validation failure visible as a defect at this integration
         // boundary; direct callers can still handle the typed BrandError.
-        yield* Effect.orDie(time.advance(dt))
+        yield* Effect.orDie(time.advance(NonNegativeTickCount(1)))
         yield* crops.advance(dt)
 
         // Resolved-position overrides win for one tick and skip physics.

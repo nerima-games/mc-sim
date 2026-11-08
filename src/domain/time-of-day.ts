@@ -14,17 +14,17 @@
  * contrast, multiplies by the denominator that happens to be installed when it
  * runs. The two therefore do not commute:
  *
- * Both start from the fresh-world state, whose day is 400 s:
+ * Both start from the fresh-world state, whose day is 1200 s:
  *
  *   setDayLength(600) then setTimeOfDay(0.30)  ->  timeOfDay 0.30   (intended)
- *   setTimeOfDay(0.30) then setDayLength(600)  ->  timeOfDay 0.20   (a bug)
+ *   setTimeOfDay(0.30) then setDayLength(600)  ->  timeOfDay 0.60   (a bug)
  *
  * The SIGN of the error follows the denominator, and both directions are real:
  *
- *   - LENGTHENING the day (400 s -> 600 s) leaves the same absolute tick count
+ *   - LENGTHENING the day (600 s -> 1200 s) leaves the same absolute tick count
  *     sitting earlier in a bigger day, so the time of day moves DOWN: 0.30 into
- *     a 400 s day is tick 7200, and 7200 of 36000 is 0.20.
- *   - SHORTENING it (400 s -> 200 s) does the reverse and moves the time of day
+ *     a 600 s day is tick 3600, and 3600 of 24000 is 0.15.
+ *   - SHORTENING it (1200 s -> 600 s) does the reverse and moves the time of day
  *     UP: 7200 of 12000 is 0.60. `test/time-of-day.test.ts` pins this half,
  *     because a doubling from mid-morning to dusk is the more alarming of the
  *     two to read; it pins the 600 s half too, so this worked example cannot
@@ -56,22 +56,25 @@
  * the ordering constraint is the price, and the price is paid by naming it and
  * pinning it with a regression test rather than by hoping callers remember.
  *
- * `advance` is a pure function of state and delta, with no clock read anywhere
- * in this file. Time enters the simulation at exactly one place, the frame
- * loop, and is passed down. That is what makes fast-forward possible: a
- * scenario test can advance a simulated week in a few microseconds.
+ * `advance` is a pure function of state and simulation tick count, with no
+ * clock read anywhere in this file. The tick service's ordered stage runner
+ * calls it once for each fixed tick; frame deltas never enter the world clock.
+ * Passing a tick count directly also makes fast-forward possible: a scenario
+ * test can advance a simulated week in a few microseconds.
  */
 import { Brand, Result, Schema, SchemaIssue } from 'effect'
 import {
-  DeltaTimeSecs,
   FixedDurationSecs,
   InterpolationFraction,
+  NonNegativeTickCount,
+  type NonNegativeTickCount as NonNegativeTickCountValue,
   PositiveTickCount,
   SimulationTick,
 } from '@nerima-games/mc-kernel'
+import { DEFAULT_TICK_DURATION } from './fixed-step.js'
 
-/** Simulation ticks per second. Vanilla parity; the reference uses the same rate. */
-export const TICKS_PER_SECOND = 60
+/** Simulation ticks per second, derived from SM1's fixed tick duration. */
+export const TICKS_PER_SECOND: number = 1 / Number(DEFAULT_TICK_DURATION)
 
 /** Day-length bounds, in seconds. ts-minecraft/packages/game/application/time-service-state.ts:23. */
 export const MIN_DAY_LENGTH_SECS = 120
@@ -121,8 +124,8 @@ const ValidTimeDayLengthTicks = Brand.make<ValidTimeDayLengthTicks>((value) =>
  *   and daylight-immune hostiles then camped the respawn point: an
  *   unrecoverable death loop on world creation.
  *
- * 24000 ticks at 60 ticks/s is a 400-second day, which is the reference's
- * default and sits inside the [120, 1200] clamp range.
+ * 24000 simulation ticks at 20 ticks/s is a 1200-second day. The starting
+ * fraction remains 0.30, so night at 0.75 begins 540 seconds (9 minutes) later.
  */
 export const INITIAL_TIME_STATE: TimeState = {
   ticks: 7200,
@@ -130,7 +133,7 @@ export const INITIAL_TIME_STATE: TimeState = {
 }
 
 /** The fresh-world day length in seconds, for callers that want it named. */
-export const DEFAULT_DAY_LENGTH_SECS = 400
+export const DEFAULT_DAY_LENGTH_SECS = 1200
 
 /**
  * Does this value carry a magnitude at all?
@@ -310,10 +313,10 @@ export const isNight = (state: TimeState): boolean => {
   return fraction < 0.25 || fraction > 0.75
 }
 
-/** Advance by one frame. Pure; the delta is supplied, never read from a clock. */
+/** Advance by simulation ticks. Pure; the count is supplied by the tick runner. */
 export const advance = (
   state: TimeState,
-  dt: DeltaTimeSecs,
+  elapsedTicks: NonNegativeTickCountValue,
 ): Result.Result<TimeState, Brand.BrandError> => {
   const candidate: Readonly<Record<string, unknown>> = isRecord(state) ? state : {}
   const dayLengthTicksValue = candidate['dayLengthTicks']
@@ -321,16 +324,16 @@ export const advance = (
   const dayLengthTicks = ValidTimeDayLengthTicks.result(dayLengthTicksValue)
   if (Result.isFailure(dayLengthTicks)) return Result.fail(dayLengthTicks.failure)
 
-  if (typeof dt !== 'number') return Result.fail(invalidTimeStateValue(dt))
-  const delta = DeltaTimeSecs.result(dt)
-  if (Result.isFailure(delta)) return Result.fail(delta.failure)
+  if (typeof elapsedTicks !== 'number') return Result.fail(invalidTimeStateValue(elapsedTicks))
+  const elapsed = NonNegativeTickCount.result(elapsedTicks)
+  if (Result.isFailure(elapsed)) return Result.fail(elapsed.failure)
 
   const currentTicksValue = candidate['ticks']
   if (typeof currentTicksValue !== 'number') return Result.fail(invalidTimeStateValue(currentTicksValue))
   const currentTicks = FiniteTimeTicks.result(currentTicksValue)
   if (Result.isFailure(currentTicks)) return Result.fail(currentTicks.failure)
 
-  const nextTicks = FiniteTimeTicks.result(currentTicks.success + delta.success * TICKS_PER_SECOND)
+  const nextTicks = FiniteTimeTicks.result(currentTicks.success + elapsed.success)
   return Result.map(nextTicks, (ticks) => ({ ticks, dayLengthTicks: dayLengthTicks.success }))
 }
 

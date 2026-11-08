@@ -1,6 +1,7 @@
 import fc from 'fast-check'
 import { Effect } from 'effect'
 import { expect, it } from 'vitest'
+import { DeltaTimeSecs } from '@nerima-games/mc-kernel'
 import * as Sim from '../src/index.js'
 import { finiteTree, hostileValue, isRecord, unknownValue } from './public-property-helpers.js'
 
@@ -50,6 +51,71 @@ it('vitals normalization repairs hostile records to finite valid state and valid
       assertValidVitals(normalized)
       expect(JSON.stringify(input)).toBe(before)
     }),
+    checks,
+  )
+})
+
+it('regeneration timing follows generated 20-Hz ticks and hunger/saturation states', () => {
+  fc.assert(
+    fc.property(
+      fc.integer({ min: 18, max: 20 }).chain((hungerPoints) =>
+        fc.record({
+          ticks: fc.integer({ min: 0, max: 300 }),
+          hungerPoints: fc.constant(hungerPoints),
+          saturation: fc.integer({ min: 0, max: hungerPoints }),
+          exhaustion: fc.double({ min: 0, max: 3.99, noNaN: true }),
+        }),
+      ),
+      ({ ticks, hungerPoints, saturation, exhaustion }) => {
+        const initial = Sim.normaliseVitals({
+          ...Sim.SPAWN_VITALS,
+          healthPoints: 10,
+          hungerPoints,
+          saturation,
+          exhaustion,
+          foodTimerSecs: 0,
+        })
+        let current = initial
+        let observedRegenCount = 0
+        let expectedRegenCount = 0
+        let expectedHunger: number = initial.hungerPoints
+        let expectedSaturation: number = initial.saturation
+        let expectedExhaustion: number = initial.exhaustion
+        let expectedTimer = 0
+
+        for (let tick = 0; tick < ticks; tick++) {
+          const [signal, next] = Sim.advanceFoodTimer(current, DeltaTimeSecs(0.05))
+          if (signal === 'regen') observedRegenCount++
+          current = next
+
+          expectedTimer += 0.05
+          const fastRegen = expectedHunger === 20 && expectedSaturation > 0
+          const interval = fastRegen ? 0.5 : 4
+          const tolerance = Number.EPSILON * interval
+          if (expectedTimer + tolerance >= interval) {
+            const completedIntervals = Math.floor((expectedTimer + tolerance) / interval)
+            expectedTimer = Math.max(0, expectedTimer - completedIntervals * interval)
+            if (expectedHunger >= 18) {
+              expectedRegenCount++
+              expectedExhaustion += 6
+              while (expectedExhaustion >= 4) {
+                expectedExhaustion -= 4
+                if (expectedSaturation > 0) expectedSaturation = Math.max(0, expectedSaturation - 1)
+                else expectedHunger = Math.max(0, expectedHunger - 1)
+              }
+            }
+          }
+        }
+
+        expect(observedRegenCount).toBe(expectedRegenCount)
+        expect(current.healthPoints).toBe(10)
+        expect(current.hungerPoints).toBe(expectedHunger)
+        expect(current.saturation).toBe(expectedSaturation)
+        expect(current.exhaustion).toBeCloseTo(expectedExhaustion, 12)
+        expect(current.foodTimerSecs).toBeCloseTo(expectedTimer, 12)
+        expect(Sim.isValidVitals(current)).toBe(true)
+      },
+    ),
     checks,
   )
 })

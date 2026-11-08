@@ -170,6 +170,7 @@ export type {
 export {
   applySettings,
   DEFAULT_SETTINGS,
+  decodeSettings,
   GRAPHICS_QUALITIES,
   isGraphicsQuality,
   isValidSettings,
@@ -177,14 +178,17 @@ export {
   MAX_FOV_DEGREES,
   MAX_MOUSE_SENSITIVITY,
   MAX_RENDER_DISTANCE,
+  MAX_UI_SCALE,
   MAX_VOLUME,
   MIN_FOV_DEGREES,
   MIN_MOUSE_SENSITIVITY,
   MIN_RENDER_DISTANCE,
+  MIN_UI_SCALE,
   MIN_VOLUME,
   normaliseSettings,
   rebindKey,
+  SettingsSchema,
   unbindKey,
 } from './domain/settings.js'
 
-export type { GraphicsQuality, Settings } from './domain/settings.js'
+export type { GraphicsQuality, Settings, SettingsValidationError } from './domain/settings.js'
