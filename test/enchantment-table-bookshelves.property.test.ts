@@ -116,5 +116,32 @@ describe('enchantment table bookshelf power', () => {
         message: 'Block power must describe air or bookshelf power 0 or 1',
       },
     })
+
+    let blockPowerCalls = 0
+    const invalidUpperGap = countEnchantmentTableBookshelves({
+      tablePosition: positionAt(0, 0, 0),
+      blockPowerAt: () => ++blockPowerCalls === 2 ? null as never : { _tag: 'Air' },
+    })
+    expect(Result.isFailure(invalidUpperGap)).toBe(true)
+
+    blockPowerCalls = 0
+    const invalidShelfPosition = countEnchantmentTableBookshelves({
+      tablePosition: positionAt(0, 0, 0),
+      blockPowerAt: () => ++blockPowerCalls === 3 ? null as never : { _tag: 'Air' },
+    })
+    expect(Result.isFailure(invalidShelfPosition)).toBe(true)
+  })
+
+  it('ignores air where a bookshelf block could be placed', () => {
+    const noShelves = Array.from({ length: 16 }, () => false)
+    const openGaps = ringOffsets.map(() => true)
+    const blockPowerAt = blockPowerAtFor(noShelves, openGaps)
+
+    expect(unwrap(countEnchantmentTableBookshelves({
+      tablePosition: positionAt(0, 0, 0),
+      blockPowerAt: (position) => position.x === -2 && position.y === 0 && position.z === -2
+        ? { _tag: 'Air' }
+        : blockPowerAt(position),
+    }))).toBe(0)
   })
 })

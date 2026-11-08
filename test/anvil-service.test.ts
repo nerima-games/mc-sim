@@ -7,7 +7,8 @@ import {
   AnvilServiceErrorSchema,
   AnvilServiceInputSchema,
   AnvilServiceStateSchema,
-  makeAnvilService,
+  AnvilService,
+  AnvilServiceLayer,
   makeAnvilServiceRegistration,
   type AnvilServiceApi,
 } from '../src/application/anvil-service.js'
@@ -51,7 +52,9 @@ const makeAnvilFixture = Effect.gen(function* () {
   const world = yield* Schema.decodeUnknownEffect(WorldIdSchema)('anvil-service-test')
   const registration = must(makeAnvilServiceRegistration(ownerId))
   const coordinator = yield* makeWorldCommitCoordinator({ world, owners: [registration] })
-  const anvil = yield* makeAnvilService(ownerId)
+  const anvil = yield* Effect.gen(function* () {
+    return yield* AnvilService
+  }).pipe(Effect.provide(AnvilServiceLayer(ownerId)))
   return { anvil, coordinator }
 })
 
@@ -87,6 +90,12 @@ describe('AnvilService', () => {
       ignored: true,
     }))).toBe(true)
     expect(Result.isFailure(makeAnvilServiceRegistration(ownerId, null))).toBe(true)
+
+    const hostileInput = new Proxy({}, {
+      ownKeys: () => { throw new Error('hostile key enumeration') },
+    })
+    expect(Result.isFailure(makeAnvilServiceRegistration(ownerId, hostileInput))).toBe(true)
+    expect(Result.isFailure(Schema.decodeUnknownResult(AnvilServiceApplyResultSchema)(hostileInput))).toBe(true)
   })
 
   it.effect('combines two tools with kernel enchantment cost and commits the result atomically', () =>

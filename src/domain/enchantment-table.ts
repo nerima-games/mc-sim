@@ -144,16 +144,11 @@ export const countEnchantmentTableBookshelves = ({
     ))
   }
 
-  const positions = new Map<string, EnchantmentTableBlockPower>()
   const powerAt = (
     blockX: number,
     blockY: number,
     blockZ: number,
   ): Result.Result<EnchantmentTableBlockPower, EnchantmentTableBookshelfFailure> => {
-    const key = `${blockX},${blockY},${blockZ}`
-    const cached = positions.get(key)
-    if (cached !== undefined) return Result.succeed(cached)
-
     const position = blockPosition(BlockAxis(blockX), BlockAxis(blockY), BlockAxis(blockZ))
     const power = blockPowerAt(position)
     if (!isEnchantmentTableBlockPower(power)) {
@@ -163,7 +158,6 @@ export const countEnchantmentTableBookshelves = ({
         'Block power must describe air or bookshelf power 0 or 1',
       ))
     }
-    positions.set(key, power)
     return Result.succeed(power)
   }
 
