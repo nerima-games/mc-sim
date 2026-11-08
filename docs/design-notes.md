@@ -306,7 +306,6 @@ packages/app/application/frame/stages/input-stage-runtime.ts:17-30
 **This worked example previously drifted from the default day length (SIM-11).**
 SM4 aligns the clock with the fixed simulation rate of 20 ticks per second and sets the default day to 1,200 seconds.
 Each case starts at time fraction 0.30 before changing the day length: shortening a 1,200-second day to 600 seconds moves the same absolute tick to **0.60**; lengthening a 600-second day to 1,200 seconds moves it to **0.15**.
-Regression tests pin both values.
 
 ### 新設計での差分
 
