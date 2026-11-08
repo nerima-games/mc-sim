@@ -5,6 +5,7 @@
  * module owns only the vanilla rows that this simulation can represent.
  */
 import { Result } from 'effect'
+import { VANILLA_CRAFTING_RECIPES } from '@nerima-games/mc-kernel'
 import {
   shapedRecipe as createShapedRecipe,
   shapelessRecipe as createShapelessRecipe,
@@ -13,6 +14,8 @@ import {
   type RecipeTable,
 } from './recipe-core.js'
 import { itemStack, type ItemStack, type ItemStackFailure } from './inventory.js'
+
+export { VANILLA_CRAFTING_RECIPES }
 
 const shapedRecipe = (
   id: string,
@@ -27,6 +30,7 @@ const shapelessRecipe = (
   output: Result.Result<ItemStack, ItemStackFailure>,
 ): Result.Result<RecipeTable[number], RecipeFailure> => createShapelessRecipe(id, ingredients, output)
 
+// Retained as a compact fixture for crafting and progression tests.
 export const STARTER_RECIPES: Result.Result<RecipeTable, RecipeFailure> = Result.all([
   shapelessRecipe('mc-sim:bone-meal', ['bone'], itemStack('bone_meal', 3)),
   shapelessRecipe('mc-sim:oak-planks', ['oak_log'], itemStack('oak_planks', 4)),

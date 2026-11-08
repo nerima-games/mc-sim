@@ -2,6 +2,7 @@ import {
   enchantmentsComponent,
   storedEnchantmentsComponent,
 } from '@nerima-games/mc-kernel/domain/item-enchantments'
+import { isItemType, type BlockPosition } from '@nerima-games/mc-kernel'
 import { Brand, Context, Effect, Layer, Result, Schema } from 'effect'
 import type { AnvilEnchantment } from '../domain/anvil.js'
 import * as EnchantmentTable from '../domain/enchantment-table.js'
@@ -12,7 +13,9 @@ import {
 } from '../domain/enchantment.js'
 import {
   enchantmentTableRuleFor,
+  ENCHANTMENT_TABLE_MAX_BOOKSHELVES,
   itemEnchantabilityOf,
+  type EnchantmentTableItem,
 } from '../domain/enchantment-table-data.js'
 import * as Inventory from '../domain/inventory.js'
 import * as PlayerStorage from '../domain/player-storage.js'
@@ -22,6 +25,7 @@ import { PlayerStorageSnapshotSchema } from './container-service.js'
 import {
   ReplicatedOwnerIdSchema,
   type ReplicatedOwnerId,
+  WorldBlockPositionSchema,
 } from './replicated-state.js'
 import {
   WorldCommitCoordinator,
@@ -65,6 +69,57 @@ export const EnchantmentTableOfferSchema: Schema.Codec<SupportedEnchantmentTable
   lapisCost: Schema.Literals([1, 2, 3]),
   enchantments: Schema.Array(EnchantmentSchema),
 })
+
+const EnchantmentTableItemSchema: Schema.Codec<EnchantmentTableItem, unknown> = Schema.declare(
+  (value: unknown): value is EnchantmentTableItem =>
+    value === 'book' || isItemType(value),
+)
+const EnchantmentTableRandomSchema: Schema.Codec<EnchantmentTable.EnchantmentTableRandom, unknown> = Schema.declare(
+  (value: unknown): value is EnchantmentTable.EnchantmentTableRandom =>
+    typeof value === 'object' && value !== null &&
+    'nextInt' in value && typeof value.nextInt === 'function' &&
+    'nextFloat' in value && typeof value.nextFloat === 'function',
+)
+const EnchantmentTableBlockPowerAtSchema: Schema.Codec<EnchantmentTable.EnchantmentTableBlockPowerAt, unknown> =
+  Schema.declare((value: unknown): value is EnchantmentTable.EnchantmentTableBlockPowerAt => typeof value === 'function')
+
+export type EnchantmentTableGenerateOffersRequest = Readonly<{
+  item: EnchantmentTableItem
+  tablePosition: BlockPosition
+  blockPowerAt: EnchantmentTable.EnchantmentTableBlockPowerAt
+  random: EnchantmentTable.EnchantmentTableRandom
+}>
+
+export const EnchantmentTableGenerateOffersRequestSchema: Schema.Codec<EnchantmentTableGenerateOffersRequest, unknown> =
+  Schema.Struct({
+    item: EnchantmentTableItemSchema,
+    tablePosition: WorldBlockPositionSchema,
+    blockPowerAt: EnchantmentTableBlockPowerAtSchema,
+    random: EnchantmentTableRandomSchema,
+  })
+
+export type EnchantmentTableGenerateOffersResult = Readonly<{
+  bookshelfCount: number
+  offers: SupportedEnchantmentTableOffers
+}>
+
+type SupportedEnchantmentTableOffers = readonly [
+  SupportedEnchantmentTableOffer | undefined,
+  SupportedEnchantmentTableOffer | undefined,
+  SupportedEnchantmentTableOffer | undefined,
+]
+
+const EnchantmentTableOfferSlotSchema = Schema.Union([EnchantmentTableOfferSchema, Schema.Undefined])
+const EnchantmentTableOffersSchema: Schema.Codec<SupportedEnchantmentTableOffers, unknown> = Schema.Tuple([
+  EnchantmentTableOfferSlotSchema,
+  EnchantmentTableOfferSlotSchema,
+  EnchantmentTableOfferSlotSchema,
+])
+export const EnchantmentTableGenerateOffersResultSchema: Schema.Codec<EnchantmentTableGenerateOffersResult, unknown> =
+  Schema.Struct({
+    bookshelfCount: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: ENCHANTMENT_TABLE_MAX_BOOKSHELVES })),
+    offers: EnchantmentTableOffersSchema,
+  })
 
 export type EnchantmentTableApplyState = Readonly<{
   playerStorage: PlayerStorage.PlayerStorage
@@ -137,12 +192,31 @@ export const EnchantmentTableApplyFailureSchema: Schema.Codec<EnchantmentTableAp
 
 export type EnchantmentTableServiceError =
   | Schema.SchemaError
+  | EnchantmentTable.EnchantmentTableFailure
+  | EnchantmentTable.EnchantmentTableBookshelfFailure
   | WorldCommitPlanConflict
   | WorldCommitCoordinatorError
   | EnchantmentTableApplyFailure
 
 export const EnchantmentTableServiceErrorSchema: Schema.Codec<EnchantmentTableServiceError, unknown> = Schema.Union([
   SchemaErrorSchema,
+  Schema.TaggedStruct('EnchantmentTableFailure', {
+    reason: Schema.Literals([
+      'invalid-level',
+      'invalid-bookshelf-count',
+      'invalid-slot',
+      'invalid-random-integer',
+      'invalid-random-float',
+      'empty-candidate-set',
+    ]),
+    value: Schema.Unknown,
+    message: Schema.String,
+  }),
+  Schema.TaggedStruct('EnchantmentTableBookshelfFailure', {
+    reason: Schema.Literals(['invalid-table-position', 'invalid-block-power']),
+    value: Schema.Unknown,
+    message: Schema.String,
+  }),
   WorldCommitPlanConflictSchema,
   WorldCommitCoordinatorErrorSchema,
   EnchantmentTableApplyFailureSchema,
@@ -305,6 +379,9 @@ const planApplyResult = (
 }
 
 export type EnchantmentTableServiceApi = Readonly<{
+  generateOffers: (
+    request: EnchantmentTableGenerateOffersRequest,
+  ) => Effect.Effect<EnchantmentTableGenerateOffersResult, EnchantmentTableServiceError>
   planApply: (
     snapshot: WorldCommitPlanSnapshot<EnchantmentTableApplyState>,
     request: EnchantmentTableApplyRequest,
@@ -334,6 +411,22 @@ export const makeEnchantmentTableService = (): Effect.Effect<
 > =>
   Effect.gen(function* () {
     const coordinator = yield* WorldCommitCoordinator
+    const generateOffers: EnchantmentTableServiceApi['generateOffers'] = (request) => Effect.gen(function* () {
+      const decodedRequest = yield* Schema.decodeUnknownEffect(EnchantmentTableGenerateOffersRequestSchema)(request)
+      const bookshelfCount = yield* Effect.fromResult(EnchantmentTable.countEnchantmentTableBookshelves({
+        tablePosition: decodedRequest.tablePosition,
+        blockPowerAt: decodedRequest.blockPowerAt,
+      }))
+      const offers = yield* Effect.fromResult(EnchantmentTable.generateEnchantmentTableOffers({
+        item: decodedRequest.item,
+        bookshelfCount,
+        random: decodedRequest.random,
+      }))
+      return yield* Schema.decodeUnknownEffect(EnchantmentTableGenerateOffersResultSchema)({
+        bookshelfCount,
+        offers,
+      })
+    })
     const planApply: EnchantmentTableServiceApi['planApply'] = (snapshot, request) => Effect.gen(function* () {
       const decodedSnapshot = yield* Schema.decodeUnknownEffect(
         worldCommitPlanSnapshotSchema(EnchantmentTableApplyStateSchema),
@@ -379,7 +472,7 @@ export const makeEnchantmentTableService = (): Effect.Effect<
       const delta = yield* coordinator.commit(commitRequest)
       return { result: fragment.result, delta }
     })
-    return { planApply, apply }
+    return { generateOffers, planApply, apply }
   })
 
 export const EnchantmentTableServiceLayer: Layer.Layer<

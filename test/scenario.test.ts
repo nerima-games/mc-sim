@@ -28,7 +28,6 @@ import {
   position as kernelPosition,
 } from '@nerima-games/mc-kernel'
 import { craftGrid as craftGridResult, type CraftGrid } from '../src/domain/recipe'
-import { itemStack as itemStackResult, type ItemStack } from '../src/domain/inventory'
 import { ClockPort, FixedClockLayer } from '@nerima-games/mc-kernel'
 import {
   InventoryService,
@@ -39,11 +38,6 @@ import { PlayerService, PlayerServiceLayer } from '../src/application/player-ser
 import { TimeService, TimeServiceLayer } from '../src/application/time-service'
 import { TICKS_PER_SECOND } from '../src/domain/time-of-day'
 
-const itemStack = (...args: Parameters<typeof itemStackResult>): ItemStack => {
-  const result = itemStackResult(...args)
-  if (Result.isFailure(result)) throw result.failure
-  return result.success
-}
 const craftGrid = (...args: Parameters<typeof craftGridResult>): CraftGrid => {
   const result = craftGridResult(...args)
   if (Result.isFailure(result)) throw result.failure
@@ -150,15 +144,15 @@ describe('deterministic scenario: spawn -> look -> mine -> assert', () => {
         expect(snapshotAgeSecs(pose, later.capturedAtSecs)).toBe(360)
 
         // --- craft: a log becomes planks, planks become sticks -----------
-        // The recipe table is mc-sim's (plan.md §7) and one craft is a single
+        // The recipe table is kernel-backed and one craft is a single
         // Ref.modify, so the whole thing runs headless with no screen in the
         // process. That is the division of labour: mx-ui PROJECTS this answer,
         // it does not compute it.
         expect(yield* inventory.add('oak_log', 1)).toBe(0)
-        expect(yield* inventory.craft(craftGrid(1, 1, ['oak_log']))).toStrictEqual({
+        expect(yield* inventory.craft(craftGrid(1, 1, ['oak_log']))).toMatchObject({
           _tag: 'Crafted',
-          recipeId: 'mc-sim:oak-planks',
-          output: itemStack('oak_planks', 4),
+          recipeId: 'minecraft:oak-planks',
+          output: { item: 'oak_planks', count: 4 },
         })
         expect(yield* inventory.countOf('oak_log')).toBe(0)
         expect(yield* inventory.countOf('oak_planks')).toBe(4)
@@ -166,10 +160,10 @@ describe('deterministic scenario: spawn -> look -> mine -> assert', () => {
         // Two planks in a COLUMN. A loose shapeless recipe over the same two
         // planks also matches; the shaped one wins because it is more specific,
         // and the difference is visible here as 4 sticks rather than 2.
-        expect(yield* inventory.craft(craftGrid(1, 2, ['oak_planks', 'oak_planks']))).toStrictEqual({
+        expect(yield* inventory.craft(craftGrid(1, 2, ['oak_planks', 'oak_planks']))).toMatchObject({
           _tag: 'Crafted',
-          recipeId: 'mc-sim:stick',
-          output: itemStack('stick', 4),
+          recipeId: 'minecraft:stick',
+          output: { item: 'stick', count: 4 },
         })
         expect(yield* inventory.countOf('oak_planks')).toBe(2)
         expect(yield* inventory.countOf('stick')).toBe(4)

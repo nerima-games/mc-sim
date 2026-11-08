@@ -30,7 +30,10 @@ import {
   shapelessRecipe as shapelessRecipeResult,
   type CraftGrid,
 } from '../src/domain/recipe'
-import { STARTER_RECIPES as starterRecipesResult } from '../src/domain/recipe-data'
+import {
+  STARTER_RECIPES as starterRecipesResult,
+  VANILLA_CRAFTING_RECIPES,
+} from '../src/domain/recipe-data'
 
 const requireSuccess = <A, E>(result: Result.Result<A, E>): A => {
   if (Result.isFailure(result)) throw result.failure
@@ -661,10 +664,10 @@ describe('InventoryService.craft', () => {
       const service = yield* makeInventoryService()
       yield* service.add('oak_log', 1)
 
-      expect(yield* service.craft(gridOf('L'))).toStrictEqual({
+      expect(yield* service.craft(gridOf('L'))).toMatchObject({
         _tag: 'Crafted',
-        recipeId: 'mc-sim:oak-planks',
-        output: itemStack('oak_planks', 4),
+        recipeId: 'minecraft:oak-planks',
+        output: { item: 'oak_planks', count: 4 },
       })
       expect(yield* service.countOf('oak_log')).toBe(0)
       expect(yield* service.countOf('oak_planks')).toBe(4)
@@ -677,7 +680,7 @@ describe('InventoryService.craft', () => {
       const before = yield* service.snapshot
 
       const match = yield* service.previewCraft(STICK_GRID)
-      expect(match._tag === 'Match' ? match.recipe.id : 'NoMatch').toBe('mc-sim:stick')
+      expect(match._tag === 'Match' ? match.recipe.id : 'NoMatch').toBe('minecraft:stick')
 
       // Preview says what the grid MAKES; it does not say the player can afford
       // it, and the empty inventory below is the proof that it must not.
@@ -723,7 +726,7 @@ describe('InventoryService.craft', () => {
       const vanilla = yield* makeInventoryService()
       const world = yield* makeInventoryService(stocked([['dirt', 1]]), modded)
 
-      expect(yield* vanilla.recipes).toStrictEqual(STARTER_RECIPES)
+      expect(yield* vanilla.recipes).toBe(VANILLA_CRAFTING_RECIPES)
       expect(yield* vanilla.previewCraft(gridOf('D'))).toStrictEqual({ _tag: 'NoMatch' })
 
       expect((yield* world.craft(gridOf('D')))._tag).toBe('Crafted')

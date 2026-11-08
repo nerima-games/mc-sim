@@ -1,5 +1,5 @@
 import { Result } from 'effect'
-import type { ItemType } from '@nerima-games/mc-kernel'
+import { BlockAxis, blockPosition, type BlockPosition, type ItemType } from '@nerima-games/mc-kernel'
 import {
   type AnvilEnchantment,
 } from './anvil.js'
@@ -23,6 +23,24 @@ import { assertRandomInteger, weightedCandidate } from './enchantment-table-sele
 export type EnchantmentTableRandom = Readonly<{
   readonly nextInt: (bound: number) => number
   readonly nextFloat: () => number
+}>
+
+export type EnchantmentTableBlockPower =
+  | Readonly<{ readonly _tag: 'Air' }>
+  | Readonly<{ readonly _tag: 'Block'; readonly bookshelfPower: 0 | 1 }>
+
+export type EnchantmentTableBlockPowerAt = (position: BlockPosition) => EnchantmentTableBlockPower
+
+export type CountEnchantmentTableBookshelvesInput = Readonly<{
+  readonly tablePosition: BlockPosition
+  readonly blockPowerAt: EnchantmentTableBlockPowerAt
+}>
+
+export type EnchantmentTableBookshelfFailure = Readonly<{
+  readonly _tag: 'EnchantmentTableBookshelfFailure'
+  readonly reason: 'invalid-table-position' | 'invalid-block-power'
+  readonly value: unknown
+  readonly message: string
 }>
 
 export type EnchantmentTableOffer = Readonly<{
@@ -67,6 +85,8 @@ export type EnchantmentTableFailure = Readonly<{
 
 export type EnchantmentTableError = EnchantmentTableFailure
 
+export type EnchantmentTableBookshelfCountResult = Result.Result<number, EnchantmentTableBookshelfFailure>
+
 type Candidate = Readonly<{
   readonly id: EnchantmentTableRuleId
   readonly level: number
@@ -83,6 +103,85 @@ const failure = (
   value,
   message,
 })
+
+const bookshelfFailure = (
+  reason: EnchantmentTableBookshelfFailure['reason'],
+  value: unknown,
+  message: string,
+): EnchantmentTableBookshelfFailure => ({
+  _tag: 'EnchantmentTableBookshelfFailure',
+  reason,
+  value,
+  message,
+})
+
+const isEnchantmentTableBlockPower = (value: unknown): value is EnchantmentTableBlockPower => {
+  if (typeof value !== 'object' || value === null || !('_tag' in value)) return false
+  if (value._tag === 'Air') return true
+  return value._tag === 'Block' && 'bookshelfPower' in value &&
+    (value.bookshelfPower === 0 || value.bookshelfPower === 1)
+}
+
+/** Counts bookshelf power in the two-block ring above and around an enchantment table. */
+export const countEnchantmentTableBookshelves = ({
+  tablePosition,
+  blockPowerAt,
+}: CountEnchantmentTableBookshelvesInput): EnchantmentTableBookshelfCountResult => {
+  const { x, y, z } = tablePosition
+  if (![x, y, z, x - 2, x + 2, y + 1, z - 2, z + 2].every(Number.isSafeInteger)) {
+    return Result.fail(bookshelfFailure(
+      'invalid-table-position',
+      tablePosition,
+      'Table position must leave room for a safe integer two-block ring',
+    ))
+  }
+
+  const positions = new Map<string, EnchantmentTableBlockPower>()
+  const powerAt = (
+    blockX: number,
+    blockY: number,
+    blockZ: number,
+  ): Result.Result<EnchantmentTableBlockPower, EnchantmentTableBookshelfFailure> => {
+    const key = `${blockX},${blockY},${blockZ}`
+    const cached = positions.get(key)
+    if (cached !== undefined) return Result.succeed(cached)
+
+    const position = blockPosition(BlockAxis(blockX), BlockAxis(blockY), BlockAxis(blockZ))
+    const power = blockPowerAt(position)
+    if (!isEnchantmentTableBlockPower(power)) {
+      return Result.fail(bookshelfFailure(
+        'invalid-block-power',
+        power,
+        'Block power must describe air or bookshelf power 0 or 1',
+      ))
+    }
+    positions.set(key, power)
+    return Result.succeed(power)
+  }
+
+  let bookshelfCount = 0
+  for (const dx of [-2, 0, 2]) {
+    for (const dz of [-2, 0, 2]) {
+      if (dx === 0 && dz === 0) continue
+
+      const gapX = x + dx / 2
+      const gapZ = z + dz / 2
+      const lowerGap = powerAt(gapX, y, gapZ)
+      if (Result.isFailure(lowerGap)) return Result.fail(lowerGap.failure)
+      const upperGap = powerAt(gapX, y + 1, gapZ)
+      if (Result.isFailure(upperGap)) return Result.fail(upperGap.failure)
+      if (lowerGap.success._tag !== 'Air' || upperGap.success._tag !== 'Air') continue
+
+      for (const shelfY of [y, y + 1]) {
+        const shelf = powerAt(x + dx, shelfY, z + dz)
+        if (Result.isFailure(shelf)) return Result.fail(shelf.failure)
+        if (shelf.success._tag === 'Block') bookshelfCount += shelf.success.bookshelfPower
+      }
+    }
+  }
+
+  return Result.succeed(Math.min(ENCHANTMENT_TABLE_MAX_BOOKSHELVES, bookshelfCount))
+}
 
 const costAtLevelUnchecked = (cost: EnchantmentTableCost, level: number): number =>
   cost.base + cost.perLevelAboveFirst * (level - 1)

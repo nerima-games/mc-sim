@@ -1,5 +1,11 @@
 import type { ItemType } from '@nerima-games/mc-kernel'
 import {
+  SUPPORTED_VANILLA_ANVIL_RULE_SET as kernelAnvilRules,
+  SUPPORTED_VANILLA_BOOK_ANVIL_RULE_SET as kernelBookAnvilRules,
+  SUPPORTED_VANILLA_ITEM_ANVIL_RULE_SET as kernelItemAnvilRules,
+  VANILLA_ENCHANTMENT_COSTS,
+} from '@nerima-games/mc-kernel'
+import {
   applyAnvil,
   isAnvilEnchantmentId,
   planAnvil,
@@ -9,27 +15,46 @@ import {
   type AnvilRuleSet,
   type AnvilState,
 } from './anvil.js'
-import {
-  SUPPORTED_VANILLA_BOOK_ENCHANTMENT_RULES,
-  SUPPORTED_VANILLA_ENCHANTMENT_RULES,
-  SUPPORTED_VANILLA_ITEM_ENCHANTMENT_RULES,
-  type SupportedVanillaEnchantmentId,
-} from './enchantment-data.js'
+import type { SupportedVanillaEnchantmentId } from './enchantment-data.js'
+import { anvilEnchantmentIdFromValidated } from './anvil-primitives.js'
+import { SUPPORTED_VANILLA_ANVIL_REPAIR_MATERIAL_RULES } from './anvil-material-data.js'
+
+type KernelVanillaEnchantmentRule = Readonly<{
+  id: SupportedVanillaEnchantmentId
+  maxLevel: number
+  applicableItems: ReadonlyArray<ItemType>
+  incompatibleWith: ReadonlyArray<SupportedVanillaEnchantmentId>
+}>
+
+const localRules = (
+  rules: ReadonlyArray<KernelVanillaEnchantmentRule>,
+  costSource: 'item' | 'book',
+): ReadonlyArray<AnvilEnchantmentRule> =>
+  rules.map(({ id, maxLevel, applicableItems, incompatibleWith }) => ({
+    id: anvilEnchantmentIdFromValidated(id),
+    maxLevel: Number(maxLevel),
+    applicableItems,
+    incompatibleWith: incompatibleWith.map(anvilEnchantmentIdFromValidated),
+    costPerLevel: Number(VANILLA_ENCHANTMENT_COSTS[id][costSource]),
+  }))
 
 export const SUPPORTED_VANILLA_BOOK_ANVIL_RULE_SET: AnvilRuleSet = {
-  enchantments: SUPPORTED_VANILLA_BOOK_ENCHANTMENT_RULES,
+  enchantments: localRules(kernelBookAnvilRules.enchantments, 'book'),
+  repairMaterials: SUPPORTED_VANILLA_ANVIL_REPAIR_MATERIAL_RULES,
 } as const
 
 export const SUPPORTED_VANILLA_ITEM_ANVIL_RULE_SET: AnvilRuleSet = {
-  enchantments: SUPPORTED_VANILLA_ITEM_ENCHANTMENT_RULES,
+  enchantments: localRules(kernelItemAnvilRules.enchantments, 'item'),
+  repairMaterials: SUPPORTED_VANILLA_ANVIL_REPAIR_MATERIAL_RULES,
 } as const
 
 export const SUPPORTED_VANILLA_ANVIL_RULE_SET: AnvilRuleSet = {
-  enchantments: SUPPORTED_VANILLA_ENCHANTMENT_RULES,
+  enchantments: localRules(kernelAnvilRules.enchantments, 'book'),
+  repairMaterials: SUPPORTED_VANILLA_ANVIL_REPAIR_MATERIAL_RULES,
 } as const
 
 const RULES_BY_ID: ReadonlyMap<string, AnvilEnchantmentRule> = new Map(
-  SUPPORTED_VANILLA_ENCHANTMENT_RULES.map(
+  SUPPORTED_VANILLA_ANVIL_RULE_SET.enchantments.map(
     (rule): readonly [string, AnvilEnchantmentRule] => [rule.id, rule],
   ),
 )

@@ -1,9 +1,18 @@
 import { Context, Effect, Layer, Result, Schema } from 'effect'
-import { isItemStack, RecipeExperience, WorldRevisionSchema, type ItemStack, type RecipeExperience as RecipeExperienceValue, type WorldRevision } from '@nerima-games/mc-kernel'
+import {
+  isItemStack,
+  RecipeExperience,
+  WorldRevisionSchema,
+  type ItemStack,
+  type NonNegativeTickCount as NonNegativeTickCountValue,
+  type RecipeExperience as RecipeExperienceValue,
+  type WorldRevision,
+} from '@nerima-games/mc-kernel'
 import type { Inventory } from '../domain/inventory.js'
 import { INVENTORY_SLOT_COUNT } from '../domain/inventory.js'
 import {
   advanceFurnace,
+  advanceFurnaceTicks,
   collectFurnaceOutput,
   emptyFurnaceState,
   furnaceState,
@@ -94,6 +103,9 @@ export type FurnaceServiceApi = {
   ) => Effect.Effect<void, FurnaceServiceError, WorldCommitCoordinator>
   readonly advance: (
     elapsedSecs: number,
+  ) => Effect.Effect<FurnaceOutcome, FurnaceServiceError, WorldCommitCoordinator>
+  readonly advanceTicks: (
+    elapsedTicks: NonNegativeTickCountValue,
   ) => Effect.Effect<FurnaceOutcome, FurnaceServiceError, WorldCommitCoordinator>
   readonly prepareCollectOutput: (
     inventory: Inventory,
@@ -225,6 +237,20 @@ export const makeFurnaceService = (
         })),
       ),
     ),
+    advanceTicks: (elapsedTicks) => elapsedTicks === 0
+      ? Effect.flatMap(WorldCommitCoordinator, (coordinator) =>
+        Effect.flatMap(coordinator.snapshot(ownerId, FurnaceServiceStateSchema), ({ state }) =>
+          fromResult(advanceFurnaceTicks(state.furnace, elapsedTicks)),
+        ),
+      )
+      : updateFurnaceState(ownerId, (current) =>
+        Result.flatMap(advanceFurnaceTicks(current.furnace, elapsedTicks), (outcome) =>
+          Result.map(RecipeExperience.result(current.experience + outcome.experienceGained), (experience) => ({
+            value: outcome,
+            state: { furnace: outcome.state, experience },
+          })),
+        ),
+      ),
     prepareCollectOutput: (inventory) => prepareFurnaceOutputCollection(ownerId, inventory),
     prepareCollectExperience: prepareFurnaceExperienceCollection(ownerId),
     restore: (snapshot) => {
