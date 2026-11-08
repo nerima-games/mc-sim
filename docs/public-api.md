@@ -312,6 +312,9 @@ tick は kernel の `SimulationTick` で管理し、余りから `interpolationF
 `advanceFrame(delta)` returns `FixedStepAdvance`, including the number of ticks and the interpolation fraction.
 Invalid deltas return the existing typed `FixedStepFailure` values and leave the accumulator unchanged.
 `pause` holds the current remainder; `resume` clears it.
+Elapsed time accumulates in integer units of 1/60,000,000 second; non-negative deltas are truncated to avoid
+crediting time that has not elapsed. The seconds-valued `accumulator` remains available, and callers may omit
+the optional `accumulatorUnits` field when constructing legacy accumulator states.
 
 `runStagesForTicks` runs an already ordered `StageRegistration` list once per tick, in list order, using
 `DEFAULT_TICK_DURATION` for each call. It returns a typed failure for an invalid count or a count above

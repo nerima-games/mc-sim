@@ -28,6 +28,14 @@ const runSequence = async (deltas: ReadonlyArray<number>) => {
   })
 }
 
+const adjacentFloat = (value: number, direction: 'down' | 'up'): number => {
+  const view = new DataView(new ArrayBuffer(8))
+  view.setFloat64(0, value)
+  const bits = view.getBigUint64(0)
+  view.setBigUint64(0, direction === 'down' ? bits - 1n : bits + 1n)
+  return view.getFloat64(0)
+}
+
 it('returns schema-valid fixed-step output or a typed failure for hostile frame deltas', async () => {
   await fc.assert(
     fc.asyncProperty(hostileNumberOrNullish, async (delta) => {
@@ -78,6 +86,18 @@ it('matches the theoretical 20 TPS tick total for non-overloaded varied frame se
       const actualTicks = frames.reduce((total, frame) => total + Number(frame.ticks), 0)
       const theoreticalTicks = Math.floor(milliseconds.reduce((total, value) => total + value, 0) / 50)
 
+      let cumulativeMilliseconds = 0
+      let cumulativeTicks = 0
+      const elapsedFrames = milliseconds[Symbol.iterator]()
+      for (const frame of frames) {
+        const elapsed = elapsedFrames.next()
+        if (elapsed.done) throw new Error('Tick service returned more frames than inputs')
+        cumulativeMilliseconds += elapsed.value
+        cumulativeTicks += Number(frame.ticks)
+        expect(cumulativeTicks).toBeLessThanOrEqual(Math.floor(cumulativeMilliseconds / 50))
+      }
+      expect(elapsedFrames.next().done).toBe(true)
+
       expect(actualTicks).toBe(theoreticalTicks)
       expect(frames.every((frame) => frame.ticks <= NonNegativeTickCount(5))).toBe(true)
       expect(frames.every((frame) => frame.interpolationFraction >= 0 && frame.interpolationFraction < 1)).toBe(true)
@@ -116,7 +136,10 @@ it('caps large jumps, discards excess time, and handles zero and boundary deltas
   const boundaries = [
     { delta: 0, ticks: 0 },
     { delta: 0.049999, ticks: 0 },
+    { delta: adjacentFloat(0.05, 'down'), ticks: 0 },
+    { delta: 0.04999999999999999, ticks: 0 },
     { delta: 0.05, ticks: 1 },
+    { delta: adjacentFloat(0.05, 'up'), ticks: 1 },
     { delta: 0.050001, ticks: 1 },
     { delta: 0.249999, ticks: 4 },
     { delta: 0.25, ticks: 5 },

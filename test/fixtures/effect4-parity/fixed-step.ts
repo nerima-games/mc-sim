@@ -33,12 +33,12 @@ export const fixedStepMainParityInput: {
   overflowDelta: 0.05,
 }
 
-export const fixedStepMainParityExpected = {
+export const fixedStepIntegerUnitsExpected = {
   sequence: [
     {
       _tag: 'Success',
       value: {
-        state: { accumulator: 0.0125, tick: 100, tickDuration: 0.05, maxCatchUpTicks: 5, paused: false },
+        state: { accumulator: 0.0125, accumulatorUnits: 750_000, tick: 100, tickDuration: 0.05, maxCatchUpTicks: 5, paused: false },
         ticks: 0,
         interpolationFraction: 0.25,
         overloaded: false,
@@ -47,7 +47,7 @@ export const fixedStepMainParityExpected = {
     {
       _tag: 'Success',
       value: {
-        state: { accumulator: 0, tick: 101, tickDuration: 0.05, maxCatchUpTicks: 5, paused: false },
+        state: { accumulator: 0, accumulatorUnits: 0, tick: 101, tickDuration: 0.05, maxCatchUpTicks: 5, paused: false },
         ticks: 1,
         interpolationFraction: 0,
         overloaded: false,
@@ -57,21 +57,22 @@ export const fixedStepMainParityExpected = {
       _tag: 'Success',
       value: {
         state: {
-          accumulator: 0.024999999999999994,
+          accumulator: 0.025,
+          accumulatorUnits: 1_500_000,
           tick: 103,
           tickDuration: 0.05,
           maxCatchUpTicks: 5,
           paused: false,
         },
         ticks: 2,
-        interpolationFraction: 0.4999999999999999,
+        interpolationFraction: 0.5,
         overloaded: false,
       },
     },
     {
       _tag: 'Success',
       value: {
-        state: { accumulator: 0, tick: 108, tickDuration: 0.05, maxCatchUpTicks: 5, paused: false },
+        state: { accumulator: 0, accumulatorUnits: 0, tick: 108, tickDuration: 0.05, maxCatchUpTicks: 5, paused: false },
         ticks: 5,
         interpolationFraction: 0,
         overloaded: true,
@@ -81,7 +82,7 @@ export const fixedStepMainParityExpected = {
   pausedAdvance: {
     _tag: 'Success',
     value: {
-      state: { accumulator: 0, tick: 108, tickDuration: 0.05, maxCatchUpTicks: 5, paused: true },
+      state: { accumulator: 0, accumulatorUnits: 0, tick: 108, tickDuration: 0.05, maxCatchUpTicks: 5, paused: true },
       ticks: 0,
       interpolationFraction: 0,
       overloaded: false,
@@ -90,7 +91,7 @@ export const fixedStepMainParityExpected = {
   resumeAdvance: {
     _tag: 'Success',
     value: {
-      state: { accumulator: 0.025, tick: 108, tickDuration: 0.05, maxCatchUpTicks: 5, paused: false },
+      state: { accumulator: 0.025, accumulatorUnits: 1_500_000, tick: 108, tickDuration: 0.05, maxCatchUpTicks: 5, paused: false },
       ticks: 0,
       interpolationFraction: 0.5,
       overloaded: false,

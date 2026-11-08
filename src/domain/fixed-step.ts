@@ -26,8 +26,12 @@ export const DEFAULT_TICK_DURATION: FixedDurationSecsValue = tickDuration
  */
 export const MAX_CATCH_UP_TICKS = 5
 
+const ELAPSED_TIME_UNITS_PER_SECOND = 60_000_000
+
 export type FixedStepAccumulator = {
   readonly accumulator: FixedDurationSecsValue
+  /** Exact integer form used for accumulation; optional for older constructed states. */
+  readonly accumulatorUnits?: number
   readonly tick: SimulationTickValue
   readonly tickDuration: FixedDurationSecsValue
   readonly maxCatchUpTicks: number
@@ -56,12 +60,17 @@ const NonNegativeTickCountSchema = Schema.Int.check(
   Schema.makeFilter((value) => Number.isSafeInteger(value) && NonNegativeTickCount.is(value)),
 ).pipe(Schema.brand('NonNegativeTickCount'))
 
+const FixedTimeUnitsSchema = Schema.Int.check(
+  Schema.makeFilter((value) => Number.isSafeInteger(value) && value >= 0),
+)
+
 const InterpolationFractionSchema = Schema.Finite.check(
   Schema.makeFilter((value) => InterpolationFraction.is(value)),
 ).pipe(Schema.brand('InterpolationFraction'))
 
 export const FixedStepAccumulatorSchema: Schema.Codec<FixedStepAccumulator, unknown> = Schema.Struct({
   accumulator: FixedDurationSecsSchema,
+  accumulatorUnits: Schema.optionalKey(FixedTimeUnitsSchema),
   tick: SimulationTickSchema,
   tickDuration: FixedDurationSecsSchema,
   maxCatchUpTicks: NonNegativeTickCountSchema,
@@ -100,6 +109,7 @@ export const initialFixedStepAccumulator = (
   maxCatchUpTicks: number = MAX_CATCH_UP_TICKS,
 ): FixedStepAccumulator => ({
   accumulator: FixedDurationSecs(0),
+  accumulatorUnits: 0,
   tick,
   tickDuration: duration,
   maxCatchUpTicks,
@@ -111,6 +121,7 @@ export const pause = (state: FixedStepAccumulator): FixedStepAccumulator => ({ .
 export const resume = (state: FixedStepAccumulator): FixedStepAccumulator => ({
   ...state,
   accumulator: FixedDurationSecs(0),
+  accumulatorUnits: 0,
   paused: false,
 })
 
@@ -129,37 +140,60 @@ export const advance = (
       return yield* Result.fail(invalidConfiguration('paused'))
     }
 
+    const rawAccumulatorUnits = state.accumulatorUnits === undefined
+      ? Math.trunc(Number(accumulator) * ELAPSED_TIME_UNITS_PER_SECOND)
+      : state.accumulatorUnits
+    const accumulatorUnits = Number(yield* NonNegativeTickCount.result(rawAccumulatorUnits))
+    const fixedIntervalUnits = Math.round(Number(fixedIntervalSecs) * ELAPSED_TIME_UNITS_PER_SECOND)
+    if (!Number.isSafeInteger(fixedIntervalUnits)) {
+      return yield* Result.fail(invalidConfiguration('catchUpWindow'))
+    }
+
+    const normalizedAccumulator = yield* FixedDurationSecs.result(
+      accumulatorUnits / ELAPSED_TIME_UNITS_PER_SECOND,
+    )
+    const normalizedState: FixedStepAccumulator = {
+      ...state,
+      accumulator: normalizedAccumulator,
+      accumulatorUnits,
+    }
+
     if (state.paused) {
-      const fraction = yield* InterpolationFraction.result(accumulator / fixedIntervalSecs)
+      const fraction = yield* InterpolationFraction.result(accumulatorUnits / fixedIntervalUnits)
       return {
-        state,
+        state: normalizedState,
         ticks: NonNegativeTickCount(0),
         interpolationFraction: fraction,
         overloaded: false,
       }
     }
 
-    const available = accumulator + validDelta
-    const maximum = fixedIntervalSecs * maxCatchUpTicks
-    if (!Number.isFinite(maximum)) {
+    const maximumUnits = fixedIntervalUnits * maxCatchUpTicks
+    if (!Number.isSafeInteger(maximumUnits) || maximumUnits >= Number.MAX_SAFE_INTEGER) {
       return yield* Result.fail(invalidConfiguration('catchUpWindow'))
     }
 
-    const overloaded = available > maximum
-    const bounded = Math.min(available, maximum)
-    const wholeTicks = Math.floor(bounded / fixedIntervalSecs)
-    const remainderBeforeBoundary = bounded - wholeTicks * fixedIntervalSecs
-    // Floating-point deltas can leave an exact tick boundary a few ULPs short.
-    const boundaryTolerance = Number.EPSILON * Math.max(Math.abs(bounded), Math.abs(fixedIntervalSecs)) * 4
-    const roundedTicks = remainderBeforeBoundary > 0 &&
-      fixedIntervalSecs - remainderBeforeBoundary <= boundaryTolerance
-      ? wholeTicks + 1
-      : wholeTicks
-    const ticks = yield* NonNegativeTickCount.result(Math.min(maxCatchUpTicks, roundedTicks))
+    // Units are 1/60,000,000 s, so 20, 60, and 120 Hz frame deltas are integral.
+    // Truncate non-negative elapsed input to avoid crediting time that has not elapsed.
+    const elapsedUnits = Math.trunc(Number(validDelta) * ELAPSED_TIME_UNITS_PER_SECOND)
+    const availableUnits = elapsedUnits > maximumUnits - accumulatorUnits
+      ? maximumUnits + 1
+      : accumulatorUnits + elapsedUnits
+    const overloaded = availableUnits > maximumUnits
+    const boundedUnits = Math.min(availableUnits, maximumUnits)
+    const ticks = yield* NonNegativeTickCount.result(
+      Math.min(maxCatchUpTicks, Math.floor(boundedUnits / fixedIntervalUnits)),
+    )
     const nextTick = yield* addTick(tick, ticks)
-    const remainder = yield* FixedDurationSecs.result(Math.max(0, bounded - ticks * fixedIntervalSecs))
-    const fraction = yield* InterpolationFraction.result(remainder / fixedIntervalSecs)
-    const nextState: FixedStepAccumulator = { ...state, accumulator: remainder, tick: nextTick }
+    const remainderUnits = boundedUnits - Number(ticks) * fixedIntervalUnits
+    const remainder = yield* FixedDurationSecs.result(remainderUnits / ELAPSED_TIME_UNITS_PER_SECOND)
+    const fraction = yield* InterpolationFraction.result(remainderUnits / fixedIntervalUnits)
+    const nextState: FixedStepAccumulator = {
+      ...normalizedState,
+      accumulator: remainder,
+      accumulatorUnits: remainderUnits,
+      tick: nextTick,
+    }
 
     return {
       state: nextState,
