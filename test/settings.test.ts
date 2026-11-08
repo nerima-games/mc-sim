@@ -172,11 +172,14 @@ describe('locally owned settings API', () => {
     Effect.sync(() => {
       const presetPatch = apply(DEFAULT_SETTINGS, { graphicsPreset: 'high' })
       const legacyPatch = apply(DEFAULT_SETTINGS, { graphicsQuality: 'low' })
+      const presetOnly = normalize({ graphicsPreset: 'high' })
 
       expect(presetPatch.graphicsPreset).toBe('high')
       expect(presetPatch.graphicsQuality).toBe('high')
       expect(legacyPatch.graphicsPreset).toBe('low')
       expect(legacyPatch.graphicsQuality).toBe('low')
+      expect(presetOnly.graphicsPreset).toBe('high')
+      expect(presetOnly.graphicsQuality).toBe('high')
     }),
   )
 
@@ -277,6 +280,36 @@ describe('key bindings are overrides, not a roster', () => {
       expect(
         domainRebindKey(DEFAULT_SETTINGS, '' as InputAction, KeyCode('Space')),
       ).toMatchObject({ _tag: 'Failure' })
+      expect(
+        Reflect.apply(domainRebindKey, undefined, [DEFAULT_SETTINGS, InputAction('jump'), '']),
+      ).toMatchObject({ _tag: 'Failure' })
+    }),
+  )
+
+  it.effect('rejects invalid settings before rebinding', () =>
+    Effect.sync(() => {
+      const invalid = withSettings({ uiScale: MAX_UI_SCALE + 0.01 })
+
+      expect(domainRebindKey(invalid, InputAction('jump'), KeyCode('Space'))).toMatchObject({
+        _tag: 'Failure',
+      })
+    }),
+  )
+
+  it.effect('a no-op rebind leaves valid settings unchanged and decodes partial settings', () =>
+    Effect.sync(() => {
+      const bound = rebindKey(DEFAULT_SETTINGS, 'jump', 'Space')
+      expect(rebindKey(bound, 'jump', 'Space')).toEqual(bound)
+
+      const partial: Record<string, unknown> = {
+        ...DEFAULT_SETTINGS,
+        keyBindings: { jump: 'Space' },
+      }
+      delete partial['uiScale']
+      const decoded = Reflect.apply(domainRebindKey, undefined, [partial, InputAction('jump'), KeyCode('Space')])
+
+      expect(decoded).toMatchObject({ _tag: 'Success', success: { uiScale: DEFAULT_SETTINGS.uiScale } })
+      if (Result.isSuccess(decoded)) expect(isValidSettings(decoded.success)).toBe(true)
     }),
   )
 

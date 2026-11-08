@@ -129,7 +129,6 @@ const isValidKeyBindings = (value: unknown): value is Readonly<Record<string, st
 
 export const isValidSettings = (value: unknown): value is Settings => {
   if (!isExactSettingsRecord(value) || Reflect.ownKeys(value).length !== SETTINGS_FIELDS.length) return false
-  if (!SETTINGS_FIELDS.every((field) => Object.hasOwn(value, field))) return false
 
   return (
     isIntegerInRange(value['renderDistance'], MIN_RENDER_DISTANCE, MAX_RENDER_DISTANCE) &&
@@ -228,9 +227,7 @@ export const rebindKey = (
   const base = decodeSettings(settings)
   if (Result.isFailure(base)) return base
   const next = kernelRebindKey(base.success, checkedAction.success, checkedCode.success)
-  return next === base.success
-    ? Result.succeed(isValidSettings(settings) ? settings : base.success)
-    : decodeSettings(next)
+  return decodeSettings(next)
 }
 
 export const unbindKey = (

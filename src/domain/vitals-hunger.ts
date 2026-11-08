@@ -111,9 +111,7 @@ export const advanceFoodTimer = (
   const completedIntervals = crossesTick
     ? Math.floor((timerWithRemainder + remainderTolerance) / regenInterval)
     : 0
-  const foodTimerSecs = Number.isNaN(elapsed)
-    ? base.foodTimerSecs
-    : FoodTimerSecs(Math.max(0, timerWithRemainder - completedIntervals * regenInterval))
+  const foodTimerSecs = FoodTimerSecs(Math.max(0, timerWithRemainder - completedIntervals * regenInterval))
   if (!crossesTick) {
     return ['none', { ...base, foodTimerSecs }]
   }
