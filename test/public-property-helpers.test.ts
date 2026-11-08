@@ -1,5 +1,6 @@
 import { Arbitrary, Brand, Duration, Effect, Option, Result, Schedule, Schema, SchemaAST, SchemaIssue } from 'effect'
 import { SaveDecodeError } from '@nerima-games/mc-save'
+import { BlockId } from '@nerima-games/mc-kernel'
 import { expect, it } from 'vitest'
 import * as PublicApi from '../src/index.js'
 import * as Vitals from '../src/domain/vitals.js'
@@ -133,7 +134,7 @@ const opaqueSchemaInputProviders: Readonly<Record<string, () => unknown>> = {
   EnchantmentTableGenerateOffersRequestSchema: () => ({
     item: 'book',
     tablePosition: { x: 0, y: 0, z: 0 },
-    blockPowerAt: () => ({ _tag: 'Air' }),
+    blockIdAt: () => BlockId(0),
     random: { nextInt: () => 0, nextFloat: () => 0.5 },
   }),
   AutoSaveDaemonSchema: () => Effect.runFork(Effect.void),

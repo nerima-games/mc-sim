@@ -1,5 +1,15 @@
-import { Brand, Result } from 'effect'
-import { BlockAxis, blockPosition, type BlockPosition, type ItemType } from '@nerima-games/mc-kernel'
+import { Brand, Option, Result, Schema } from 'effect'
+import {
+  BlockEnchantingPowerSchema,
+  BlockAxis,
+  blockPosition,
+  blockIdOf,
+  enchantingPowerOfBlockId,
+  type BlockEnchantingPower,
+  type BlockId,
+  type BlockPosition,
+  type ItemType,
+} from '@nerima-games/mc-kernel'
 import {
   type AnvilEnchantment,
 } from './anvil.js'
@@ -27,24 +37,26 @@ export type EnchantmentTableRandom = Readonly<{
 
 export type EnchantmentTableBlockPower =
   | Readonly<{ readonly _tag: 'Air' }>
-  | Readonly<{ readonly _tag: 'Block'; readonly bookshelfPower: 0 | 1 }>
+  | Readonly<{ readonly _tag: 'Block'; readonly bookshelfPower: BlockEnchantingPower }>
 
 export type EnchantmentTableBlockPowerAt = (position: BlockPosition) => EnchantmentTableBlockPower
+export type EnchantmentTableBlockIdAt = (position: BlockPosition) => BlockId
 
-export type CountEnchantmentTableBookshelvesInput = Readonly<{
-  readonly tablePosition: BlockPosition
-  readonly blockPowerAt: EnchantmentTableBlockPowerAt
-}>
+export type CountEnchantmentTableBookshelvesInput = Readonly<{ readonly tablePosition: BlockPosition } & (
+  | Readonly<{ readonly blockIdAt: EnchantmentTableBlockIdAt; readonly blockPowerAt?: undefined }>
+  | Readonly<{ readonly blockPowerAt: EnchantmentTableBlockPowerAt; readonly blockIdAt?: undefined }>
+)>
 
 export type EnchantmentTableBookshelfFailure = Readonly<{
   readonly _tag: 'EnchantmentTableBookshelfFailure'
-  readonly reason: 'invalid-table-position' | 'invalid-block-power'
+  readonly reason: 'invalid-table-position' | 'invalid-block-id' | 'invalid-block-power'
   readonly value: unknown
   readonly message: EnchantmentTableBookshelfFailureMessage
 }>
 
 type EnchantmentTableBookshelfFailureMessage =
   | 'Table position must leave room for a safe integer two-block ring'
+  | 'Block id must identify a registered block'
   | 'Block power must describe air or bookshelf power 0 or 1'
 
 export type EnchantmentTableBookshelfCount = number & Brand.Brand<'EnchantmentTableBookshelfCount'>
@@ -94,6 +106,7 @@ export type EnchantmentTableError = EnchantmentTableFailure
 export type EnchantmentTableBookshelfCountResult = Result.Result<EnchantmentTableBookshelfCount, EnchantmentTableBookshelfFailure>
 
 const enchantmentTableBookshelfCountFromInvariant = Brand.nominal<EnchantmentTableBookshelfCount>()
+const AIR_BLOCK_ID = Option.getOrThrow(blockIdOf('air'))
 
 type Candidate = Readonly<{
   readonly id: EnchantmentTableRuleId
@@ -127,14 +140,30 @@ const isEnchantmentTableBlockPower = (value: unknown): value is EnchantmentTable
   if (typeof value !== 'object' || value === null || !('_tag' in value)) return false
   if (value._tag === 'Air') return true
   return value._tag === 'Block' && 'bookshelfPower' in value &&
-    (value.bookshelfPower === 0 || value.bookshelfPower === 1)
+    Schema.is(BlockEnchantingPowerSchema)(value.bookshelfPower)
+}
+
+const blockPowerFromId = (
+  blockId: BlockId,
+): Result.Result<EnchantmentTableBlockPower, EnchantmentTableBookshelfFailure> => {
+  const power = enchantingPowerOfBlockId(blockId)
+  if (Result.isFailure(power)) {
+    return Result.fail(bookshelfFailure(
+      'invalid-block-id',
+      { blockId, failure: power.failure },
+      'Block id must identify a registered block',
+    ))
+  }
+
+  if (blockId === AIR_BLOCK_ID) return Result.succeed({ _tag: 'Air' })
+  return Result.succeed({ _tag: 'Block', bookshelfPower: power.success })
 }
 
 /** Counts bookshelf power in the two-block ring above and around an enchantment table. */
-export const countEnchantmentTableBookshelves = ({
-  tablePosition,
-  blockPowerAt,
-}: CountEnchantmentTableBookshelvesInput): EnchantmentTableBookshelfCountResult => {
+export const countEnchantmentTableBookshelves = (
+  input: CountEnchantmentTableBookshelvesInput,
+): EnchantmentTableBookshelfCountResult => {
+  const { tablePosition } = input
   const { x, y, z } = tablePosition
   if (![x, y, z, x - 2, x + 2, y + 1, z - 2, z + 2].every(Number.isSafeInteger)) {
     return Result.fail(bookshelfFailure(
@@ -150,7 +179,11 @@ export const countEnchantmentTableBookshelves = ({
     blockZ: number,
   ): Result.Result<EnchantmentTableBlockPower, EnchantmentTableBookshelfFailure> => {
     const position = blockPosition(BlockAxis(blockX), BlockAxis(blockY), BlockAxis(blockZ))
-    const power = blockPowerAt(position)
+    const powerResult = 'blockIdAt' in input && input.blockIdAt !== undefined
+      ? blockPowerFromId(input.blockIdAt(position))
+      : Result.succeed(input.blockPowerAt(position))
+    if (Result.isFailure(powerResult)) return Result.fail(powerResult.failure)
+    const power = powerResult.success
     if (!isEnchantmentTableBlockPower(power)) {
       return Result.fail(bookshelfFailure(
         'invalid-block-power',

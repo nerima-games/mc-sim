@@ -80,13 +80,13 @@ const EnchantmentTableRandomSchema: Schema.Codec<EnchantmentTable.EnchantmentTab
     'nextInt' in value && typeof value.nextInt === 'function' &&
     'nextFloat' in value && typeof value.nextFloat === 'function',
 )
-const EnchantmentTableBlockPowerAtSchema: Schema.Codec<EnchantmentTable.EnchantmentTableBlockPowerAt, unknown> =
-  Schema.declare((value: unknown): value is EnchantmentTable.EnchantmentTableBlockPowerAt => typeof value === 'function')
+const EnchantmentTableBlockIdAtSchema: Schema.Codec<EnchantmentTable.EnchantmentTableBlockIdAt, unknown> =
+  Schema.declare((value: unknown): value is EnchantmentTable.EnchantmentTableBlockIdAt => typeof value === 'function')
 
 export type EnchantmentTableGenerateOffersRequest = Readonly<{
   item: EnchantmentTableItem
   tablePosition: BlockPosition
-  blockPowerAt: EnchantmentTable.EnchantmentTableBlockPowerAt
+  blockIdAt: EnchantmentTable.EnchantmentTableBlockIdAt
   random: EnchantmentTable.EnchantmentTableRandom
 }>
 
@@ -94,7 +94,7 @@ export const EnchantmentTableGenerateOffersRequestSchema: Schema.Codec<Enchantme
   Schema.Struct({
     item: EnchantmentTableItemSchema,
     tablePosition: WorldBlockPositionSchema,
-    blockPowerAt: EnchantmentTableBlockPowerAtSchema,
+    blockIdAt: EnchantmentTableBlockIdAtSchema,
     random: EnchantmentTableRandomSchema,
   })
 
@@ -214,10 +214,11 @@ export const EnchantmentTableServiceErrorSchema: Schema.Codec<EnchantmentTableSe
     message: Schema.String,
   }),
   Schema.TaggedStruct('EnchantmentTableBookshelfFailure', {
-    reason: Schema.Literals(['invalid-table-position', 'invalid-block-power']),
+    reason: Schema.Literals(['invalid-table-position', 'invalid-block-id', 'invalid-block-power']),
     value: Schema.Unknown,
     message: Schema.Literals([
       'Table position must leave room for a safe integer two-block ring',
+      'Block id must identify a registered block',
       'Block power must describe air or bookshelf power 0 or 1',
     ]),
   }),
@@ -419,7 +420,7 @@ export const makeEnchantmentTableService = (): Effect.Effect<
       const decodedRequest = yield* Schema.decodeUnknownEffect(EnchantmentTableGenerateOffersRequestSchema)(request)
       const bookshelfCount = yield* Effect.fromResult(EnchantmentTable.countEnchantmentTableBookshelves({
         tablePosition: decodedRequest.tablePosition,
-        blockPowerAt: decodedRequest.blockPowerAt,
+        blockIdAt: decodedRequest.blockIdAt,
       }))
       const offers = yield* Effect.fromResult(EnchantmentTable.generateEnchantmentTableOffers({
         item: decodedRequest.item,

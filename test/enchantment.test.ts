@@ -128,16 +128,16 @@ describe('vanilla anvil integration', () => {
     expect(planVanillaAnvil(state)).toMatchObject({ ok: true, levelCost: 4, materialCost: 1 })
   })
 
-  it('rejects conflicts, incompatible targets, and unregistered enchantments', () => {
+  it('discards conflicts, ignores inapplicable enchantments, and rejects unregistered ids', () => {
     const conflictState: AnvilState = {
       ...anvilState('iron_sword', 'enchanted_book', enchantment('smite')),
       left: payload('iron_sword', [enchantment('sharpness')]),
     }
-    expect(planVanillaAnvil(conflictState)).toMatchObject({ ok: false, reason: 'enchantment-conflict' })
+    expect(planVanillaAnvil(conflictState)).toMatchObject({ ok: false, reason: 'incompatible-input' })
 
     expect(planVanillaAnvil(anvilState('bow', 'enchanted_book', enchantment('sharpness')))).toMatchObject({
       ok: false,
-      reason: 'invalid-enchantment',
+      reason: 'incompatible-input',
     })
 
     expect(planVanillaAnvil(anvilState('iron_sword', 'enchanted_book', enchantment('minecraft:sharpness')))).toMatchObject({

@@ -16,6 +16,7 @@ import {
 } from '../src/domain/anvil'
 import {
   applyVanillaAnvil,
+  enchantmentRuleFor,
   planVanillaAnvil,
   SUPPORTED_VANILLA_BOOK_ANVIL_RULE_SET,
   SUPPORTED_VANILLA_ITEM_ANVIL_RULE_SET,
@@ -112,6 +113,66 @@ describe('anvil runtime', () => {
     if (materialPlan.ok) expect(materialPlan.output.durability?.current).toBe(50 + 2 * Math.floor(swordMax * 0.25))
   })
 
+  it('charges the final enchantment level when a book does not raise the target level', () => {
+    const sharpnessBookMultiplier = 1
+    const levelCases: ReadonlyArray<Readonly<{
+      readonly targetLevel: number
+      readonly bookLevel: number
+      readonly expectedFinalLevel: number
+      readonly expectedCost: number
+    }>> = [
+      { targetLevel: 3, bookLevel: 1, expectedFinalLevel: 3, expectedCost: 3 },
+      { targetLevel: 5, bookLevel: 5, expectedFinalLevel: 5, expectedCost: 5 },
+    ]
+    for (const { targetLevel, bookLevel, expectedFinalLevel, expectedCost } of levelCases) {
+      const finalLevel = Math.min(
+        5,
+        targetLevel === bookLevel ? targetLevel + 1 : Math.max(targetLevel, bookLevel),
+      )
+      const expectedLevelCost = finalLevel * sharpnessBookMultiplier
+      const plan = planVanillaAnvil({
+        left: payload('iron_sword', [enchantment('sharpness', targetLevel)]),
+        right: { payload: payload('enchanted_book', [enchantment('sharpness', bookLevel)]), count: 1 },
+        rename: null,
+        experienceLevels: 40,
+      })
+
+      expect(finalLevel).toBe(expectedFinalLevel)
+      expect(expectedLevelCost).toBe(expectedCost)
+      expect(plan).toMatchObject({ ok: true, levelCost: expectedLevelCost })
+      if (plan.ok) expect(plan.output.enchantments).toStrictEqual([enchantment('sharpness', finalLevel)])
+    }
+  })
+
+  it('ignores inapplicable book enchantments and discards conflicts while charging Java costs', () => {
+    const lootingLevel = 2
+    const lootingBookMultiplier = 2
+    const incompatibleCost = 1
+    const expectedLevelCost = incompatibleCost + lootingLevel * lootingBookMultiplier
+    const plan = planVanillaAnvil({
+      left: payload('iron_sword', [enchantment('sharpness', 3)]),
+      right: {
+        payload: payload('enchanted_book', [
+          enchantment('protection', 3),
+          enchantment('smite', 2),
+          enchantment('looting', lootingLevel),
+        ]),
+        count: 1,
+      },
+      rename: null,
+      experienceLevels: 40,
+    })
+
+    expect(expectedLevelCost).toBe(5)
+    expect(plan).toMatchObject({ ok: true, levelCost: expectedLevelCost })
+    if (!plan.ok) return
+    expect(plan.output.enchantments).toHaveLength(2)
+    expect(plan.output.enchantments).toContainEqual(enchantment('sharpness', 3))
+    expect(plan.output.enchantments).toContainEqual(enchantment('looting', lootingLevel))
+    expect(plan.output.enchantments).not.toContainEqual(expect.objectContaining({ id: 'smite' }))
+    expect(plan.output.enchantments).not.toContainEqual(expect.objectContaining({ id: 'protection' }))
+  })
+
   it('covers each kernel-durable item with a supported vanilla repair material and source metadata', () => {
     expect(vanillaAnvilSource).toStrictEqual({
       edition: 'Java Edition 26.3',
@@ -155,18 +216,21 @@ describe('anvil runtime', () => {
   it('matches the independently calculated tool-combination formula for arbitrary valid damage and levels', () => {
     const maxDurability = Number(itemDurabilityDefinitionFor('iron_sword')?.maxDurability)
     const itemCost = Number(VANILLA_ENCHANTMENT_COSTS.sharpness.item)
+    const sharpnessRule = enchantmentRuleFor('sharpness')
+    if (sharpnessRule === undefined) throw new Error('Expected the kernel Sharpness rule')
     fc.assert(fc.property(
       fc.integer({ min: 1, max: maxDurability - 1 }),
       fc.integer({ min: 1, max: maxDurability - 1 }),
-      fc.integer({ min: 1, max: 4 }),
-      fc.integer({ min: 1, max: 4 }),
+      fc.integer({ min: 1, max: sharpnessRule.maxLevel }),
+      fc.integer({ min: 1, max: sharpnessRule.maxLevel }),
       fc.integer({ min: 0, max: 3 }),
       fc.integer({ min: 0, max: 3 }),
       (leftCurrent, rightCurrent, leftLevel, rightLevel, leftRepairCost, rightRepairCost) => {
-        const mergedLevel = leftLevel === rightLevel
-          ? leftLevel + 1
-          : Math.max(leftLevel, rightLevel)
-        const enchantmentCost = leftLevel > rightLevel ? 0 : mergedLevel * itemCost
+        const mergedLevel = Math.min(
+          sharpnessRule.maxLevel,
+          leftLevel === rightLevel ? leftLevel + 1 : Math.max(leftLevel, rightLevel),
+        )
+        const enchantmentCost = mergedLevel * itemCost
         const expectedDurability = Math.min(
           maxDurability,
           leftCurrent + rightCurrent + Math.floor(maxDurability * ANVIL_REPAIR_BONUS_RATIO),

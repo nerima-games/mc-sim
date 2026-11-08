@@ -1,14 +1,14 @@
 import { describe, expect, it } from '@effect/vitest'
 import fc from 'fast-check'
-import { BlockAxis, blockPosition, WorldIdSchema } from '@nerima-games/mc-kernel'
+import { BlockAxis, BlockId, blockPosition, WorldIdSchema } from '@nerima-games/mc-kernel'
 import { Effect, Layer, Result, Schema } from 'effect'
 import {
   EnchantmentTableGenerateOffersResultSchema,
+  EnchantmentTableServiceErrorSchema,
   EnchantmentTableService,
   EnchantmentTableServiceLayer,
 } from '../src/application/enchantment-table-service.js'
 import { WorldCommitCoordinatorLayer } from '../src/application/world-commit-coordinator.js'
-import type { EnchantmentTableBlockPower } from '../src/domain/enchantment-table.js'
 
 const world = Schema.decodeUnknownSync(WorldIdSchema)('enchantment-table-offers-test')
 const tablePosition = blockPosition(BlockAxis(0), BlockAxis(0), BlockAxis(0))
@@ -19,27 +19,26 @@ const ringOffsets = [
 ] as const
 const keyOf = ({ x, y, z }: Readonly<{ x: number; y: number; z: number }>): string => `${x},${y},${z}`
 
-const blockPowerAtFor = (
+const blockIdAtFor = (
   center: Readonly<{ x: number; y: number; z: number }>,
   shelves: readonly boolean[],
   openGaps: readonly boolean[],
 ) => {
-  const powers = new Map<string, EnchantmentTableBlockPower>()
+  const blocks = new Map<string, BlockId>()
+  const air = BlockId(0)
+  const solid = BlockId(1)
+  const bookshelf = BlockId(125)
   ringOffsets.forEach(([dx, dz], index) => {
     for (const dy of [0, 1]) {
-      powers.set(keyOf({ x: center.x + dx / 2, y: center.y + dy, z: center.z + dz / 2 }),
-        openGaps[index] ? { _tag: 'Air' } : { _tag: 'Block', bookshelfPower: 0 })
-      if (shelves[index * 2 + dy]) {
-        powers.set(keyOf({ x: center.x + dx, y: center.y + dy, z: center.z + dz }), {
-          _tag: 'Block',
-          bookshelfPower: 1,
-        })
-      }
+      blocks.set(keyOf({ x: center.x + dx / 2, y: center.y + dy, z: center.z + dz / 2 }),
+        openGaps[index] ? air : solid)
+      blocks.set(keyOf({ x: center.x + dx, y: center.y + dy, z: center.z + dz }),
+        shelves[index * 2 + dy] ? bookshelf : air)
     }
   })
 
-  return ({ x, y, z }: Readonly<{ x: number; y: number; z: number }>): EnchantmentTableBlockPower =>
-    powers.get(keyOf({ x, y, z })) ?? { _tag: 'Block', bookshelfPower: 0 }
+  return ({ x, y, z }: Readonly<{ x: number; y: number; z: number }>): BlockId =>
+    blocks.get(keyOf({ x, y, z })) ?? air
 }
 
 const bookshelfLayout = fc.record({
@@ -62,13 +61,13 @@ describe('EnchantmentTableService generated offers', () => {
       const withoutBookshelves = yield* service.generateOffers({
         item: 'book',
         tablePosition,
-        blockPowerAt: blockPowerAtFor(tablePosition, Array.from({ length: 16 }, () => false), ringOffsets.map(() => true)),
+        blockIdAt: blockIdAtFor(tablePosition, Array.from({ length: 16 }, () => false), ringOffsets.map(() => true)),
         random,
       })
       const withFifteenBookshelves = yield* service.generateOffers({
         item: 'book',
         tablePosition,
-        blockPowerAt: blockPowerAtFor(tablePosition, Array.from({ length: 16 }, (_, index) => index < 15), ringOffsets.map(() => true)),
+        blockIdAt: blockIdAtFor(tablePosition, Array.from({ length: 16 }, (_, index) => index < 15), ringOffsets.map(() => true)),
         random,
       })
 
@@ -87,7 +86,7 @@ describe('EnchantmentTableService generated offers', () => {
           const result = await Effect.runPromise(service.generateOffers({
             item: 'book',
             tablePosition: center,
-            blockPowerAt: blockPowerAtFor(center, shelves, openGaps),
+            blockIdAt: blockIdAtFor(center, shelves, openGaps),
             random: { nextInt: () => 0, nextFloat: () => 0.5 },
           }))
           const expected = Math.min(15, shelves.reduce((count, hasShelf, index) =>
@@ -100,6 +99,26 @@ describe('EnchantmentTableService generated offers', () => {
         }),
         { numRuns: 48, seed: 0x454e4348 },
       ))
+    }).pipe(Effect.provide(serviceLayer)),
+  )
+
+  it.effect('returns a typed failure when a block ID is not registered', () =>
+    Effect.gen(function* () {
+      const service = yield* EnchantmentTableService
+      const outcome = yield* Effect.result(service.generateOffers({
+        item: 'book',
+        tablePosition,
+        blockIdAt: () => BlockId(126),
+        random: { nextInt: () => 0, nextFloat: () => 0.5 },
+      }))
+
+      expect(outcome).toMatchObject({
+        _tag: 'Failure',
+        failure: { _tag: 'EnchantmentTableBookshelfFailure', reason: 'invalid-block-id' },
+      })
+      if (Result.isFailure(outcome)) {
+        expect(Result.isSuccess(Schema.decodeUnknownResult(EnchantmentTableServiceErrorSchema)(outcome.failure))).toBe(true)
+      }
     }).pipe(Effect.provide(serviceLayer)),
   )
 })

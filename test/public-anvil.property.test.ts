@@ -174,20 +174,22 @@ it('anvil repair-cost helper keeps exact calculations for representable valid co
 it('public vanilla anvil plans match the independent two-tool cost formula', () => {
   const maxDurability = Number(ITEM_DURABILITY_CATALOG.iron_sword.maxDurability)
   const itemCost = Number(VANILLA_ENCHANTMENT_COSTS.sharpness.item)
+  const sharpnessMaxLevel = 5
   const sharpness = Result.getOrThrow(Sim.AnvilEnchantmentId('sharpness'))
 
   fc.assert(fc.property(
     fc.integer({ min: 1, max: maxDurability - 1 }),
     fc.integer({ min: 1, max: maxDurability - 1 }),
-    fc.integer({ min: 1, max: 4 }),
-    fc.integer({ min: 1, max: 4 }),
+    fc.integer({ min: 1, max: sharpnessMaxLevel }),
+    fc.integer({ min: 1, max: sharpnessMaxLevel }),
     fc.integer({ min: 0, max: 3 }),
     fc.integer({ min: 0, max: 3 }),
     (leftCurrent, rightCurrent, leftLevel, rightLevel, leftRepairCost, rightRepairCost) => {
-      const mergedLevel = leftLevel === rightLevel
-        ? leftLevel + 1
-        : Math.max(leftLevel, rightLevel)
-      const enchantmentCost = leftLevel > rightLevel ? 0 : mergedLevel * itemCost
+      const mergedLevel = Math.min(
+        sharpnessMaxLevel,
+        leftLevel === rightLevel ? leftLevel + 1 : Math.max(leftLevel, rightLevel),
+      )
+      const enchantmentCost = mergedLevel * itemCost
       const expectedDurability = Math.min(
         maxDurability,
         leftCurrent + rightCurrent + Math.floor(maxDurability * ANVIL_REPAIR_BONUS_RATIO),
