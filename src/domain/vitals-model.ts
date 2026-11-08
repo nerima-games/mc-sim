@@ -49,6 +49,7 @@ export const SPAWN_SATURATION = 5
 export const EXHAUSTION_PER_POINT = 4
 export const MAX_EXHAUSTION = 40
 export const FOOD_TICK_SECS = 4
+export const SATURATED_REGEN_TICK_SECS = 0.5
 export const REGEN_HUNGER_THRESHOLD = 18
 export const EXHAUSTION_PER_REGEN = 6
 

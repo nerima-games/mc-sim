@@ -503,8 +503,8 @@ export const findingsPanel = (view: WorldView, style: Style, width: number): Rea
     },
     {
       id: 'SIM-14',
-      hit: view.settingsClamped > 0 || view.vitalsRepaired > 0,
-      text: `${String(view.settingsClamped)} settings write(s) the clamp had to move and ${String(view.vitalsRepaired)} vitals state(s) repaired on restore; both are counted at the CALL, because a repaired value is indistinguishable from one that was always legal`,
+      hit: view.settingsRejected > 0 || view.vitalsRepaired > 0,
+      text: `${String(view.settingsRejected)} invalid settings update(s) rejected by the schema and ${String(view.vitalsRepaired)} vitals state(s) repaired on restore; both are counted at the CALL, because a repaired value is indistinguishable from one that was always legal`,
     },
     {
       id: 'SIM-10',

@@ -392,7 +392,7 @@ it('PlayerService constructor and restore schema-gate dimension outcomes', () =>
   }), checks)
 })
 
-it('SettingsService candidates, updates, and key mutations keep a valid snapshot', async () => {
+it('SettingsService candidates and updates return typed outcomes without repairing supplied values', async () => {
   await fc.assert(
     fc.asyncProperty(
       fc.tuple(hostileScalar, hostileScalar, hostileScalar),
@@ -400,35 +400,57 @@ it('SettingsService candidates, updates, and key mutations keep a valid snapshot
       async ([renderDistance, volume, uiScale], [action, code]) => {
       const settings = await Effect.runPromise(App.makeSettingsService())
       const patch = { renderDistance, masterVolume: volume, uiScale }
-      await Effect.runPromise(invokeEffect(settings.candidate, [patch]))
-      const beforeUpdate = await Effect.runPromise(settings.snapshot)
-      expect(App.isValidSettings(beforeUpdate)).toBe(true)
+        const beforeCandidate = await Effect.runPromise(settings.snapshot)
+        const candidate = await Effect.runPromise(Effect.result(invokeEffect(settings.candidate, [patch])))
+        if (Result.isFailure(candidate)) {
+          expect(Schema.is(App.SchemaErrorSchema)(candidate.failure)).toBe(true)
+        } else {
+          expect(App.isValidSettings(candidate.success)).toBe(true)
+          expect(Schema.is(App.SettingsSchema)(candidate.success)).toBe(true)
+        }
+        expect(await Effect.runPromise(settings.snapshot)).toStrictEqual(beforeCandidate)
 
-      await Effect.runPromise(invokeEffect(settings.update, [patch]))
-      for (const [propertyName, outcome] of [
-        ['SettingsService.rebindKey', await Effect.runPromise(Effect.result(invokeEffect(settings.rebindKey, [action, code])))],
-        ['SettingsService.unbindKey', await Effect.runPromise(Effect.result(invokeEffect(settings.unbindKey, [action])))],
-      ] as const) {
-        assertEffectOutcome(propertyName, () => outcome, Schema.Void, App.BrandErrorSchema)
-      }
-      expect(App.isValidSettings(await Effect.runPromise(settings.snapshot))).toBe(true)
+        const update = await Effect.runPromise(Effect.result(invokeEffect(settings.update, [patch])))
+        if (Result.isFailure(update)) {
+          expect(Schema.is(App.SchemaErrorSchema)(update.failure)).toBe(true)
+          expect(await Effect.runPromise(settings.snapshot)).toStrictEqual(beforeCandidate)
+        } else {
+          expect(App.isValidSettings(update.success)).toBe(true)
+          expect(await Effect.runPromise(settings.snapshot)).toStrictEqual(update.success)
+        }
+
+        const settingFailureSchema = Schema.Union([App.BrandErrorSchema, App.SchemaErrorSchema])
+        for (const [propertyName, outcome] of [
+          ['SettingsService.rebindKey', await Effect.runPromise(Effect.result(invokeEffect(settings.rebindKey, [action, code])))],
+          ['SettingsService.unbindKey', await Effect.runPromise(Effect.result(invokeEffect(settings.unbindKey, [action])))],
+        ] as const) {
+          assertEffectOutcome(propertyName, () => outcome, Schema.Void, settingFailureSchema)
+        }
       },
     ),
     checks,
   )
 })
 
-it('SettingsService.restore decodes its void result and installs normalized external state', async () => {
+it('SettingsService.restore applies only valid decoded state and rejects malformed external state', async () => {
   await fc.assert(
     fc.asyncProperty(fc.anything({ maxDepth: 3 }), async (input) => {
       const settings = await Effect.runPromise(App.makeSettingsService())
+      const before = await Effect.runPromise(settings.snapshot)
       const restored = await Effect.runPromise(Effect.result(invokeEffect(settings.restore, [input])))
-      assertEffectOutcome('SettingsService.restore', () => restored, Schema.Void, Schema.Never)
-      expect(Result.isSuccess(restored)).toBe(true)
+      const decoded = App.decodeSettings(input)
+      assertEffectOutcome('SettingsService.restore', () => restored, Schema.Void, App.SchemaErrorSchema)
 
-      const snapshot = await Effect.runPromise(settings.snapshot)
-      expect(App.isValidSettings(snapshot)).toBe(true)
-      expect(snapshot).toStrictEqual(App.normaliseSettings(input))
+      if (Result.isFailure(decoded)) {
+        expect(Result.isFailure(restored)).toBe(true)
+        if (Result.isFailure(restored)) expect(Schema.is(App.SchemaErrorSchema)(restored.failure)).toBe(true)
+        expect(await Effect.runPromise(settings.snapshot)).toStrictEqual(before)
+      } else {
+        expect(Result.isSuccess(restored)).toBe(true)
+        const snapshot = await Effect.runPromise(settings.snapshot)
+        expect(App.isValidSettings(snapshot)).toBe(true)
+        expect(snapshot).toStrictEqual(decoded.success)
+      }
     }),
     checks,
   )
@@ -487,12 +509,51 @@ it('StatisticsService returns typed failures for achievement IDs outside the cat
   )
 })
 
-it('TimeService candidate, setters, configureDay, and restore keep a finite valid clock', async () => {
+it('TimeService advances by generated simulation ticks with an independent expected state', async () => {
+  await fc.assert(
+    fc.asyncProperty(fc.integer({ min: 0, max: 100_000 }), async (elapsedTicks) => {
+      const time = await Effect.runPromise(App.makeTimeService())
+      const before = await Effect.runPromise(time.snapshot)
+      const candidate = await Effect.runPromise(Effect.result(invokeEffect(time.advanceCandidate, [elapsedTicks])))
+      assertEffectOutcome('TimeService.advanceCandidate', () => candidate, App.TimeStateSchema, App.BrandErrorSchema)
+      expect(Result.isSuccess(candidate)).toBe(true)
+      if (Result.isSuccess(candidate)) {
+        const expected = { ...before, ticks: before.ticks + elapsedTicks }
+        expect(candidate.success).toStrictEqual(expected)
+        expect(await Effect.runPromise(time.snapshot)).toStrictEqual(before)
+        await Effect.runPromise(invokeEffect(time.advance, [elapsedTicks]))
+        expect(await Effect.runPromise(time.snapshot)).toStrictEqual(expected)
+      }
+    }),
+    checks,
+  )
+})
+
+it('TimeService returns typed failures for invalid elapsed tick counts without changing state', async () => {
+  await fc.assert(
+    fc.asyncProperty(
+      fc.constantFrom<unknown>(-1, 0.5, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, null, '1'),
+      async (elapsedTicks) => {
+        const time = await Effect.runPromise(App.makeTimeService())
+        const before = await Effect.runPromise(time.snapshot)
+        const candidate = await Effect.runPromise(Effect.result(invokeEffect(time.advanceCandidate, [elapsedTicks])))
+        assertEffectOutcome('TimeService.advanceCandidate invalid ticks', () => candidate, App.TimeStateSchema, App.BrandErrorSchema)
+        expect(Result.isFailure(candidate)).toBe(true)
+
+        const advance = await Effect.runPromise(Effect.result(invokeEffect(time.advance, [elapsedTicks])))
+        assertEffectOutcome('TimeService.advance invalid ticks', () => advance, Schema.Void, App.BrandErrorSchema)
+        expect(Result.isFailure(advance)).toBe(true)
+        expect(await Effect.runPromise(time.snapshot)).toStrictEqual(before)
+      },
+    ),
+    checks,
+  )
+})
+
+it('TimeService setters, configureDay, and restore keep a finite valid clock', async () => {
   await fc.assert(
     fc.asyncProperty(fc.tuple(hostileScalar, hostileScalar), async ([first, second]) => {
       const time = await Effect.runPromise(App.makeTimeService())
-      const candidate = await Effect.runPromise(Effect.result(invokeEffect(time.advanceCandidate, [first])))
-      assertEffectOutcome('TimeService.advanceCandidate', () => candidate, App.TimeStateSchema, App.BrandErrorSchema)
 
       await Effect.runPromise(invokeEffect(time.setDayLength, [first]))
       expect(App.isValidTimeState(await Effect.runPromise(time.snapshot))).toBe(true)

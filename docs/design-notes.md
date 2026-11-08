@@ -303,15 +303,10 @@ packages/app/application/frame/stages/input-stage-runtime.ts:17-30
 **絶対 tick カウンタが正しい表現であり、順序制約はその対価**である。
 対価は「覚えておく」ではなく「名前を付けて回帰テストで固定する」で払う。
 
-**その worked example 自体が間違っていた（SIM-11）。** `domain/time-of-day.ts` は
-ハザードを 1 か所で説明しており、そこが消費者の唯一の参照点である。にもかかわらず
-「`setTimeOfDay(0.30)` の後に `setDayLength(600)` → 0.60」と書いてあり、実際は **0.20** だった
-（1 日を 400 s から 600 s に**伸ばす**と、同じ絶対 tick はより大きな 1 日の**より早い**位置に落ちる）。
-0.60 になるのは 200 s に**縮めた**場合であり、回帰テストが使っているのはそちらである。
-誤っていた側が真実と**逆向き**に動くため、600 で再現した読者は 0.20 を見て
-「この注記は当てにならない」と結論し、正しい警告ごと信用を失う。
-コードは正しかったのでどのテストも捕まえられなかった。
-現在は**コメントが表示する数値そのもの**を assert するテストが 1 本ある（上表）。
+**This worked example previously drifted from the default day length (SIM-11).**
+SM4 aligns the clock with the fixed simulation rate of 20 ticks per second and sets the default day to 1,200 seconds.
+Each case starts at time fraction 0.30 before changing the day length: shortening a 1,200-second day to 600 seconds moves the same absolute tick to **0.60**; lengthening a 600-second day to 1,200 seconds moves it to **0.15**.
+Regression tests pin both values.
 
 ### 新設計での差分
 
@@ -326,13 +321,13 @@ packages/app/application/frame/stages/input-stage-runtime.ts:17-30
 | テスト名 | 内容 |
 | --- | --- |
 | `correct order — the requested time of day is the time of day you get` | |
-| `wrong order — a SHORTER day afterwards silently DOUBLES the time of day` | 400 s → 200 s（分母を半分に）で 0.30 が 0.60 になる |
-| `REGRESSION: the module header worked example is the arithmetic — a LONGER day moves the time of day DOWN, to 0.20` | 400 s → 600 s では **0.20**。誤差の符号は分母の増減に従う（SIM-11） |
+| `wrong order — a SHORTER day afterwards silently DOUBLES the time of day` | 1,200 s → 600 s（分母を半分に）で 0.30 が 0.60 になる |
+| `REGRESSION: the module header worked example is the arithmetic — a LONGER day moves the time of day DOWN, to 0.15` | 600 s → 1,200 s では **0.15**。誤差の符号は分母の増減に従う |
 | `the two orders disagree — which is the whole reason the rule exists` | |
 | `setDayLengthThenTimeOfDay is the correct order, so callers cannot get it wrong` | |
 | `setDayLength ALONE is still legal, and its side effect on time of day is real` | 単独呼びの副作用を assert として明文化 |
 | `keeps the ABSOLUTE tick counter, so the moon phase advances across days` | 正規化してはいけない理由 |
-| `a fresh world starts in daylight, not at midnight with hostile mobs` | `{ ticks: 7200, dayLengthTicks: 24000 }` |
+| `a fresh world starts in daylight, not at midnight with hostile mobs` | `{ ticks: 7200, dayLengthTicks: 24000 }`、1 日 1,200 秒（20 tick/秒） |
 
 ---
 

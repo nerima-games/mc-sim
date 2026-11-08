@@ -44,6 +44,7 @@ import {
   MAX_FRAME_DELTA_SECS,
   MIN_FRAME_DELTA_SECS,
   MonotonicTimeSecs,
+  NonNegativeTickCount,
 } from '@nerima-games/mc-kernel'
 import {
   emptyInventory,
@@ -151,7 +152,9 @@ const timeOrderProbe = (): ReadonlyArray<string> => {
   // Age a world four in-game days, then "load" it two ways.
   let aged = fresh
   for (let day = 0; day < 4; day += 1) {
-    aged = Result.getOrThrow(Time.advance(aged, DeltaTimeSecs(Time.dayLengthSecs(aged))))
+    aged = Result.getOrThrow(
+      Time.advance(aged, NonNegativeTickCount(Time.dayLengthSecs(aged) * Time.TICKS_PER_SECOND)),
+    )
   }
   const viaRestore = aged
   const viaConfigure = Time.setDayLengthThenTimeOfDay(
@@ -243,7 +246,7 @@ const timeRestoreProbe = Effect.gen(function* () {
   yield* time.setTimeOfDay(InterpolationFraction(0.5))
   const afterSetter = yield* time.timeOfDay
 
-  yield* time.advance(DeltaTimeSecs(1))
+  yield* time.advance(NonNegativeTickCount(Time.TICKS_PER_SECOND))
   const afterAdvance = yield* time.timeOfDay
 
   // A world that was saved four in-game days in must come back on the same

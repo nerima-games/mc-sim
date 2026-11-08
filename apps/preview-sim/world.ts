@@ -83,14 +83,15 @@ import {
   FoodNutrition,
   InterpolationFraction,
   MonotonicTimeSecs,
-  normaliseSettings,
+  NonNegativeTickCount,
   PositionAxis,
   position,
+  type SimulationTick,
   type CameraPoseSnapshot,
   type ClockService,
-  type Settings,
 } from '@nerima-games/mc-kernel'
 import * as Time from '../../src/domain/time-of-day'
+import type { Settings } from '../../src/domain/settings'
 import { scenarioFor, stepsAt, type ScenarioName, type ScriptedAction } from './script'
 
 /**
@@ -208,8 +209,8 @@ export type WorldView = {
   readonly deaths: number
   readonly statistics: Statistics.Statistics
   readonly settings: Settings
-  /** Settings writes the clamp had to move, counted at the call. */
-  readonly settingsClamped: number
+  /** Invalid settings updates rejected by the schema. */
+  readonly settingsRejected: number
 
   readonly faults: number
   readonly log: ReadonlyArray<LogLine>
@@ -241,7 +242,7 @@ type Bookkeeping = {
   blowsWithoutMagnitude: number
   vitalsRepaired: number
   deaths: number
-  settingsClamped: number
+  settingsRejected: number
   faults: number
   log: Array<LogLine>
 }
@@ -308,7 +309,7 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
     blowsWithoutMagnitude: 0,
     vitalsRepaired: 0,
     deaths: 0,
-    settingsClamped: 0,
+    settingsRejected: 0,
     faults: 0,
     log: [],
   }
@@ -340,20 +341,18 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
 
   const { clockSecs, clockLayer, player, inventory, time, vitals, statistics, settings, loop } = built
 
-  /**
-   * The frame handler.
-   *
-   * This is the ONE place the simulated world advances, and it advances by the
-   * delta the loop derived — never by a number this app chose. That is the
-   * property the whole preview exists to show, so short-circuiting it here would
-   * be the app arguing against its own subject.
-   */
-  const frameHandler: FrameHandler = (dt) =>
-    Effect.sync(() => {
+  /** A fixed simulation tick is split across two handler calls for physics. */
+  let lastTimeTick: SimulationTick | undefined
+  const frameHandler: FrameHandler = (dt, tick) => {
+    const shouldAdvanceTime = tick !== undefined && tick !== lastTimeTick
+    if (shouldAdvanceTime) lastTimeTick = tick
+    return Effect.sync(() => {
       book.lastDeltaSecs = dt
       book.simulatedSecs += dt
     }).pipe(
-      Effect.andThen(Effect.orDie(time.advance(dt))),
+      Effect.andThen(
+        shouldAdvanceTime ? Effect.orDie(time.advance(NonNegativeTickCount(1))) : Effect.void,
+      ),
       // The food timer takes THE SAME delta the world clock does, and this app
       // is the only place the two are visibly one number. The signal is counted
       // and DELIBERATELY NOT ACTED ON: `'starve'` means mx-gameplay would now
@@ -370,6 +369,7 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
         ),
       ),
     )
+  }
 
   const autoSaveTick = Effect.gen(function* () {
     book.autoSaveFired += 1
@@ -768,19 +768,14 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
         const patch = action.patch
         return guarded(
           'settings.update',
-          Effect.flatMap(settings.snapshot, (current) => {
-            const next = normaliseSettings({ ...current, ...patch })
-            const normalisedValues = new Map(Object.entries(next))
-            const moved = Object.entries(patch).some(([key, value]) => normalisedValues.get(key) !== value)
-            return settings.update(next).pipe(
-              Effect.tap(() =>
-                Effect.sync(() => {
-                  if (moved) {
-                    book.settingsClamped += 1
-                  }
-                }),
-              ),
-            )
+          Effect.gen(function* () {
+            const outcome = yield* Effect.result(settings.update(patch))
+            if (Result.isFailure(outcome)) {
+              yield* Effect.sync(() => {
+                book.settingsRejected += 1
+              })
+              return yield* Effect.fail(outcome.failure)
+            }
           }),
         ).pipe(
           Effect.andThen(
@@ -920,7 +915,7 @@ export const makeWorld = async (config: WorldConfig): Promise<World> => {
           deaths: book.deaths,
           statistics: yield* statistics.snapshot,
           settings: yield* settings.snapshot,
-          settingsClamped: book.settingsClamped,
+          settingsRejected: book.settingsRejected,
           faults: book.faults,
           log: [...book.log],
         } satisfies WorldView

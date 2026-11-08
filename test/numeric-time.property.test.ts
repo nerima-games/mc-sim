@@ -20,23 +20,23 @@ const containsOnlyFiniteNumbers = (value: unknown): boolean => {
 
 const checks = { numRuns: 100 }
 
-it('time advance decodes every Result branch for arbitrary states and deltas', () => {
+it('time advance decodes every Result branch for arbitrary states and tick counts', () => {
   fc.assert(
-    fc.property(fc.tuple(timeStateInput, hostileValue), ([state, delta]) => {
-      const result = invoke(Time.advance, [state, delta]) as Result.Result<unknown, unknown>
+    fc.property(fc.tuple(timeStateInput, hostileValue), ([state, elapsedTicks]) => {
+      const result = invoke(Time.advance, [state, elapsedTicks]) as Result.Result<unknown, unknown>
       assertResultContract('Time.advance', () => result, Time.TimeStateSchema, BrandErrorSchema)
     }),
     checks,
   )
 })
 
-it('TimeService advance decodes its Effect result and preserves a valid snapshot for arbitrary deltas', async () => {
+it('TimeService advance decodes its Effect result and preserves a valid snapshot for arbitrary tick counts', async () => {
   await fc.assert(
-    fc.asyncProperty(hostileValue, async (delta) => {
+    fc.asyncProperty(hostileValue, async (elapsedTicks) => {
       const result = await Effect.runPromise(
         Effect.gen(function* () {
           const service = yield* TimeService.makeTimeService()
-          const advanced = yield* Effect.result(invokeEffect(service.advance, [delta]))
+          const advanced = yield* Effect.result(invokeEffect(service.advance, [elapsedTicks]))
           const snapshot = yield* Effect.result(service.snapshot)
           return { advanced, snapshot }
         }),

@@ -917,8 +917,21 @@ it('player, settings, and weather services preserve valid finite snapshots after
         expect(await Effect.runPromise(player.pose)).toEqual(poseBeforeLook)
       }
 
-      await Effect.runPromise(invokeEffect(settings.restore, [value]))
-      await Effect.runPromise(settings.snapshot)
+      const settingsBeforeRestore = await Effect.runPromise(settings.snapshot)
+      const settingsRestore = await assertEffectResult(
+        'SettingsService.restore hostile input',
+        settings.restore,
+        [value],
+        Schema.Void,
+        PublicApplication.SchemaErrorSchema,
+      )
+      const settingsAfterRestore = await Effect.runPromise(settings.snapshot)
+      if (Result.isFailure(settingsRestore)) {
+        expect(settingsRestore.failure).toBeDefined()
+        expect(settingsAfterRestore).toEqual(settingsBeforeRestore)
+      } else {
+        expect(PublicApplication.isValidSettings(settingsAfterRestore)).toBe(true)
+      }
 
       const stateBeforeCandidate = decodeWeatherState(await Effect.runPromise(weather.snapshot))
       const candidateOutcome = await assertEffectResult(

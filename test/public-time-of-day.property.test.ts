@@ -77,11 +77,30 @@ it('time setters repair hostile states and scalar inputs into finite states', ()
   )
 })
 
-it('advance returns a valid finite time state when hostile envelopes are accepted', () => {
+it('advance returns a valid finite time state or a typed failure for hostile tick inputs', () => {
   fc.assert(
-    fc.property(timeState, hostileScalar, (state, delta) => {
-      const result = Sim.advance(state as never, delta as never)
+    fc.property(timeState, hostileScalar, (state, elapsedTicks) => {
+      const result = Sim.advance(state as never, elapsedTicks as never)
       assertResultContract('time-of-day.advance', () => result, Sim.TimeStateSchema, Sim.BrandErrorSchema)
+    }),
+    checks,
+  )
+})
+
+it('advance counts generated elapsed simulation ticks exactly', () => {
+  expect(Sim.TICKS_PER_SECOND).toBe(20)
+  expect(Sim.DEFAULT_DAY_LENGTH_SECS).toBe(1200)
+
+  fc.assert(
+    fc.property(fc.integer({ min: 0, max: 1_000_000 }), (elapsedTicks) => {
+      const result = Sim.advance(Sim.INITIAL_TIME_STATE, elapsedTicks as never)
+      expect(Result.isSuccess(result)).toBe(true)
+      if (Result.isSuccess(result)) {
+        const expectedTicks = 7_200 + elapsedTicks
+        const expectedFraction = (expectedTicks % 24_000) / 24_000
+        expect(result.success.ticks).toBe(expectedTicks)
+        expect(Sim.timeOfDay(result.success)).toBeCloseTo(expectedFraction, 12)
+      }
     }),
     checks,
   )

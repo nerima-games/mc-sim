@@ -6,12 +6,11 @@
  * docs/responsibility.md §2 scopes this row to 値の保持, with 画面は mx-ui and
  * 適用は各所 in the same line.
  *
- * The rules themselves moved to mc-kernel 0.7.0 (merged with mc-compose's
- * PlayerSettingsV1, the other independent copy of this same domain — see
- * mc-kernel's CHANGELOG). This module used to own `domain/settings.ts`
- * outright; it is now a thin wrapper the same shape as every other service
- * here, just over an imported ruleset instead of a local one. Two behaviour
- * changes ride in with the pin bump and are NOT re-implemented locally:
+ * The common settings fields and bounds moved to mc-kernel 0.7.0 (merged with
+ * mc-compose's PlayerSettingsV1, the other independent copy of this same
+ * domain). mc-sim keeps the presentation fields and owns the strict schema
+ * that fills only omitted settings fields. Two default changes ride in with
+ * the kernel pin bump and are NOT re-implemented locally:
  * `audioEnabled` now defaults to `true` and `mouseSensitivity` to `1`
  * (kernel reconciled both against mc-compose's real shipped defaults; see
  * `test/settings.test.ts` for why the old pinned values were updated rather
@@ -53,21 +52,21 @@
  * and the frame already visits every consumer once. A consumer reads `snapshot`
  * on the frame it cares about.
  */
-import { Brand, Context, Effect, Layer, Ref, Schema, SchemaIssue } from 'effect'
-import { applySettings, normaliseSettings, rebindKey, unbindKey } from '../domain/settings.js'
+import { Brand, Context, Effect, Layer, Ref, Result, Schema, SchemaIssue } from 'effect'
+import { applySettings, decodeSettings, rebindKey, unbindKey } from '../domain/settings.js'
 import { DEFAULT_SETTINGS, type Settings } from '../domain/settings.js'
 import { InputAction, KeyCode } from '@nerima-games/mc-kernel'
 
 export type SettingsServiceApi = {
   /** Every held value. Read on the frame a consumer wants to act on them. */
   readonly snapshot: Effect.Effect<Settings>
-  /** Read and normalise a candidate without installing it, for coordinator commits. */
-  readonly candidate: (patch: Partial<Settings>) => Effect.Effect<Settings>
+  /** Validate a candidate without installing it, for coordinator commits. */
+  readonly candidate: (patch: Partial<Settings>) => Effect.Effect<Settings, Schema.SchemaError>
   /**
-   * Change some values and leave the rest. The result is normalised, so a
-   * screen cannot install a render distance nothing can load.
+   * Change some values and leave the rest. Supplied values must be inside the
+   * settings schema; failure leaves the held snapshot unchanged.
    */
-  readonly update: (patch: Partial<Settings>) => Effect.Effect<Settings>
+  readonly update: (patch: Partial<Settings>) => Effect.Effect<Settings, Schema.SchemaError>
   /**
    * Rebind one action. The roster of actions is mc-render's; this map is
    * overrides only. Conflict-swap: an action already bound to `code` gives up
@@ -75,15 +74,14 @@ export type SettingsServiceApi = {
    * rather than the two colliding on one physical key. See the module header
    * — this replaces the old plain-overwrite `bindKey`.
    */
-  readonly rebindKey: (action: string, code: string) => Effect.Effect<void, Brand.BrandError>
+  readonly rebindKey: (action: string, code: string) => Effect.Effect<void, Brand.BrandError | Schema.SchemaError>
   /** Drop one rebind, returning the action to the input owner's default. */
-  readonly unbindKey: (action: string) => Effect.Effect<void, Brand.BrandError>
+  readonly unbindKey: (action: string) => Effect.Effect<void, Brand.BrandError | Schema.SchemaError>
   /**
-   * Load stored preferences. Repaired by `normaliseSettings` on the way in, with
-   * no error channel — a player whose stored FOV is out of range should get a
-   * playable FOV, not a game that refuses to start.
+   * Load stored preferences. Omitted fields receive defaults; malformed values
+   * and unknown fields fail before the current settings are changed.
    */
-  readonly restore: (settings: unknown) => Effect.Effect<void>
+  readonly restore: (settings: unknown) => Effect.Effect<void, Schema.SchemaError>
   /**
    * RESTORE DEFAULTS — the settings screen's button. NOT the world-teardown
    * path. See the module header.
@@ -105,40 +103,61 @@ const invalidKeyString = (value: unknown): Brand.BrandError =>
 /**
  * Build a SettingsService over a fresh Ref.
  *
- * `initial` is normalised for the reason every other `make*` in this repository
- * normalises its own: a layer constructed from stored preferences is the second
- * entry point for a value mc-sim did not compute, and guarding only `restore`
- * leaves it open.
+ * `initial` uses the same strict decoder as `restore`: a layer constructed from
+ * stored preferences is another entry point for a value mc-sim did not compute.
  */
 export const makeSettingsService = (
   initial: Settings = DEFAULT_SETTINGS,
-): Effect.Effect<SettingsServiceApi> =>
-  Effect.map(Ref.make(normaliseSettings(initial)), (state) => ({
-    snapshot: Ref.get(state),
-    candidate: (patch) => Ref.get(state).pipe(Effect.map((current) => applySettings(current, patch))),
-    update: (patch) =>
-      Ref.modify(state, (current) => {
-        const next = applySettings(current, patch)
-        return [next, next]
-      }),
-    rebindKey: (action, code) =>
-      Effect.gen(function* () {
-        if (typeof action !== 'string') return yield* Effect.fail(invalidKeyString(action))
-        const inputAction = yield* Effect.fromResult(InputAction.result(action))
-        if (typeof code !== 'string') return yield* Effect.fail(invalidKeyString(code))
-        const keyCode = yield* Effect.fromResult(KeyCode.result(code))
-        yield* Ref.update(state, (current) => rebindKey(current, inputAction, keyCode))
-      }),
-    unbindKey: (action) =>
-      Effect.gen(function* () {
-        if (typeof action !== 'string') return yield* Effect.fail(invalidKeyString(action))
-        const inputAction = yield* Effect.fromResult(InputAction.result(action))
-        yield* Ref.update(state, (current) => unbindKey(current, inputAction))
-      }),
-    restore: (next) => Ref.set(state, normaliseSettings(next)),
-    reset: Ref.set(state, DEFAULT_SETTINGS),
-  }))
+): Effect.Effect<SettingsServiceApi, Schema.SchemaError> =>
+  Effect.flatMap(Effect.fromResult(decodeSettings(initial)), (initialSettings) =>
+    Effect.map(Ref.make(initialSettings), (state) => ({
+      snapshot: Ref.get(state),
+      candidate: (patch) =>
+        Ref.get(state).pipe(
+          Effect.flatMap((current) => Effect.fromResult(applySettings(current, patch))),
+        ),
+      update: (patch) =>
+        Ref.modify(state, (current): readonly [Result.Result<Settings, Schema.SchemaError>, Settings] => {
+          const next = applySettings(current, patch)
+          return Result.match(next, {
+            onFailure: (failure) => [Result.fail(failure), current],
+            onSuccess: (settings) => [Result.succeed(settings), settings],
+          })
+        }).pipe(Effect.flatMap(Effect.fromResult)),
+      rebindKey: (action, code) =>
+        Effect.gen(function* () {
+          if (typeof action !== 'string') return yield* Effect.fail(invalidKeyString(action))
+          const inputAction = yield* Effect.fromResult(InputAction.result(action))
+          if (typeof code !== 'string') return yield* Effect.fail(invalidKeyString(code))
+          const keyCode = yield* Effect.fromResult(KeyCode.result(code))
+          const result = yield* Ref.modify(state, (current): readonly [Result.Result<Settings, Brand.BrandError | Schema.SchemaError>, Settings] => {
+            const next = rebindKey(current, inputAction, keyCode)
+            return Result.match(next, {
+              onFailure: (failure) => [Result.fail(failure), current],
+              onSuccess: (settings) => [Result.succeed(settings), settings],
+            })
+          })
+          yield* Effect.fromResult(result)
+        }),
+      unbindKey: (action) =>
+        Effect.gen(function* () {
+          if (typeof action !== 'string') return yield* Effect.fail(invalidKeyString(action))
+          const inputAction = yield* Effect.fromResult(InputAction.result(action))
+          const result = yield* Ref.modify(state, (current): readonly [Result.Result<Settings, Brand.BrandError | Schema.SchemaError>, Settings] => {
+            const next = unbindKey(current, inputAction)
+            return Result.match(next, {
+              onFailure: (failure) => [Result.fail(failure), current],
+              onSuccess: (settings) => [Result.succeed(settings), settings],
+            })
+          })
+          yield* Effect.fromResult(result)
+        }),
+      restore: (next) =>
+        Effect.flatMap(Effect.fromResult(decodeSettings(next)), (settings) => Ref.set(state, settings)),
+      reset: Ref.set(state, DEFAULT_SETTINGS),
+    })),
+  )
 
 export const SettingsServiceLayer = (
   initial: Settings = DEFAULT_SETTINGS,
-): Layer.Layer<SettingsService> => Layer.effect(SettingsService, makeSettingsService(initial))
+): Layer.Layer<SettingsService, Schema.SchemaError> => Layer.effect(SettingsService, makeSettingsService(initial))

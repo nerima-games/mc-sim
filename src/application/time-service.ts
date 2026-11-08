@@ -15,14 +15,18 @@
  * computes `justDied` inside the same step so the death signal fires once.
  */
 import { Brand, Context, Effect, Layer, Ref, Result, Schema, SchemaIssue } from 'effect'
-import { FixedDurationSecs, InterpolationFraction, type DeltaTimeSecs } from '@nerima-games/mc-kernel'
+import {
+  FixedDurationSecs,
+  InterpolationFraction,
+  type NonNegativeTickCount as NonNegativeTickCountValue,
+} from '@nerima-games/mc-kernel'
 import * as Time from '../domain/time-of-day.js'
 
 export type TimeServiceApi = {
-  /** Advance the world clock by one frame. The delta is supplied, never read. */
-  readonly advance: (dt: DeltaTimeSecs) => Effect.Effect<void, Brand.BrandError>
+  /** Advance the world clock by elapsed SM1 simulation ticks. */
+  readonly advance: (elapsedTicks: NonNegativeTickCountValue) => Effect.Effect<void, Brand.BrandError>
   /** Compute the next clock state without installing it, for coordinator commits. */
-  readonly advanceCandidate: (dt: DeltaTimeSecs) => Effect.Effect<Time.TimeState, Brand.BrandError>
+  readonly advanceCandidate: (elapsedTicks: NonNegativeTickCountValue) => Effect.Effect<Time.TimeState, Brand.BrandError>
   /** Position within the current day, in [0, 1). */
   readonly timeOfDay: Effect.Effect<InterpolationFraction, Brand.BrandError>
   /** Day length in seconds. */
@@ -122,13 +126,13 @@ export const makeTimeService = (
 ): Effect.Effect<TimeServiceApi, Brand.BrandError> => {
   if (!isRecord(initial)) return Effect.fail(invalidInitialTimeState(initial))
   return Effect.map(Ref.make(Time.normaliseTimeState(initial)), (state) => ({
-    advance: (dt) =>
+    advance: (elapsedTicks) =>
       Ref.modify(state, (current) => {
-        const next = Time.advance(current, dt)
+        const next = Time.advance(current, elapsedTicks)
         return [next, Result.isSuccess(next) ? next.success : current]
       }).pipe(Effect.flatMap(Effect.fromResult), Effect.map(() => undefined)),
-    advanceCandidate: (dt) =>
-      Ref.get(state).pipe(Effect.flatMap((current) => Effect.fromResult(Time.advance(current, dt)))),
+    advanceCandidate: (elapsedTicks) =>
+      Ref.get(state).pipe(Effect.flatMap((current) => Effect.fromResult(Time.advance(current, elapsedTicks)))),
     timeOfDay: Ref.get(state).pipe(
       Effect.flatMap((current) => Effect.fromResult(InterpolationFraction.result(Time.timeOfDay(current)))),
     ),
