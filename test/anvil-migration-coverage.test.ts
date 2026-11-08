@@ -658,6 +658,33 @@ describe('anvil planning and application', () => {
     ), rules)).toMatchObject({ ok: false, reason: 'incompatible-input' })
   })
 
+  it('returns a typed failure when a compiled enchantment lookup disappears during transformation', () => {
+    const sharpness = AnvilEnchantmentId('minecraft:sharpness')
+    const compiled = compile(ruleSet([enchantmentRule(sharpness)]))
+    class ChangingEnchantmentMap extends Map<AnvilEnchantmentIdValue, CompiledAnvilEnchantmentRule> {
+      private lookups = 0
+
+      override get(id: AnvilEnchantmentIdValue): CompiledAnvilEnchantmentRule | undefined {
+        this.lookups += 1
+        return this.lookups === 1 ? super.get(id) : undefined
+      }
+
+      get lookupCount(): number {
+        return this.lookups
+      }
+    }
+    const changingEnchantmentMap = new ChangingEnchantmentMap(compiled.enchantments)
+
+    expect(planAnvil(state(
+      payload('iron_sword'),
+      inputStack(payload('enchanted_book', { enchantments: [enchantment('minecraft:sharpness')] })),
+    ), { ...compiled, enchantments: changingEnchantmentMap })).toMatchObject({
+      ok: false,
+      reason: 'invalid-enchantment',
+    })
+    expect(changingEnchantmentMap.lookupCount).toBe(2)
+  })
+
   it('rejects forged compiled maps and accepts valid repair maps', () => {
     const sharpness = AnvilEnchantmentId('minecraft:sharpness')
     const smite = AnvilEnchantmentId('minecraft:smite')
