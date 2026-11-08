@@ -29,6 +29,30 @@ export * from './domain/fishing.js'
 export * from './domain/grindstone.js'
 export * from './domain/primed-tnt.js'
 export * from './domain/projectile.js'
+export {
+  DEFAULT_MOB_PATHFINDING_SETTINGS,
+  MobPathCellSchema,
+  MobPathFailureSchema,
+  MobPathOutcomeSchema,
+  MobPathProfileSchema,
+  MobPathRequestSchema,
+  MobPathStepSchema,
+  MobPathTickPlanSchema,
+  MobPathfindingSettingsSchema,
+  planMobPathsForTick,
+} from './domain/mob-pathfinding.js'
+export type {
+  MobPathCell,
+  MobPathFailure,
+  MobPathOutcome,
+  MobPathProfile,
+  MobPathRequest,
+  MobPathStep,
+  MobPathTickInput,
+  MobPathTickPlan,
+  MobPathWorldPort,
+  MobPathfindingSettings,
+} from './domain/mob-pathfinding.js'
 export * from './domain/player-storage.js'
 export {
   advanceFixedStep,
@@ -82,6 +106,7 @@ export * from './application/brewing-service.js'
 export * from './application/achievement-service.js'
 export * from './application/core.js'
 export * from './application/entity-manager.js'
+export * from './application/mob-movement.js'
 export * from './application/equipment-service.js'
 export * from './application/fishing-service.js'
 export * from './application/furnace-service.js'
