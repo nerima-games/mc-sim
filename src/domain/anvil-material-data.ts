@@ -1,4 +1,4 @@
-import { itemDurabilityDefinitionFor } from '@nerima-games/mc-kernel'
+import { ITEM_DURABILITY_CATALOG } from '@nerima-games/mc-kernel'
 import type { DamageableItemType, ItemType } from '@nerima-games/mc-kernel'
 import type { AnvilRepairMaterialRule } from './anvil.js'
 
@@ -62,13 +62,12 @@ const VANILLA_REPAIR_MATERIALS: ReadonlyArray<readonly [DamageableItemType, Item
 const ANVIL_MATERIAL_REPAIR_RATIO = 0.25
 
 export const SUPPORTED_VANILLA_ANVIL_REPAIR_MATERIAL_RULES: ReadonlyArray<AnvilRepairMaterialRule> =
-  VANILLA_REPAIR_MATERIALS.flatMap(([target, material]) => {
-    const durability = itemDurabilityDefinitionFor(target)
-    if (durability === undefined) return []
+  VANILLA_REPAIR_MATERIALS.map(([target, material]) => {
+    const durability = ITEM_DURABILITY_CATALOG[target]
     const durabilityPerUnit = Math.floor(Number(durability.maxDurability) * ANVIL_MATERIAL_REPAIR_RATIO)
-    return [{
+    return {
       target,
       material,
       durabilityPerUnit,
-    }]
+    }
   })

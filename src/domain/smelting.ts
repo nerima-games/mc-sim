@@ -346,15 +346,15 @@ const validStarterRecipe = (
   (value['experience'] === undefined || isFiniteNonNegative(value['experience']))
 
 const validateCookTimeSecsByStation = (
-  value: unknown,
+  value: Record<string, unknown>,
 ): Result.Result<KernelSmeltingRecipe['cookTimeSecsByStation'], FurnaceFailure> => {
-  if (!isRecord(value)) return Result.fail(smeltingFailure('recipe', 'expected cooking station durations'))
   const durations: Partial<Record<CookingStation, FixedDurationSecsValue>> = {}
   for (const [station, duration] of Object.entries(value)) {
     if (!isCookingStation(station)) return Result.fail(smeltingFailure('recipe', 'unknown cooking station duration'))
-    if (!isFinitePositive(duration)) return Result.fail(smeltingFailure('recipe', 'invalid cooking station duration'))
+    if (typeof duration !== 'number') return Result.fail(smeltingFailure('recipe', 'invalid cooking station duration'))
     const durationResult = FixedDurationSecs.result(duration)
-    if (Result.isFailure(durationResult)) return Result.fail(durationResult.failure)
+    if (Result.isFailure(durationResult)) return Result.fail(smeltingFailure('recipe', 'invalid cooking station duration'))
+    if (durationResult.success <= 0) return Result.fail(smeltingFailure('recipe', 'invalid cooking station duration'))
     durations[station] = durationResult.success
   }
   return Result.succeed(durations)

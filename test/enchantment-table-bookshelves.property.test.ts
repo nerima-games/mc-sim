@@ -89,4 +89,32 @@ describe('enchantment table bookshelf power', () => {
       blockPowerAt: blockPowerAtFor(shelves, openGaps),
     }))).toBe(0)
   })
+
+  it('returns failures for positions that overflow the ring and invalid block power', () => {
+    const invalidPosition = countEnchantmentTableBookshelves({
+      tablePosition: positionAt(Number.MAX_SAFE_INTEGER, 0, 0),
+      blockPowerAt: () => ({ _tag: 'Air' }),
+    })
+    expect(invalidPosition).toMatchObject({
+      _tag: 'Failure',
+      failure: {
+        _tag: 'EnchantmentTableBookshelfFailure',
+        reason: 'invalid-table-position',
+        message: 'Table position must leave room for a safe integer two-block ring',
+      },
+    })
+
+    const invalidBlockPower = countEnchantmentTableBookshelves({
+      tablePosition: positionAt(0, 0, 0),
+      blockPowerAt: () => null as never,
+    })
+    expect(invalidBlockPower).toMatchObject({
+      _tag: 'Failure',
+      failure: {
+        _tag: 'EnchantmentTableBookshelfFailure',
+        reason: 'invalid-block-power',
+        message: 'Block power must describe air or bookshelf power 0 or 1',
+      },
+    })
+  })
 })

@@ -873,6 +873,14 @@ describe('furnace boundary validation', () => {
     ]) {
       expect(Result.isFailure(matchSmeltingRecipeResult(undefined, 'furnace', [malformed] as never))).toBe(true)
     }
+    for (const malformed of [
+      { ...kernelRecipe, cookTimeSecsByStation: { unknown_station: kernelRecipe.cookTimeSecs } },
+      { ...kernelRecipe, cookTimeSecsByStation: { furnace: 0 } },
+      { ...kernelRecipe, cookTimeSecsByStation: { furnace: 'not-a-duration' } },
+      { ...kernelRecipe, cookTimeSecsByStation: { furnace: Number.POSITIVE_INFINITY } },
+    ]) {
+      expect(Result.isFailure(matchSmeltingRecipeResult(undefined, 'furnace', [malformed] as never))).toBe(true)
+    }
 
     const starter = STARTER_SMELTING_RECIPES[0]
     if (starter === undefined) throw new Error('starter smelting recipe missing')
@@ -973,6 +981,17 @@ describe('furnace boundary validation', () => {
     if (Result.isFailure(fastCook)) throw fastCook.failure
     expect(fastCook.success.state.output?.item).toBe('iron_ingot')
     expect(fastCook.success.experienceGained).toBe(0.7)
+
+    const fallbackRecipe = { ...recipe, cookTimeSecsByStation: {} }
+    const fallbackCook = advanceFurnaceResult(
+      furnace,
+      recipe.cookTimeSecs,
+      [fallbackRecipe],
+      [...VANILLA_FUEL_RULES],
+    )
+    expect(Result.isSuccess(fallbackCook)).toBe(true)
+    if (Result.isFailure(fallbackCook)) throw fallbackCook.failure
+    expect(fallbackCook.success.state.output?.item).toBe('iron_ingot')
   })
 
   it.effect('does not advance a recipe whose cook progress already meets its duration', () =>
