@@ -30,6 +30,8 @@ export type MobPathTickInput = Readonly<{
   requests: ReadonlyArray<MobPathRequest>
   world: MobPathWorldPort
   settings?: MobPathfindingSettings
+  /** Zero-based request index to resume from; pass `nextSearchCursor` back next tick. */
+  searchCursor?: NonNegativeTickCount
 }>
 
 export type MobPathfindingSettings = Readonly<{
@@ -58,7 +60,7 @@ export type MobPathOutcome =
 export type MobPathTickPlan =
   | Readonly<{
       _tag: 'InvalidMobPathfindingInput'
-      field: 'input' | 'requests' | 'world'
+      field: 'input' | 'requests' | 'world' | 'searchCursor'
     }>
   | Readonly<{
       _tag: 'InvalidMobPathfindingSettings'
@@ -69,6 +71,7 @@ export type MobPathTickPlan =
       outcomes: ReadonlyArray<MobPathOutcome>
       searchesPerformed: NonNegativeTickCount
       expandedNodes: NonNegativeTickCount
+      nextSearchCursor: NonNegativeTickCount
     }>
 
 const BlockAxisSchema = Schema.Int.check(Schema.makeFilter(Number.isSafeInteger)).pipe(Schema.brand('BlockAxis'))
@@ -154,7 +157,7 @@ const InvalidMobPathfindingSettingsSchema = Schema.TaggedStruct('InvalidMobPathf
 })
 
 const InvalidMobPathfindingInputSchema = Schema.TaggedStruct('InvalidMobPathfindingInput', {
-  field: Schema.Literals(['input', 'requests', 'world']),
+  field: Schema.Literals(['input', 'requests', 'world', 'searchCursor']),
 })
 
 export const MobPathTickPlanSchema: Schema.Codec<MobPathTickPlan, unknown> = Schema.Union([
@@ -164,6 +167,7 @@ export const MobPathTickPlanSchema: Schema.Codec<MobPathTickPlan, unknown> = Sch
     outcomes: Schema.Array(MobPathOutcomeSchema),
     searchesPerformed: NonNegativeTickCountSchema,
     expandedNodes: NonNegativeTickCountSchema,
+    nextSearchCursor: NonNegativeTickCountSchema,
   }),
 ])
 
@@ -514,55 +518,68 @@ type PlannedMobPaths<A> = Readonly<{
   outcomes: ReadonlyArray<PlannedPathEntry<A>>
   searchesPerformed: NonNegativeTickCount
   expandedNodes: NonNegativeTickCount
+  nextSearchCursor: NonNegativeTickCount
 }>
 
 const planValidatedEntries = <A>(
   entries: ReadonlyArray<ValidatedPathEntry<A>>,
   world: MobPathWorldPort,
   settings: SearchSettings,
+  searchCursor: NonNegativeTickCount,
 ): PlannedMobPaths<A> => {
-  const outcomes: Array<PlannedPathEntry<A>> = []
+  const outcomes: Array<PlannedPathEntry<A> | undefined> = Array.from({ length: entries.length })
+  const normalizedCursor = entries.length === 0 ? 0 : Number(searchCursor) % entries.length
   let searchesPerformed = 0
   let expandedNodes = 0
+  let lastSearchedIndex: number | undefined
 
-  for (const entry of entries) {
+  for (let offset = 0; offset < entries.length; offset += 1) {
+    const index = (normalizedCursor + offset) % entries.length
+    const entry = entries[index]
+    if (entry === undefined) continue
     if (entry._tag === 'Outcome') {
-      outcomes.push({ source: entry.source, outcome: entry.outcome })
+      outcomes[index] = { source: entry.source, outcome: entry.outcome }
       continue
     }
 
     const request = entry.request
     if (request.profile.kind === 'swimmer' || request.profile.kind === 'flyer') {
-      outcomes.push({
+      outcomes[index] = {
         source: entry.source,
         outcome: { _tag: 'PathFailed', failure: { _tag: 'UnsupportedProfile', kind: request.profile.kind } },
-      })
+      }
       continue
     }
     if (searchesPerformed >= settings.maxSearchesPerTick) {
-      outcomes.push({
+      outcomes[index] = {
         source: entry.source,
         outcome: {
           _tag: 'PathFailed',
           failure: { _tag: 'TickBudgetExhausted', maxSearches: settings.maxSearchesPerTick },
         },
-      })
+      }
       continue
     }
 
     searchesPerformed += 1
+    lastSearchedIndex = index
     const outcome = searchPath(request, world, settings)
     if (outcome._tag === 'PathFound') expandedNodes += outcome.expandedNodes
     if (outcome._tag === 'PathFailed' && outcome.failure._tag === 'NodeBudgetExhausted') {
       expandedNodes += outcome.failure.expandedNodes
     }
-    outcomes.push({ source: entry.source, outcome })
+    outcomes[index] = { source: entry.source, outcome }
   }
 
   return {
-    outcomes,
+    outcomes: outcomes.filter((entry): entry is PlannedPathEntry<A> => entry !== undefined),
     searchesPerformed: NonNegativeTickCount(searchesPerformed),
     expandedNodes: NonNegativeTickCount(expandedNodes),
+    nextSearchCursor: NonNegativeTickCount(
+      entries.length === 0 || lastSearchedIndex === undefined
+        ? normalizedCursor
+        : (lastSearchedIndex + 1) % entries.length,
+    ),
   }
 }
 
@@ -571,15 +588,17 @@ export const planValidatedMobPathsForMovement = <A>(
   requests: ReadonlyArray<Readonly<{ source: A; request: MobPathRequest }>>,
   world: MobPathWorldPort,
   settings: MobPathfindingSettings,
+  searchCursor: NonNegativeTickCount = NonNegativeTickCount(0),
 ): PlannedMobPaths<A> => planValidatedEntries(
   requests.map(({ source, request }): ValidatedPathEntry<A> => ({ _tag: 'Request', source, request })),
   world,
   settings,
+  searchCursor,
 )
 
 export const planMobPathsForTick = (input: MobPathTickInput): MobPathTickPlan => {
   if (!isRecord(input)) return { _tag: 'InvalidMobPathfindingInput', field: 'input' }
-  const allowedInputKeys = new Set(['requests', 'world', 'settings'])
+  const allowedInputKeys = new Set(['requests', 'world', 'settings', 'searchCursor'])
   if (Object.keys(input).some((key) => !allowedInputKeys.has(key))) {
     return { _tag: 'InvalidMobPathfindingInput', field: 'input' }
   }
@@ -587,6 +606,10 @@ export const planMobPathsForTick = (input: MobPathTickInput): MobPathTickPlan =>
   if (!Array.isArray(requests)) return { _tag: 'InvalidMobPathfindingInput', field: 'requests' }
   const world = input['world']
   if (!isWorldPort(world)) return { _tag: 'InvalidMobPathfindingInput', field: 'world' }
+  const decodedCursor = Schema.decodeUnknownResult(NonNegativeTickCountSchema)(
+    Object.hasOwn(input, 'searchCursor') ? input['searchCursor'] : 0,
+  )
+  if (Result.isFailure(decodedCursor)) return { _tag: 'InvalidMobPathfindingInput', field: 'searchCursor' }
 
   const providedSettings: unknown = Object.prototype.hasOwnProperty.call(input, 'settings')
     ? input['settings']
@@ -651,11 +674,12 @@ export const planMobPathsForTick = (input: MobPathTickInput): MobPathTickPlan =>
     entries.push({ _tag: 'Request', source: rawRequest, request: decodedRequest.success })
   }
 
-  const planned = planValidatedEntries(entries, world, settings)
+  const planned = planValidatedEntries(entries, world, settings, decodedCursor.success)
   return {
     _tag: 'MobPathsPlanned',
     outcomes: planned.outcomes.map(({ outcome }) => outcome),
     searchesPerformed: planned.searchesPerformed,
     expandedNodes: planned.expandedNodes,
+    nextSearchCursor: planned.nextSearchCursor,
   }
 }

@@ -55,6 +55,7 @@ export type MobMovementState = Readonly<{
   readonly pathIndex: NonNegativeTickCount
   readonly stuckTicks: NonNegativeTickCount
   readonly isGrounded: boolean
+  readonly movementSpeed?: Physics.BlocksPerSecond
 }>
 
 export type MobMovementRequest = MobMovementState
@@ -77,6 +78,8 @@ export type MobMovementTickInput = Readonly<{
   readonly mobs: ReadonlyArray<MobMovementRequest>
   readonly world: MobMovementWorldPort
   readonly settings?: MobMovementSettings
+  /** Zero-based mob index to resume from; pass `nextSearchCursor` back next tick. */
+  readonly searchCursor?: NonNegativeTickCount
 }>
 
 export const DEFAULT_MOB_MOVEMENT_SETTINGS: Required<MobMovementSettings> = Object.freeze({
@@ -148,6 +151,7 @@ export const MobMovementStateSchema: Schema.Codec<MobMovementState, unknown> = S
   pathIndex: TickCountSchema,
   stuckTicks: TickCountSchema,
   isGrounded: Schema.Boolean,
+  movementSpeed: Schema.optionalKey(MovementSpeedSchema),
 })
 
 export type MobMovementOutcome =
@@ -160,6 +164,7 @@ export type MobMovementTickResult =
       readonly outcomes: ReadonlyArray<MobMovementOutcome>
       readonly searchesPerformed: NonNegativeTickCount
       readonly expandedNodes: NonNegativeTickCount
+      readonly nextSearchCursor: NonNegativeTickCount
     }>
   | Readonly<{ readonly _tag: 'MobMovementRejected'; readonly failure: MobMovementFailure }>
 
@@ -176,6 +181,7 @@ export const MobMovementTickResultSchema: Schema.Codec<MobMovementTickResult, un
     outcomes: Schema.Array(MobMovementOutcomeSchema),
     searchesPerformed: TickCountSchema,
     expandedNodes: TickCountSchema,
+    nextSearchCursor: TickCountSchema,
   }),
   Schema.TaggedStruct('MobMovementRejected', { failure: MobMovementFailureSchema }),
 ])
@@ -194,13 +200,14 @@ type PlannedMovementPaths = Readonly<{
   pathByIndex: ReadonlyMap<number, ReadonlyArray<MobPathStep>>
   searchesPerformed: NonNegativeTickCount
   expandedNodes: NonNegativeTickCount
+  nextSearchCursor: NonNegativeTickCount
 }>
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
 const hasOnlyMovementInputKeys = (input: Readonly<Record<string, unknown>>): boolean =>
-  Object.keys(input).every((key) => key === 'mobs' || key === 'world' || key === 'settings')
+  Object.keys(input).every((key) => key === 'mobs' || key === 'world' || key === 'settings' || key === 'searchCursor')
 
 const isWorldPort = (value: unknown): value is MobMovementWorldPort => {
   if (!isRecord(value)) return false
@@ -316,19 +323,21 @@ const velocityFor = (
 
   const differenceX = step.x + 0.5 - request.body.x
   const differenceZ = step.z + 0.5 - request.body.z
+  const movementSpeed = request.movementSpeed ?? settings.movementSpeed
   let vxValue: number
   let vzValue: number
   if (step.action === 'climb') {
-    vxValue = step.wall.x * settings.spiderClimbSpeed
-    vzValue = step.wall.z * settings.spiderClimbSpeed
+    const climbSpeed = request.movementSpeed ?? settings.spiderClimbSpeed
+    vxValue = step.wall.x * climbSpeed
+    vzValue = step.wall.z * climbSpeed
   } else {
     const distance = Math.hypot(differenceX, differenceZ)
-    vxValue = distance === 0 ? 0 : (differenceX / distance) * settings.movementSpeed
-    vzValue = distance === 0 ? 0 : (differenceZ / distance) * settings.movementSpeed
+    vxValue = distance === 0 ? 0 : (differenceX / distance) * movementSpeed
+    vzValue = distance === 0 ? 0 : (differenceZ / distance) * movementSpeed
   }
 
   const vyValue = step.action === 'climb'
-    ? settings.spiderClimbSpeed
+    ? request.movementSpeed ?? settings.spiderClimbSpeed
     : step.action === 'jump' && request.isGrounded
       ? settings.jumpImpulse
       : request.body.vy
@@ -491,16 +500,28 @@ const planMovementPaths = (
   failures: Map<number, MobMovementFailure>,
   world: MobMovementWorldPort,
   settings: EffectiveSettings,
+  searchCursor: NonNegativeTickCount,
+  mobCount: number,
 ): PlannedMovementPaths => {
   const pathByIndex = new Map<number, ReadonlyArray<MobPathStep>>()
   let searchesPerformed = NonNegativeTickCount(0)
   let expandedNodes = NonNegativeTickCount(0)
+  const normalizedCursor = mobCount === 0 ? 0 : Number(searchCursor) % mobCount
   if (requests.length === 0) {
-    return { pathByIndex, searchesPerformed, expandedNodes }
+    return {
+      pathByIndex,
+      searchesPerformed,
+      expandedNodes,
+      nextSearchCursor: NonNegativeTickCount(normalizedCursor),
+    }
   }
 
+  const orderedRequests = [
+    ...requests.filter(({ index }) => Number(index) >= normalizedCursor),
+    ...requests.filter(({ index }) => Number(index) < normalizedCursor),
+  ]
   const plan = planValidatedMobPathsForMovement(
-    requests.map((source) => ({
+    orderedRequests.map((source) => ({
       source,
       request: { start: source.start, goal: source.request.goal, profile: source.request.profile },
     })),
@@ -510,10 +531,19 @@ const planMovementPaths = (
       maxSearchesPerTick: settings.maxSearchesPerTick,
       maxFallDistance: settings.maxFallDistance,
     },
+    NonNegativeTickCount(0),
   )
 
   searchesPerformed = plan.searchesPerformed
   expandedNodes = plan.expandedNodes
+  let nextSearchCursor = normalizedCursor
+  if (searchesPerformed > 0 && mobCount > 0) {
+    const lastSearchedRequestIndex = (Number(plan.nextSearchCursor) + orderedRequests.length - 1) % orderedRequests.length
+    const lastSearchedRequest = orderedRequests[lastSearchedRequestIndex]
+    if (lastSearchedRequest !== undefined) {
+      nextSearchCursor = (Number(lastSearchedRequest.index) + 1) % mobCount
+    }
+  }
   for (const { source: parsed, outcome } of plan.outcomes) {
     if (outcome._tag === 'PathFound') {
       pathByIndex.set(parsed.index, [...outcome.path])
@@ -526,7 +556,12 @@ const planMovementPaths = (
     })
   }
 
-  return { pathByIndex, searchesPerformed, expandedNodes }
+  return {
+    pathByIndex,
+    searchesPerformed,
+    expandedNodes,
+    nextSearchCursor: NonNegativeTickCount(nextSearchCursor),
+  }
 }
 
 type MovementStepContext = Readonly<{
@@ -580,18 +615,30 @@ export const stepMobMovementsForTick = (input: MobMovementTickInput): MobMovemen
   const worldValue = input['world']
   if (!Array.isArray(rawMobs)) return rejected(inputFailure(zeroIndex, 'invalid-batch'))
   if (!isWorldPort(worldValue)) return rejected(inputFailure(zeroIndex, 'invalid-world'))
+  const decodedCursor = Schema.decodeUnknownResult(TickCountSchema)(
+    Object.hasOwn(input, 'searchCursor') ? input['searchCursor'] : zeroIndex,
+  )
+  if (Result.isFailure(decodedCursor)) return rejected(inputFailure(zeroIndex, 'invalid-batch'))
 
   const settingsResult = settingsFor(input['settings'], Object.hasOwn(input, 'settings'))
   if (Result.isFailure(settingsResult)) return rejected(inputFailure(zeroIndex, 'invalid-settings'))
   const settings = settingsResult.success
 
   const prepared = prepareMovementRequests(rawMobs, settings)
-  const planned = planMovementPaths(prepared.requests, prepared.failures, worldValue, settings)
+  const planned = planMovementPaths(
+    prepared.requests,
+    prepared.failures,
+    worldValue,
+    settings,
+    decodedCursor.success,
+    rawMobs.length,
+  )
 
   return {
     _tag: 'MobMovementCompleted',
     outcomes: stepPreparedMobs(prepared, planned, worldValue, settings),
     searchesPerformed: planned.searchesPerformed,
     expandedNodes: planned.expandedNodes,
+    nextSearchCursor: planned.nextSearchCursor,
   }
 }

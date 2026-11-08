@@ -233,6 +233,109 @@ it('keeps one simulation tick deterministic and enforces per-tick search limits 
   expect(first.expandedNodes).toBeLessThanOrEqual(8 * Sim.DEFAULT_MOB_MOVEMENT_SETTINGS.maxNodesPerSearch)
 })
 
+it('round-robins failed path searches across ticks using a persisted cursor', () => {
+  const attemptedStarts = new Set<number>()
+  const baseWorld = makeWorld(new Set())
+  const world: Sim.MobMovementWorldPort = {
+    ...baseWorld,
+    isPassable: ({ x, y }) => {
+      if (y === 1) attemptedStarts.add(x)
+      return false
+    },
+  }
+  const mobs = Array.from({ length: 10 }, (_, index) => {
+    const initial = makeMob(`mob-starved-${index}`)
+    return {
+      ...initial,
+      body: { ...initial.body, x: PositionAxis(index * 2 + 0.5) },
+      goal: cell(index * 2 + 1, 1, 0),
+    }
+  })
+
+  const first = Sim.stepMobMovementsForTick({ mobs, world })
+  expect(first._tag).toBe('MobMovementCompleted')
+  if (first._tag !== 'MobMovementCompleted') throw new Error('first path-search tick was rejected')
+  expect(first.searchesPerformed).toBe(NonNegativeTickCount(8))
+  expect(first.nextSearchCursor).toBe(NonNegativeTickCount(8))
+  expect(first.outcomes.slice(0, 8).every((outcome) =>
+    outcome._tag === 'MobStepFailed' && outcome.failure._tag === 'MobMovementPathFailure' && outcome.failure.failure._tag === 'NoPath'))
+    .toBe(true)
+  expect(first.outcomes.slice(8).every((outcome) =>
+    outcome._tag === 'MobStepFailed' && outcome.failure._tag === 'MobMovementPathFailure' && outcome.failure.failure._tag === 'TickBudgetExhausted'))
+    .toBe(true)
+  expect([...attemptedStarts].sort((left, right) => left - right)).toEqual([0, 2, 4, 6, 8, 10, 12, 14])
+
+  attemptedStarts.clear()
+  const secondInput = { mobs, world, searchCursor: first.nextSearchCursor }
+  const second = Sim.stepMobMovementsForTick(secondInput)
+  expect(Sim.stepMobMovementsForTick(secondInput)).toStrictEqual(second)
+  expect(second._tag).toBe('MobMovementCompleted')
+  if (second._tag !== 'MobMovementCompleted') throw new Error('second path-search tick was rejected')
+  expect(second.searchesPerformed).toBe(NonNegativeTickCount(8))
+  expect(second.nextSearchCursor).toBe(NonNegativeTickCount(6))
+  expect(second.outcomes.slice(0, 6).every((outcome) =>
+    outcome._tag === 'MobStepFailed' && outcome.failure._tag === 'MobMovementPathFailure' && outcome.failure.failure._tag === 'NoPath'))
+    .toBe(true)
+  expect(second.outcomes.slice(6, 8).every((outcome) =>
+    outcome._tag === 'MobStepFailed' && outcome.failure._tag === 'MobMovementPathFailure' && outcome.failure.failure._tag === 'TickBudgetExhausted'))
+    .toBe(true)
+  expect(second.outcomes.slice(8).every((outcome) =>
+    outcome._tag === 'MobStepFailed' && outcome.failure._tag === 'MobMovementPathFailure' && outcome.failure.failure._tag === 'NoPath'))
+    .toBe(true)
+  expect([...attemptedStarts].sort((left, right) => left - right)).toEqual([0, 2, 4, 6, 8, 10, 16, 18])
+  expect([...new Set([0, 2, 4, 6, 8, 10, 12, 14, ...attemptedStarts])].sort((left, right) => left - right))
+    .toEqual([0, 2, 4, 6, 8, 10, 12, 14, 16, 18])
+})
+
+it('uses per-mob movement speeds while sharing the tick search budget', () => {
+  const world = makeWorld(makePlatform())
+  const zombieBase = makeMob('mob-zombie-speed')
+  const zombie: Sim.MobMovementState = {
+    ...zombieBase,
+    goal: cell(1, 1, 0),
+    movementSpeed: Physics.BlocksPerSecond(1),
+    path: [
+      { ...cell(0, 1, 0), action: 'start' },
+      { ...cell(1, 1, 0), action: 'walk' },
+    ],
+    pathIndex: NonNegativeTickCount(1),
+  }
+  const spiderBase = makeMob('mob-spider-speed')
+  const spider: Sim.MobMovementState = {
+    ...spiderBase,
+    body: { ...spiderBase.body, y: Physics.CentreY(1.45) },
+    profile: { kind: 'spider', width: Physics.BlockLength(0.6), height: Physics.BlockLength(0.9) },
+    goal: cell(1, 1, 0),
+    movementSpeed: Physics.BlocksPerSecond(4),
+    path: [
+      { ...cell(0, 1, 0), action: 'start' },
+      { ...cell(1, 1, 0), action: 'walk' },
+    ],
+    pathIndex: NonNegativeTickCount(1),
+  }
+
+  const result = Sim.stepMobMovementsForTick({
+    mobs: [zombie, spider, makeMob('mob-shared-search-budget')],
+    world,
+    settings: { maxSearchesPerTick: NonNegativeTickCount(1) },
+  })
+  expect(result._tag).toBe('MobMovementCompleted')
+  if (result._tag !== 'MobMovementCompleted') throw new Error('speed override tick was rejected')
+  expect(Sim.DEFAULT_MOB_MOVEMENT_SETTINGS.movementSpeed).toBe(Physics.BlocksPerSecond(2))
+  expect(result.searchesPerformed).toBe(NonNegativeTickCount(1))
+  expect(result.nextSearchCursor).toBe(NonNegativeTickCount(0))
+
+  const zombieOutcome = result.outcomes[0]
+  const spiderOutcome = result.outcomes[1]
+  if (zombieOutcome?._tag !== 'MobAdvanced' || spiderOutcome?._tag !== 'MobAdvanced') {
+    throw new Error('cached zombie or spider path did not advance')
+  }
+  expect(zombieOutcome.state.body.x - zombie.body.x).toBeCloseTo(0.05, 10)
+  expect(spiderOutcome.state.body.x - spider.body.x).toBeCloseTo(0.2, 10)
+  expect(zombieOutcome.state.movementSpeed).toBe(Physics.BlocksPerSecond(1))
+  expect(spiderOutcome.state.movementSpeed).toBe(Physics.BlocksPerSecond(4))
+})
+
 it('returns a schema-valid empty tick without searching', () => {
   const empty = Sim.stepMobMovementsForTick({ mobs: [], world: makeWorld(makePlatform()) })
   expect(empty._tag).toBe('MobMovementCompleted')
@@ -376,6 +479,7 @@ it('returns per-mob failures for invalid bodies, path indexes, and unsupported p
       }],
       searchesPerformed: NonNegativeTickCount(0),
       expandedNodes: NonNegativeTickCount(0),
+      nextSearchCursor: NonNegativeTickCount(0),
     })
   }
 
@@ -388,6 +492,7 @@ it('returns per-mob failures for invalid bodies, path indexes, and unsupported p
     }],
     searchesPerformed: NonNegativeTickCount(0),
     expandedNodes: NonNegativeTickCount(0),
+    nextSearchCursor: NonNegativeTickCount(0),
   })
 
   const invalidPhysicsSize = Sim.stepMobMovementsForTick({ mobs: [unrepresentablePhysicsSize], world })
@@ -399,6 +504,7 @@ it('returns per-mob failures for invalid bodies, path indexes, and unsupported p
     }],
     searchesPerformed: NonNegativeTickCount(0),
     expandedNodes: NonNegativeTickCount(0),
+    nextSearchCursor: NonNegativeTickCount(0),
   })
 
   const unsupported = Sim.stepMobMovementsForTick({ mobs: [swimmer], world })
@@ -414,6 +520,7 @@ it('returns per-mob failures for invalid bodies, path indexes, and unsupported p
     }],
     searchesPerformed: NonNegativeTickCount(0),
     expandedNodes: NonNegativeTickCount(0),
+    nextSearchCursor: NonNegativeTickCount(0),
   })
 })
 
@@ -478,6 +585,7 @@ it('returns a typed failure if stuck tick count would exceed its brand', () => {
     }],
     searchesPerformed: NonNegativeTickCount(0),
     expandedNodes: NonNegativeTickCount(0),
+    nextSearchCursor: NonNegativeTickCount(0),
   })
 })
 
@@ -512,6 +620,7 @@ it('returns a schema-valid failure when physics block lookup fails', () => {
     }],
     searchesPerformed: NonNegativeTickCount(0),
     expandedNodes: NonNegativeTickCount(0),
+    nextSearchCursor: NonNegativeTickCount(0),
   })
   expect(Schema.decodeUnknownResult(Sim.MobMovementTickResultSchema, { onExcessProperty: 'error' })(result)._tag)
     .toBe('Success')
@@ -568,10 +677,24 @@ it('returns schema-valid failures for invalid values and never throws on generat
       }],
       searchesPerformed: NonNegativeTickCount(0),
       expandedNodes: NonNegativeTickCount(0),
+      nextSearchCursor: NonNegativeTickCount(0),
     })
   }
 
   expectInputFailure(excessBatchKey, 'invalid-batch')
+  expectInputFailure({ mobs: [state], world, searchCursor: -1 }, 'invalid-batch')
+
+  const invalidMobSpeed = movementResultFor({ mobs: [{ ...state, movementSpeed: 0 }], world })
+  expect(invalidMobSpeed).toStrictEqual({
+    _tag: 'MobMovementCompleted',
+    outcomes: [{
+      _tag: 'MobStepFailed',
+      failure: { _tag: 'MobMovementInputFailure', index: NonNegativeTickCount(0), reason: 'invalid-request' },
+    }],
+    searchesPerformed: NonNegativeTickCount(0),
+    expandedNodes: NonNegativeTickCount(0),
+    nextSearchCursor: NonNegativeTickCount(0),
+  })
 
   const explicitlyUndefinedSetting = Schema.decodeUnknownResult(Sim.MobMovementSettingsSchema, { onExcessProperty: 'error' })({
     movementSpeed: undefined,

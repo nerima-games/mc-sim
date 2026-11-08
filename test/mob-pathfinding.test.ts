@@ -290,6 +290,7 @@ it('distinguishes no path from search-node and per-tick budgets', () => {
   }))
   if (crowd === undefined) return
   expect(crowd.searchesPerformed).toBe(8)
+  expect(crowd.nextSearchCursor).toBe(8)
   expect(crowd.outcomes.filter((outcome) => outcome._tag === 'PathFound')).toHaveLength(8)
   expect(crowd.outcomes.slice(8).every((outcome) =>
     outcome._tag === 'PathFailed' && outcome.failure._tag === 'TickBudgetExhausted'))
@@ -390,6 +391,14 @@ it('returns typed failures for malformed public input, goal, profile, and aggreg
   decodePlan(invalidRequests)
   expect(invalidRequests).toEqual({ _tag: 'InvalidMobPathfindingInput', field: 'requests' })
 
+  const invalidSearchCursor = invoke(planMobPathsForTick, [{
+    requests: [],
+    world: world(),
+    searchCursor: -1,
+  }])
+  decodePlan(invalidSearchCursor)
+  expect(invalidSearchCursor).toEqual({ _tag: 'InvalidMobPathfindingInput', field: 'searchCursor' })
+
   const invalidWorld = invoke(planMobPathsForTick, [{
     requests: [],
     world: { isPassable: () => true, hasSupport: () => true },
@@ -407,6 +416,7 @@ it('returns typed failures for malformed public input, goal, profile, and aggreg
     outcomes: [{ _tag: 'PathFailed', failure: { _tag: 'InvalidInput', field: 'goal' } }],
     searchesPerformed: 0,
     expandedNodes: 0,
+    nextSearchCursor: 0,
   })
 
   const invalidProfileKind = invoke(planMobPathsForTick, [{
@@ -423,6 +433,7 @@ it('returns typed failures for malformed public input, goal, profile, and aggreg
     outcomes: [{ _tag: 'PathFailed', failure: { _tag: 'InvalidInput', field: 'profile' } }],
     searchesPerformed: 0,
     expandedNodes: 0,
+    nextSearchCursor: 0,
   })
 
   const aggregateBudgetOverflow = invoke(planMobPathsForTick, [{
@@ -573,6 +584,7 @@ it('rejects excess request and settings fields and unknown tags at strict schema
     outcomes: [{ _tag: 'PathFailed', failure: { _tag: 'InvalidInput', field: 'request' } }],
     searchesPerformed: 0,
     expandedNodes: 0,
+    nextSearchCursor: 0,
   })
 
   const profileWithUnknownTag = { ...ground(), _tag: 'UnknownProfile' }
@@ -590,6 +602,7 @@ it('rejects excess request and settings fields and unknown tags at strict schema
     outcomes: [{ _tag: 'PathFailed', failure: { _tag: 'InvalidInput', field: 'request' } }],
     searchesPerformed: 0,
     expandedNodes: 0,
+    nextSearchCursor: 0,
   })
 
   const settingsWithExtraField = { ...DEFAULT_MOB_PATHFINDING_SETTINGS, extra: true }
