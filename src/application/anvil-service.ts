@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Result, Schema } from 'effect'
+import { Brand, Context, Effect, Layer, Result, Schema } from 'effect'
 import { applyVanillaAnvil, planVanillaAnvil } from '../domain/enchantment.js'
 import {
   ANVIL_SNAPSHOT_VERSION,
@@ -12,7 +12,10 @@ import {
   type CanonicalAnvilItemPayload,
   type CanonicalAnvilState,
 } from '../domain/anvil.js'
-import { AnvilMaterialCost as createAnvilMaterialCost } from '../domain/anvil-primitives.js'
+import {
+  AnvilMaterialCost as createAnvilMaterialCost,
+  type AnvilMaterialCost,
+} from '../domain/anvil-primitives.js'
 import { SchemaErrorSchema } from '../schema-errors.js'
 import {
   ReplicatedOwnerChangeSchema,
@@ -27,6 +30,11 @@ import {
   type ReplicatedOwnerRegistration,
   type WorldCommitCoordinatorError,
 } from './world-commit-coordinator.js'
+
+type AnvilServiceLevelCost = number & Brand.Brand<'AnvilServiceLevelCost'>
+const AnvilServiceLevelCostSchema: Schema.Codec<AnvilServiceLevelCost, number> = Schema.Int
+  .check(Schema.isGreaterThanOrEqualTo(0))
+  .pipe(Schema.brand('AnvilServiceLevelCost'))
 
 export type AnvilServiceState = Readonly<{
   input: AnvilState
@@ -105,8 +113,8 @@ export const AnvilServiceApplyFailureSchema: Schema.Codec<AnvilServiceApplyFailu
 
 export type AnvilServiceApplyResult = Readonly<{
   output: CanonicalAnvilItemPayload
-  levelCost: number
-  materialCost: number
+  levelCost: AnvilServiceLevelCost
+  materialCost: AnvilMaterialCost
   delta: ReplicatedWorldDelta<unknown>
 }>
 
@@ -120,11 +128,12 @@ export const AnvilServiceApplyResultSchema: Schema.Codec<AnvilServiceApplyResult
           !isRecord(value) ||
           !hasExactKeys(value, ['output', 'levelCost', 'materialCost', 'delta']) ||
           !isCanonicalPayload(value['output']) ||
-          typeof value['levelCost'] !== 'number' || !Number.isSafeInteger(value['levelCost']) || value['levelCost'] < 0 ||
           typeof value['materialCost'] !== 'number'
         ) return false
+        const levelCost = Schema.decodeUnknownResult(AnvilServiceLevelCostSchema)(value['levelCost'])
         const materialCost = createAnvilMaterialCost(value['materialCost'])
-        return Result.isSuccess(materialCost) && Result.isSuccess(Schema.decodeUnknownResult(AnvilServiceDeltaSchema)(value['delta']))
+        return Result.isSuccess(levelCost) && Result.isSuccess(materialCost) &&
+          Result.isSuccess(Schema.decodeUnknownResult(AnvilServiceDeltaSchema)(value['delta']))
       },
       catch: () => false,
     })
@@ -236,6 +245,7 @@ export const makeAnvilService = (
       const applied: AnvilApplyResult = applyVanillaAnvil(snapshot.state.input)
       if (!applied.ok) return yield* Effect.fail(serviceFailure(applied.reason, applied.issues))
 
+      const levelCost = yield* Schema.decodeUnknownEffect(AnvilServiceLevelCostSchema)(applied.levelCost)
       const nextInput = yield* Effect.fromResult(canonicalInputOf(applied.state))
       const nextState: AnvilServiceState = { input: nextInput, output: applied.output }
       const delta = yield* coordinator.commit({
@@ -245,7 +255,7 @@ export const makeAnvilService = (
       })
       return {
         output: applied.output,
-        levelCost: applied.levelCost,
+        levelCost,
         materialCost: applied.materialCost,
         delta,
       }

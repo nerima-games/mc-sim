@@ -99,7 +99,7 @@ export const EnchantmentTableGenerateOffersRequestSchema: Schema.Codec<Enchantme
   })
 
 export type EnchantmentTableGenerateOffersResult = Readonly<{
-  bookshelfCount: number
+  bookshelfCount: EnchantmentTable.EnchantmentTableBookshelfCount
   offers: SupportedEnchantmentTableOffers
 }>
 
@@ -117,7 +117,8 @@ const EnchantmentTableOffersSchema: Schema.Codec<SupportedEnchantmentTableOffers
 ])
 export const EnchantmentTableGenerateOffersResultSchema: Schema.Codec<EnchantmentTableGenerateOffersResult, unknown> =
   Schema.Struct({
-    bookshelfCount: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: ENCHANTMENT_TABLE_MAX_BOOKSHELVES })),
+    bookshelfCount: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: ENCHANTMENT_TABLE_MAX_BOOKSHELVES }))
+      .pipe(Schema.brand('EnchantmentTableBookshelfCount')),
     offers: EnchantmentTableOffersSchema,
   })
 
@@ -215,7 +216,10 @@ export const EnchantmentTableServiceErrorSchema: Schema.Codec<EnchantmentTableSe
   Schema.TaggedStruct('EnchantmentTableBookshelfFailure', {
     reason: Schema.Literals(['invalid-table-position', 'invalid-block-power']),
     value: Schema.Unknown,
-    message: Schema.String,
+    message: Schema.Literals([
+      'Table position must leave room for a safe integer two-block ring',
+      'Block power must describe air or bookshelf power 0 or 1',
+    ]),
   }),
   WorldCommitPlanConflictSchema,
   WorldCommitCoordinatorErrorSchema,

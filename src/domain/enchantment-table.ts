@@ -1,4 +1,4 @@
-import { Result } from 'effect'
+import { Brand, Result } from 'effect'
 import { BlockAxis, blockPosition, type BlockPosition, type ItemType } from '@nerima-games/mc-kernel'
 import {
   type AnvilEnchantment,
@@ -40,8 +40,14 @@ export type EnchantmentTableBookshelfFailure = Readonly<{
   readonly _tag: 'EnchantmentTableBookshelfFailure'
   readonly reason: 'invalid-table-position' | 'invalid-block-power'
   readonly value: unknown
-  readonly message: string
+  readonly message: EnchantmentTableBookshelfFailureMessage
 }>
+
+type EnchantmentTableBookshelfFailureMessage =
+  | 'Table position must leave room for a safe integer two-block ring'
+  | 'Block power must describe air or bookshelf power 0 or 1'
+
+export type EnchantmentTableBookshelfCount = number & Brand.Brand<'EnchantmentTableBookshelfCount'>
 
 export type EnchantmentTableOffer = Readonly<{
   readonly levelCost: number
@@ -85,7 +91,9 @@ export type EnchantmentTableFailure = Readonly<{
 
 export type EnchantmentTableError = EnchantmentTableFailure
 
-export type EnchantmentTableBookshelfCountResult = Result.Result<number, EnchantmentTableBookshelfFailure>
+export type EnchantmentTableBookshelfCountResult = Result.Result<EnchantmentTableBookshelfCount, EnchantmentTableBookshelfFailure>
+
+const enchantmentTableBookshelfCountFromInvariant = Brand.nominal<EnchantmentTableBookshelfCount>()
 
 type Candidate = Readonly<{
   readonly id: EnchantmentTableRuleId
@@ -107,7 +115,7 @@ const failure = (
 const bookshelfFailure = (
   reason: EnchantmentTableBookshelfFailure['reason'],
   value: unknown,
-  message: string,
+  message: EnchantmentTableBookshelfFailureMessage,
 ): EnchantmentTableBookshelfFailure => ({
   _tag: 'EnchantmentTableBookshelfFailure',
   reason,
@@ -180,7 +188,9 @@ export const countEnchantmentTableBookshelves = ({
     }
   }
 
-  return Result.succeed(Math.min(ENCHANTMENT_TABLE_MAX_BOOKSHELVES, bookshelfCount))
+  return Result.succeed(enchantmentTableBookshelfCountFromInvariant(
+    Math.min(ENCHANTMENT_TABLE_MAX_BOOKSHELVES, bookshelfCount),
+  ))
 }
 
 const costAtLevelUnchecked = (cost: EnchantmentTableCost, level: number): number =>
