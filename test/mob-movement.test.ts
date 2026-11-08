@@ -193,6 +193,17 @@ it('replans after the configured number of immobile ticks', () => {
   expect(first.state.body.x).toBe(mob.body.x)
   expect(first.state.stuckTicks).toBe(NonNegativeTickCount(1))
 
+  const oneTickBeforeDefaultThreshold = {
+    ...first.state,
+    stuckTicks: NonNegativeTickCount(Sim.DEFAULT_MOB_MOVEMENT_SETTINGS.stuckThresholdTicks - 1),
+  }
+  const defaultThresholdState = stepOnce(oneTickBeforeDefaultThreshold, navigationWorld, {})
+  expect(defaultThresholdState.searchesPerformed).toBe(NonNegativeTickCount(0))
+  expect(defaultThresholdState.state.stuckTicks).toBe(Sim.DEFAULT_MOB_MOVEMENT_SETTINGS.stuckThresholdTicks)
+
+  const defaultThresholdReplan = stepOnce(defaultThresholdState.state, navigationWorld, {})
+  expect(defaultThresholdReplan.searchesPerformed).toBe(NonNegativeTickCount(1))
+
   const next = Sim.stepMobMovementsForTick({
     mobs: [first.state],
     world: navigationWorld,
