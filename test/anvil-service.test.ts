@@ -95,7 +95,17 @@ describe('AnvilService', () => {
       ownKeys: () => { throw new Error('hostile key enumeration') },
     })
     expect(Result.isFailure(makeAnvilServiceRegistration(ownerId, hostileInput))).toBe(true)
+    expect(Result.isFailure(Schema.decodeUnknownResult(AnvilServiceInputSchema)(hostileInput))).toBe(true)
+    expect(Result.isFailure(Schema.decodeUnknownResult(AnvilServiceStateSchema)(hostileInput))).toBe(true)
     expect(Result.isFailure(Schema.decodeUnknownResult(AnvilServiceApplyResultSchema)(hostileInput))).toBe(true)
+
+    const hostilePayload = new Proxy({}, {
+      ownKeys: () => { throw new Error('hostile payload key enumeration') },
+    })
+    expect(Result.isFailure(Schema.decodeUnknownResult(AnvilServiceStateSchema)({
+      input: empty,
+      output: hostilePayload,
+    }))).toBe(true)
   })
 
   it.effect('combines two tools with kernel enchantment cost and commits the result atomically', () =>
