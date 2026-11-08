@@ -17,7 +17,7 @@ import {
   type GraphicsQuality,
   type Settings as KernelSettings,
 } from '@nerima-games/mc-kernel/domain/settings'
-import { isDifficulty, type Difficulty } from '@nerima-games/mc-kernel/domain/game-mode'
+import type { Difficulty } from '@nerima-games/mc-kernel/domain/game-mode'
 import { Brand, Result, Schema, SchemaIssue } from 'effect'
 
 export {
@@ -66,24 +66,6 @@ const invalidKeyString = (value: unknown): Brand.BrandError =>
 
 type UnknownRecord = Readonly<Record<string, unknown>>
 
-const SETTINGS_FIELDS = [
-  'renderDistance',
-  'fovDegrees',
-  'graphicsQuality',
-  'graphicsPreset',
-  'audioEnabled',
-  'masterVolume',
-  'musicVolume',
-  'sfxVolume',
-  'mouseSensitivity',
-  'captionsEnabled',
-  'keyBindings',
-  'difficulty',
-  'uiScale',
-  'reducedMotion',
-  'colorVisionCorrection',
-] as const
-
 const isRecord = (value: unknown): value is UnknownRecord => {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
   const prototype = Object.getPrototypeOf(value)
@@ -97,69 +79,112 @@ const hasEnumerableDataProperties = (value: UnknownRecord): boolean =>
     return descriptor !== undefined && descriptor.enumerable && Object.hasOwn(descriptor, 'value')
   })
 
-const isFiniteInRange = (value: unknown, minimum: number, maximum: number): value is number =>
-  typeof value === 'number' && Number.isFinite(value) && value >= minimum && value <= maximum
-
-const isIntegerInRange = (value: unknown, minimum: number, maximum: number): value is number =>
-  typeof value === 'number' && Number.isInteger(value) && value >= minimum && value <= maximum
-
-const isGraphicsPreset = (value: unknown): value is GraphicsPreset =>
-  GRAPHICS_QUALITIES.some((preset) => preset === value)
-
-const isReducedMotionSetting = (value: unknown): value is ReducedMotionSetting =>
-  REDUCED_MOTION_SETTINGS.some((setting) => setting === value)
-
-const isColorVisionCorrection = (value: unknown): value is ColorVisionCorrection =>
-  COLOR_VISION_CORRECTIONS.some((correction) => correction === value)
-
-const isExactSettingsRecord = (value: unknown): value is UnknownRecord =>
-  isRecord(value) &&
-  hasEnumerableDataProperties(value) &&
-  Reflect.ownKeys(value).every((key) => typeof key === 'string' && SETTINGS_FIELDS.some((field) => field === key))
-
 export const isGraphicsQuality = (value: unknown): value is GraphicsQuality =>
   GRAPHICS_QUALITIES.some((quality) => quality === value)
 
-const isValidKeyBindings = (value: unknown): value is Readonly<Record<string, string>> => {
-  if (!isRecord(value) || !hasEnumerableDataProperties(value)) return false
-  return Object.entries(value).every(
-    ([action, code]) => InputAction.is(action) && typeof code === 'string' && KeyCode.is(code),
-  )
+const RenderDistanceSchema: Schema.Codec<KernelSettings['renderDistance'], unknown> = Schema.Int.check(
+  Schema.isBetween({ minimum: MIN_RENDER_DISTANCE, maximum: MAX_RENDER_DISTANCE }),
+).pipe(Schema.brand('RenderDistanceChunks'))
+
+const FovSchema: Schema.Codec<KernelSettings['fovDegrees'], unknown> = Schema.Finite.check(
+  Schema.isBetween({ minimum: MIN_FOV_DEGREES, maximum: MAX_FOV_DEGREES }),
+).pipe(Schema.brand('FieldOfViewDegrees'))
+
+const VolumeSchema: Schema.Codec<KernelSettings['masterVolume'], unknown> = Schema.Finite.check(
+  Schema.isBetween({ minimum: MIN_VOLUME, maximum: MAX_VOLUME }),
+).pipe(Schema.brand('VolumeLevel'))
+
+const MouseSensitivitySchema: Schema.Codec<KernelSettings['mouseSensitivity'], unknown> = Schema.Finite.check(
+  Schema.isBetween({ minimum: MIN_MOUSE_SENSITIVITY, maximum: MAX_MOUSE_SENSITIVITY }),
+).pipe(Schema.brand('MouseSensitivity'))
+
+const GraphicsQualitySchema: Schema.Codec<GraphicsQuality, unknown> = Schema.Literals(GRAPHICS_QUALITIES)
+const DifficultySchema: Schema.Codec<Difficulty, unknown> = Schema.Literals(['peaceful', 'easy', 'normal', 'hard'])
+const GraphicsPresetSchema: Schema.Codec<GraphicsPreset, unknown> = Schema.Literals(GRAPHICS_PRESETS)
+const ReducedMotionSchema: Schema.Codec<ReducedMotionSetting, unknown> = Schema.Literals(REDUCED_MOTION_SETTINGS)
+const ColorVisionCorrectionSchema: Schema.Codec<ColorVisionCorrection, unknown> = Schema.Literals(
+  COLOR_VISION_CORRECTIONS,
+)
+
+const InputActionSchema = Schema.String.check(
+  Schema.makeFilter(InputAction.is),
+).pipe(Schema.brand('InputAction'))
+const KeyCodeSchema = Schema.String.check(Schema.makeFilter(KeyCode.is)).pipe(
+  Schema.brand('KeyCode'),
+)
+
+const KeyBindingsSchema: Schema.Codec<KernelSettings['keyBindings'], unknown> = Schema.Record(
+  InputActionSchema,
+  KeyCodeSchema,
+)
+
+const SettingsFields = {
+  renderDistance: RenderDistanceSchema,
+  fovDegrees: FovSchema,
+  graphicsQuality: GraphicsQualitySchema,
+  graphicsPreset: GraphicsPresetSchema,
+  audioEnabled: Schema.Boolean,
+  masterVolume: VolumeSchema,
+  musicVolume: VolumeSchema,
+  sfxVolume: VolumeSchema,
+  mouseSensitivity: MouseSensitivitySchema,
+  captionsEnabled: Schema.Boolean,
+  keyBindings: KeyBindingsSchema,
+  difficulty: DifficultySchema,
+  uiScale: Schema.Finite.check(Schema.isBetween({ minimum: MIN_UI_SCALE, maximum: MAX_UI_SCALE })),
+  reducedMotion: ReducedMotionSchema,
+  colorVisionCorrection: ColorVisionCorrectionSchema,
 }
+
+/** Complete settings values are decoded strictly at the input boundary. */
+export const SettingsSchema: Schema.Codec<Settings, unknown> = Schema.Union([
+  Schema.Struct({ ...SettingsFields, graphicsQuality: Schema.Literal('low'), graphicsPreset: Schema.Literal('low') }),
+  Schema.Struct({ ...SettingsFields, graphicsQuality: Schema.Literal('medium'), graphicsPreset: Schema.Literal('medium') }),
+  Schema.Struct({ ...SettingsFields, graphicsQuality: Schema.Literal('high'), graphicsPreset: Schema.Literal('high') }),
+  Schema.Struct({ ...SettingsFields, graphicsQuality: Schema.Literal('ultra'), graphicsPreset: Schema.Literal('ultra') }),
+])
+
+const SettingsInputSchema: Schema.Codec<Partial<Settings>, unknown> = Schema.Struct({
+  renderDistance: Schema.optionalKey(RenderDistanceSchema),
+  fovDegrees: Schema.optionalKey(FovSchema),
+  graphicsQuality: Schema.optionalKey(GraphicsQualitySchema),
+  graphicsPreset: Schema.optionalKey(GraphicsPresetSchema),
+  audioEnabled: Schema.optionalKey(Schema.Boolean),
+  masterVolume: Schema.optionalKey(VolumeSchema),
+  musicVolume: Schema.optionalKey(VolumeSchema),
+  sfxVolume: Schema.optionalKey(VolumeSchema),
+  mouseSensitivity: Schema.optionalKey(MouseSensitivitySchema),
+  captionsEnabled: Schema.optionalKey(Schema.Boolean),
+  keyBindings: Schema.optionalKey(KeyBindingsSchema),
+  difficulty: Schema.optionalKey(DifficultySchema),
+  uiScale: Schema.optionalKey(
+    Schema.Finite.check(Schema.isBetween({ minimum: MIN_UI_SCALE, maximum: MAX_UI_SCALE })),
+  ),
+  reducedMotion: Schema.optionalKey(ReducedMotionSchema),
+  colorVisionCorrection: Schema.optionalKey(ColorVisionCorrectionSchema),
+})
+
+const decodeCompleteSettings = Schema.decodeUnknownResult(SettingsSchema, { onExcessProperty: 'error' })
+const decodeSettingsInput = Schema.decodeUnknownResult(SettingsInputSchema, { onExcessProperty: 'error' })
 
 export const isValidSettings = (value: unknown): value is Settings => {
-  if (!isExactSettingsRecord(value) || Reflect.ownKeys(value).length !== SETTINGS_FIELDS.length) return false
-
-  return (
-    isIntegerInRange(value['renderDistance'], MIN_RENDER_DISTANCE, MAX_RENDER_DISTANCE) &&
-    isFiniteInRange(value['fovDegrees'], MIN_FOV_DEGREES, MAX_FOV_DEGREES) &&
-    isGraphicsQuality(value['graphicsQuality']) &&
-    isGraphicsPreset(value['graphicsPreset']) &&
-    value['graphicsPreset'] === value['graphicsQuality'] &&
-    typeof value['audioEnabled'] === 'boolean' &&
-    isFiniteInRange(value['masterVolume'], MIN_VOLUME, MAX_VOLUME) &&
-    isFiniteInRange(value['musicVolume'], MIN_VOLUME, MAX_VOLUME) &&
-    isFiniteInRange(value['sfxVolume'], MIN_VOLUME, MAX_VOLUME) &&
-    isFiniteInRange(value['mouseSensitivity'], MIN_MOUSE_SENSITIVITY, MAX_MOUSE_SENSITIVITY) &&
-    typeof value['captionsEnabled'] === 'boolean' &&
-    isValidKeyBindings(value['keyBindings']) &&
-    isDifficulty(value['difficulty']) &&
-    isFiniteInRange(value['uiScale'], MIN_UI_SCALE, MAX_UI_SCALE) &&
-    isReducedMotionSetting(value['reducedMotion']) &&
-    isColorVisionCorrection(value['colorVisionCorrection'])
-  )
+  if (!isRecord(value) || !hasEnumerableDataProperties(value)) return false
+  return Result.isSuccess(decodeCompleteSettings(value))
 }
 
-/** Strict schema for a complete, stored settings value. */
-export const SettingsSchema: Schema.Codec<Settings, unknown> = Schema.declare(isValidSettings)
+type MutableSettings = { -readonly [K in keyof Settings]: Settings[K] }
 
-const withDefaults = (candidate: UnknownRecord): UnknownRecord => {
-  const settings: Record<string, unknown> = { ...DEFAULT_SETTINGS, ...candidate }
+const withDefaults = (candidate: Partial<Settings>): MutableSettings => {
+  const settings: MutableSettings = { ...DEFAULT_SETTINGS, ...candidate }
   const hasPreset = Object.hasOwn(candidate, 'graphicsPreset')
   const hasQuality = Object.hasOwn(candidate, 'graphicsQuality')
 
-  if (hasPreset && !hasQuality) settings['graphicsQuality'] = candidate['graphicsPreset']
-  if (hasQuality && !hasPreset) settings['graphicsPreset'] = candidate['graphicsQuality']
+  if (hasPreset && !hasQuality && candidate.graphicsPreset !== undefined) {
+    settings.graphicsQuality = candidate.graphicsPreset
+  }
+  if (hasQuality && !hasPreset && candidate.graphicsQuality !== undefined) {
+    settings.graphicsPreset = candidate.graphicsQuality
+  }
 
   return settings
 }
@@ -169,8 +194,12 @@ const withDefaults = (candidate: UnknownRecord): UnknownRecord => {
  * defaults; every supplied field and unknown key must pass the strict schema.
  */
 export const decodeSettings = (candidate: unknown): Result.Result<Settings, SettingsValidationError> => {
-  const input = isExactSettingsRecord(candidate) ? withDefaults(candidate) : candidate
-  const decoded = Schema.decodeUnknownResult(SettingsSchema)(input)
+  if (!isRecord(candidate) || !hasEnumerableDataProperties(candidate)) return decodeCompleteSettings(candidate)
+
+  const decodedInput = decodeSettingsInput(candidate)
+  if (Result.isFailure(decodedInput)) return Result.fail(decodedInput.failure)
+
+  const decoded = decodeCompleteSettings(withDefaults(decodedInput.success))
   if (Result.isFailure(decoded)) return decoded
 
   const kernelSettings = normaliseKernelSettings(decoded.success)
@@ -195,13 +224,19 @@ export const applySettings = (
 ): Result.Result<Settings, SettingsValidationError> => {
   const base = decodeSettings(current)
   if (Result.isFailure(base)) return base
-  if (!isExactSettingsRecord(patch)) return decodeSettings(patch)
 
-  const candidate: Record<string, unknown> = { ...base.success, ...patch }
-  const hasPreset = Object.hasOwn(patch, 'graphicsPreset')
-  const hasQuality = Object.hasOwn(patch, 'graphicsQuality')
-  if (hasPreset && !hasQuality) candidate['graphicsQuality'] = patch.graphicsPreset
-  if (hasQuality && !hasPreset) candidate['graphicsPreset'] = patch.graphicsQuality
+  const decodedPatch = decodeSettingsInput(patch)
+  if (Result.isFailure(decodedPatch)) return Result.fail(decodedPatch.failure)
+
+  const candidate: MutableSettings = { ...base.success, ...decodedPatch.success }
+  const hasPreset = Object.hasOwn(decodedPatch.success, 'graphicsPreset')
+  const hasQuality = Object.hasOwn(decodedPatch.success, 'graphicsQuality')
+  if (hasPreset && !hasQuality && decodedPatch.success.graphicsPreset !== undefined) {
+    candidate.graphicsQuality = decodedPatch.success.graphicsPreset
+  }
+  if (hasQuality && !hasPreset && decodedPatch.success.graphicsQuality !== undefined) {
+    candidate.graphicsPreset = decodedPatch.success.graphicsQuality
+  }
   return decodeSettings(candidate)
 }
 
