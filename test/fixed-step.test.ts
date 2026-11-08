@@ -233,6 +233,14 @@ describe('fixed-step accumulator', () => {
           },
           expectedTag: 'InvalidFixedStepConfiguration',
         },
+        {
+          state: {
+            ...initial,
+            tickDuration: duration(1),
+            maxCatchUpTicks: Number.MAX_SAFE_INTEGER,
+          },
+          expectedTag: 'InvalidFixedStepConfiguration',
+        },
         { state: { ...initial, paused: 'paused' }, expectedTag: 'InvalidFixedStepConfiguration' },
       ]
 
