@@ -106,6 +106,10 @@ describe('AnvilService', () => {
       input: empty,
       output: hostilePayload,
     }))).toBe(true)
+    expect(Result.isFailure(Schema.decodeUnknownResult(AnvilServiceStateSchema)({
+      input: empty,
+      output: [],
+    }))).toBe(true)
   })
 
   it.effect('combines two tools with kernel enchantment cost and commits the result atomically', () =>
