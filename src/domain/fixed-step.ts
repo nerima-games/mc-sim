@@ -28,10 +28,13 @@ export const MAX_CATCH_UP_TICKS = 5
 
 const ELAPSED_TIME_UNITS_PER_SECOND = 60_000_000
 
+type FixedTimeUnits = number & Brand.Brand<'FixedTimeUnits'>
+const makeFixedTimeUnits = Brand.nominal<FixedTimeUnits>()
+
 export type FixedStepAccumulator = {
   readonly accumulator: FixedDurationSecsValue
   /** Exact integer form used for accumulation; optional for older constructed states. */
-  readonly accumulatorUnits?: number
+  readonly accumulatorUnits?: FixedTimeUnits
   readonly tick: SimulationTickValue
   readonly tickDuration: FixedDurationSecsValue
   readonly maxCatchUpTicks: number
@@ -60,9 +63,9 @@ const NonNegativeTickCountSchema = Schema.Int.check(
   Schema.makeFilter((value) => Number.isSafeInteger(value) && NonNegativeTickCount.is(value)),
 ).pipe(Schema.brand('NonNegativeTickCount'))
 
-const FixedTimeUnitsSchema = Schema.Int.check(
+const FixedTimeUnitsSchema: Schema.Codec<FixedTimeUnits, number> = Schema.Int.check(
   Schema.makeFilter((value) => Number.isSafeInteger(value) && value >= 0),
-)
+).pipe(Schema.brand('FixedTimeUnits'))
 
 const InterpolationFractionSchema = Schema.Finite.check(
   Schema.makeFilter((value) => InterpolationFraction.is(value)),
@@ -109,7 +112,7 @@ export const initialFixedStepAccumulator = (
   maxCatchUpTicks: number = MAX_CATCH_UP_TICKS,
 ): FixedStepAccumulator => ({
   accumulator: FixedDurationSecs(0),
-  accumulatorUnits: 0,
+  accumulatorUnits: makeFixedTimeUnits(0),
   tick,
   tickDuration: duration,
   maxCatchUpTicks,
@@ -121,7 +124,7 @@ export const pause = (state: FixedStepAccumulator): FixedStepAccumulator => ({ .
 export const resume = (state: FixedStepAccumulator): FixedStepAccumulator => ({
   ...state,
   accumulator: FixedDurationSecs(0),
-  accumulatorUnits: 0,
+  accumulatorUnits: makeFixedTimeUnits(0),
   paused: false,
 })
 
@@ -143,7 +146,9 @@ export const advance = (
     const rawAccumulatorUnits = state.accumulatorUnits === undefined
       ? Math.trunc(Number(accumulator) * ELAPSED_TIME_UNITS_PER_SECOND)
       : state.accumulatorUnits
-    const accumulatorUnits = Number(yield* NonNegativeTickCount.result(rawAccumulatorUnits))
+    const accumulatorUnits = makeFixedTimeUnits(
+      Number(yield* NonNegativeTickCount.result(rawAccumulatorUnits)),
+    )
     const fixedIntervalUnits = Math.round(Number(fixedIntervalSecs) * ELAPSED_TIME_UNITS_PER_SECOND)
     if (!Number.isSafeInteger(fixedIntervalUnits)) {
       return yield* Result.fail(invalidConfiguration('catchUpWindow'))
@@ -191,7 +196,7 @@ export const advance = (
     const nextState: FixedStepAccumulator = {
       ...normalizedState,
       accumulator: remainder,
-      accumulatorUnits: remainderUnits,
+      accumulatorUnits: makeFixedTimeUnits(remainderUnits),
       tick: nextTick,
     }
 
