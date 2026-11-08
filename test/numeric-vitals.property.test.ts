@@ -1,6 +1,7 @@
 import fc from 'fast-check'
 import { expect, it } from 'vitest'
 import { Effect, Result } from 'effect'
+import { DeltaTimeSecs } from '@nerima-games/mc-kernel'
 import * as VitalsService from '../src/application/vitals-service.js'
 import * as Vitals from '../src/domain/vitals.js'
 import { assertEffectOutcome, hostileValue, invoke, invokeEffect, isRecord } from './public-property-helpers.js'
@@ -13,6 +14,35 @@ const containsOnlyFiniteNumbers = (value: unknown): boolean => {
 }
 
 const checks = { numRuns: 100 }
+
+it('food timer selects regen cadence and spends generated saturation by the exhaustion rule', () => {
+  const hungerAndSaturation = fc.integer({ min: 18, max: 20 }).chain((hungerPoints) =>
+    fc.integer({ min: 0, max: hungerPoints }).map((saturation) => ({ hungerPoints, saturation })),
+  )
+
+  fc.assert(
+    fc.property(hungerAndSaturation, ({ hungerPoints, saturation }) => {
+      const before = {
+        ...Vitals.SPAWN_VITALS,
+        healthPoints: 10,
+        hungerPoints,
+        saturation,
+        exhaustion: 0,
+        foodTimerSecs: 0,
+      } as Vitals.Vitals
+      const fastRegeneration = hungerPoints === 20 && saturation > 0
+      const elapsedSeconds = fastRegeneration ? 0.5 : 4
+      const [signal, after] = Vitals.advanceFoodTimer(before, DeltaTimeSecs(elapsedSeconds))
+
+      expect(signal).toBe('regen')
+      expect(after.hungerPoints).toBe(saturation > 0 ? hungerPoints : hungerPoints - 1)
+      expect(after.saturation).toBe(saturation > 0 ? saturation - 1 : 0)
+      expect(after.exhaustion).toBe(2)
+      expect(after.foodTimerSecs).toBe(0)
+    }),
+    checks,
+  )
+})
 
 it('vitals normalizer and pure mutators preserve valid state for arbitrary numeric inputs', async () => {
   await fc.assert(

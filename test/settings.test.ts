@@ -533,6 +533,24 @@ describe('SettingsService', () => {
     }),
   )
 
+  it.effect('rebindKey and unbindKey preserve an invalid held snapshot on validation failure', () =>
+    Effect.gen(function* () {
+      const settings = yield* makeSettingsService()
+      const held = yield* settings.snapshot
+      expect(Reflect.set(held, 'uiScale', MAX_UI_SCALE + 0.01)).toBe(true)
+      const corrupted = { ...held }
+
+      const rebind = yield* Effect.result(settings.rebindKey('jump', 'Space'))
+      const unbind = yield* Effect.result(settings.unbindKey('jump'))
+
+      expect(Result.isFailure(rebind)).toBe(true)
+      expect(Result.isFailure(unbind)).toBe(true)
+      if (Result.isFailure(rebind)) expect(Schema.is(SchemaErrorSchema)(rebind.failure)).toBe(true)
+      if (Result.isFailure(unbind)) expect(Schema.is(SchemaErrorSchema)(unbind.failure)).toBe(true)
+      expect(yield* settings.snapshot).toEqual(corrupted)
+    }),
+  )
+
   it.effect('invalid branded rebind input fails and leaves settings unchanged', () =>
     Effect.gen(function* () {
       const settings = yield* makeSettingsService()
