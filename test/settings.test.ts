@@ -148,9 +148,30 @@ describe('existing defaults stay reconciled with mc-kernel', () => {
 describe('strict settings schema', () => {
   it.effect('decodes complete values and rejects missing or unknown fields', () =>
     Effect.sync(() => {
-      expect(Result.isSuccess(Schema.decodeUnknownResult(SettingsSchema)(DEFAULT_SETTINGS))).toBe(true)
-      expect(Result.isFailure(Schema.decodeUnknownResult(SettingsSchema)({ ...DEFAULT_SETTINGS, _tag: 'Settings' }))).toBe(true)
-      expect(Result.isFailure(decodeSettings({ ...DEFAULT_SETTINGS, extra: true }))).toBe(true)
+      const decode = Schema.decodeUnknownResult(SettingsSchema)
+      expect(Result.isSuccess(decode(DEFAULT_SETTINGS))).toBe(true)
+      expect(Result.isFailure(decode({ ...DEFAULT_SETTINGS, _tag: 'Settings' }))).toBe(true)
+      expect(Result.isFailure(decode({ ...DEFAULT_SETTINGS, extra: true }))).toBe(true)
+      const unknownTag = decodeSettings({ ...DEFAULT_SETTINGS, _tag: 'Settings' })
+      const extraField = decodeSettings({ ...DEFAULT_SETTINGS, extra: true })
+      const oldSavedField = decodeSettings({ ...DEFAULT_SETTINGS, oldGraphicsMode: 'cinematic' })
+      const mismatchedGraphicsAliases = decodeSettings({
+        ...DEFAULT_SETTINGS,
+        graphicsQuality: 'low',
+        graphicsPreset: 'medium',
+      })
+      expect(isValidSettings({ ...DEFAULT_SETTINGS, _tag: 'Settings' })).toBe(false)
+      expect(isValidSettings({ ...DEFAULT_SETTINGS, extra: true })).toBe(false)
+      expect(Result.isFailure(unknownTag)).toBe(true)
+      expect(Result.isFailure(extraField)).toBe(true)
+      expect(Result.isFailure(oldSavedField)).toBe(true)
+      expect(Result.isFailure(mismatchedGraphicsAliases)).toBe(true)
+      if (Result.isFailure(unknownTag)) expect(Schema.is(SchemaErrorSchema)(unknownTag.failure)).toBe(true)
+      if (Result.isFailure(extraField)) expect(Schema.is(SchemaErrorSchema)(extraField.failure)).toBe(true)
+      if (Result.isFailure(oldSavedField)) expect(Schema.is(SchemaErrorSchema)(oldSavedField.failure)).toBe(true)
+      if (Result.isFailure(mismatchedGraphicsAliases)) {
+        expect(Schema.is(SchemaErrorSchema)(mismatchedGraphicsAliases.failure)).toBe(true)
+      }
       expect(Result.isFailure(decodeSettings({ ...DEFAULT_SETTINGS, [Symbol('extra')]: true }))).toBe(true)
       expect(Result.isFailure(decodeSettings(new Date()))).toBe(true)
     }),
