@@ -80,8 +80,15 @@ const hasEnumerableDataProperties = (value: UnknownRecord): boolean =>
   })
 
 const hasNoEnumerableInheritedProperties = (value: UnknownRecord): boolean => {
-  const prototype = Object.getPrototypeOf(value)
-  return prototype === null || Object.keys(prototype).every((key) => Object.hasOwn(value, key))
+  let enumerableKeyCount = 0
+  let ownKeyCount = 0
+
+  for (const key in value) {
+    enumerableKeyCount += 1
+    ownKeyCount += Number(Object.hasOwn(value, key))
+  }
+
+  return enumerableKeyCount === ownKeyCount
 }
 
 export const isGraphicsQuality = (value: unknown): value is GraphicsQuality =>
