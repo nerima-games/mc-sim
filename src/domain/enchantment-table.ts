@@ -201,13 +201,11 @@ export const countEnchantmentTableBookshelves = (
 
       const gapX = x + dx / 2
       const gapZ = z + dz / 2
-      const lowerGap = powerAt(gapX, y, gapZ)
-      if (Result.isFailure(lowerGap)) return Result.fail(lowerGap.failure)
-      const upperGap = powerAt(gapX, y + 1, gapZ)
-      if (Result.isFailure(upperGap)) return Result.fail(upperGap.failure)
-      if (lowerGap.success._tag !== 'Air' || upperGap.success._tag !== 'Air') continue
-
       for (const shelfY of [y, y + 1]) {
+        const gap = powerAt(gapX, shelfY, gapZ)
+        if (Result.isFailure(gap)) return Result.fail(gap.failure)
+        if (gap.success._tag !== 'Air') continue
+
         const shelf = powerAt(x + dx, shelfY, z + dz)
         if (Result.isFailure(shelf)) return Result.fail(shelf.failure)
         if (shelf.success._tag === 'Block') bookshelfCount += shelf.success.bookshelfPower

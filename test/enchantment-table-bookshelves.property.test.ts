@@ -17,13 +17,14 @@ const keyOf = ({ x, y, z }: Readonly<{ x: number; y: number; z: number }>): stri
 const positionAt = (x: number, y: number, z: number) =>
   blockPosition(BlockAxis(x), BlockAxis(y), BlockAxis(z))
 
-const blockPowerAtFor = (shelves: readonly boolean[], openGaps: readonly boolean[]) => {
+const blockPowerAtFor = (shelves: readonly boolean[], openPassages: readonly boolean[]) => {
   const blocks = new Map<string, EnchantmentTableBlockPower>()
   ringOffsets.forEach(([dx, dz], index) => {
     const gapX = dx / 2
     const gapZ = dz / 2
     for (const gapY of [0, 1]) {
-      blocks.set(keyOf({ x: gapX, y: gapY, z: gapZ }), openGaps[index]
+      const passageIndex = index * 2 + gapY
+      blocks.set(keyOf({ x: gapX, y: gapY, z: gapZ }), openPassages[passageIndex]
         ? { _tag: 'Air' }
         : { _tag: 'Block', bookshelfPower: 0 })
     }
@@ -46,32 +47,32 @@ const unwrap = (value: ReturnType<typeof countEnchantmentTableBookshelves>): num
 
 describe('enchantment table bookshelf power', () => {
   it('clamps the 15 and 16 bookshelf boundaries', () => {
-    const openGaps = ringOffsets.map(() => true)
+    const openPassages = Array.from({ length: 16 }, () => true)
     const fifteenShelves = Array.from({ length: 16 }, (_, index) => index < 15)
     const sixteenShelves = Array.from({ length: 16 }, () => true)
 
     expect(unwrap(countEnchantmentTableBookshelves({
       tablePosition: positionAt(0, 0, 0),
-      blockPowerAt: blockPowerAtFor(fifteenShelves, openGaps),
+      blockPowerAt: blockPowerAtFor(fifteenShelves, openPassages),
     }))).toBe(15)
     expect(unwrap(countEnchantmentTableBookshelves({
       tablePosition: positionAt(0, 0, 0),
-      blockPowerAt: blockPowerAtFor(sixteenShelves, openGaps),
+      blockPowerAt: blockPowerAtFor(sixteenShelves, openPassages),
     }))).toBe(15)
   })
 
   it('counts generated layouts using an independent ring calculation', () => {
     const layout = fc.record({
       shelves: fc.array(fc.boolean(), { minLength: 16, maxLength: 16 }),
-      openGaps: fc.array(fc.boolean(), { minLength: 8, maxLength: 8 }),
+      openPassages: fc.array(fc.boolean(), { minLength: 16, maxLength: 16 }),
     })
 
-    fc.assert(fc.property(layout, ({ shelves, openGaps }) => {
+    fc.assert(fc.property(layout, ({ shelves, openPassages }) => {
       const expected = Math.min(15, shelves.reduce((count, hasShelf, index) =>
-        count + Number(hasShelf) * Number(openGaps[Math.floor(index / 2)]), 0))
+        count + Number(hasShelf && openPassages[index]), 0))
       const actual = countEnchantmentTableBookshelves({
         tablePosition: positionAt(0, 0, 0),
-        blockPowerAt: blockPowerAtFor(shelves, openGaps),
+        blockPowerAt: blockPowerAtFor(shelves, openPassages),
       })
 
       expect(Result.isSuccess(actual)).toBe(true)
@@ -79,14 +80,38 @@ describe('enchantment table bookshelf power', () => {
     }))
   })
 
-  it('does not count shelves whose one-block air gap is obstructed', () => {
+  it('counts the lower bookshelf when only the upper passage is blocked', () => {
     const shelves = Array.from({ length: 16 }, () => false)
     shelves[0] = true
-    const openGaps = ringOffsets.map((_, index) => index !== 0)
+    const openPassages = Array.from({ length: 16 }, () => true)
+    openPassages[1] = false
 
     expect(unwrap(countEnchantmentTableBookshelves({
       tablePosition: positionAt(0, 0, 0),
-      blockPowerAt: blockPowerAtFor(shelves, openGaps),
+      blockPowerAt: blockPowerAtFor(shelves, openPassages),
+    }))).toBe(1)
+  })
+
+  it('counts the upper bookshelf when only the lower passage is blocked', () => {
+    const shelves = Array.from({ length: 16 }, () => false)
+    shelves[1] = true
+    const openPassages = Array.from({ length: 16 }, () => true)
+    openPassages[0] = false
+
+    expect(unwrap(countEnchantmentTableBookshelves({
+      tablePosition: positionAt(0, 0, 0),
+      blockPowerAt: blockPowerAtFor(shelves, openPassages),
+    }))).toBe(1)
+  })
+
+  it('does not count shelves whose one-block air gap is obstructed', () => {
+    const shelves = Array.from({ length: 16 }, () => false)
+    shelves[0] = true
+    const openPassages = Array.from({ length: 16 }, (_, index) => index !== 0)
+
+    expect(unwrap(countEnchantmentTableBookshelves({
+      tablePosition: positionAt(0, 0, 0),
+      blockPowerAt: blockPowerAtFor(shelves, openPassages),
     }))).toBe(0)
   })
 
@@ -120,22 +145,22 @@ describe('enchantment table bookshelf power', () => {
     let blockPowerCalls = 0
     const invalidUpperGap = countEnchantmentTableBookshelves({
       tablePosition: positionAt(0, 0, 0),
-      blockPowerAt: () => ++blockPowerCalls === 2 ? null as never : { _tag: 'Air' },
+      blockPowerAt: () => ++blockPowerCalls === 3 ? null as never : { _tag: 'Air' },
     })
     expect(Result.isFailure(invalidUpperGap)).toBe(true)
 
     blockPowerCalls = 0
     const invalidShelfPosition = countEnchantmentTableBookshelves({
       tablePosition: positionAt(0, 0, 0),
-      blockPowerAt: () => ++blockPowerCalls === 3 ? null as never : { _tag: 'Air' },
+      blockPowerAt: () => ++blockPowerCalls === 2 ? null as never : { _tag: 'Air' },
     })
     expect(Result.isFailure(invalidShelfPosition)).toBe(true)
   })
 
   it('ignores air where a bookshelf block could be placed', () => {
     const noShelves = Array.from({ length: 16 }, () => false)
-    const openGaps = ringOffsets.map(() => true)
-    const blockPowerAt = blockPowerAtFor(noShelves, openGaps)
+    const openPassages = Array.from({ length: 16 }, () => true)
+    const blockPowerAt = blockPowerAtFor(noShelves, openPassages)
 
     expect(unwrap(countEnchantmentTableBookshelves({
       tablePosition: positionAt(0, 0, 0),
