@@ -79,6 +79,11 @@ const hasEnumerableDataProperties = (value: UnknownRecord): boolean =>
     return descriptor !== undefined && descriptor.enumerable && Object.hasOwn(descriptor, 'value')
   })
 
+const hasNoEnumerableInheritedProperties = (value: UnknownRecord): boolean => {
+  const prototype = Object.getPrototypeOf(value)
+  return prototype === null || Object.keys(prototype).every((key) => Object.hasOwn(value, key))
+}
+
 export const isGraphicsQuality = (value: unknown): value is GraphicsQuality =>
   GRAPHICS_QUALITIES.some((quality) => quality === value)
 
@@ -136,13 +141,26 @@ const SettingsFields = {
   colorVisionCorrection: ColorVisionCorrectionSchema,
 }
 
-/** Complete settings values are decoded strictly at the input boundary. */
-export const SettingsSchema: Schema.Codec<Settings, unknown> = Schema.Union([
+const CompleteSettingsSchema: Schema.Codec<Settings, unknown> = Schema.Union([
   Schema.Struct({ ...SettingsFields, graphicsQuality: Schema.Literal('low'), graphicsPreset: Schema.Literal('low') }),
   Schema.Struct({ ...SettingsFields, graphicsQuality: Schema.Literal('medium'), graphicsPreset: Schema.Literal('medium') }),
   Schema.Struct({ ...SettingsFields, graphicsQuality: Schema.Literal('high'), graphicsPreset: Schema.Literal('high') }),
   Schema.Struct({ ...SettingsFields, graphicsQuality: Schema.Literal('ultra'), graphicsPreset: Schema.Literal('ultra') }),
 ])
+
+const isKnownSettingsRecord = (value: unknown): value is UnknownRecord =>
+  isRecord(value) &&
+  hasEnumerableDataProperties(value) &&
+  hasNoEnumerableInheritedProperties(value) &&
+  Object.keys(SettingsFields).every((key) => Object.hasOwn(value, key)) &&
+  Reflect.ownKeys(value).every((key) => typeof key === 'string' && Object.hasOwn(SettingsFields, key))
+
+const KnownSettingsRecordSchema = Schema.Unknown.check(Schema.makeFilter(isKnownSettingsRecord))
+
+/** Complete settings values reject unknown properties even with default decode options. */
+export const SettingsSchema: Schema.Codec<Settings, unknown> = Schema.decodeTo(CompleteSettingsSchema)(
+  KnownSettingsRecordSchema,
+)
 
 const SettingsInputSchema: Schema.Codec<Partial<Settings>, unknown> = Schema.Struct({
   renderDistance: Schema.optionalKey(RenderDistanceSchema),

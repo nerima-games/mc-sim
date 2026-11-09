@@ -148,9 +148,10 @@ describe('existing defaults stay reconciled with mc-kernel', () => {
 describe('strict settings schema', () => {
   it.effect('decodes complete values and rejects missing or unknown fields', () =>
     Effect.sync(() => {
-      const decode = Schema.decodeUnknownResult(SettingsSchema, { onExcessProperty: 'error' })
+      const decode = Schema.decodeUnknownResult(SettingsSchema)
       expect(Result.isSuccess(decode(DEFAULT_SETTINGS))).toBe(true)
       expect(Result.isFailure(decode({ ...DEFAULT_SETTINGS, _tag: 'Settings' }))).toBe(true)
+      expect(Result.isFailure(decode({ ...DEFAULT_SETTINGS, extra: true }))).toBe(true)
       const unknownTag = decodeSettings({ ...DEFAULT_SETTINGS, _tag: 'Settings' })
       const extraField = decodeSettings({ ...DEFAULT_SETTINGS, extra: true })
       const oldSavedField = decodeSettings({ ...DEFAULT_SETTINGS, oldGraphicsMode: 'cinematic' })
