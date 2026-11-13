@@ -817,6 +817,63 @@ describe('furnace boundary validation', () => {
     }),
   )
 
+  it('defaults omitted station and timer fields', () => {
+    expect(requireSuccess(furnaceState())).toMatchObject({
+      station: 'furnace',
+      fuelTimeRemainingSecs: 0,
+      fuelTimeTotalSecs: 0,
+      cookProgressSecs: 0,
+    })
+  })
+
+  it('rejects explicit null or undefined station', () => {
+    for (const station of [null, undefined]) {
+      expect(furnaceState({ station })).toMatchObject({
+        _tag: 'Failure',
+        failure: { _tag: 'FurnaceStateValidationFailure', path: 'station', reason: 'expected a cooking station' },
+      })
+    }
+  })
+
+  it('rejects explicit null or undefined fuel remaining time', () => {
+    for (const fuelTimeRemainingSecs of [null, undefined]) {
+      expect(furnaceState({ fuelTimeRemainingSecs })).toMatchObject({
+        _tag: 'Failure',
+        failure: {
+          _tag: 'FurnaceStateValidationFailure',
+          path: 'fuelTimeRemainingSecs',
+          reason: 'must be a finite non-negative number',
+        },
+      })
+    }
+  })
+
+  it('rejects explicit null or undefined total fuel time', () => {
+    for (const fuelTimeTotalSecs of [null, undefined]) {
+      expect(furnaceState({ fuelTimeTotalSecs })).toMatchObject({
+        _tag: 'Failure',
+        failure: {
+          _tag: 'FurnaceStateValidationFailure',
+          path: 'fuelTimeTotalSecs',
+          reason: 'must be a finite non-negative number',
+        },
+      })
+    }
+  })
+
+  it('rejects explicit null or undefined cook progress', () => {
+    for (const cookProgressSecs of [null, undefined]) {
+      expect(furnaceState({ cookProgressSecs })).toMatchObject({
+        _tag: 'Failure',
+        failure: {
+          _tag: 'FurnaceStateValidationFailure',
+          path: 'cookProgressSecs',
+          reason: 'must be a finite non-negative number',
+        },
+      })
+    }
+  })
+
   it.effect('invalid timers return failures and completed progress is rejected safely', () =>
     Effect.sync(() => {
       expect(Result.isFailure(furnaceState({ cookProgressSecs: Number.NaN }))).toBe(true)

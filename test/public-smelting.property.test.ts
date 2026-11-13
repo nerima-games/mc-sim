@@ -83,6 +83,20 @@ it('furnace construction, matching, transfer selection, and collection handle ho
   })
 })
 
+it('furnaceState rejects generated nulls for fields with omitted-value defaults', () => {
+  fc.assert(
+    fc.property(
+      fc.constantFrom('station', 'fuelTimeRemainingSecs', 'fuelTimeTotalSecs', 'cookProgressSecs'),
+      (field) => {
+        const result = Sim.furnaceState({ [field]: null })
+        assertResultContract('furnaceState.null-default', () => result, Sim.FurnaceStateSchema, Sim.FurnaceFailureSchema)
+        expect(Result.isFailure(result)).toBe(true)
+      },
+    ),
+    checks,
+  )
+})
+
 it('smelting recipe schemas validate canonical and malformed recipes', () => {
   expect(Schema.is(Sim.SmeltingRecipeInputSchema)(recipe)).toBe(true)
   expect(Schema.is(Sim.SmeltingRecipeInputSchema)({ ...recipe, cookDurationSecs: Number.NaN })).toBe(false)

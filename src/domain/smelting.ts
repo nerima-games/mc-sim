@@ -208,14 +208,16 @@ export const furnaceState = (
   input: unknown = {},
 ): Result.Result<FurnaceState, FurnaceStateFailure> => {
   if (!isRecord(input)) return Result.fail(validationFailure('state', 'expected an object'))
-  const station = input['station'] ?? 'furnace'
+  const valueOrDefault = (key: string, fallback: unknown): unknown =>
+    Object.hasOwn(input, key) ? input[key] : fallback
+  const station = valueOrDefault('station', 'furnace')
   if (!isCookingStation(station)) return Result.fail(validationFailure('station', 'expected a cooking station'))
   const furnaceInput = validateSlot(input['input'], 'input')
   const fuel = validateSlot(input['fuel'], 'fuel')
   const output = validateSlot(input['output'], 'output')
-  const fuelTimeRemaining = fixedDuration(input['fuelTimeRemainingSecs'] ?? 0, 'fuelTimeRemainingSecs')
-  const fuelTimeTotal = fixedDuration(input['fuelTimeTotalSecs'] ?? 0, 'fuelTimeTotalSecs')
-  const cookProgress = fixedDuration(input['cookProgressSecs'] ?? 0, 'cookProgressSecs')
+  const fuelTimeRemaining = fixedDuration(valueOrDefault('fuelTimeRemainingSecs', 0), 'fuelTimeRemainingSecs')
+  const fuelTimeTotal = fixedDuration(valueOrDefault('fuelTimeTotalSecs', 0), 'fuelTimeTotalSecs')
+  const cookProgress = fixedDuration(valueOrDefault('cookProgressSecs', 0), 'cookProgressSecs')
   return Result.flatMap(Result.all([furnaceInput, fuel, output]), ([validInput, validFuel, validOutput]) =>
     Result.flatMap(Result.all([fuelTimeRemaining, fuelTimeTotal, cookProgress]), ([remaining, total, progress]) => {
       if (remaining > total) {
