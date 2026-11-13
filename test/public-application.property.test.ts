@@ -25,7 +25,7 @@ import {
   position,
 } from '@nerima-games/mc-kernel'
 import * as Physics from '@nerima-games/mc-physics'
-import type { Chunk } from '@nerima-games/mc-worldgen'
+import type { ChunkWithBlockStates } from '@nerima-games/mc-worldgen'
 import * as PublicApplication from '../src/index.js'
 import * as Camera from '../src/domain/camera-pose.js'
 import { EntityKind } from '../src/domain/entity.js'
@@ -546,9 +546,10 @@ it('entity manager spawn and restore repair hostile coordinates, health, serials
 })
 
 const saveCoordinatorChunk = (cx: number, cz: number): DimensionChunk => {
-  const chunk: Chunk = {
+  const chunk: ChunkWithBlockStates = {
     coord: chunkCoord(Result.getOrThrow(ChunkAxis.result(cx)), Result.getOrThrow(ChunkAxis.result(cz))),
     blocks: new Uint16Array(1),
+    blockStates: new Uint32Array(1),
     biomes: [],
   }
   return { dimension: 'overworld', chunk }

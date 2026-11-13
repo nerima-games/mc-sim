@@ -21,7 +21,7 @@
  * Effect-based and none of them uses `Promise` (see `application/autosave.ts`
  * for the sibling scheduling module this pairs with).
  */
-import { chunkSnapshotOf, type Chunk } from '@nerima-games/mc-worldgen'
+import { chunkSnapshotOf, type ChunkWithBlockStates } from '@nerima-games/mc-worldgen'
 import type { Dimension } from '@nerima-games/mc-kernel'
 import { Brand, Data, Deferred, Effect, Ref, Schema, SchemaIssue } from 'effect'
 import type { YieldableError } from 'effect/Cause'
@@ -29,7 +29,7 @@ import type { YieldableError } from 'effect/Cause'
 /** One chunk plus the dimension it belongs to — the unit `retainChunk` and the save manifest exchange. */
 export type DimensionChunk = {
   readonly dimension: Dimension
-  readonly chunk: Chunk
+  readonly chunk: ChunkWithBlockStates
 }
 
 export type SaveCoordinatorPublication<State> = {

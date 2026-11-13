@@ -20,7 +20,7 @@
  *      and the merged chunk count stays correct under contention.
  */
 import { ChunkAxis, chunkCoord, type Dimension } from '@nerima-games/mc-kernel'
-import type { Chunk } from '@nerima-games/mc-worldgen'
+import type { ChunkWithBlockStates } from '@nerima-games/mc-worldgen'
 import { describe, expect, it } from '@effect/vitest'
 import { Deferred, Effect, Result, Fiber, Ref } from 'effect'
 import {
@@ -31,9 +31,10 @@ import {
   type SaveCoordinatorPublication,
 } from '../src/application/save-coordinator'
 
-const fakeChunk = (cx: number, cz: number): Chunk => ({
+const fakeChunk = (cx: number, cz: number): ChunkWithBlockStates => ({
   coord: chunkCoord(Result.getOrThrow(ChunkAxis.result(cx)), Result.getOrThrow(ChunkAxis.result(cz))),
   blocks: new Uint16Array(1),
+  blockStates: new Uint32Array(1),
   biomes: [],
 })
 
