@@ -1,5 +1,6 @@
 import {
   BlockIdSchema,
+  BlockStateValuesSchema,
   DIMENSIONS,
   WorldIdSchema,
   WorldPositionSchema,
@@ -7,6 +8,7 @@ import {
 } from '@nerima-games/mc-kernel'
 import { Brand, Schema } from 'effect'
 import type { BlockId, BlockPosition, Dimension, WorldId, WorldRevision } from '@nerima-games/mc-kernel'
+import type { BlockStateValues } from '@nerima-games/mc-kernel/domain/block-state'
 
 export type ReplicatedOwnerId = string & Brand.Brand<'ReplicatedOwnerId'>
 type AnyCodec = Schema.Codec<any, any>
@@ -81,6 +83,7 @@ export type ReplicatedBlockChange = Readonly<{
   position: BlockPosition
   before: BlockId
   after: BlockId
+  state?: BlockStateValues
 }>
 
 export const ReplicatedBlockChangeSchema: Schema.Codec<ReplicatedBlockChange, Readonly<{
@@ -88,11 +91,13 @@ export const ReplicatedBlockChangeSchema: Schema.Codec<ReplicatedBlockChange, Re
   position: Schema.Codec.Encoded<typeof WorldBlockPositionSchema>
   before: Schema.Codec.Encoded<typeof BlockIdSchema>
   after: Schema.Codec.Encoded<typeof BlockIdSchema>
+  state?: Schema.Codec.Encoded<typeof BlockStateValuesSchema>
 }>> = Schema.Struct({
   dimension: Schema.Literals(DIMENSIONS),
   position: WorldBlockPositionSchema,
   before: BlockIdSchema,
   after: BlockIdSchema,
+  state: Schema.optionalKey(BlockStateValuesSchema),
 })
 
 export type ReplicatedWorldDelta<Change> = Readonly<{

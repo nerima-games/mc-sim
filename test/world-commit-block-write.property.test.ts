@@ -1,9 +1,28 @@
 import { expect, it } from 'vitest'
-import { Effect, Result, Schema } from 'effect'
+import { Effect, Option, Result, Schema } from 'effect'
 import fc from 'fast-check'
-import { BlockIdSchema, BlockPositionSchema, ChunkAxis, DimensionIdSchema, WorldIdSchema } from '@nerima-games/mc-kernel'
+import {
+  BlockIdSchema,
+  BlockPositionSchema,
+  BlockStateValuesSchema,
+  ChunkAxis,
+  DimensionIdSchema,
+  DimensionRevisionSchema,
+  WorldIdSchema,
+  WorldRevisionSchema,
+} from '@nerima-games/mc-kernel'
 import type { BlockPosition, Dimension, WorldWriteBatch } from '@nerima-games/mc-kernel'
-import type { ChunkCoord } from '@nerima-games/mc-worldgen'
+import { BlockEditSchema } from '@nerima-games/mc-kernel/domain/world-write-port'
+import { blockIdOf } from '@nerima-games/mc-kernel/domain/block-registry'
+import {
+  BLOCK_STATE_TYPES,
+  blockStateDefinitionOf,
+  defaultBlockState,
+  decodeBlockState,
+  encodeBlockState,
+} from '@nerima-games/mc-kernel/domain/block-state'
+import type { BlockStateValues } from '@nerima-games/mc-kernel/domain/block-state'
+import type { ChunkCoord, ChunkStoreRegistryApi } from '@nerima-games/mc-worldgen'
 import {
   CHUNK_SIZE_XZ,
   ChunkCapacity,
@@ -32,6 +51,41 @@ const ownerStateSchema = Schema.Struct({ value: Schema.Number })
 const initialOwnerState = { value: 0 }
 const chunk = chunkCoord(ChunkAxis(0), ChunkAxis(0))
 const batchDimension = Schema.decodeUnknownSync(DimensionIdSchema)(dimension)
+const airBlock = Schema.decodeUnknownSync(BlockIdSchema)(0)
+
+const slotValueArbitrary = (values: ReadonlyArray<unknown>) => {
+  if (values.length === 0) throw new Error('kernel block-state slot has no values')
+  return fc.integer({ min: 0, max: values.length - 1 }).map((index) => {
+    const value = values[index]
+    if (value === undefined) throw new Error('kernel block-state slot value is missing')
+    return value
+  })
+}
+
+const statefulBlockCases = BLOCK_STATE_TYPES.map((blockType) => {
+  const blockId = Option.getOrThrowWith(blockIdOf(blockType), () => new Error(`kernel block ID missing for ${blockType}`))
+  const definition = Result.getOrThrow(blockStateDefinitionOf(blockId))
+  const stateArbitrary = fc.tuple(...definition.slots.map((slot) => slotValueArbitrary(slot.values))).map((slotValues) => {
+    const state: Record<string, unknown> = {}
+    const connections: Record<string, unknown> = {}
+    for (const [index, slot] of definition.slots.entries()) {
+      const value = slotValues[index]
+      if (value === undefined) throw new Error(`kernel block-state value missing for ${blockType}`)
+      if (slot.property === 'connections') connections[slot.direction] = value
+      else state[slot.property] = value
+    }
+    if (Object.keys(connections).length > 0) state['connections'] = connections
+    return Schema.decodeUnknownSync(BlockStateValuesSchema)(state)
+  })
+  return { blockId, stateArbitrary }
+})
+
+const statefulBlockStatesArbitrary = statefulBlockCases.reduce<fc.Arbitrary<Array<BlockStateValues>>>(
+  (states, { stateArbitrary }) => states.chain((previous) =>
+    stateArbitrary.map((state) => [...previous, state]),
+  ),
+  fc.constant<Array<BlockStateValues>>([]),
+)
 
 const sourceForDimension = (_dimension: Dimension) =>
   (coord: ChunkCoord) =>
@@ -141,6 +195,7 @@ type BlockChange = Readonly<{
   position: BlockPosition
   before: number
   after: number
+  state?: BlockStateValues
 }>
 
 const kindSequenceArbitrary: fc.Arbitrary<ReadonlyArray<CommitKind>> = fc
@@ -231,10 +286,17 @@ const runModelSequence = (steps: ReadonlyArray<Step>) =>
               position: positionForCell(cell),
               block: Schema.decodeUnknownSync(BlockIdSchema)(after),
             }
+            const state = Result.getOrThrow(defaultBlockState(edit.block))
             return {
               cell,
               edit,
-              change: { dimension, position: edit.position, before, after },
+              change: {
+                dimension,
+                position: edit.position,
+                before,
+                after,
+                ...(Object.keys(state).length === 0 ? {} : { state }),
+              },
             }
           })
         : []
@@ -317,5 +379,100 @@ it('matches an independent model across randomized owner-only, block-only, and m
       await Effect.runPromise(runModelSequence(steps))
     }),
     { numRuns: 35 },
+  )
+})
+
+it('forwards generated states for every kernel stateful block through prepare and replicated deltas', async () => {
+  expect(statefulBlockCases.length).toBeGreaterThan(0)
+  expect(new Set(statefulBlockCases.map(({ blockId }) => blockId)).size).toBe(BLOCK_STATE_TYPES.length)
+  expect(statefulBlockCases.length).toBeLessThanOrEqual(CHUNK_SIZE_XZ * CHUNK_SIZE_XZ)
+  await fc.assert(
+    fc.asyncProperty(statefulBlockStatesArbitrary, async (states) => {
+      const edits = statefulBlockCases.map(({ blockId }, index) => {
+        const state = states[index]
+        if (state === undefined) throw new Error(`generated block state missing for stateful type index ${index}`)
+        const decodedState = Schema.decodeUnknownSync(BlockStateValuesSchema)(state)
+        const encodedState = Result.getOrThrow(encodeBlockState(blockId, decodedState))
+        expect(Result.getOrThrow(decodeBlockState(blockId, encodedState))).toEqual(decodedState)
+        const position = Schema.decodeUnknownSync(BlockPositionSchema)({
+          x: index % CHUNK_SIZE_XZ,
+          y: 0,
+          z: Math.floor(index / CHUNK_SIZE_XZ),
+        })
+        const edit = Schema.decodeUnknownSync(BlockEditSchema)({ position, block: blockId, state: decodedState })
+        return { blockId, position, state: decodedState, edit }
+      })
+      expect(edits).toHaveLength(statefulBlockCases.length)
+      const preparedInputs: Array<unknown> = []
+      await Effect.runPromise(Effect.gen(function* () {
+        const registry = yield* ChunkStoreRegistry
+        const store = registry.forDimension(dimension)
+        yield* store.load(chunk)
+        const observingRegistry: ChunkStoreRegistryApi = {
+          forDimension: (targetDimension) => {
+            const targetStore = registry.forDimension(targetDimension)
+            return {
+              ...targetStore,
+              prepare: (preparedEdits) => {
+                preparedInputs.push(preparedEdits)
+                return targetStore.prepare(preparedEdits)
+              },
+            }
+          },
+        }
+        const coordinator = yield* makeWorldCommitCoordinator({
+          world,
+          owners: [],
+          dimensions: [dimension],
+          chunkStores: observingRegistry,
+        })
+        const blockWrite: WorldWriteBatch = {
+          world,
+          expectedWorldRevision: Schema.decodeUnknownSync(WorldRevisionSchema)(0),
+          dimension: batchDimension,
+          expectedDimensionRevision: Schema.decodeUnknownSync(DimensionRevisionSchema)(0),
+          edits: edits.map(({ edit }) => edit),
+        }
+
+        const delta = yield* coordinator.commit({
+          expectedRevision: Schema.decodeUnknownSync(WorldRevisionSchema)(0),
+          expectedDimensions: [{
+            dimension,
+            expectedRevision: Schema.decodeUnknownSync(DimensionRevisionSchema)(0),
+          }],
+          changes: [],
+          blockWrite,
+        })
+
+        expect(delta.revision).toBe(1)
+        const expectedChanges = edits.map(({ blockId, position, state }) => ({
+          dimension,
+          position,
+          before: airBlock,
+          after: blockId,
+          state,
+        }))
+        expect(delta.blockChanges).toHaveLength(expectedChanges.length)
+        expect(sortedBlockChanges(delta.blockChanges)).toEqual(sortedBlockChanges(expectedChanges))
+        expect(preparedInputs).toHaveLength(1)
+        const preparedEdits = Schema.decodeUnknownSync(Schema.Array(Schema.Struct({
+          position: WorldBlockPositionSchema,
+          block: BlockIdSchema,
+          state: Schema.optionalKey(BlockStateValuesSchema),
+        })))(preparedInputs[0])
+        expect(preparedEdits).toHaveLength(edits.length)
+        expect(preparedEdits).toEqual(edits.map(({ blockId, position, state }) => ({
+          position,
+          block: blockId,
+          state,
+        })))
+
+        for (const { blockId, position, state } of edits) {
+          const readback = yield* store.getBlockWithState(position)
+          expect(readback).toMatchObject({ _tag: 'Block', block: blockId, state })
+        }
+      }).pipe(Effect.provide(chunkStoreLayer)))
+    }),
+    { numRuns: 3 },
   )
 })

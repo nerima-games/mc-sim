@@ -1,5 +1,6 @@
 import {
   BlockIdSchema,
+  BlockStateValuesSchema,
   DIMENSIONS,
   DimensionRevisionSchema,
   WorldIdSchema,
@@ -421,6 +422,7 @@ const WorldBlockReadRequestSchema = Schema.Struct({
 const WorldWriteEditsSchema = Schema.Array(Schema.Struct({
   position: WorldBlockPositionSchema,
   block: BlockIdSchema,
+  state: Schema.optionalKey(BlockStateValuesSchema),
 }))
 
 const isChunkStoreRegistryApi = (value: unknown): value is ChunkStoreRegistryApi =>
@@ -726,11 +728,12 @@ export const makeWorldCommitCoordinator = (
         for (const change of preparedChanges) nextOwners.set(change.owner, change.state)
         const blockChanges = preparedBlockWrite === undefined
           ? []
-          : preparedBlockWrite.token.changes.map(({ position, previous, next }) => ({
+          : preparedBlockWrite.token.changes.map(({ position, previous, next, state }) => ({
               dimension: preparedBlockWrite.dimension,
               position,
               before: previous,
               after: next,
+              ...(state === undefined ? {} : { state }),
             }))
         const delta: ReplicatedWorldDelta<PreparedOwnerChange> = {
           world: current.world,
