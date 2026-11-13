@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@effect/vitest'
 import fc from 'fast-check'
-import { BlockAxis, BlockId, blockPosition, WorldIdSchema } from '@nerima-games/mc-kernel'
+import { BlockAxis, BlockId, BlockIdSchema, blockPosition, WorldIdSchema } from '@nerima-games/mc-kernel'
 import { Effect, Layer, Result, Schema } from 'effect'
 import {
   EnchantmentTableGenerateOffersResultSchema,
@@ -108,7 +108,7 @@ describe('EnchantmentTableService generated offers', () => {
       const outcome = yield* Effect.result(service.generateOffers({
         item: 'book',
         tablePosition,
-        blockIdAt: () => BlockId(126),
+        blockIdAt: () => Schema.decodeUnknownSync(BlockIdSchema)(65_535),
         random: { nextInt: () => 0, nextFloat: () => 0.5 },
       }))
 
