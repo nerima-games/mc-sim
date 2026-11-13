@@ -9,7 +9,6 @@ import {
   WorldIdSchema,
   WorldRevisionSchema,
   WorldWriteChunkUnavailable,
-  WorldWriteInvalidBatch,
   chunkKeyOfPosition,
 } from '@nerima-games/mc-kernel'
 import type { BlockId, ChunkCoord, Dimension, WorldWriteBatch } from '@nerima-games/mc-kernel'
@@ -649,8 +648,12 @@ describe('WorldCommitCoordinator', () => {
 
       expect(outcomes.map(({ _tag }) => _tag)).toStrictEqual(['Failure', 'Failure', 'Failure', 'Failure'])
       const [emptyOutcome, duplicateOutcome, outOfWorldOutcome, unavailableOutcome] = outcomes
-      if (emptyOutcome?._tag === 'Failure') expect(emptyOutcome.failure).toBeInstanceOf(WorldWriteInvalidBatch)
-      if (duplicateOutcome?._tag === 'Failure') expect(duplicateOutcome.failure).toBeInstanceOf(WorldWriteInvalidBatch)
+      if (emptyOutcome?._tag === 'Failure') {
+        expect(emptyOutcome.failure).toMatchObject({ _tag: 'WorldWriteInvalidBatch', reason: 'empty' })
+      }
+      if (duplicateOutcome?._tag === 'Failure') {
+        expect(duplicateOutcome.failure).toMatchObject({ _tag: 'WorldWriteInvalidBatch', reason: 'duplicate-position' })
+      }
       if (outOfWorldOutcome?._tag === 'Failure') expect(outOfWorldOutcome.failure).toBeInstanceOf(WorldCommitBlockWriteInvalidPosition)
       if (unavailableOutcome?._tag === 'Failure') expect(unavailableOutcome.failure).toBeInstanceOf(WorldWriteChunkUnavailable)
       expect(yield* coordinator.revision).toBe(0)

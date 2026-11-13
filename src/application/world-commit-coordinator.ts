@@ -4,10 +4,10 @@ import {
   DimensionRevisionSchema,
   WorldIdSchema,
   WorldRevisionSchema,
-  blockPositionKeyOf,
   WorldWriteBatchSchema,
   WorldWriteChunkUnavailable,
   WorldWriteInvalidBatch,
+  validateWorldWriteBatch,
   chunkKeyOfPosition,
   isChunkKey,
 } from '@nerima-games/mc-kernel'
@@ -409,31 +409,21 @@ const isChunkStoreRegistryApi = (value: unknown): value is ChunkStoreRegistryApi
   typeof value === 'object' && value !== null &&
   'forDimension' in value && typeof value.forDimension === 'function'
 
-const repeatedBlockPosition = (edits: WorldWriteBatch['edits']): BlockPosition | undefined => {
-  const seen = new Set<string>()
-  for (const { position } of edits) {
-    const key = blockPositionKeyOf(position)
-    if (seen.has(key)) return position
-    seen.add(key)
-  }
-  return undefined
-}
-
 const invalidBatchError = (
   error: ChunkWriteInvalidBatch,
-): WorldWriteInvalidBatch | WorldCommitBlockWritePrepareInvalid => {
+): Result.Result<WorldWriteInvalidBatch | WorldCommitBlockWritePrepareInvalid, Schema.SchemaError> => {
   if (error.reason === 'empty' || error.reason === 'duplicate-position') {
-    return new WorldWriteInvalidBatch({ reason: error.reason })
+    return Schema.decodeUnknownResult(WorldWriteInvalidBatch)({ _tag: 'WorldWriteInvalidBatch', reason: error.reason })
   }
-  return new WorldCommitBlockWritePrepareInvalid({ reason: error.reason })
+  return Result.succeed(new WorldCommitBlockWritePrepareInvalid({ reason: error.reason }))
 }
 
 const mapChunkWritePrepareError = (
   dimension: Dimension,
   error: ChunkWriteInvalidBatch | ChunkWriteChunkUnavailable,
-): WorldWriteChunkUnavailable | WorldWriteInvalidBatch | WorldCommitBlockWritePrepareInvalid =>
+): Result.Result<WorldWriteChunkUnavailable | WorldWriteInvalidBatch | WorldCommitBlockWritePrepareInvalid, Schema.SchemaError> =>
   error._tag === 'ChunkWriteChunkUnavailable'
-    ? new WorldWriteChunkUnavailable({ dimension, chunk: chunkKeyOfPosition(error.position) })
+    ? Result.succeed(new WorldWriteChunkUnavailable({ dimension, chunk: chunkKeyOfPosition(error.position) }))
     : invalidBatchError(error)
 
 const mapChunkWritePublishError = (
@@ -514,10 +504,8 @@ const prepareBlockWrite = (
     if (candidate === undefined) return { _tag: 'None' }
     const blockWrite = yield* Schema.decodeUnknownEffect(WorldWriteBatchSchema)(candidate)
     const blockEdits = yield* Schema.decodeUnknownEffect(WorldWriteEditsSchema)(blockWrite.edits)
-    if (blockEdits.length === 0) return yield* Effect.fail(new WorldWriteInvalidBatch({ reason: 'empty' }))
-    if (repeatedBlockPosition(blockEdits) !== undefined) {
-      return yield* Effect.fail(new WorldWriteInvalidBatch({ reason: 'duplicate-position' }))
-    }
+    const validatedBatch = validateWorldWriteBatch(blockWrite)
+    if (Result.isFailure(validatedBatch)) return yield* Effect.fail(validatedBatch.failure)
     const outOfWorld = blockEdits.find(({ position }) => position.y < 0 || position.y >= CHUNK_HEIGHT)
     if (outOfWorld !== undefined) {
       return yield* Effect.fail(new WorldCommitBlockWriteInvalidPosition({
@@ -695,7 +683,10 @@ export const makeWorldCommitCoordinator = (
         if (block._tag === 'Some') {
           const chunkStore = block.registry.forDimension(block.batch.dimension)
           const token = yield* restore(chunkStore.prepare(block.edits).pipe(
-            Effect.mapError((error) => mapChunkWritePrepareError(block.batch.dimension, error)),
+            Effect.mapError((error) => {
+              const mapped = mapChunkWritePrepareError(block.batch.dimension, error)
+              return Result.isFailure(mapped) ? mapped.failure : mapped.success
+            }),
           ))
           preparedBlockWrite = { chunkStore, dimension: block.batch.dimension, token }
         }
