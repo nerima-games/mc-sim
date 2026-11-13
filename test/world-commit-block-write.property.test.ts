@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { Effect, Result, Schema } from 'effect'
+import { Effect, Layer, Option, Result, Schema } from 'effect'
 import fc from 'fast-check'
 import {
   BlockIdSchema,
@@ -15,13 +15,17 @@ import type { BlockPosition, Dimension, WorldWriteBatch } from '@nerima-games/mc
 import { defaultBlockState } from '@nerima-games/mc-kernel/domain/block-state'
 import type { BlockStateValues } from '@nerima-games/mc-kernel/domain/block-state'
 import type { ChunkCoord, ChunkStoreRegistryApi } from '@nerima-games/mc-worldgen'
+import { StoragePort, loadFrom, makeInMemoryStorage } from '@nerima-games/mc-save'
 import {
+  CHUNK_FORMAT,
   CHUNK_SIZE_XZ,
   ChunkCapacity,
   ChunkStoreRegistry,
   ChunkStoreRegistryLayer,
+  PersistentChunkStoreRegistryLayer,
   blockIndex,
   chunkCoord,
+  chunkSaveKey,
 } from '@nerima-games/mc-worldgen'
 import { emptyBlocks } from '@nerima-games/mc-worldgen/testing'
 import {
@@ -34,6 +38,7 @@ import {
   replicatedOwnerChangeSchema,
   replicatedWorldDeltaSchema,
 } from '../src/index.js'
+import type { ReplicatedBlockChange } from '../src/application/replicated-state.js'
 import { assertResultContract } from './public-property-helpers.js'
 
 const dimension: Dimension = 'overworld'
@@ -43,6 +48,7 @@ const ownerStateSchema = Schema.Struct({ value: Schema.Number })
 const initialOwnerState = { value: 0 }
 const chunk = chunkCoord(ChunkAxis(0), ChunkAxis(0))
 const batchDimension = Schema.decodeUnknownSync(DimensionIdSchema)(dimension)
+const airBlock = Schema.decodeUnknownSync(BlockIdSchema)(0)
 const stickyPiston = Schema.decodeUnknownSync(BlockIdSchema)(126)
 const stickyPistonDefaultState = Result.getOrThrow(defaultBlockState(stickyPiston))
 const stickyPistonStateArbitrary = fc.record({
@@ -399,14 +405,14 @@ it('forwards explicit and default block states through prepare, delta, and readb
           {
             dimension,
             position: explicitPosition,
-            before: 0,
+            before: airBlock,
             after: stickyPiston,
             state,
           },
           {
             dimension,
             position: defaultPosition,
-            before: 0,
+            before: airBlock,
             after: stickyPiston,
             state: stickyPistonDefaultState,
           },
@@ -434,5 +440,113 @@ it('forwards explicit and default block states through prepare, delta, and readb
       }).pipe(Effect.provide(chunkStoreLayer)))
     }),
     { numRuns: 24 },
+  )
+})
+
+it('persists generated explicit states and omitted defaults through chunk v3 unload and reload', async () => {
+  await fc.assert(
+    fc.asyncProperty(
+      fc.array(stickyPistonStateArbitrary, { minLength: 4, maxLength: 4 }),
+      async (states) => {
+        await Effect.runPromise(Effect.gen(function* () {
+          const storage = yield* makeInMemoryStorage
+          const storageLayer = Layer.succeed(StoragePort, storage)
+          const persistentWorldId = 'block-state-property-world'
+          const persistentRegistryLayer = () => PersistentChunkStoreRegistryLayer(
+            sourceForDimension,
+            persistentWorldId,
+            ChunkCapacity(2),
+          ).pipe(Layer.provide(storageLayer))
+          const registry = yield* Effect.provide(ChunkStoreRegistry, persistentRegistryLayer())
+          const store = registry.forDimension(dimension)
+          yield* store.load(chunk)
+
+          const coordinator = yield* makeWorldCommitCoordinator({
+            world,
+            owners: [],
+            dimensions: [dimension],
+            chunkStores: registry,
+          })
+          const explicitEdits = states.map((state, index) => ({
+            position: positionForCell(index),
+            block: stickyPiston,
+            state,
+          }))
+          const defaultPosition = positionForCell(states.length)
+          const blockWrite: WorldWriteBatch = {
+            world,
+            expectedWorldRevision: Schema.decodeUnknownSync(WorldRevisionSchema)(0),
+            dimension: batchDimension,
+            expectedDimensionRevision: Schema.decodeUnknownSync(DimensionRevisionSchema)(0),
+            edits: [
+              ...explicitEdits,
+              { position: defaultPosition, block: stickyPiston },
+            ],
+          }
+          const delta = yield* coordinator.commit({
+            expectedRevision: Schema.decodeUnknownSync(WorldRevisionSchema)(0),
+            expectedDimensions: [{
+              dimension,
+              expectedRevision: Schema.decodeUnknownSync(DimensionRevisionSchema)(0),
+            }],
+            changes: [],
+            blockWrite,
+          })
+
+          const expectedChanges: Array<ReplicatedBlockChange> = explicitEdits.map(({ position, state }) => ({
+            dimension,
+            position,
+            before: airBlock,
+            after: stickyPiston,
+            state,
+          }))
+          expectedChanges.push({
+            dimension,
+            position: defaultPosition,
+            before: airBlock,
+            after: stickyPiston,
+            state: stickyPistonDefaultState,
+          })
+          expect(delta.blockChanges).toEqual(expectedChanges)
+          for (const [index, edit] of explicitEdits.entries()) {
+            expect(delta.blockChanges[index]).toHaveProperty('state', edit.state)
+            expect(yield* store.getBlockWithState(edit.position)).toMatchObject({
+              _tag: 'Block', block: stickyPiston, state: edit.state,
+            })
+          }
+          expect(delta.blockChanges[states.length]).toHaveProperty('state', stickyPistonDefaultState)
+          expect(yield* store.getBlockWithState(defaultPosition)).toMatchObject({
+            _tag: 'Block', block: stickyPiston, state: stickyPistonDefaultState,
+          })
+
+          const expectedSnapshot = yield* store.snapshot(chunk)
+          if (expectedSnapshot === undefined) throw new Error('committed chunk snapshot was not observable')
+          yield* store.unload(chunk)
+          const saveKey = chunkSaveKey({ worldId: persistentWorldId, dimension: batchDimension }, chunk)
+          const envelope = yield* storage.get(saveKey)
+          expect(Option.isSome(envelope)).toBe(true)
+          if (Option.isSome(envelope)) expect(envelope.value.version).toBe(CHUNK_FORMAT.version)
+          const savedChunk = yield* loadFrom(CHUNK_FORMAT, saveKey).pipe(Effect.provide(storageLayer))
+          expect(Option.isSome(savedChunk)).toBe(true)
+          if (Option.isSome(savedChunk)) {
+            expect(savedChunk.value.blocks).toStrictEqual(expectedSnapshot.blocks)
+            expect(savedChunk.value.blockStates).toStrictEqual(expectedSnapshot.blockStates)
+          }
+
+          const restoredRegistry = yield* Effect.provide(ChunkStoreRegistry, persistentRegistryLayer())
+          const restoredStore = restoredRegistry.forDimension(dimension)
+          yield* restoredStore.load(chunk)
+          for (const edit of explicitEdits) {
+            expect(yield* restoredStore.getBlockWithState(edit.position)).toMatchObject({
+              _tag: 'Block', block: stickyPiston, state: edit.state,
+            })
+          }
+          expect(yield* restoredStore.getBlockWithState(defaultPosition)).toMatchObject({
+            _tag: 'Block', block: stickyPiston, state: stickyPistonDefaultState,
+          })
+        }))
+      },
+    ),
+    { numRuns: 3 },
   )
 })
