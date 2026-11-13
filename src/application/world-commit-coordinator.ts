@@ -411,19 +411,22 @@ const isChunkStoreRegistryApi = (value: unknown): value is ChunkStoreRegistryApi
 
 const invalidBatchError = (
   error: ChunkWriteInvalidBatch,
-): Result.Result<WorldWriteInvalidBatch | WorldCommitBlockWritePrepareInvalid, Schema.SchemaError> => {
+): WorldWriteInvalidBatch | WorldCommitBlockWritePrepareInvalid | Schema.SchemaError => {
   if (error.reason === 'empty' || error.reason === 'duplicate-position') {
-    return Schema.decodeUnknownResult(WorldWriteInvalidBatch)({ _tag: 'WorldWriteInvalidBatch', reason: error.reason })
+    return Result.merge(Schema.decodeUnknownResult(WorldWriteInvalidBatch)({
+      _tag: 'WorldWriteInvalidBatch',
+      reason: error.reason,
+    }))
   }
-  return Result.succeed(new WorldCommitBlockWritePrepareInvalid({ reason: error.reason }))
+  return new WorldCommitBlockWritePrepareInvalid({ reason: error.reason })
 }
 
 const mapChunkWritePrepareError = (
   dimension: Dimension,
   error: ChunkWriteInvalidBatch | ChunkWriteChunkUnavailable,
-): Result.Result<WorldWriteChunkUnavailable | WorldWriteInvalidBatch | WorldCommitBlockWritePrepareInvalid, Schema.SchemaError> =>
+): WorldWriteChunkUnavailable | WorldWriteInvalidBatch | WorldCommitBlockWritePrepareInvalid | Schema.SchemaError =>
   error._tag === 'ChunkWriteChunkUnavailable'
-    ? Result.succeed(new WorldWriteChunkUnavailable({ dimension, chunk: chunkKeyOfPosition(error.position) }))
+    ? new WorldWriteChunkUnavailable({ dimension, chunk: chunkKeyOfPosition(error.position) })
     : invalidBatchError(error)
 
 const mapChunkWritePublishError = (
@@ -683,10 +686,7 @@ export const makeWorldCommitCoordinator = (
         if (block._tag === 'Some') {
           const chunkStore = block.registry.forDimension(block.batch.dimension)
           const token = yield* restore(chunkStore.prepare(block.edits).pipe(
-            Effect.mapError((error) => {
-              const mapped = mapChunkWritePrepareError(block.batch.dimension, error)
-              return Result.isFailure(mapped) ? mapped.failure : mapped.success
-            }),
+            Effect.mapError((error) => mapChunkWritePrepareError(block.batch.dimension, error)),
           ))
           preparedBlockWrite = { chunkStore, dimension: block.batch.dimension, token }
         }
