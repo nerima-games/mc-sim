@@ -22,6 +22,7 @@ const starterRecipe = (
 ): Result.Result<StarterSmeltingRecipe, ItemStackFailure> =>
   Result.map(output, (stack) => ({ id, input, output: stack, cookDurationSecs: 10 }))
 
+// Retained as compact fixtures for legacy smelting and progression tests.
 export const STARTER_SMELTING_RECIPES: Result.Result<ReadonlyArray<StarterSmeltingRecipe>, ItemStackFailure> = Result.all([
   starterRecipe('mc-sim:iron-ingot', 'raw_iron', itemStack('iron_ingot', 1)),
   starterRecipe('mc-sim:stone', 'cobblestone', itemStack('stone', 1)),
@@ -41,6 +42,7 @@ export const STARTER_SMELTING_RECIPES: Result.Result<ReadonlyArray<StarterSmelti
   starterRecipe('mc-sim:nether-brick', 'netherrack', itemStack('nether_brick', 1)),
 ])
 
+// Retained as explicit overrides for focused furnace tests.
 export const STARTER_FUEL_RULES: ReadonlyArray<StarterFuelRule> = [
   { item: 'coal', burnDurationSecs: 80 },
   { item: 'coal_block', burnDurationSecs: 800 },

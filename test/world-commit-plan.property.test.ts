@@ -11,6 +11,7 @@ import {
   WorldRevisionSchema,
 } from '@nerima-games/mc-kernel'
 import type { BlockPosition, Dimension, WorldWriteBatch } from '@nerima-games/mc-kernel'
+import { AIR_BLOCK_ID, BLOCK_IDS } from '@nerima-games/mc-kernel/domain/block-registry'
 import type { ChunkCoord } from '@nerima-games/mc-worldgen'
 import {
   CHUNK_SIZE_XZ,
@@ -51,6 +52,7 @@ const resultSchema = Schema.Struct({ status: Schema.Literal('planned') })
 const fragmentSchema = worldCommitPlanFragmentSchema(resultSchema)
 const chunk = chunkCoord(ChunkAxis(0), ChunkAxis(0))
 const batchDimension = Schema.decodeUnknownSync(DimensionIdSchema)(dimension)
+const writableBlockIds = BLOCK_IDS.filter((block) => block !== AIR_BLOCK_ID)
 const chunkStoreLayer = ChunkStoreRegistryLayer(
   (_dimension) => (coord: ChunkCoord) => Effect.succeed({
     blocks: emptyBlocks(),
@@ -462,18 +464,18 @@ it('merges fragments into one commit with all owner and block changes', async ()
       fc.record({
         firstValue: fc.integer({ min: 0, max: 100_000 }),
         secondValue: fc.integer({ min: 0, max: 100_000 }),
-        firstBlock: fc.integer({ min: 1, max: 65_535 }),
-        secondBlock: fc.integer({ min: 1, max: 65_535 }),
+        firstBlock: fc.constantFrom(...writableBlockIds),
+        secondBlock: fc.constantFrom(...writableBlockIds),
       }),
       async ({ firstValue, secondValue, firstBlock, secondBlock }) => {
         const merged = Schema.decodeUnknownSync(WorldCommitPlanMergeResultSchema)(mergeWorldCommitPlans([
           makeFragment({
             changes: [makeCandidate(ownerA, firstValue)],
-            blockEdits: { dimension, edits: [{ position: position(0), block: makeBlock(firstBlock) }] },
+            blockEdits: { dimension, edits: [{ position: position(0), block: firstBlock }] },
           }),
           makeFragment({
             changes: [makeCandidate(ownerB, secondValue)],
-            blockEdits: { dimension, edits: [{ position: position(1), block: makeBlock(secondBlock) }] },
+            blockEdits: { dimension, edits: [{ position: position(1), block: secondBlock }] },
           }),
         ]))
         if (Result.isFailure(merged)) throw merged.failure

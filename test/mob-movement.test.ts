@@ -20,8 +20,10 @@ const cell = (x: number, y: number, z: number): Sim.MobPathCell => ({
 })
 
 const solidProperties = Result.getOrThrow(resolveBlockProperties({}))
+const noSupport: Readonly<{ kind: 'none' }> = { kind: 'none' }
+const solidPropertiesForPhysics = { ...solidProperties, drops: undefined, supportRule: noSupport }
 const solidCapabilities = Result.getOrThrow(resolveBlockCapabilities({ passable: false }))
-const solidSample = { properties: solidProperties, capabilities: solidCapabilities }
+const solidSample = { properties: solidPropertiesForPhysics, capabilities: solidCapabilities }
 
 const key = (x: number, y: number, z: number): string => `${x},${y},${z}`
 
@@ -42,7 +44,7 @@ const makeWorld = (
         blockAt: (x, y, z) => Result.succeed(blocks.has(key(x, y, z)) ? solidSample : null),
         blockShapeAt,
       },
-      blockPropertiesAt: (x, y, z) => Result.succeed(blocks.has(key(x, y, z)) ? solidProperties : null),
+      blockPropertiesAt: (x, y, z) => Result.succeed(blocks.has(key(x, y, z)) ? solidPropertiesForPhysics : null),
       blockShapeAt,
     },
   }

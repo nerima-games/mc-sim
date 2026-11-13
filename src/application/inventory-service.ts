@@ -18,7 +18,7 @@ import { ITEM_TYPES, RecipeGroup, itemValidationFailure, type ItemType, type Rec
 import { TagLocation } from '@nerima-games/mc-kernel'
 import * as Storage from '../domain/player-storage.js'
 import * as Recipe from '../domain/recipe.js'
-import { STARTER_RECIPES } from '../domain/recipe-data.js'
+import { VANILLA_CRAFTING_RECIPES } from '../domain/recipe-data.js'
 import {
   carriedAt,
   carriedWithCount,
@@ -669,7 +669,7 @@ export const makeInventoryService = (
   }
   return Effect.flatMap(Effect.fromResult(Inv.normaliseInventory(initial)), (normalised) =>
     Effect.flatMap(
-      Effect.fromResult(recipeTableInput === undefined ? STARTER_RECIPES : Result.succeed(recipeTableInput)),
+      Effect.succeed(recipeTableInput ?? VANILLA_CRAFTING_RECIPES),
       (recipeTable) =>
       Effect.map(
         Ref.make<InventoryServiceState>({

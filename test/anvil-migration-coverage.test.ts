@@ -505,7 +505,12 @@ describe('anvil transformations', () => {
       definitions,
       transformation({ enchantments: [enchantment('minecraft:sharpness', 3)] }),
     )).toStrictEqual({
-      state: transformation({ enchantments: [enchantment('minecraft:sharpness', 3)] }),
+      state: transformation({
+        enchantments: [enchantment('minecraft:sharpness', 3)],
+        operationCost: 6,
+        materialCost: AnvilMaterialCost(1),
+        rightContributed: true,
+      }),
     })
     expect(mergeEnchantments(left, canonicalRight(canonicalPayload('diamond')), definitions, initialTransformationOf(left)))
       .toBeUndefined()
@@ -520,7 +525,7 @@ describe('anvil transformations', () => {
       book(enchantment('minecraft:sharpness')),
       new Map([[sharpness, compiledRule(sharpness, { applicableItems: new Set<ItemType>(['diamond_sword']) })]]),
       initialTransformationOf(canonicalPayload('iron_sword')),
-    )).toMatchObject({ failure: { reason: 'invalid-enchantment' } })
+    )).toStrictEqual({ state: initialTransformationOf(canonicalPayload('iron_sword')) })
     expect(mergeEnchantments(
       canonicalPayload('iron_sword', { enchantments: [enchantment('minecraft:sharpness')] }),
       book(enchantment('minecraft:smite')),
@@ -529,7 +534,7 @@ describe('anvil transformations', () => {
         [smite, compiledRule(smite)],
       ]),
       initialTransformationOf(canonicalPayload('iron_sword', { enchantments: [enchantment('minecraft:sharpness')] })),
-    )).toMatchObject({ failure: { reason: 'enchantment-conflict' } })
+    )).toMatchObject({ state: { operationCost: 1, rightContributed: false } })
     expect(mergeEnchantments(
       canonicalPayload('enchanted_book'),
       book(enchantment('minecraft:sharpness')),
@@ -634,7 +639,7 @@ describe('anvil planning and application', () => {
     expect(planAnvil(state(
       payload('iron_sword', { enchantments: [enchantment('minecraft:sharpness')] }),
       inputStack(payload('enchanted_book', { enchantments: [enchantment('minecraft:smite')] })),
-    ), rules)).toMatchObject({ ok: false, reason: 'enchantment-conflict' })
+    ), rules)).toMatchObject({ ok: false, reason: 'incompatible-input' })
     expect(planAnvil(state(
       payload('iron_sword'),
       inputStack(payload('enchanted_book', { enchantments: [enchantment('minecraft:sharpness')] })),
@@ -651,6 +656,33 @@ describe('anvil planning and application', () => {
       payload('iron_sword', { durability: { current: 10, max: 100 } }),
       inputStack(payload('iron_sword', { durability: { current: 20, max: 80 } })),
     ), rules)).toMatchObject({ ok: false, reason: 'incompatible-input' })
+  })
+
+  it('returns a typed failure when a compiled enchantment lookup disappears during transformation', () => {
+    const sharpness = AnvilEnchantmentId('minecraft:sharpness')
+    const compiled = compile(ruleSet([enchantmentRule(sharpness)]))
+    class ChangingEnchantmentMap extends Map<AnvilEnchantmentIdValue, CompiledAnvilEnchantmentRule> {
+      private lookups = 0
+
+      override get(id: AnvilEnchantmentIdValue): CompiledAnvilEnchantmentRule | undefined {
+        this.lookups += 1
+        return this.lookups === 1 ? super.get(id) : undefined
+      }
+
+      get lookupCount(): number {
+        return this.lookups
+      }
+    }
+    const changingEnchantmentMap = new ChangingEnchantmentMap(compiled.enchantments)
+
+    expect(planAnvil(state(
+      payload('iron_sword'),
+      inputStack(payload('enchanted_book', { enchantments: [enchantment('minecraft:sharpness')] })),
+    ), { ...compiled, enchantments: changingEnchantmentMap })).toMatchObject({
+      ok: false,
+      reason: 'invalid-enchantment',
+    })
+    expect(changingEnchantmentMap.lookupCount).toBe(2)
   })
 
   it('rejects forged compiled maps and accepts valid repair maps', () => {

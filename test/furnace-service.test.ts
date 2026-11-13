@@ -19,7 +19,8 @@ import {
 } from '../src/application/world-commit-coordinator.js'
 import { emptyInventory, itemStack } from '../src/domain/inventory.js'
 import { VANILLA_SMELTING_RECIPES } from '../src/domain/smelting.js'
-import { WorldIdSchema, WorldRevisionSchema } from '@nerima-games/mc-kernel'
+import { NonNegativeTickCount, WorldIdSchema, WorldRevisionSchema } from '@nerima-games/mc-kernel'
+import { invokeEffect } from './public-property-helpers.js'
 
 const must = <A, E>(result: Result.Result<A, E>): A => {
   if (Result.isFailure(result)) throw result.failure
@@ -79,7 +80,7 @@ describe('FurnaceService', () => {
 
         const recipe = VANILLA_SMELTING_RECIPES.find((candidate) => candidate.input === 'iron_ore')
         expect(recipe).toBeDefined()
-        const outcome = yield* furnace.advance(10)
+        const outcome = yield* furnace.advanceTicks(NonNegativeTickCount(200))
         expect(outcome.smeltedCount).toBe(1)
         expect((yield* furnace.snapshot).output?.item).toBe('iron_ingot')
 
@@ -238,6 +239,21 @@ describe('FurnaceService', () => {
         const invalidRestore = yield* Effect.result(furnace.restore({}))
         expect(Result.isFailure(invalidRestore)).toBe(true)
         expect(yield* furnace.snapshot).toStrictEqual(readyToCollect)
+      }),
+    ),
+  )
+
+  it.effect('rejects non-integer ticks and leaves the revision unchanged for zero ticks', () =>
+    withFurnace(({ furnace, coordinator }) =>
+      Effect.gen(function* () {
+        const before = yield* coordinator.snapshot(furnaceOwnerId, FurnaceServiceStateSchema)
+        const invalid = yield* Effect.result(invokeEffect(furnace.advanceTicks, [0.5]))
+        expect(Result.isFailure(invalid)).toBe(true)
+        expect(yield* coordinator.snapshot(furnaceOwnerId, FurnaceServiceStateSchema)).toStrictEqual(before)
+
+        const zero = yield* furnace.advanceTicks(NonNegativeTickCount(0))
+        expect(zero.smeltedCount).toBe(0)
+        expect(yield* coordinator.snapshot(furnaceOwnerId, FurnaceServiceStateSchema)).toStrictEqual(before)
       }),
     ),
   )

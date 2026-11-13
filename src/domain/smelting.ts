@@ -2,6 +2,7 @@ import { Brand, Result, Schema } from 'effect'
 import {
   COOKING_STATIONS,
   FixedDurationSecs,
+  NonNegativeTickCount,
   RecipeCompletionCount,
   RecipeId,
   type FixedDurationSecs as FixedDurationSecsValue,
@@ -18,7 +19,10 @@ import {
   type FurnaceStateInput,
   type ItemStack,
   type ItemType,
+  type NonNegativeTickCount as NonNegativeTickCountValue,
   type SmeltingRecipe as KernelSmeltingRecipe,
+  type TimeOverflow,
+  secondsForTicks,
 } from '@nerima-games/mc-kernel'
 import {
   VANILLA_FUEL_RULES,
@@ -77,6 +81,7 @@ export type SmeltingValidationFailure = Readonly<{
 }>
 export type FurnaceFailure =
   | Brand.BrandError
+  | TimeOverflow
   | ItemStackFailure
   | FurnaceStateValidationFailure
   | SmeltingValidationFailure
@@ -129,6 +134,7 @@ export const SmeltingValidationFailureSchema: Schema.Schema<SmeltingValidationFa
   Schema.TaggedStruct('SmeltingValidationFailure', { path: Schema.String, reason: Schema.String })
 export const FurnaceFailureSchema: Schema.Schema<FurnaceFailure> = Schema.Union([
   BrandErrorSchema,
+  Schema.TaggedStruct('TimeOverflow', {}),
   ItemStackFailureSchema,
   FurnaceStateValidationFailureSchema,
   SmeltingValidationFailureSchema,
@@ -202,14 +208,16 @@ export const furnaceState = (
   input: unknown = {},
 ): Result.Result<FurnaceState, FurnaceStateFailure> => {
   if (!isRecord(input)) return Result.fail(validationFailure('state', 'expected an object'))
-  const station = input['station'] ?? 'furnace'
+  const valueOrDefault = (key: string, fallback: unknown): unknown =>
+    Object.hasOwn(input, key) ? input[key] : fallback
+  const station = valueOrDefault('station', 'furnace')
   if (!isCookingStation(station)) return Result.fail(validationFailure('station', 'expected a cooking station'))
   const furnaceInput = validateSlot(input['input'], 'input')
   const fuel = validateSlot(input['fuel'], 'fuel')
   const output = validateSlot(input['output'], 'output')
-  const fuelTimeRemaining = fixedDuration(input['fuelTimeRemainingSecs'] ?? 0, 'fuelTimeRemainingSecs')
-  const fuelTimeTotal = fixedDuration(input['fuelTimeTotalSecs'] ?? 0, 'fuelTimeTotalSecs')
-  const cookProgress = fixedDuration(input['cookProgressSecs'] ?? 0, 'cookProgressSecs')
+  const fuelTimeRemaining = fixedDuration(valueOrDefault('fuelTimeRemainingSecs', 0), 'fuelTimeRemainingSecs')
+  const fuelTimeTotal = fixedDuration(valueOrDefault('fuelTimeTotalSecs', 0), 'fuelTimeTotalSecs')
+  const cookProgress = fixedDuration(valueOrDefault('cookProgressSecs', 0), 'cookProgressSecs')
   return Result.flatMap(Result.all([furnaceInput, fuel, output]), ([validInput, validFuel, validOutput]) =>
     Result.flatMap(Result.all([fuelTimeRemaining, fuelTimeTotal, cookProgress]), ([remaining, total, progress]) => {
       if (remaining > total) {
@@ -339,6 +347,21 @@ const validStarterRecipe = (
   isFinitePositive(value['cookDurationSecs']) &&
   (value['experience'] === undefined || isFiniteNonNegative(value['experience']))
 
+const validateCookTimeSecsByStation = (
+  value: Record<string, unknown>,
+): Result.Result<KernelSmeltingRecipe['cookTimeSecsByStation'], FurnaceFailure> => {
+  const durations: Partial<Record<CookingStation, FixedDurationSecsValue>> = {}
+  for (const [station, duration] of Object.entries(value)) {
+    if (!isCookingStation(station)) return Result.fail(smeltingFailure('recipe', 'unknown cooking station duration'))
+    if (typeof duration !== 'number') return Result.fail(smeltingFailure('recipe', 'invalid cooking station duration'))
+    const durationResult = FixedDurationSecs.result(duration)
+    if (Result.isFailure(durationResult)) return Result.fail(smeltingFailure('recipe', 'invalid cooking station duration'))
+    if (durationResult.success <= 0) return Result.fail(smeltingFailure('recipe', 'invalid cooking station duration'))
+    durations[station] = durationResult.success
+  }
+  return Result.succeed(durations)
+}
+
 const validateRecipe = (
   value: unknown,
 ): Result.Result<SmeltingRecipeInput, FurnaceFailure> => {
@@ -353,6 +376,7 @@ const validateRecipe = (
   const output = value['output']
   const stations = value['stations']
   const cookTimeSecs = value['cookTimeSecs']
+  const cookTimeSecsByStation = value['cookTimeSecsByStation']
   const experience = value['experience']
   if (
     typeof id !== 'string' ||
@@ -361,11 +385,14 @@ const validateRecipe = (
     !isItemStack(output) ||
     !isCookingStationTable(stations) ||
     stations.length === 0 ||
+    !isRecord(cookTimeSecsByStation) ||
     !isFinitePositive(cookTimeSecs) ||
     !isFiniteNonNegative(experience)
   ) {
     return Result.fail(smeltingFailure('recipe', 'invalid kernel smelting recipe'))
   }
+  const validatedCookTimes = validateCookTimeSecsByStation(cookTimeSecsByStation)
+  if (Result.isFailure(validatedCookTimes)) return Result.fail(validatedCookTimes.failure)
   return Result.map(
     Result.all([
       RecipeId.result(id),
@@ -378,6 +405,7 @@ const validateRecipe = (
       input,
       output,
       cookTimeSecs: validDuration,
+      cookTimeSecsByStation: validatedCookTimes.success,
       experience: validExperience,
       stations,
     }),
@@ -405,6 +433,11 @@ const KernelSmeltingRecipeSchema: Schema.Codec<KernelSmeltingRecipe, unknown> = 
   input: ItemTypeSchema,
   output: CanonicalItemStackSchema,
   cookTimeSecs: FixedDurationSecsSchema.check(Schema.isGreaterThan(0)),
+  cookTimeSecsByStation: Schema.Struct({
+    furnace: Schema.optionalKey(FixedDurationSecsSchema.check(Schema.isGreaterThan(0))),
+    blast_furnace: Schema.optionalKey(FixedDurationSecsSchema.check(Schema.isGreaterThan(0))),
+    smoker: Schema.optionalKey(FixedDurationSecsSchema.check(Schema.isGreaterThan(0))),
+  }),
   experience: RecipeExperienceSchema,
   stations: Schema.Array(Schema.Literals(COOKING_STATIONS)).check(Schema.makeFilter((stations) => stations.length > 0)),
 })
@@ -421,8 +454,10 @@ const recipeInput = (recipe: SmeltingRecipeInput): ItemType => recipe.input
 const recipeOutput = (recipe: SmeltingRecipeInput): ItemStack => recipe.output
 const isKernelSmeltingRecipe = (recipe: SmeltingRecipeInput): recipe is KernelSmeltingRecipe =>
   '_tag' in recipe && recipe._tag === 'Smelting'
-const recipeDuration = (recipe: SmeltingRecipeInput): number =>
-  isKernelSmeltingRecipe(recipe) ? recipe.cookTimeSecs : recipe.cookDurationSecs
+const recipeDuration = (recipe: SmeltingRecipeInput, station: CookingStation): number =>
+  isKernelSmeltingRecipe(recipe)
+    ? recipe.cookTimeSecsByStation[station] ?? recipe.cookTimeSecs
+    : recipe.cookDurationSecs
 const recipeExperience = (recipe: SmeltingRecipeInput): number =>
   isKernelSmeltingRecipe(recipe) ? recipe.experience : recipe.experience ?? 0
 const recipeSupportsStation = (recipe: SmeltingRecipeInput, station: CookingStation): boolean =>
@@ -653,14 +688,15 @@ const advanceCookingInterval = (
   recipe: SmeltingRecipeInput,
   remaining: number,
 ): Result.Result<CookingInterval, FurnaceFailure> => {
-  const cookRemaining = recipeDuration(recipe) - state.cookProgressSecs
+  const cookTimeSecs = recipeDuration(recipe, state.station)
+  const cookRemaining = cookTimeSecs - state.cookProgressSecs
   const step = Math.min(remaining, cookRemaining, state.fuelTimeRemainingSecs)
   const fuelTimeRemainingSecs = FixedDurationSecs.result(state.fuelTimeRemainingSecs - step)
   const cookProgressSecs = FixedDurationSecs.result(state.cookProgressSecs + step)
   return Result.flatMap(Result.all([fuelTimeRemainingSecs, cookProgressSecs]), ([fuelRemaining, cookProgress]) => {
     const nextState = { ...state, fuelTimeRemainingSecs: fuelRemaining, cookProgressSecs: cookProgress }
     const nextRemaining = remaining - step
-    if (cookProgress < recipeDuration(recipe)) {
+    if (cookProgress < cookTimeSecs) {
       return Result.succeed<CookingInterval>({ state: nextState, remaining: nextRemaining, smelted: false })
     }
     return Result.flatMap(consumeOne(nextState.input), (input) =>
@@ -681,7 +717,7 @@ const completedCookProgressFailure = (
 ): FurnaceFailure | undefined => {
   if (state.input === undefined) return undefined
   const recipe = smeltingRecipeFor(recipes, state.input, state.station)
-  if (recipe === undefined || state.cookProgressSecs < recipeDuration(recipe)) return undefined
+  if (recipe === undefined || state.cookProgressSecs < recipeDuration(recipe, state.station)) return undefined
   return validationFailure('cookProgressSecs', 'must be less than the matched recipe duration')
 }
 
@@ -745,6 +781,23 @@ export const advanceFurnace = (
       RecipeExperience.result(experienceGained),
     ]),
     ([count, experience]) => ({ state: current, smeltedCount: count, experienceGained: experience, fuelConsumed }),
+  )
+}
+
+export const advanceFurnaceTicks = (
+  state: FurnaceState,
+  elapsedTicks: NonNegativeTickCountValue,
+  recipes: ReadonlyArray<SmeltingRecipeInput> = VANILLA_SMELTING_RECIPES,
+  fuels: ReadonlyArray<FuelRuleInput> = VANILLA_FUEL_RULES,
+): Result.Result<FurnaceOutcome, FurnaceFailure> => {
+  return Result.flatMap(
+    Result.mapError(
+      NonNegativeTickCount.result(elapsedTicks),
+      () => validationFailure('elapsedTicks', 'must be a finite non-negative integer'),
+    ),
+    (ticks) => Result.flatMap(secondsForTicks(ticks), (elapsedSecs) =>
+      advanceFurnace(state, elapsedSecs, recipes, fuels),
+    ),
   )
 }
 

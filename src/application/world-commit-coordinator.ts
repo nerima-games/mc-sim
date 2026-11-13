@@ -4,16 +4,17 @@ import {
   DimensionRevisionSchema,
   WorldIdSchema,
   WorldRevisionSchema,
-  blockPositionKeyOf,
   WorldWriteBatchSchema,
   WorldWriteChunkUnavailable,
   WorldWriteInvalidBatch,
+  validateWorldWriteBatch,
   chunkKeyOfPosition,
   isChunkKey,
 } from '@nerima-games/mc-kernel'
 import type { BlockPosition, ChunkKey, Dimension, DimensionRevision, WorldId, WorldRevision, WorldWriteBatch } from '@nerima-games/mc-kernel'
-import { CHUNK_HEIGHT } from '@nerima-games/mc-worldgen'
-import type { ChunkStoreRegistryApi, ChunkWriteChunkUnavailable, ChunkWriteInvalidBatch, ChunkWriteStale, ChunkWriteTokenInvalid, PreparedChunkWrite } from '@nerima-games/mc-worldgen'
+import type { BlockStateCodecFailure } from '@nerima-games/mc-kernel/domain/block-state'
+import { CHUNK_HEIGHT, LightQueueUnderflowError } from '@nerima-games/mc-worldgen'
+import type { ChunkStoreRegistryApi, ChunkWriteChunkUnavailable, ChunkWriteInvalidBatch, ChunkWritePublishError, ChunkWriteTokenInvalid, PreparedChunkWrite } from '@nerima-games/mc-worldgen'
 import { Brand, Context, Effect, Layer, Ref, Result, Schema, Semaphore } from 'effect'
 import type { YieldableError } from 'effect/Cause'
 import { SchemaErrorSchema } from '../schema-errors.js'
@@ -225,6 +226,19 @@ const WorldCommitBlockWritePrepareInvalidBase: Schema.Class<
 > = Schema.TaggedError<WorldCommitBlockWritePrepareInvalidShape>()('WorldCommitBlockWritePrepareInvalid', WorldCommitBlockWritePrepareInvalidFieldsSchema)
 export class WorldCommitBlockWritePrepareInvalid extends WorldCommitBlockWritePrepareInvalidBase {}
 
+const BlockStateCodecFailureSchema: Schema.Codec<BlockStateCodecFailure, unknown> = Schema.Struct({
+  _tag: Schema.Literal('BlockStateCodecFailure'),
+  reason: Schema.Literals([
+    'invalid-block-id',
+    'unknown-block-id',
+    'invalid-state',
+    'unsupported-property',
+    'invalid-property-value',
+    'invalid-encoded-value',
+    'reserved-code',
+  ]),
+})
+
 export type ReplicatedOwnerRegistration<Codec extends AnyCodec = AnyCodec> = Readonly<{
   ownerId: ReplicatedOwnerId
   schema: Codec
@@ -288,6 +302,8 @@ export type WorldCommitCoordinatorError =
   | WorldWriteStale
   | WorldWriteTokenInvalid
   | WorldCommitBlockWritePrepareInvalid
+  | BlockStateCodecFailure
+  | LightQueueUnderflowError
 
 export const WorldCommitCoordinatorErrorSchema: Schema.Codec<WorldCommitCoordinatorError, unknown> = Schema.Union([
   Schema.Struct({
@@ -308,6 +324,8 @@ export const WorldCommitCoordinatorErrorSchema: Schema.Codec<WorldCommitCoordina
   WorldWriteStale,
   WorldWriteTokenInvalid,
   WorldCommitBlockWritePrepareInvalid,
+  BlockStateCodecFailureSchema,
+  Schema.instanceOf(LightQueueUnderflowError),
 ])
 
 export const WorldCommitResultSchema = <Change extends AnyCodec>(
@@ -409,21 +427,14 @@ const isChunkStoreRegistryApi = (value: unknown): value is ChunkStoreRegistryApi
   typeof value === 'object' && value !== null &&
   'forDimension' in value && typeof value.forDimension === 'function'
 
-const repeatedBlockPosition = (edits: WorldWriteBatch['edits']): BlockPosition | undefined => {
-  const seen = new Set<string>()
-  for (const { position } of edits) {
-    const key = blockPositionKeyOf(position)
-    if (seen.has(key)) return position
-    seen.add(key)
-  }
-  return undefined
-}
-
 const invalidBatchError = (
   error: ChunkWriteInvalidBatch,
-): WorldWriteInvalidBatch | WorldCommitBlockWritePrepareInvalid => {
+): WorldWriteInvalidBatch | WorldCommitBlockWritePrepareInvalid | Schema.SchemaError => {
   if (error.reason === 'empty' || error.reason === 'duplicate-position') {
-    return new WorldWriteInvalidBatch({ reason: error.reason })
+    return Result.merge(Schema.decodeUnknownResult(WorldWriteInvalidBatch)({
+      _tag: 'WorldWriteInvalidBatch',
+      reason: error.reason,
+    }))
   }
   return new WorldCommitBlockWritePrepareInvalid({ reason: error.reason })
 }
@@ -431,14 +442,16 @@ const invalidBatchError = (
 const mapChunkWritePrepareError = (
   dimension: Dimension,
   error: ChunkWriteInvalidBatch | ChunkWriteChunkUnavailable,
-): WorldWriteChunkUnavailable | WorldWriteInvalidBatch | WorldCommitBlockWritePrepareInvalid =>
-  error._tag === 'ChunkWriteChunkUnavailable'
-    ? new WorldWriteChunkUnavailable({ dimension, chunk: chunkKeyOfPosition(error.position) })
-    : invalidBatchError(error)
+): WorldWriteChunkUnavailable | WorldWriteInvalidBatch | WorldCommitBlockWritePrepareInvalid | Schema.SchemaError => {
+  if (error._tag === 'ChunkWriteChunkUnavailable') {
+    return new WorldWriteChunkUnavailable({ dimension, chunk: chunkKeyOfPosition(error.position) })
+  }
+  return invalidBatchError(error)
+}
 
 const mapChunkWritePublishError = (
   dimension: Dimension,
-  error: ChunkWriteStale | ChunkWriteTokenInvalid,
+  error: ChunkWritePublishError,
 ): WorldWriteStale | WorldWriteTokenInvalid => {
   if (error._tag === 'ChunkWriteStale') {
     return new WorldWriteStale({
@@ -514,10 +527,8 @@ const prepareBlockWrite = (
     if (candidate === undefined) return { _tag: 'None' }
     const blockWrite = yield* Schema.decodeUnknownEffect(WorldWriteBatchSchema)(candidate)
     const blockEdits = yield* Schema.decodeUnknownEffect(WorldWriteEditsSchema)(blockWrite.edits)
-    if (blockEdits.length === 0) return yield* Effect.fail(new WorldWriteInvalidBatch({ reason: 'empty' }))
-    if (repeatedBlockPosition(blockEdits) !== undefined) {
-      return yield* Effect.fail(new WorldWriteInvalidBatch({ reason: 'duplicate-position' }))
-    }
+    const validatedBatch = validateWorldWriteBatch(blockWrite)
+    if (Result.isFailure(validatedBatch)) return yield* Effect.fail(validatedBatch.failure)
     const outOfWorld = blockEdits.find(({ position }) => position.y < 0 || position.y >= CHUNK_HEIGHT)
     if (outOfWorld !== undefined) {
       return yield* Effect.fail(new WorldCommitBlockWriteInvalidPosition({
@@ -695,7 +706,9 @@ export const makeWorldCommitCoordinator = (
         if (block._tag === 'Some') {
           const chunkStore = block.registry.forDimension(block.batch.dimension)
           const token = yield* restore(chunkStore.prepare(block.edits).pipe(
-            Effect.mapError((error) => mapChunkWritePrepareError(block.batch.dimension, error)),
+            Effect.catchTag(['ChunkWriteInvalidBatch', 'ChunkWriteChunkUnavailable'], (error) =>
+              Effect.fail(mapChunkWritePrepareError(block.batch.dimension, error)),
+            ),
           ))
           preparedBlockWrite = { chunkStore, dimension: block.batch.dimension, token }
         }
@@ -740,7 +753,9 @@ export const makeWorldCommitCoordinator = (
 
         if (preparedBlockWrite !== undefined) {
           yield* preparedBlockWrite.chunkStore.publish(preparedBlockWrite.token).pipe(
-            Effect.mapError((error) => mapChunkWritePublishError(preparedBlockWrite.dimension, error)),
+            Effect.catchTag(['ChunkWriteStale', 'ChunkWriteTokenInvalid'], (error) =>
+              Effect.fail(mapChunkWritePublishError(preparedBlockWrite.dimension, error)),
+            ),
           )
         }
         yield* Ref.set(committed, nextState)

@@ -9,7 +9,6 @@ import {
   WorldIdSchema,
   WorldRevisionSchema,
   WorldWriteChunkUnavailable,
-  WorldWriteInvalidBatch,
   chunkKeyOfPosition,
 } from '@nerima-games/mc-kernel'
 import type { BlockId, ChunkCoord, Dimension, WorldWriteBatch } from '@nerima-games/mc-kernel'
@@ -649,10 +648,32 @@ describe('WorldCommitCoordinator', () => {
 
       expect(outcomes.map(({ _tag }) => _tag)).toStrictEqual(['Failure', 'Failure', 'Failure', 'Failure'])
       const [emptyOutcome, duplicateOutcome, outOfWorldOutcome, unavailableOutcome] = outcomes
-      if (emptyOutcome?._tag === 'Failure') expect(emptyOutcome.failure).toBeInstanceOf(WorldWriteInvalidBatch)
-      if (duplicateOutcome?._tag === 'Failure') expect(duplicateOutcome.failure).toBeInstanceOf(WorldWriteInvalidBatch)
+      if (emptyOutcome?._tag === 'Failure') {
+        expect(emptyOutcome.failure).toMatchObject({ _tag: 'WorldWriteInvalidBatch', reason: 'empty' })
+      }
+      if (duplicateOutcome?._tag === 'Failure') {
+        expect(duplicateOutcome.failure).toMatchObject({ _tag: 'WorldWriteInvalidBatch', reason: 'duplicate-position' })
+      }
       if (outOfWorldOutcome?._tag === 'Failure') expect(outOfWorldOutcome.failure).toBeInstanceOf(WorldCommitBlockWriteInvalidPosition)
       if (unavailableOutcome?._tag === 'Failure') expect(unavailableOutcome.failure).toBeInstanceOf(WorldWriteChunkUnavailable)
+
+      const invalidStateOutcome = decodeCommitEffectResult(yield* Effect.result(coordinator.commit({
+        expectedRevision: revisionZero,
+        expectedDimensions: [{ dimension: 'overworld', expectedRevision: dimensionRevisionZero }],
+        changes: [candidate],
+        blockWrite: makeBlockWrite(blockId(2), [{
+          position: transactionPosition,
+          block: blockId(2),
+          state: { facing: 'north' },
+        }]),
+      })))
+      expect(invalidStateOutcome._tag).toBe('Failure')
+      if (invalidStateOutcome._tag === 'Failure') {
+        expect(invalidStateOutcome.failure).toMatchObject({
+          _tag: 'WorldWriteInvalidBatch',
+          reason: 'invalid-block-state',
+        })
+      }
       expect(yield* coordinator.revision).toBe(0)
       expect(yield* coordinator.dimensionRevision('overworld')).toBe(0)
       expect((yield* coordinator.snapshot(ownerA, counterSchema)).state).toStrictEqual({ count: 0 })
@@ -782,7 +803,7 @@ describe('WorldCommitCoordinator', () => {
           return {
             ...store,
             publish: (prepared) => Effect.flatMap(
-              store.setBlock(transactionPosition, blockId(3)),
+              store.setBlock(transactionPosition, blockId(3)).pipe(Effect.orDie),
               () => store.publish(prepared),
             ),
           }

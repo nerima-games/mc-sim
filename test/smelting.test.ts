@@ -817,6 +817,63 @@ describe('furnace boundary validation', () => {
     }),
   )
 
+  it('defaults omitted station and timer fields', () => {
+    expect(requireSuccess(furnaceState())).toMatchObject({
+      station: 'furnace',
+      fuelTimeRemainingSecs: 0,
+      fuelTimeTotalSecs: 0,
+      cookProgressSecs: 0,
+    })
+  })
+
+  it('rejects explicit null or undefined station', () => {
+    for (const station of [null, undefined]) {
+      expect(furnaceState({ station })).toMatchObject({
+        _tag: 'Failure',
+        failure: { _tag: 'FurnaceStateValidationFailure', path: 'station', reason: 'expected a cooking station' },
+      })
+    }
+  })
+
+  it('rejects explicit null or undefined fuel remaining time', () => {
+    for (const fuelTimeRemainingSecs of [null, undefined]) {
+      expect(furnaceState({ fuelTimeRemainingSecs })).toMatchObject({
+        _tag: 'Failure',
+        failure: {
+          _tag: 'FurnaceStateValidationFailure',
+          path: 'fuelTimeRemainingSecs',
+          reason: 'must be a finite non-negative number',
+        },
+      })
+    }
+  })
+
+  it('rejects explicit null or undefined total fuel time', () => {
+    for (const fuelTimeTotalSecs of [null, undefined]) {
+      expect(furnaceState({ fuelTimeTotalSecs })).toMatchObject({
+        _tag: 'Failure',
+        failure: {
+          _tag: 'FurnaceStateValidationFailure',
+          path: 'fuelTimeTotalSecs',
+          reason: 'must be a finite non-negative number',
+        },
+      })
+    }
+  })
+
+  it('rejects explicit null or undefined cook progress', () => {
+    for (const cookProgressSecs of [null, undefined]) {
+      expect(furnaceState({ cookProgressSecs })).toMatchObject({
+        _tag: 'Failure',
+        failure: {
+          _tag: 'FurnaceStateValidationFailure',
+          path: 'cookProgressSecs',
+          reason: 'must be a finite non-negative number',
+        },
+      })
+    }
+  })
+
   it.effect('invalid timers return failures and completed progress is rejected safely', () =>
     Effect.sync(() => {
       expect(Result.isFailure(furnaceState({ cookProgressSecs: Number.NaN }))).toBe(true)
@@ -870,6 +927,14 @@ describe('furnace boundary validation', () => {
       { ...kernelRecipe, stations: ['unknown_station'] },
       { ...kernelRecipe, cookTimeSecs: 0 },
       { ...kernelRecipe, experience: -1 },
+    ]) {
+      expect(Result.isFailure(matchSmeltingRecipeResult(undefined, 'furnace', [malformed] as never))).toBe(true)
+    }
+    for (const malformed of [
+      { ...kernelRecipe, cookTimeSecsByStation: { unknown_station: kernelRecipe.cookTimeSecs } },
+      { ...kernelRecipe, cookTimeSecsByStation: { furnace: 0 } },
+      { ...kernelRecipe, cookTimeSecsByStation: { furnace: 'not-a-duration' } },
+      { ...kernelRecipe, cookTimeSecsByStation: { furnace: Number.POSITIVE_INFINITY } },
     ]) {
       expect(Result.isFailure(matchSmeltingRecipeResult(undefined, 'furnace', [malformed] as never))).toBe(true)
     }
@@ -945,6 +1010,45 @@ describe('furnace boundary validation', () => {
     })
     expect(Result.isFailure(furnaceState({ fuelTimeRemainingSecs: 2, fuelTimeTotalSecs: 1 }))).toBe(true)
     expect(Result.isSuccess(advanceFurnaceResult(requireSuccess(emptyFurnaceStateResult()), 1))).toBe(true)
+  })
+
+  it('uses kernel station-specific cooking durations during furnace progression', () => {
+    const recipe = VANILLA_SMELTING_RECIPES.find((candidate) => candidate.input === 'iron_ore')
+    if (recipe === undefined) throw new Error('iron ore smelting recipe missing')
+    const furnace = requireSuccess(furnaceState({
+      station: 'furnace',
+      input: itemStack('iron_ore', 1),
+      fuel: itemStack('coal', 1),
+    }))
+    const blastFurnace = requireSuccess(furnaceState({
+      station: 'blast_furnace',
+      input: itemStack('iron_ore', 1),
+      fuel: itemStack('coal', 1),
+    }))
+
+    expect(recipe.cookTimeSecsByStation).toMatchObject({ furnace: 10, blast_furnace: 5 })
+    const normalCook = advanceFurnaceResult(furnace, 5)
+    const fastCook = advanceFurnaceResult(blastFurnace, 5)
+
+    expect(Result.isSuccess(normalCook)).toBe(true)
+    if (Result.isFailure(normalCook)) throw normalCook.failure
+    expect(normalCook.success.state.output).toBeUndefined()
+    expect(normalCook.success.state.cookProgressSecs).toBe(5)
+    expect(Result.isSuccess(fastCook)).toBe(true)
+    if (Result.isFailure(fastCook)) throw fastCook.failure
+    expect(fastCook.success.state.output?.item).toBe('iron_ingot')
+    expect(fastCook.success.experienceGained).toBe(0.7)
+
+    const fallbackRecipe = { ...recipe, cookTimeSecsByStation: {} }
+    const fallbackCook = advanceFurnaceResult(
+      furnace,
+      recipe.cookTimeSecs,
+      [fallbackRecipe],
+      [...VANILLA_FUEL_RULES],
+    )
+    expect(Result.isSuccess(fallbackCook)).toBe(true)
+    if (Result.isFailure(fallbackCook)) throw fallbackCook.failure
+    expect(fallbackCook.success.state.output?.item).toBe('iron_ingot')
   })
 
   it.effect('does not advance a recipe whose cook progress already meets its duration', () =>

@@ -12,7 +12,7 @@ import {
   WorldIdSchema,
   type Dimension,
 } from '@nerima-games/mc-kernel'
-import type { Chunk } from '@nerima-games/mc-worldgen'
+import type { ChunkWithBlockStates } from '@nerima-games/mc-worldgen'
 import { InMemoryStorageLayer } from '@nerima-games/mc-save'
 import { PLAYER_HALF_HEIGHT, PLAYER_HALF_WIDTH } from '@nerima-games/mc-physics'
 import * as App from '../src/index.js'
@@ -31,9 +31,10 @@ const achievementId = fc.constantFrom(...ACHIEVEMENT_IDS).map(Schema.decodeUnkno
 const world = Schema.decodeUnknownSync(WorldIdSchema)('public-application-state-property')
 const hostileDimension: fc.Arbitrary<unknown> = fc.oneof(hostileScalar, fc.constant('moon'), fc.constantFrom(...DIMENSIONS))
 
-const fakeChunk = (cx: number, cz: number): Chunk => ({
+const fakeChunk = (cx: number, cz: number): ChunkWithBlockStates => ({
   coord: chunkCoord(Result.getOrThrow(ChunkAxis.result(cx)), Result.getOrThrow(ChunkAxis.result(cz))),
   blocks: new Uint16Array(1),
+  blockStates: new Uint32Array(1),
   biomes: [],
 })
 

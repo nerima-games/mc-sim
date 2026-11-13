@@ -184,25 +184,35 @@ const mergeOneEnchantment = (
   transformation: TransformationState,
 ): TransformationResult => {
   const definition = definitions.get(source.id)
-  if (definition === undefined || (left.item !== 'enchanted_book' && !definition.applicableItems.has(left.item))) {
+  if (definition === undefined) {
     return {
       failure: rejection('invalid-enchantment', '$.state.right.payload.enchantments', 'does not apply to the output item'),
     }
   }
+  if (left.item !== 'enchanted_book' && !definition.applicableItems.has(left.item)) {
+    return { state: transformation }
+  }
 
   const existing = transformation.enchantments.find((candidate) => candidate.id === source.id)
   const mergedLevel = mergedLevelOf(existing, source, definition.maxLevel)
-  if (transformation.enchantments.some((candidate) => conflicts(candidate.id, source.id, definitions))) {
+  const incompatibleEnchantments = transformation.enchantments.filter((candidate) =>
+    conflicts(candidate.id, source.id, definitions),
+  ).length
+  if (incompatibleEnchantments > 0) {
     return {
-      failure: rejection('enchantment-conflict', '$.state.right.payload.enchantments', 'conflicts with the output item'),
+      state: {
+        ...transformation,
+        operationCost: safeAdd(transformation.operationCost, incompatibleEnchantments),
+      },
     }
   }
-  if (existing !== undefined && existing.level === mergedLevel) return { state: transformation }
 
   return {
     state: {
       ...transformation,
-      enchantments: enchantmentsWith(transformation.enchantments, existing, source, mergedLevel),
+      enchantments: existing !== undefined && existing.level === mergedLevel
+        ? transformation.enchantments
+        : enchantmentsWith(transformation.enchantments, existing, source, mergedLevel),
       operationCost: safeAdd(
         transformation.operationCost,
         mergedLevel * definition.costPerLevel,

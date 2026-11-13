@@ -1,5 +1,6 @@
 import { Arbitrary, Brand, Duration, Effect, Option, Result, Schedule, Schema, SchemaAST, SchemaIssue } from 'effect'
 import { SaveDecodeError } from '@nerima-games/mc-save'
+import { BlockId } from '@nerima-games/mc-kernel'
 import { expect, it } from 'vitest'
 import * as PublicApi from '../src/index.js'
 import * as Vitals from '../src/domain/vitals.js'
@@ -97,6 +98,44 @@ const opaqueSchemaInputProviders: Readonly<Record<string, () => unknown>> = {
     actualRevision: 1,
     ownerId: 'owner',
     reason: 'revision',
+  }),
+  AnvilServiceInputSchema: () => ({
+    left: null,
+    right: null,
+    rename: null,
+    experienceLevels: 0,
+  }),
+  AnvilServiceApplyResultSchema: () => ({
+    output: {
+      item: 'iron_sword',
+      durability: null,
+      enchantments: [],
+      repairCost: 0,
+      customName: null,
+    },
+    levelCost: 0,
+    materialCost: 0,
+    delta: {
+      world: 'world',
+      revision: 1,
+      changes: [{ owner: 'anvil', state: {} }],
+      blockChanges: [],
+    },
+  }),
+  AnvilServiceStateSchema: () => ({
+    input: {
+      left: null,
+      right: null,
+      rename: null,
+      experienceLevels: 0,
+    },
+    output: null,
+  }),
+  EnchantmentTableGenerateOffersRequestSchema: () => ({
+    item: 'book',
+    tablePosition: { x: 0, y: 0, z: 0 },
+    blockIdAt: () => BlockId(0),
+    random: { nextInt: () => 0, nextFloat: () => 0.5 },
   }),
   AutoSaveDaemonSchema: () => Effect.runFork(Effect.void),
   AutoSaveScheduleSchema: () => Schedule.spaced(Duration.millis(1)),

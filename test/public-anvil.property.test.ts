@@ -1,5 +1,10 @@
 import { Result } from 'effect'
 import fc from 'fast-check'
+import {
+  ANVIL_REPAIR_BONUS_RATIO,
+  ITEM_DURABILITY_CATALOG,
+  VANILLA_ENCHANTMENT_COSTS,
+} from '@nerima-games/mc-kernel'
 import { expect, it } from 'vitest'
 import * as Sim from '../src/index.js'
 import * as Anvil from '../src/domain/anvil.js'
@@ -164,4 +169,71 @@ it('anvil repair-cost helper keeps exact calculations for representable valid co
       }
     },
   ), checks)
+})
+
+it('public vanilla anvil plans match the independent two-tool cost formula', () => {
+  const maxDurability = Number(ITEM_DURABILITY_CATALOG.iron_sword.maxDurability)
+  const itemCost = Number(VANILLA_ENCHANTMENT_COSTS.sharpness.item)
+  const sharpnessMaxLevel = 5
+  const sharpness = Result.getOrThrow(Sim.AnvilEnchantmentId('sharpness'))
+
+  fc.assert(fc.property(
+    fc.integer({ min: 1, max: maxDurability - 1 }),
+    fc.integer({ min: 1, max: maxDurability - 1 }),
+    fc.integer({ min: 1, max: sharpnessMaxLevel }),
+    fc.integer({ min: 1, max: sharpnessMaxLevel }),
+    fc.integer({ min: 0, max: 3 }),
+    fc.integer({ min: 0, max: 3 }),
+    (leftCurrent, rightCurrent, leftLevel, rightLevel, leftRepairCost, rightRepairCost) => {
+      const mergedLevel = Math.min(
+        sharpnessMaxLevel,
+        leftLevel === rightLevel ? leftLevel + 1 : Math.max(leftLevel, rightLevel),
+      )
+      const enchantmentCost = mergedLevel * itemCost
+      const expectedDurability = Math.min(
+        maxDurability,
+        leftCurrent + rightCurrent + Math.floor(maxDurability * ANVIL_REPAIR_BONUS_RATIO),
+      )
+      const payload = (current: number, level: number, repairCost: number) => ({
+        item: 'iron_sword' as const,
+        durability: { current, max: maxDurability },
+        enchantments: [{ id: sharpness, level }],
+        repairCost,
+      })
+      const plan = Sim.planVanillaAnvil({
+        left: payload(leftCurrent, leftLevel, leftRepairCost),
+        right: { payload: payload(rightCurrent, rightLevel, rightRepairCost), count: 1 },
+        rename: null,
+        experienceLevels: 40,
+      })
+
+      expect(plan).toMatchObject({
+        ok: true,
+        levelCost: 2 + enchantmentCost + leftRepairCost + rightRepairCost,
+        materialCost: 1,
+        output: {
+          durability: { current: expectedDurability, max: maxDurability },
+          enchantments: [{ id: sharpness, level: mergedLevel }],
+        },
+      })
+    },
+  ), { ...checks, seed: 0x50554241 })
+})
+
+it('public vanilla anvil planning allows cost 39 and rejects cost 40', () => {
+  const name = Result.getOrThrow(Sim.AnvilCustomName('Renamed'))
+  const renameAt = (repairCost: number) => Sim.planVanillaAnvil({
+    left: {
+      item: 'iron_sword',
+      durability: null,
+      enchantments: [],
+      repairCost,
+    },
+    right: null,
+    rename: name,
+    experienceLevels: 40,
+  })
+
+  expect(renameAt(38)).toMatchObject({ ok: true, levelCost: 39 })
+  expect(renameAt(39)).toMatchObject({ ok: false, reason: 'too-expensive' })
 })

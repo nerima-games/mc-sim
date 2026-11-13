@@ -47,8 +47,28 @@ describe('brewing domain', () => {
       input: 'water_bottle',
       output: 'awkward_potion',
     })
-    expect(VANILLA_BREWING_RECIPES).toHaveLength(4)
+    expect(VANILLA_BREWING_RECIPES).toHaveLength(8)
     expect(VANILLA_BREWING_RECIPES[0]?._tag).toBe('Brewing')
+    expect(VANILLA_BREWING_RECIPES.find(({ id }) => id === 'minecraft:strong_swiftness')).toMatchObject({
+      ingredient: 'glowstone_dust',
+      input: 'potion_of_swiftness',
+      output: 'potion_of_swiftness_ii',
+    })
+    expect(VANILLA_BREWING_RECIPES.find(({ id }) => id === 'minecraft:long_swiftness')).toMatchObject({
+      ingredient: 'redstone_dust',
+      input: 'potion_of_swiftness',
+      output: 'potion_of_swiftness_long',
+    })
+    expect(VANILLA_BREWING_RECIPES.find(({ id }) => id === 'minecraft:healing')).toMatchObject({
+      ingredient: 'glistering_melon_slice',
+      input: 'awkward_potion',
+      output: 'potion_of_healing',
+    })
+    expect(VANILLA_BREWING_RECIPES.find(({ id }) => id === 'minecraft:strong_healing')).toMatchObject({
+      ingredient: 'glowstone_dust',
+      input: 'potion_of_healing',
+      output: 'potion_of_healing_ii',
+    })
     expect(BREWING_FUEL_ITEM).toBe('blaze_powder')
     expect(BREWING_FUEL_CHARGES).toBe(BREWING_MAX_FUEL_CHARGES)
     expect(BREWING_TIME_SECS).toBe(20)
