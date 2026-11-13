@@ -8,7 +8,7 @@
 
 - Settings validation now rejects unknown fields and returns schema failures for invalid saved values.
 
-- Use mc-kernel 0.17.0 data for vanilla crafting, brewing, smelting, fuel, and enchantment costs. The vanilla brewing table has 8 recipes; keep the 4-recipe starter table for focused fixtures. Add anvil and tick-based furnace services, and derive enchantment offers from nearby bookshelf power.
+- mc-sim uses mc-kernel 0.17.0 data for vanilla crafting, brewing, smelting, fuel, and enchantment costs. The vanilla brewing table has eight recipes, and the four-recipe starter table remains available for focused fixtures. The package adds anvil and tick-based furnace services and derives enchantment offers from nearby bookshelf power.
 
 ## 0.10.0
 
