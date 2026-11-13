@@ -1,5 +1,6 @@
 import {
   BlockIdSchema,
+  BlockStateValuesSchema,
   DIMENSIONS,
   DimensionRevisionSchema,
   WorldIdSchema,
@@ -421,6 +422,7 @@ const WorldBlockReadRequestSchema = Schema.Struct({
 const WorldWriteEditsSchema = Schema.Array(Schema.Struct({
   position: WorldBlockPositionSchema,
   block: BlockIdSchema,
+  state: Schema.optionalKey(BlockStateValuesSchema),
 }))
 
 const isChunkStoreRegistryApi = (value: unknown): value is ChunkStoreRegistryApi =>

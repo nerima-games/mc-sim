@@ -636,9 +636,18 @@ describe('WorldCommitCoordinator', () => {
         { position: transactionPosition, block: blockId(2) },
         { position: transactionPosition, block: blockId(3) },
       ])
+      const invalidStateBatch = makeBlockWrite(blockId(2), [
+        { position: transactionPosition, block: blockId(2), state: { facing: 'north' } },
+      ])
       const outOfWorldBatch = makeBlockWrite(blockId(2), [{ position: outOfWorldPosition, block: blockId(2) }])
       const unavailableBatch = makeBlockWrite(blockId(2), [{ position: unavailablePosition, block: blockId(2) }])
-      const requests: ReadonlyArray<WorldWriteBatch> = [emptyBatch, duplicateBatch, outOfWorldBatch, unavailableBatch]
+      const requests: ReadonlyArray<WorldWriteBatch> = [
+        emptyBatch,
+        duplicateBatch,
+        invalidStateBatch,
+        outOfWorldBatch,
+        unavailableBatch,
+      ]
       const outcomes = yield* Effect.forEach(requests, (blockWrite) => Effect.map(Effect.result(coordinator.commit({
         expectedRevision: revisionZero,
         expectedDimensions: [{ dimension: 'overworld', expectedRevision: dimensionRevisionZero }],
@@ -646,13 +655,26 @@ describe('WorldCommitCoordinator', () => {
         blockWrite,
       })), decodeCommitEffectResult))
 
-      expect(outcomes.map(({ _tag }) => _tag)).toStrictEqual(['Failure', 'Failure', 'Failure', 'Failure'])
-      const [emptyOutcome, duplicateOutcome, outOfWorldOutcome, unavailableOutcome] = outcomes
+      expect(outcomes.map(({ _tag }) => _tag)).toStrictEqual([
+        'Failure',
+        'Failure',
+        'Failure',
+        'Failure',
+        'Failure',
+      ])
+      const [emptyOutcome, duplicateOutcome, invalidStateOutcome, outOfWorldOutcome, unavailableOutcome] = outcomes
       if (emptyOutcome?._tag === 'Failure') {
         expect(emptyOutcome.failure).toMatchObject({ _tag: 'WorldWriteInvalidBatch', reason: 'empty' })
       }
       if (duplicateOutcome?._tag === 'Failure') {
         expect(duplicateOutcome.failure).toMatchObject({ _tag: 'WorldWriteInvalidBatch', reason: 'duplicate-position' })
+      }
+      if (invalidStateOutcome?._tag === 'Failure') {
+        expect(invalidStateOutcome.failure).toMatchObject({
+          _tag: 'WorldWriteInvalidBatch',
+          reason: 'invalid-block-state',
+          position: transactionPosition,
+        })
       }
       if (outOfWorldOutcome?._tag === 'Failure') expect(outOfWorldOutcome.failure).toBeInstanceOf(WorldCommitBlockWriteInvalidPosition)
       if (unavailableOutcome?._tag === 'Failure') expect(unavailableOutcome.failure).toBeInstanceOf(WorldWriteChunkUnavailable)
@@ -816,14 +838,27 @@ describe('WorldCommitCoordinator', () => {
         chunkStores: staleRegistry,
       })
       const revisionZero = Schema.decodeUnknownSync(WorldRevisionSchema)(0)
+      const revisionOne = Schema.decodeUnknownSync(WorldRevisionSchema)(1)
       const dimensionRevisionZero = Schema.decodeUnknownSync(DimensionRevisionSchema)(0)
+      const revisionConflictOutcome = decodeCommitEffectResult(yield* Effect.result(staleCoordinator.commit({
+        expectedRevision: revisionOne,
+        expectedDimensions: [],
+        changes: [{ ownerId: ownerA, state: { count: 1 } }],
+      })))
+      expect(revisionConflictOutcome._tag).toBe('Failure')
+      if (revisionConflictOutcome._tag === 'Failure') {
+        expect(revisionConflictOutcome.failure._tag).toBe('WorldRevisionConflict')
+        expect(revisionConflictOutcome.failure).toBeInstanceOf(WorldRevisionConflict)
+      }
+      expect(yield* staleCoordinator.revision).toBe(0)
+      expect((yield* staleCoordinator.snapshot(ownerA, counterSchema)).state).toStrictEqual({ count: 0 })
+
       const staleOutcome = decodeCommitEffectResult(yield* Effect.result(staleCoordinator.commit({
         expectedRevision: revisionZero,
         expectedDimensions: [{ dimension: 'overworld', expectedRevision: dimensionRevisionZero }],
         changes: [{ ownerId: ownerA, state: { count: 1 } }],
         blockWrite: makeBlockWrite(blockId(2)),
       })))
-
       expect(staleOutcome._tag).toBe('Failure')
       if (staleOutcome._tag === 'Failure') {
         expect(staleOutcome.failure._tag).toBe('WorldWriteStale')

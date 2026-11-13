@@ -1,9 +1,18 @@
 import { expect, it } from 'vitest'
 import { Effect, Result, Schema } from 'effect'
 import fc from 'fast-check'
-import { BlockIdSchema, BlockPositionSchema, ChunkAxis, DimensionIdSchema, WorldIdSchema } from '@nerima-games/mc-kernel'
+import {
+  BlockIdSchema,
+  BlockPositionSchema,
+  BlockStateValuesSchema,
+  ChunkAxis,
+  DimensionIdSchema,
+  DimensionRevisionSchema,
+  WorldIdSchema,
+  WorldRevisionSchema,
+} from '@nerima-games/mc-kernel'
 import type { BlockPosition, Dimension, WorldWriteBatch } from '@nerima-games/mc-kernel'
-import type { ChunkCoord } from '@nerima-games/mc-worldgen'
+import type { ChunkCoord, ChunkStoreRegistryApi } from '@nerima-games/mc-worldgen'
 import {
   CHUNK_SIZE_XZ,
   ChunkCapacity,
@@ -32,6 +41,11 @@ const ownerStateSchema = Schema.Struct({ value: Schema.Number })
 const initialOwnerState = { value: 0 }
 const chunk = chunkCoord(ChunkAxis(0), ChunkAxis(0))
 const batchDimension = Schema.decodeUnknownSync(DimensionIdSchema)(dimension)
+const stickyPiston = Schema.decodeUnknownSync(BlockIdSchema)(126)
+const stickyPistonStateArbitrary = fc.record({
+  facing: fc.constantFrom('north', 'east', 'south', 'west', 'up', 'down'),
+  extended: fc.boolean(),
+})
 
 const sourceForDimension = (_dimension: Dimension) =>
   (coord: ChunkCoord) =>
@@ -317,5 +331,67 @@ it('matches an independent model across randomized owner-only, block-only, and m
       await Effect.runPromise(runModelSequence(steps))
     }),
     { numRuns: 35 },
+  )
+})
+
+it('forwards validated kernel block state to the real ChunkStore prepare boundary', async () => {
+  await fc.assert(
+    fc.asyncProperty(stickyPistonStateArbitrary, async (state) => {
+      const preparedInputs: Array<unknown> = []
+      await Effect.runPromise(Effect.gen(function* () {
+        const registry = yield* ChunkStoreRegistry
+        const store = registry.forDimension(dimension)
+        yield* store.load(chunk)
+        const observingRegistry: ChunkStoreRegistryApi = {
+          forDimension: (targetDimension) => {
+            const targetStore = registry.forDimension(targetDimension)
+            return {
+              ...targetStore,
+              prepare: (edits) => {
+                preparedInputs.push(edits)
+                return targetStore.prepare(edits)
+              },
+            }
+          },
+        }
+        const coordinator = yield* makeWorldCommitCoordinator({
+          world,
+          owners: [],
+          dimensions: [dimension],
+          chunkStores: observingRegistry,
+        })
+        const position = positionForCell(0)
+        const blockWrite: WorldWriteBatch = {
+          world,
+          expectedWorldRevision: Schema.decodeUnknownSync(WorldRevisionSchema)(0),
+          dimension: batchDimension,
+          expectedDimensionRevision: Schema.decodeUnknownSync(DimensionRevisionSchema)(0),
+          edits: [{ position, block: stickyPiston, state }],
+        }
+
+        const delta = yield* coordinator.commit({
+          expectedRevision: Schema.decodeUnknownSync(WorldRevisionSchema)(0),
+          expectedDimensions: [{
+            dimension,
+            expectedRevision: Schema.decodeUnknownSync(DimensionRevisionSchema)(0),
+          }],
+          changes: [],
+          blockWrite,
+        })
+
+        expect(delta.revision).toBe(1)
+        expect(preparedInputs).toHaveLength(1)
+        const preparedEdits = Schema.decodeUnknownSync(Schema.Array(Schema.Struct({
+          position: WorldBlockPositionSchema,
+          block: BlockIdSchema,
+          state: BlockStateValuesSchema,
+        })))(preparedInputs[0])
+        expect(preparedEdits).toHaveLength(1)
+        expect(preparedEdits[0]?.position).toStrictEqual(position)
+        expect(preparedEdits[0]?.block).toBe(stickyPiston)
+        expect(preparedEdits[0]?.state).toEqual(state)
+      }).pipe(Effect.provide(chunkStoreLayer)))
+    }),
+    { numRuns: 24 },
   )
 })
