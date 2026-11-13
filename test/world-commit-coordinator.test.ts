@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Brand, Cause, Deferred, Effect, Exit, Fiber, Result, Schema, SchemaGetter } from 'effect'
+import { Brand, Cause, Deferred, Effect, Exit, Fiber, Layer, Option, Result, Schema, SchemaGetter } from 'effect'
 import {
   BlockIdSchema,
   BlockPositionSchema,
@@ -10,17 +10,23 @@ import {
   WorldRevisionSchema,
   WorldWriteChunkUnavailable,
   chunkKeyOfPosition,
+  BlockStateValuesSchema,
 } from '@nerima-games/mc-kernel'
 import type { BlockId, ChunkCoord, Dimension, WorldWriteBatch } from '@nerima-games/mc-kernel'
+import { defaultBlockState } from '@nerima-games/mc-kernel/domain/block-state'
 import {
+  CHUNK_FORMAT,
   CHUNK_HEIGHT,
   CHUNK_SIZE_XZ,
   ChunkCapacity,
   ChunkStoreRegistry,
   ChunkStoreRegistryLayer,
+  PersistentChunkStoreRegistryLayer,
   chunkCoord,
+  chunkSaveKey,
 } from '@nerima-games/mc-worldgen'
 import { emptyBlocks } from '@nerima-games/mc-worldgen/testing'
+import { StoragePort, loadFrom, makeInMemoryStorage } from '@nerima-games/mc-save'
 import type {
   ChunkStoreRegistryApi,
   ChunkWriteInvalidBatch,
@@ -60,6 +66,8 @@ const transactionPosition = Schema.decodeUnknownSync(BlockPositionSchema)({ x: 1
 const blockId = (value: number): BlockId => Schema.decodeUnknownSync(BlockIdSchema)(value)
 const transactionWorld = Schema.decodeUnknownSync(WorldIdSchema)('world-a')
 const transactionDimension = Schema.decodeUnknownSync(DimensionIdSchema)('overworld')
+const stickyPiston = blockId(126)
+const stickyPistonDefaultState = Result.getOrThrow(defaultBlockState(stickyPiston))
 const transactionSource = (_dimension: Dimension) => (coord: ChunkCoord) => Effect.succeed({
   blocks: emptyBlocks(),
   biomes: Array.from({ length: CHUNK_SIZE_XZ * CHUNK_SIZE_XZ }, () => 'PLAINS' as const),
@@ -586,6 +594,108 @@ describe('WorldCommitCoordinator', () => {
     }),
   )
 
+  it.effect('defaults omitted block state and persists explicit state through chunk format v3', () =>
+    Effect.gen(function* () {
+      const storage = yield* makeInMemoryStorage
+      const storageLayer = Layer.succeed(StoragePort, storage)
+      const persistentWorldId = 'block-state-persistence-world'
+      const persistentRegistryLayer = () => PersistentChunkStoreRegistryLayer(
+        transactionSource,
+        persistentWorldId,
+        ChunkCapacity(2),
+      ).pipe(Layer.provide(storageLayer))
+      const registry = yield* Effect.provide(ChunkStoreRegistry, persistentRegistryLayer())
+      const store = registry.forDimension('overworld')
+      const coord = chunkCoord(ChunkAxis(0), ChunkAxis(0))
+      yield* store.load(coord)
+
+      const coordinator = yield* makeWorldCommitCoordinator({
+        world: transactionWorld,
+        owners: [],
+        chunkStores: registry,
+      })
+      const explicitState = Schema.decodeUnknownSync(BlockStateValuesSchema)({ facing: 'west', extended: true })
+      const defaultPosition = Schema.decodeUnknownSync(BlockPositionSchema)({ x: 2, y: 32, z: 1 })
+      const blockWrite: WorldWriteBatch = {
+        world: transactionWorld,
+        expectedWorldRevision: Schema.decodeUnknownSync(WorldRevisionSchema)(0),
+        dimension: transactionDimension,
+        expectedDimensionRevision: Schema.decodeUnknownSync(DimensionRevisionSchema)(0),
+        edits: [
+          { position: transactionPosition, block: stickyPiston, state: explicitState },
+          { position: defaultPosition, block: stickyPiston },
+        ],
+      }
+      const delta = yield* coordinator.commit({
+        expectedRevision: Schema.decodeUnknownSync(WorldRevisionSchema)(0),
+        expectedDimensions: [{
+          dimension: 'overworld',
+          expectedRevision: Schema.decodeUnknownSync(DimensionRevisionSchema)(0),
+        }],
+        changes: [],
+        blockWrite,
+      })
+
+      expect(delta.blockChanges).toStrictEqual([
+        {
+          dimension: 'overworld',
+          position: transactionPosition,
+          before: blockId(0),
+          after: stickyPiston,
+          state: explicitState,
+        },
+        {
+          dimension: 'overworld',
+          position: defaultPosition,
+          before: blockId(0),
+          after: stickyPiston,
+          state: stickyPistonDefaultState,
+        },
+      ])
+      expect(yield* store.getBlockWithState(transactionPosition)).toMatchObject({
+        _tag: 'Block',
+        block: stickyPiston,
+        state: explicitState,
+      })
+      expect(yield* store.getBlockWithState(defaultPosition)).toMatchObject({
+        _tag: 'Block',
+        block: stickyPiston,
+        state: stickyPistonDefaultState,
+      })
+
+      const expectedSnapshot = yield* store.snapshot(coord)
+      if (expectedSnapshot === undefined) throw new Error('committed chunk snapshot was not observable')
+      yield* store.unload(coord)
+
+      const saveKey = chunkSaveKey({ worldId: persistentWorldId, dimension: transactionDimension }, coord)
+      const envelope = yield* storage.get(saveKey)
+      expect(Option.isSome(envelope)).toBe(true)
+      if (Option.isSome(envelope)) expect(envelope.value.version).toBe(3)
+      expect(CHUNK_FORMAT.version).toBe(3)
+
+      const savedChunk = yield* loadFrom(CHUNK_FORMAT, saveKey).pipe(Effect.provide(storageLayer))
+      expect(Option.isSome(savedChunk)).toBe(true)
+      if (Option.isSome(savedChunk)) {
+        expect(savedChunk.value.blocks).toStrictEqual(expectedSnapshot.blocks)
+        expect(savedChunk.value.blockStates).toStrictEqual(expectedSnapshot.blockStates)
+      }
+
+      const restoredRegistry = yield* Effect.provide(ChunkStoreRegistry, persistentRegistryLayer())
+      const restoredStore = restoredRegistry.forDimension('overworld')
+      yield* restoredStore.load(coord)
+      expect(yield* restoredStore.getBlockWithState(transactionPosition)).toMatchObject({
+        _tag: 'Block',
+        block: stickyPiston,
+        state: explicitState,
+      })
+      expect(yield* restoredStore.getBlockWithState(defaultPosition)).toMatchObject({
+        _tag: 'Block',
+        block: stickyPiston,
+        state: stickyPistonDefaultState,
+      })
+    }),
+  )
+
   it.effect('commits a non-empty all-no-op batch with an empty sparse delta', () =>
     Effect.gen(function* () {
       const registry = yield* makeChunkStoreRegistry()
@@ -679,23 +789,6 @@ describe('WorldCommitCoordinator', () => {
       if (outOfWorldOutcome?._tag === 'Failure') expect(outOfWorldOutcome.failure).toBeInstanceOf(WorldCommitBlockWriteInvalidPosition)
       if (unavailableOutcome?._tag === 'Failure') expect(unavailableOutcome.failure).toBeInstanceOf(WorldWriteChunkUnavailable)
 
-      const invalidStateOutcome = decodeCommitEffectResult(yield* Effect.result(coordinator.commit({
-        expectedRevision: revisionZero,
-        expectedDimensions: [{ dimension: 'overworld', expectedRevision: dimensionRevisionZero }],
-        changes: [candidate],
-        blockWrite: makeBlockWrite(blockId(2), [{
-          position: transactionPosition,
-          block: blockId(2),
-          state: { facing: 'north' },
-        }]),
-      })))
-      expect(invalidStateOutcome._tag).toBe('Failure')
-      if (invalidStateOutcome._tag === 'Failure') {
-        expect(invalidStateOutcome.failure).toMatchObject({
-          _tag: 'WorldWriteInvalidBatch',
-          reason: 'invalid-block-state',
-        })
-      }
       expect(yield* coordinator.revision).toBe(0)
       expect(yield* coordinator.dimensionRevision('overworld')).toBe(0)
       expect((yield* coordinator.snapshot(ownerA, counterSchema)).state).toStrictEqual({ count: 0 })

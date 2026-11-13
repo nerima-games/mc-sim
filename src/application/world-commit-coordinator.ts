@@ -728,11 +728,12 @@ export const makeWorldCommitCoordinator = (
         for (const change of preparedChanges) nextOwners.set(change.owner, change.state)
         const blockChanges = preparedBlockWrite === undefined
           ? []
-          : preparedBlockWrite.token.changes.map(({ position, previous, next }) => ({
+          : preparedBlockWrite.token.changes.map(({ position, previous, next, state }) => ({
               dimension: preparedBlockWrite.dimension,
               position,
               before: previous,
               after: next,
+              ...(state === undefined ? {} : { state }),
             }))
         const delta: ReplicatedWorldDelta<PreparedOwnerChange> = {
           world: current.world,

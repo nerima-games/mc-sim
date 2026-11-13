@@ -12,6 +12,8 @@ import {
   WorldRevisionSchema,
 } from '@nerima-games/mc-kernel'
 import type { BlockPosition, Dimension, WorldWriteBatch } from '@nerima-games/mc-kernel'
+import { defaultBlockState } from '@nerima-games/mc-kernel/domain/block-state'
+import type { BlockStateValues } from '@nerima-games/mc-kernel/domain/block-state'
 import type { ChunkCoord, ChunkStoreRegistryApi } from '@nerima-games/mc-worldgen'
 import {
   CHUNK_SIZE_XZ,
@@ -42,6 +44,7 @@ const initialOwnerState = { value: 0 }
 const chunk = chunkCoord(ChunkAxis(0), ChunkAxis(0))
 const batchDimension = Schema.decodeUnknownSync(DimensionIdSchema)(dimension)
 const stickyPiston = Schema.decodeUnknownSync(BlockIdSchema)(126)
+const stickyPistonDefaultState = Result.getOrThrow(defaultBlockState(stickyPiston))
 const stickyPistonStateArbitrary = fc.record({
   facing: fc.constantFrom('north', 'east', 'south', 'west', 'up', 'down'),
   extended: fc.boolean(),
@@ -155,6 +158,7 @@ type BlockChange = Readonly<{
   position: BlockPosition
   before: number
   after: number
+  state?: BlockStateValues
 }>
 
 const kindSequenceArbitrary: fc.Arbitrary<ReadonlyArray<CommitKind>> = fc
@@ -245,10 +249,17 @@ const runModelSequence = (steps: ReadonlyArray<Step>) =>
               position: positionForCell(cell),
               block: Schema.decodeUnknownSync(BlockIdSchema)(after),
             }
+            const state = Result.getOrThrow(defaultBlockState(edit.block))
             return {
               cell,
               edit,
-              change: { dimension, position: edit.position, before, after },
+              change: {
+                dimension,
+                position: edit.position,
+                before,
+                after,
+                ...(Object.keys(state).length === 0 ? {} : { state }),
+              },
             }
           })
         : []
@@ -334,7 +345,7 @@ it('matches an independent model across randomized owner-only, block-only, and m
   )
 })
 
-it('forwards validated kernel block state to the real ChunkStore prepare boundary', async () => {
+it('forwards explicit and default block states through prepare, delta, and readback', async () => {
   await fc.assert(
     fc.asyncProperty(stickyPistonStateArbitrary, async (state) => {
       const preparedInputs: Array<unknown> = []
@@ -360,13 +371,17 @@ it('forwards validated kernel block state to the real ChunkStore prepare boundar
           dimensions: [dimension],
           chunkStores: observingRegistry,
         })
-        const position = positionForCell(0)
+        const explicitPosition = positionForCell(0)
+        const defaultPosition = positionForCell(1)
         const blockWrite: WorldWriteBatch = {
           world,
           expectedWorldRevision: Schema.decodeUnknownSync(WorldRevisionSchema)(0),
           dimension: batchDimension,
           expectedDimensionRevision: Schema.decodeUnknownSync(DimensionRevisionSchema)(0),
-          edits: [{ position, block: stickyPiston, state }],
+          edits: [
+            { position: explicitPosition, block: stickyPiston, state },
+            { position: defaultPosition, block: stickyPiston },
+          ],
         }
 
         const delta = yield* coordinator.commit({
@@ -380,16 +395,42 @@ it('forwards validated kernel block state to the real ChunkStore prepare boundar
         })
 
         expect(delta.revision).toBe(1)
+        expect(delta.blockChanges).toEqual([
+          {
+            dimension,
+            position: explicitPosition,
+            before: 0,
+            after: stickyPiston,
+            state,
+          },
+          {
+            dimension,
+            position: defaultPosition,
+            before: 0,
+            after: stickyPiston,
+            state: stickyPistonDefaultState,
+          },
+        ])
+        expect(delta.blockChanges[0]).toHaveProperty('state', state)
+        expect(delta.blockChanges[1]).toHaveProperty('state', stickyPistonDefaultState)
         expect(preparedInputs).toHaveLength(1)
         const preparedEdits = Schema.decodeUnknownSync(Schema.Array(Schema.Struct({
           position: WorldBlockPositionSchema,
           block: BlockIdSchema,
-          state: BlockStateValuesSchema,
+          state: Schema.optionalKey(BlockStateValuesSchema),
         })))(preparedInputs[0])
-        expect(preparedEdits).toHaveLength(1)
-        expect(preparedEdits[0]?.position).toStrictEqual(position)
+        expect(preparedEdits).toHaveLength(2)
+        expect(preparedEdits[0]?.position).toStrictEqual(explicitPosition)
         expect(preparedEdits[0]?.block).toBe(stickyPiston)
         expect(preparedEdits[0]?.state).toEqual(state)
+        expect(preparedEdits[1]?.position).toStrictEqual(defaultPosition)
+        expect(preparedEdits[1]?.block).toBe(stickyPiston)
+        expect(preparedEdits[1]?.state).toBeUndefined()
+
+        const explicitRead = yield* store.getBlockWithState(explicitPosition)
+        const defaultRead = yield* store.getBlockWithState(defaultPosition)
+        expect(explicitRead).toMatchObject({ _tag: 'Block', block: stickyPiston, state })
+        expect(defaultRead).toMatchObject({ _tag: 'Block', block: stickyPiston, state: stickyPistonDefaultState })
       }).pipe(Effect.provide(chunkStoreLayer)))
     }),
     { numRuns: 24 },
