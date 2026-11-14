@@ -1,5 +1,11 @@
 # @nerima-games/mc-sim
 
+## 0.11.1
+
+### Patch Changes
+
+- Bump `@nerima-games/mc-worldgen` to 0.9.1. Generated output is unchanged; generation is faster.
+
 ## 0.11.0
 
 ### Minor Changes
