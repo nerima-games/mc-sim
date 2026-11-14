@@ -184,8 +184,8 @@ importers:
         specifier: 0.8.0
         version: 0.8.0
       '@nerima-games/mc-worldgen':
-        specifier: 0.9.0
-        version: 0.9.0
+        specifier: 0.9.1
+        version: 0.9.1
       effect:
         specifier: 4.0.5
         version: 4.0.5
@@ -540,8 +540,8 @@ packages:
     resolution: {integrity: sha512-z15WOznf2T/kJnOiws7ANThVoJEv8Ps9L1M9dDahlk+PBRgAgY5JC7jKMwyApKPX9KOWuP8Jgflu5P7L+8owzg==, tarball: https://npm.pkg.github.com/download/@nerima-games/mc-save/0.8.0/e281e006eac7c117a4e06a33136629da958f2625}
     engines: {node: '>=24.0.0', pnpm: '>=11.24.0'}
 
-  '@nerima-games/mc-worldgen@0.9.0':
-    resolution: {integrity: sha512-A0qtIhWP+0ksCa57G4My+oKXhKFncE9HqBSPEN215vUz9Zoj09R6zMtOoEMnZ8LrrxLpA+EwhvNrLcPihozorw==, tarball: https://npm.pkg.github.com/download/@nerima-games/mc-worldgen/0.9.0/910f82f32c5b69fe55c7fd03f8fa1a8a9cba63de}
+  '@nerima-games/mc-worldgen@0.9.1':
+    resolution: {integrity: sha512-8CiXrhqxegGOF9h2VrIfbR9s86U0jcy9q6vuw4FuDA5j7t3CP2xf6lgEbcLV+X9E9lFIPsSj/BuQ/SakJfebPw==, tarball: https://npm.pkg.github.com/download/@nerima-games/mc-worldgen/0.9.1/527c341c94b6123678bfc0bbac8734a4fed747b2}
     engines: {node: '>=24.0.0', pnpm: '>=11.24.0'}
 
   '@oxc-parser/binding-android-arm-eabi@0.154.0':
@@ -1692,7 +1692,7 @@ snapshots:
       '@nerima-games/mc-kernel': 0.17.0
       effect: 4.0.5
 
-  '@nerima-games/mc-worldgen@0.9.0':
+  '@nerima-games/mc-worldgen@0.9.1':
     dependencies:
       '@nerima-games/mc-kernel': 0.17.0
       '@nerima-games/mc-noise': 0.7.0
