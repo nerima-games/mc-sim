@@ -1,5 +1,15 @@
 # @nerima-games/mc-sim
 
+## 0.11.0
+
+### Minor Changes
+
+- Block writes preserve explicit block states and apply kernel defaults when state is omitted. Replicated block deltas include canonical state, and persisted chunks retain it across unload and reload.
+
+- Settings validation now rejects unknown fields and returns schema failures for invalid saved values.
+
+- mc-sim uses mc-kernel 0.17.0 data for vanilla crafting, brewing, smelting, fuel, and enchantment costs. The vanilla brewing table has eight recipes, and the four-recipe starter table remains available for focused fixtures. The package adds anvil and tick-based furnace services and derives enchantment offers from nearby bookshelf power.
+
 ## 0.10.0
 
 ### Minor Changes
