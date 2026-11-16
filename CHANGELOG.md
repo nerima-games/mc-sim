@@ -1,5 +1,11 @@
 # @nerima-games/mc-sim
 
+## 0.12.0
+
+### Minor Changes
+
+- Bump @nerima-games/mc-worldgen to 0.9.2.
+
 ## 0.11.1
 
 ### Patch Changes
