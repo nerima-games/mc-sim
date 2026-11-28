@@ -181,6 +181,46 @@ describe('physics configuration validation', () => {
       expect(resolveFailure).toStrictEqual({ _tag: 'SimPhysicsConfigError', field: 'resolve' })
     }).pipe(Effect.provide(SimulationLayer)),
   )
+
+  it.effect('rejects a blockIdAt that is not a function at construction, on resolve and on the environment', () =>
+    Effect.gen(function* () {
+      const onResolve: SimPhysicsConfigError = yield* Effect.flip(
+        makeControllableSimStagesWithPhysics({
+          ...AirPhysicsConfig,
+          resolve: { ...AirPhysicsConfig.resolve, blockIdAt: 1 as never },
+        }),
+      )
+      const onEnvironment: SimPhysicsConfigError = yield* Effect.flip(
+        makeSimStagesWithPhysics({
+          ...AirPhysicsConfig,
+          resolve: {
+            ...AirPhysicsConfig.resolve,
+            environment: { ...AirPhysicsConfig.resolve.environment, blockIdAt: 'ladder' as never },
+          },
+        }),
+      )
+
+      expect(onResolve).toStrictEqual({ _tag: 'SimPhysicsConfigError', field: 'resolve' })
+      expect(onEnvironment).toStrictEqual({ _tag: 'SimPhysicsConfigError', field: 'resolve' })
+    }).pipe(Effect.provide(SimulationLayer)),
+  )
+
+  it.effect('accepts a blockIdAt function on resolve or on the environment', () =>
+    Effect.gen(function* () {
+      const blockIdAt = () => null
+      yield* makeControllableSimStagesWithPhysics({
+        ...AirPhysicsConfig,
+        resolve: { ...AirPhysicsConfig.resolve, blockIdAt },
+      })
+      yield* makeSimStagesWithPhysics({
+        ...AirPhysicsConfig,
+        resolve: {
+          ...AirPhysicsConfig.resolve,
+          environment: { ...AirPhysicsConfig.resolve.environment, blockIdAt },
+        },
+      })
+    }).pipe(Effect.provide(SimulationLayer)),
+  )
 })
 
 describe('§2.3-3 the total order belongs to mc-compose', () => {
@@ -455,6 +495,29 @@ describe('the physical simulation path is opt-in and player pose remains authori
       expect(actualVelocity.z).toBeGreaterThan(0)
       expect(actualVelocity.x / actualVelocity.z).toBeCloseTo(-2)
       expect(pose.feetPosition.x / pose.feetPosition.z).toBeCloseTo(-2)
+    }).pipe(Effect.provide(SimulationLayer), Effect.provide(FrozenClockLayer)),
+  )
+
+  it.effect('scales acceleration with the input length instead of normalising a partial input to 1', () =>
+    Effect.gen(function* () {
+      const player = yield* PlayerService
+      const { state, stages } = yield* makeControllableSimStagesWithPhysics(AirPhysicsConfig)
+      const start = (yield* player.pose).feetPosition
+      const speedAfterOneTick = (intent: MovementIntent) =>
+        Effect.gen(function* () {
+          yield* player.moveTo(start)
+          yield* Ref.set(state.velocity, velocity(0, 0, 0))
+          yield* Ref.set(state.movementIntent, intent)
+          yield* stages[0]?.run(DeltaTimeSecs(0.05)) ?? Effect.void
+          const { x, z } = yield* Ref.get(state.velocity)
+          return Math.hypot(x, z)
+        })
+
+      const partial = yield* speedAfterOneTick({ forward: 0.5, strafe: -0.25 })
+      const full = yield* speedAfterOneTick({ forward: 1, strafe: -0.5 })
+
+      // Same direction, so the speeds differ only by the input length: hypot(0.5, 0.25) against 1.
+      expect(partial / full).toBeCloseTo(Math.hypot(0.5, 0.25), 6)
     }).pipe(Effect.provide(SimulationLayer), Effect.provide(FrozenClockLayer)),
   )
 

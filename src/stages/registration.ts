@@ -178,7 +178,9 @@ const hasValidResolveCallbacks = (
   typeof environment['blockAt'] === 'function' &&
   typeof resolve['blockPropertiesAt'] === 'function' &&
   isOptionalFunction(environment['blockShapeAt']) &&
+  isOptionalFunction(environment['blockIdAt']) &&
   isOptionalFunction(resolve['blockShapeAt']) &&
+  isOptionalFunction(resolve['blockIdAt']) &&
   isOptionalFunction(resolve['bouncinessAt'])
 
 const hasValidResolveDimensions = (resolve: Readonly<Record<string, unknown>>): boolean => {

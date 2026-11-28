@@ -117,6 +117,8 @@ it('stage physics constructors return typed failures for hostile config and reso
     { resolve: {}, walkSpeed: 4, jumpSpeed: 7 },
     { resolve: { environment: null }, walkSpeed: 4, jumpSpeed: 7 },
     { resolve: { environment: { blockAt: 1 }, blockPropertiesAt: 1 }, walkSpeed: 4, jumpSpeed: 7 },
+    { resolve: { ...validResolve, blockIdAt: 1 }, walkSpeed: 4, jumpSpeed: 7 },
+    { resolve: { ...validResolve, environment: { ...validResolve.environment, blockIdAt: 'id' } }, walkSpeed: 4, jumpSpeed: 7 },
     { resolve: { ...validResolve, halfHeight: Number.NaN }, walkSpeed: 4, jumpSpeed: 7 },
     { resolve: { ...validResolve, stepHeight: Number.POSITIVE_INFINITY }, walkSpeed: 4, jumpSpeed: 7 },
   )
