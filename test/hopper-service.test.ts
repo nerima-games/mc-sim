@@ -479,6 +479,94 @@ describe('HopperService', () => {
     ),
   )
 
+  it.effect('accepts a transfer into a locked hopper while that hopper stays disabled', () =>
+    Effect.flatMap(makeFixture(), ({ coordinator, containerService, hopperService }) =>
+      Effect.gen(function* () {
+        // Vanilla reads the enabled block state only in HopperBlockEntity.tryMoveItems, which gates
+        // a hopper's own push and pull. Insertion goes through addItem -> tryMoveInItem, which never
+        // reads it, so a locked hopper still receives items from another container.
+        // https://mc-packet-reference.netlify.app/26.x/source/net/minecraft/world/level/block/entity/hopperblockentity/
+        const pusherAddress = addressAt(21)
+        const lockedAddress = addressAt(22)
+        yield* containerService.createContainerAt(pusherAddress, 'hopper')
+        yield* containerService.createContainerAt(lockedAddress, 'hopper')
+        yield* containerService.transferContainerItem({
+          playerOwnerId,
+          address: pusherAddress,
+          direction: 'PlayerToContainer',
+          playerSlot: 0,
+          containerSlot: 0,
+          count: 1,
+        })
+        const revision = yield* coordinator.revision
+        const dimensionRevision = yield* coordinator.dimensionRevision('overworld')
+        const expectedDimensions = [{ dimension: 'overworld' as const, expectedRevision: dimensionRevision }]
+        const containerSnapshot = yield* coordinator.snapshot(CONTAINER_STORAGE_REPLICATED_OWNER_ID, ContainerStorageSnapshotSchema)
+        const tickPlan = (
+          hopperAddress: ReturnType<typeof addressAt>,
+          sourceAddress: ReturnType<typeof addressAt>,
+          destinationAddress: ReturnType<typeof addressAt>,
+          containers: typeof containerSnapshot.state,
+        ) => Schema.decodeUnknownSync(HopperTransferTickSnapshotSchema)({
+          world,
+          expectedRevision: revision,
+          expectedDimensions,
+          state: {
+            hoppers: Schema.decodeUnknownSync(HopperServiceSnapshotSchema)({
+              hoppers: [
+                { address: pusherAddress, cooldownTicks: 0 },
+                { address: lockedAddress, cooldownTicks: 3 },
+              ],
+            }),
+            containers: {
+              world: containerSnapshot.world,
+              expectedRevision: containerSnapshot.revision,
+              expectedDimensions,
+              state: containers,
+            },
+            player: { _tag: 'None' as const },
+            intent: {
+              hopperAddress,
+              source: { _tag: 'Container' as const, address: sourceAddress, slot: 0 },
+              destination: { _tag: 'Container' as const, address: destinationAddress, slot: 0 },
+              blockEdits: {
+                dimension: 'overworld' as const,
+                edits: batchFor(revision, dimensionRevision, hopperAddress).edits,
+              },
+            },
+          },
+        })
+        const slotOf = (containers: typeof containerSnapshot.state, address: ReturnType<typeof addressAt>) =>
+          containers.containers.find(({ id }) => id === worldContainerIdAt(address))?.slots[0]
+        const oneTick = Schema.decodeUnknownSync(HopperElapsedTicksSchema)(1)
+
+        const pushed = yield* hopperService.planTransferTick(
+          tickPlan(pusherAddress, pusherAddress, lockedAddress, containerSnapshot.state),
+          oneTick,
+          false,
+        )
+        expect(pushed.result).toMatchObject({
+          _tag: 'Committed',
+          transfer: { _tag: 'Moved', item: 'stone', count: 1 },
+        })
+        const afterPush = Schema.decodeUnknownSync(ContainerStorageSnapshotSchema)(
+          pushed.changes.find(({ ownerId }) => ownerId === CONTAINER_STORAGE_REPLICATED_OWNER_ID)?.state,
+        )
+        expect(slotOf(afterPush, lockedAddress)).toMatchObject({ item: 'stone', count: 1 })
+        expect(slotOf(afterPush, pusherAddress)).toBeNull()
+
+        const lockedTick = yield* hopperService.planTransferTick(
+          tickPlan(lockedAddress, lockedAddress, pusherAddress, afterPush),
+          oneTick,
+          true,
+        )
+        expect(lockedTick.result).toStrictEqual({ _tag: 'Disabled' })
+        expect(lockedTick.changes.map(({ ownerId }) => ownerId)).toEqual([HOPPER_REPLICATED_OWNER_ID])
+        expect(lockedTick.blockEdits).toBeUndefined()
+      }),
+    ),
+  )
+
   it.effect('commits a player inventory endpoint with the container and hopper block edit', () =>
     Effect.flatMap(makeFixture(), ({ coordinator, overworld, containerService, hopperService }) =>
       Effect.gen(function* () {
