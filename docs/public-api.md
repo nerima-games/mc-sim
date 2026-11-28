@@ -745,6 +745,17 @@ const resetLandingImpact: (state: SimFrameState) => Effect.Effect<void>
 `isBlockSolid` 相当の判定は `blockShapeAt` 側へ移す（`test/stage-registration.test.ts` の
 フィクスチャ参照）。
 
+## 4.3 Player movement
+
+With physics configured, `sim:physics` moves the player through mc-physics `applyMovementInput`, `stepBody` and `applyMovementFriction`, once per fixed tick (0.05 s). Horizontal velocity carries over from tick to tick in `SimFrameState.velocity`, which now holds the velocity after friction, so releasing the keys slows the player instead of stopping them.
+
+- `SimPhysicsConfig.walkSpeed` is the steady speed on ordinary ground (`groundAcceleration` is scaled to reach it), and `jumpSpeed` is the jump velocity. Both keep their meaning; a body that has just started walking takes several ticks to reach `walkSpeed`.
+- `SimInputPort.setSneakIntent(pressed)` writes `SimFrameState.sneakIntent`. Sneaking walks at 0.3 of the normal speed and turns on mc-physics's edge clamp (`ResolveOptions.sneaking`), which stops the player once their hitbox no longer overlaps ground. `sneaking` on `SimPhysicsConfig.resolve` is overridden by the intent every tick.
+- Ice, soul sand, cobwebs and ladders are recognised by block id, read through `blockIdAt` on `SimPhysicsConfig.resolve` (or on its `environment`). `blockIdAt` is optional, and when supplied it must be a function: the physics constructors reject anything else with `SimPhysicsConfigError` (`field: 'resolve'`). Without it they are not recognised by id, and only blocks with the `climbable` capability still count as ladders.
+- A cobweb the body overlaps cuts the steady walking speed to a quarter and slows vertical speed to a crawl (a falling body settles near 0.026 blocks/s).
+- The stage calls `stepBody` rather than `integrateBody` plus `resolveBody`, because only `stepBody` applies the sneak edge clamp. It also runs mc-physics's swept collision check, which the stage did not use before.
+- Not handled yet: sprint (no input), movement in fluid (`inFluid` is always false), and a ladder climbed by pressing forward into the wall. In mc-physics 0.6.0 the last one stalls when the head crosses a block boundary, so climb with the jump key until that is fixed upstream.
+
 ## 5. 公開サービスと GameModule
 
 この節は、実装済みのサービスとモジュール境界を一覧化する。未実装の責務を公開 API として約束しない。

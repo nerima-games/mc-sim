@@ -84,15 +84,21 @@ const expectControllableStageOutcome = (
       'movementIntent',
       'physicsConfig',
       'resolvedFeetPosition',
+      'sneakIntent',
       'velocity',
     ])
     for (const field of Object.values(success['state'])) expect(field).toBeDefined()
   }
   expect(isRecord(success['input'])).toBe(true)
   if (isRecord(success['input'])) {
-    expect(Object.keys(success['input']).sort()).toStrictEqual(['setJumpIntent', 'setMovementIntent'])
+    expect(Object.keys(success['input']).sort()).toStrictEqual([
+      'setJumpIntent',
+      'setMovementIntent',
+      'setSneakIntent',
+    ])
     expect(typeof success['input']['setMovementIntent']).toBe('function')
     expect(typeof success['input']['setJumpIntent']).toBe('function')
+    expect(typeof success['input']['setSneakIntent']).toBe('function')
   }
 }
 
@@ -111,6 +117,8 @@ it('stage physics constructors return typed failures for hostile config and reso
     { resolve: {}, walkSpeed: 4, jumpSpeed: 7 },
     { resolve: { environment: null }, walkSpeed: 4, jumpSpeed: 7 },
     { resolve: { environment: { blockAt: 1 }, blockPropertiesAt: 1 }, walkSpeed: 4, jumpSpeed: 7 },
+    { resolve: { ...validResolve, blockIdAt: 1 }, walkSpeed: 4, jumpSpeed: 7 },
+    { resolve: { ...validResolve, environment: { ...validResolve.environment, blockIdAt: 'id' } }, walkSpeed: 4, jumpSpeed: 7 },
     { resolve: { ...validResolve, halfHeight: Number.NaN }, walkSpeed: 4, jumpSpeed: 7 },
     { resolve: { ...validResolve, stepHeight: Number.POSITIVE_INFINITY }, walkSpeed: 4, jumpSpeed: 7 },
   )

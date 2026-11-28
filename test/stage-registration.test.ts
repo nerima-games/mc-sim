@@ -181,6 +181,46 @@ describe('physics configuration validation', () => {
       expect(resolveFailure).toStrictEqual({ _tag: 'SimPhysicsConfigError', field: 'resolve' })
     }).pipe(Effect.provide(SimulationLayer)),
   )
+
+  it.effect('rejects a blockIdAt that is not a function at construction, on resolve and on the environment', () =>
+    Effect.gen(function* () {
+      const onResolve: SimPhysicsConfigError = yield* Effect.flip(
+        makeControllableSimStagesWithPhysics({
+          ...AirPhysicsConfig,
+          resolve: { ...AirPhysicsConfig.resolve, blockIdAt: 1 as never },
+        }),
+      )
+      const onEnvironment: SimPhysicsConfigError = yield* Effect.flip(
+        makeSimStagesWithPhysics({
+          ...AirPhysicsConfig,
+          resolve: {
+            ...AirPhysicsConfig.resolve,
+            environment: { ...AirPhysicsConfig.resolve.environment, blockIdAt: 'ladder' as never },
+          },
+        }),
+      )
+
+      expect(onResolve).toStrictEqual({ _tag: 'SimPhysicsConfigError', field: 'resolve' })
+      expect(onEnvironment).toStrictEqual({ _tag: 'SimPhysicsConfigError', field: 'resolve' })
+    }).pipe(Effect.provide(SimulationLayer)),
+  )
+
+  it.effect('accepts a blockIdAt function on resolve or on the environment', () =>
+    Effect.gen(function* () {
+      const blockIdAt = () => null
+      yield* makeControllableSimStagesWithPhysics({
+        ...AirPhysicsConfig,
+        resolve: { ...AirPhysicsConfig.resolve, blockIdAt },
+      })
+      yield* makeSimStagesWithPhysics({
+        ...AirPhysicsConfig,
+        resolve: {
+          ...AirPhysicsConfig.resolve,
+          environment: { ...AirPhysicsConfig.resolve.environment, blockIdAt },
+        },
+      })
+    }).pipe(Effect.provide(SimulationLayer)),
+  )
 })
 
 describe('§2.3-3 the total order belongs to mc-compose', () => {
@@ -290,6 +330,7 @@ describe('the stage works through the services, and keeps no copy of what they o
         'resolvedFeetPosition',
         'movementIntent',
         'jumpIntent',
+        'sneakIntent',
         'velocity',
         'isGrounded',
         'accumulatedFallDistance',
@@ -299,6 +340,7 @@ describe('the stage works through the services, and keeps no copy of what they o
       expect(yield* Ref.get(state.resolvedFeetPosition)).toStrictEqual(Option.none())
       expect(yield* Ref.get(state.movementIntent)).toStrictEqual({ forward: 0, strafe: 0 })
       expect(yield* Ref.get(state.jumpIntent)).toBe(false)
+      expect(yield* Ref.get(state.sneakIntent)).toBe(false)
       expect(yield* Ref.get(state.velocity)).toStrictEqual(velocity(0, 0, 0))
       expect(yield* Ref.get(state.isGrounded)).toBe(false)
       expect(yield* Ref.get(state.accumulatedFallDistance)).toBe(0)
@@ -396,9 +438,11 @@ describe('the physical simulation path is opt-in and player pose remains authori
 
       yield* input.setMovementIntent({ forward: 4, strafe: Number.NaN })
       yield* input.setJumpIntent(true)
+      yield* input.setSneakIntent(true)
 
       expect(yield* Ref.get(state.movementIntent)).toStrictEqual({ forward: 1, strafe: 0 })
       expect(yield* Ref.get(state.jumpIntent)).toBe(true)
+      expect(yield* Ref.get(state.sneakIntent)).toBe(true)
     }).pipe(Effect.provide(SimulationLayer), Effect.provide(FrozenClockLayer)),
   )
 
@@ -441,32 +485,39 @@ describe('the physical simulation path is opt-in and player pose remains authori
       yield* player.look(Math.PI / 2, 0)
       yield* Ref.set(state.movementIntent, { forward: 0.5, strafe: -0.25 })
 
-      yield* stages[0]?.run(DeltaTimeSecs(0.25)) ?? Effect.void
+      yield* stages[0]?.run(DeltaTimeSecs(0.05)) ?? Effect.void
 
+      // One tick only accelerates the body, so the direction is what is fixed:
+      // forward 0.5 and strafe -0.25 at yaw pi/2 point along (-2, 1).
       const actualVelocity = yield* Ref.get(state.velocity)
       const pose = yield* player.pose
-      expect(actualVelocity.x).toBeCloseTo(-2)
-      expect(actualVelocity.z).toBeCloseTo(1)
-      expect(pose.feetPosition.x).toBeCloseTo(-0.5)
-      expect(pose.feetPosition.z).toBeCloseTo(0.25)
+      expect(actualVelocity.x).toBeLessThan(0)
+      expect(actualVelocity.z).toBeGreaterThan(0)
+      expect(actualVelocity.x / actualVelocity.z).toBeCloseTo(-2)
+      expect(pose.feetPosition.x / pose.feetPosition.z).toBeCloseTo(-2)
     }).pipe(Effect.provide(SimulationLayer), Effect.provide(FrozenClockLayer)),
   )
 
-  it.effect('clamps diagonal movement to walkSpeed without reducing single-axis speed', () =>
+  it.effect('scales acceleration with the input length instead of normalising a partial input to 1', () =>
     Effect.gen(function* () {
+      const player = yield* PlayerService
       const { state, stages } = yield* makeControllableSimStagesWithPhysics(AirPhysicsConfig)
-      const physics = stages[0]
+      const start = (yield* player.pose).feetPosition
+      const speedAfterOneTick = (intent: MovementIntent) =>
+        Effect.gen(function* () {
+          yield* player.moveTo(start)
+          yield* Ref.set(state.velocity, velocity(0, 0, 0))
+          yield* Ref.set(state.movementIntent, intent)
+          yield* stages[0]?.run(DeltaTimeSecs(0.05)) ?? Effect.void
+          const { x, z } = yield* Ref.get(state.velocity)
+          return Math.hypot(x, z)
+        })
 
-      yield* Ref.set(state.movementIntent, { forward: 1, strafe: 0 })
-      yield* physics?.run(DeltaTimeSecs(0.1)) ?? Effect.void
-      const singleAxis = yield* Ref.get(state.velocity)
+      const partial = yield* speedAfterOneTick({ forward: 0.5, strafe: -0.25 })
+      const full = yield* speedAfterOneTick({ forward: 1, strafe: -0.5 })
 
-      yield* Ref.set(state.movementIntent, { forward: 1, strafe: 1 })
-      yield* physics?.run(DeltaTimeSecs(0.1)) ?? Effect.void
-      const diagonal = yield* Ref.get(state.velocity)
-
-      expect(Math.hypot(singleAxis.x, singleAxis.z)).toBeCloseTo(AirPhysicsConfig.walkSpeed)
-      expect(Math.hypot(diagonal.x, diagonal.z)).toBeCloseTo(AirPhysicsConfig.walkSpeed)
+      // Same direction, so the speeds differ only by the input length: hypot(0.5, 0.25) against 1.
+      expect(partial / full).toBeCloseTo(Math.hypot(0.5, 0.25), 6)
     }).pipe(Effect.provide(SimulationLayer), Effect.provide(FrozenClockLayer)),
   )
 
@@ -654,7 +705,9 @@ describe('the physical simulation path is opt-in and player pose remains authori
 
       const feet = (yield* player.pose).feetPosition
       expect(feet.x).toBeCloseTo(100)
-      expect(feet.z).toBeCloseTo(99.8)
+      // The first airborne tick adds airAcceleration (8 blocks/s^2) for one tick, so the body
+      // moves 8 * 0.05 * 0.05 = 0.02 blocks from the teleported position.
+      expect(feet.z).toBeCloseTo(99.98)
     }).pipe(Effect.provide(SimulationLayer), Effect.provide(FrozenClockLayer)),
   )
 })
