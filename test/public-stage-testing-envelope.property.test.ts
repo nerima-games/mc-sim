@@ -84,15 +84,21 @@ const expectControllableStageOutcome = (
       'movementIntent',
       'physicsConfig',
       'resolvedFeetPosition',
+      'sneakIntent',
       'velocity',
     ])
     for (const field of Object.values(success['state'])) expect(field).toBeDefined()
   }
   expect(isRecord(success['input'])).toBe(true)
   if (isRecord(success['input'])) {
-    expect(Object.keys(success['input']).sort()).toStrictEqual(['setJumpIntent', 'setMovementIntent'])
+    expect(Object.keys(success['input']).sort()).toStrictEqual([
+      'setJumpIntent',
+      'setMovementIntent',
+      'setSneakIntent',
+    ])
     expect(typeof success['input']['setMovementIntent']).toBe('function')
     expect(typeof success['input']['setJumpIntent']).toBe('function')
+    expect(typeof success['input']['setSneakIntent']).toBe('function')
   }
 }
 

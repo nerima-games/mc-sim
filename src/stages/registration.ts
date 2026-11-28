@@ -87,7 +87,7 @@
  * The physics state below contains only integration inputs and results. The
  * authoritative pose and clock remain in `PlayerService` and `TimeService`.
  */
-import { Effect, Layer, Option, Ref, Schema } from 'effect'
+import { Effect, Layer, Option, Ref, Result, Schema } from 'effect'
 import {
   BlockLength,
   BlocksPerSecond,
@@ -95,12 +95,16 @@ import {
   PLAYER_HALF_HEIGHT,
   PLAYER_HALF_WIDTH,
   advanceFallTracking,
+  applyMovementFriction,
+  applyMovementInput,
   centreOfFoot,
   footOfCentre,
   integrateBody,
   resolveBody,
+  stepBody,
   type Body,
   type FallTrackingState,
+  type MovementInput,
   type ResolveOptions,
   type VelocityVector,
 } from '@nerima-games/mc-physics'
@@ -119,6 +123,7 @@ import {
   type Position,
   type StageRegistration,
 } from '@nerima-games/mc-kernel'
+import { movementConfigFor, movementContextAt } from './player-movement.js'
 import { SIM_STAGE_IDS } from './stage-ids.js'
 
 export type MovementIntent = {
@@ -236,6 +241,7 @@ export type SimFrameState = {
   readonly resolvedFeetPosition: Ref.Ref<Option.Option<Position>>
   readonly movementIntent: Ref.Ref<MovementIntent>
   readonly jumpIntent: Ref.Ref<boolean>
+  readonly sneakIntent: Ref.Ref<boolean>
   readonly velocity: Ref.Ref<VelocityVector>
   readonly isGrounded: Ref.Ref<boolean>
   readonly accumulatedFallDistance: Ref.Ref<number>
@@ -246,6 +252,7 @@ export type SimFrameState = {
 export type SimInputPort = {
   readonly setMovementIntent: (intent: MovementIntent) => Effect.Effect<void>
   readonly setJumpIntent: (pressed: boolean) => Effect.Effect<void>
+  readonly setSneakIntent: (pressed: boolean) => Effect.Effect<void>
 }
 
 const boundedIntent = (value: number): number =>
@@ -258,6 +265,7 @@ export const makeSimInputPort = (state: SimFrameState): SimInputPort => ({
       strafe: boundedIntent(intent.strafe),
     }),
   setJumpIntent: (pressed) => Ref.set(state.jumpIntent, pressed),
+  setSneakIntent: (pressed) => Ref.set(state.sneakIntent, pressed),
 })
 
 /**
@@ -275,6 +283,7 @@ export const makeSimFrameState: Effect.Effect<SimFrameState> = Effect.gen(functi
     resolvedFeetPosition: Ref.make(Option.none<Position>()),
     movementIntent: Ref.make<MovementIntent>({ forward: 0, strafe: 0 }),
     jumpIntent: Ref.make(false),
+    sneakIntent: Ref.make(false),
     velocity: Ref.make<VelocityVector>({
       x: zeroVelocity,
       y: zeroVelocity,
@@ -356,41 +365,55 @@ export const simStages = (
         const pose = yield* player.pose
         const movementIntent = yield* Ref.get(state.movementIntent)
         const jumpIntent = yield* Ref.get(state.jumpIntent)
+        const sneakIntent = yield* Ref.get(state.sneakIntent)
         const velocity = yield* Ref.get(state.velocity)
         const wasGrounded = yield* Ref.get(state.isGrounded)
-        const intentMagnitude = Math.hypot(movementIntent.forward, movementIntent.strafe)
-        const intentScale = intentMagnitude > 1 ? 1 / intentMagnitude : 1
-        const forward = movementIntent.forward * intentScale
-        const strafe = movementIntent.strafe * intentScale
-        const sinYaw = Math.sin(pose.yawRadians)
-        const cosYaw = Math.cos(pose.yawRadians)
-        const vx = (-sinYaw * forward + cosYaw * strafe) * config.walkSpeed
-        const vz = (-cosYaw * forward - sinYaw * strafe) * config.walkSpeed
+        // `sneaking` is driven by the sneak intent alone, so a host cannot leave a
+        // stale edge clamp in `config.resolve`.
         const resolveOptions: ResolveOptions = {
           ...config.resolve,
           halfWidth: PLAYER_HALF_WIDTH,
           halfHeight: PLAYER_HALF_HEIGHT,
+          sneaking: sneakIntent,
+        }
+        const movementConfig = yield* Effect.orDie(
+          Effect.fromResult(
+            Result.flatMap(
+              Result.all([BlocksPerSecond.result(config.walkSpeed), BlocksPerSecond.result(config.jumpSpeed)]),
+              ([walkSpeed, jumpSpeed]) => movementConfigFor(walkSpeed, jumpSpeed),
+            ),
+          ),
+        )
+        // Sprint has no input yet, so it is always false.
+        const movementInput: MovementInput = {
+          forward: movementIntent.forward,
+          strafe: movementIntent.strafe,
+          yawRadians: pose.yawRadians,
+          sprint: false,
+          sneak: sneakIntent,
+          jumpPressed: jumpIntent,
         }
         const footY = yield* Effect.orDie(Effect.fromResult(FootY.result(pose.feetPosition.y)))
         const centreY = yield* Effect.orDie(
           Effect.fromResult(centreOfFoot(footY, PLAYER_HALF_HEIGHT)),
         )
-        const velocityX = yield* Effect.orDie(Effect.fromResult(BlocksPerSecond.result(vx)))
-        const velocityZ = yield* Effect.orDie(Effect.fromResult(BlocksPerSecond.result(vz)))
+        const priorBody: Body = {
+          kind: 'dynamic',
+          x: pose.feetPosition.x,
+          y: centreY,
+          z: pose.feetPosition.z,
+          vx: velocity.x,
+          vy: velocity.y,
+          vz: velocity.z,
+        }
         let supportedNow = false
         if (jumpIntent && !wasGrounded) {
+          // A body at rest on a surface it has not yet been marked grounded on
+          // (the first tick after a teleport) may still jump.
           const supportResolution = yield* Effect.orDie(
             Effect.fromResult(
               resolveBody(
-                {
-                  kind: 'kinematic',
-                  x: pose.feetPosition.x,
-                  y: centreY,
-                  z: pose.feetPosition.z,
-                  vx: velocityX,
-                  vy: velocity.y,
-                  vz: velocityZ,
-                },
+                { ...priorBody, kind: 'kinematic', vx: BlocksPerSecond(0), vz: BlocksPerSecond(0) },
                 dt,
                 resolveOptions,
               ),
@@ -398,22 +421,19 @@ export const simStages = (
           )
           supportedNow = supportResolution.isGrounded
         }
-        const jumpVelocity =
-          jumpIntent && (wasGrounded || supportedNow)
-            ? yield* Effect.orDie(Effect.fromResult(BlocksPerSecond.result(config.jumpSpeed)))
-            : velocity.y
-        const body: Body = {
-          kind: 'dynamic',
-          x: pose.feetPosition.x,
-          y: centreY,
-          z: pose.feetPosition.z,
-          vx: velocityX,
-          vy: jumpVelocity,
-          vz: velocityZ,
-        }
+        const contextBefore = yield* Effect.orDie(
+          Effect.fromResult(movementContextAt(resolveOptions, priorBody, wasGrounded || supportedNow)),
+        )
+        const body = yield* Effect.orDie(
+          Effect.fromResult(applyMovementInput(priorBody, movementInput, contextBefore, movementConfig)),
+        )
+        // `stepBody` is the only mc-physics entry that applies the sneak edge clamp
+        // (`resolveBody` alone has no previous position to clamp against). Fall
+        // tracking still needs the integrated body, and `integrateBody` is the same
+        // pure step `stepBody` performs first.
         const integrated = yield* Effect.orDie(Effect.fromResult(integrateBody(body, dt)))
         const resolvedBody = yield* Effect.orDie(
-          Effect.fromResult(resolveBody(integrated, dt, resolveOptions)),
+          Effect.fromResult(stepBody(body, dt, resolveOptions)),
         )
         const priorAccumulatedFallDistance = yield* Ref.get(state.accumulatedFallDistance)
         const accumulatedFallDistance = yield* Effect.orDie(
@@ -432,12 +452,22 @@ export const simStages = (
         }
         yield* Ref.set(state.accumulatedFallDistance, fallTracking.state.accumulatedFallDistance)
 
+        // Friction reads the context at the resolved position, so a body that
+        // just stepped onto ice or off a ladder is slowed by where it ended up.
+        const contextAfter = yield* Effect.orDie(
+          Effect.fromResult(movementContextAt(resolveOptions, resolvedBody.body, resolvedBody.isGrounded)),
+        )
+        const settled = yield* Effect.orDie(
+          Effect.fromResult(
+            applyMovementFriction(resolvedBody.body, movementInput, contextAfter, movementConfig),
+          ),
+        )
         yield* Ref.set(
           state.velocity,
           {
-            x: resolvedBody.body.vx,
-            y: resolvedBody.body.vy,
-            z: resolvedBody.body.vz,
+            x: settled.vx,
+            y: settled.vy,
+            z: settled.vz,
           },
         )
         yield* Ref.set(state.isGrounded, resolvedBody.isGrounded)
