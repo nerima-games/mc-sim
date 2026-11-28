@@ -43,6 +43,32 @@ describe('tick service', () => {
     }),
   )
 
+  it.effect('honours a configured catch-up limit below the default', () =>
+    Effect.gen(function* () {
+      const ticks = yield* makeTickService(SimulationTick(0), NonNegativeTickCount(1))
+
+      const withinLimit = yield* ticks.advanceFrame(DeltaTimeSecs(0.05))
+      expect(withinLimit.ticks).toBe(1)
+      expect(withinLimit.overloaded).toBe(false)
+
+      const beyondLimit = yield* ticks.advanceFrame(DeltaTimeSecs(1))
+      expect(beyondLimit.ticks).toBe(1)
+      expect(beyondLimit.overloaded).toBe(true)
+      expect(beyondLimit.state.tick).toBe(SimulationTick(2))
+      expect(beyondLimit.state.maxCatchUpTicks).toBe(1)
+    }),
+  )
+
+  it.effect('honours a configured catch-up limit above the default', () =>
+    Effect.gen(function* () {
+      const ticks = yield* makeTickService(SimulationTick(0), NonNegativeTickCount(8))
+      const frame = yield* ticks.advanceFrame(DeltaTimeSecs(1))
+
+      expect(frame.ticks).toBe(8)
+      expect(frame.overloaded).toBe(true)
+    }),
+  )
+
   it.effect('pauses progression and clears the remainder when resuming', () =>
     Effect.gen(function* () {
       const ticks = yield* makeTickService()
