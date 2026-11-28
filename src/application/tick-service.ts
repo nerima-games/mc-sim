@@ -2,7 +2,9 @@ import { Effect, Ref, Result } from 'effect'
 import { type DeltaTimeSecs, SimulationTick } from '@nerima-games/mc-kernel'
 import {
   advance as advanceFixedStep,
+  DEFAULT_TICK_DURATION,
   initialFixedStepAccumulator,
+  MAX_CATCH_UP_TICKS,
   pause as pauseFixedStep,
   resume as resumeFixedStep,
   type FixedStepAccumulator,
@@ -18,9 +20,12 @@ export type TickServiceApi = {
 
 export const makeTickService = (
   initialTick: SimulationTick = SimulationTick(0),
+  maxCatchUpTicks: number = MAX_CATCH_UP_TICKS,
 ): Effect.Effect<TickServiceApi> =>
   Effect.gen(function* () {
-    const state = yield* Ref.make(initialFixedStepAccumulator(initialTick))
+    const state = yield* Ref.make(
+      initialFixedStepAccumulator(initialTick, DEFAULT_TICK_DURATION, maxCatchUpTicks),
+    )
     const advanceFrame = (delta: DeltaTimeSecs): Effect.Effect<FixedStepAdvance, FixedStepFailure> =>
       Ref.modify(state, (current): readonly [
         Result.Result<FixedStepAdvance, FixedStepFailure>,
