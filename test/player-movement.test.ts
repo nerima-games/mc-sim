@@ -49,6 +49,7 @@ const WALK_SPEED = 4
 const JUMP_SPEED = 7
 const PLAIN_BLOCK = 1
 const LADDER = 18
+const COBWEB = 19
 const SOUL_SAND = 47
 const ICE = 48
 
@@ -258,6 +259,35 @@ describe('block surfaces', () => {
         const plain = yield* walk(floorOf(PLAIN_BLOCK), repeat(forward, 80))
 
         expect(lastStep(soulSand) / lastStep(plain)).toBeCloseTo(2.508 / VANILLA_WALK_SPEED, 3)
+      }),
+    ),
+  )
+})
+
+describe('cobwebs', () => {
+  const inWeb = (by: number): boolean => by >= 0 && by < 10
+
+  it.effect('cut the steady walking speed to a quarter', () =>
+    run(
+      Effect.gen(function* () {
+        const web = makeConfig((_bx, by) => by === -1, (_bx, by) => (inWeb(by) ? COBWEB : by === -1 ? PLAIN_BLOCK : 0))
+        const inside = yield* walk(web, repeat(forward, 120))
+        const outside = yield* walk(floorOf(PLAIN_BLOCK), repeat(forward, 120))
+
+        expect(lastStep(inside) / lastStep(outside)).toBeCloseTo(0.25, 3)
+      }),
+    ),
+  )
+
+  it.effect('make a falling body settle at gravity * dt * 0.05 / 0.95 instead of accelerating', () =>
+    run(
+      Effect.gen(function* () {
+        // Each tick vy becomes (vy - g * dt) * 0.05 (vertical momentum multiplier of a cobweb).
+        const web = makeConfig(() => false, (_bx, by) => (inWeb(by) ? COBWEB : 0))
+        const samples = yield* walk(web, repeat(idle, 10), { start: [0.5, 5, 0.5] })
+        const settled = -(9.82 * 0.05 * 0.05) / (1 - 0.05)
+
+        expect(samples.at(-1)?.vy ?? 0).toBeCloseTo(settled, 4)
       }),
     ),
   )
