@@ -1,5 +1,9 @@
 import { Effect, Ref, Result } from 'effect'
-import { type DeltaTimeSecs, SimulationTick } from '@nerima-games/mc-kernel'
+import {
+  type DeltaTimeSecs,
+  NonNegativeTickCount,
+  SimulationTick,
+} from '@nerima-games/mc-kernel'
 import {
   advance as advanceFixedStep,
   DEFAULT_TICK_DURATION,
@@ -20,7 +24,7 @@ export type TickServiceApi = {
 
 export const makeTickService = (
   initialTick: SimulationTick = SimulationTick(0),
-  maxCatchUpTicks: number = MAX_CATCH_UP_TICKS,
+  maxCatchUpTicks: NonNegativeTickCount = NonNegativeTickCount(MAX_CATCH_UP_TICKS),
 ): Effect.Effect<TickServiceApi> =>
   Effect.gen(function* () {
     const state = yield* Ref.make(

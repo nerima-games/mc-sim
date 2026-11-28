@@ -314,8 +314,8 @@ tick は kernel の `SimulationTick` で管理し、余りから `interpolationF
 Invalid deltas return the existing typed `FixedStepFailure` values and leave the accumulator unchanged.
 `pause` holds the current remainder; `resume` clears it.
 `makeTickService(initialTick, maxCatchUpTicks)` takes an optional second argument that sets the per-frame catch-up
-limit; it defaults to `MAX_CATCH_UP_TICKS` (5). A negative or `NaN` value makes `advanceFrame`
-fail with a `BrandError`. `runStagesForTicks` still rejects counts above `MAX_CATCH_UP_TICKS`, so a limit above 5
+limit; it is a kernel `NonNegativeTickCount`, so a negative, fractional, or `NaN` value cannot be constructed, and it defaults to
+`MAX_CATCH_UP_TICKS` (5). `runStagesForTicks` still rejects counts above `MAX_CATCH_UP_TICKS`, so a limit above 5
 cannot be fed to it; lower limits are safe.
 Elapsed time accumulates in integer units of 1/60,000,000 second; non-negative deltas are truncated to avoid
 crediting time that has not elapsed. The seconds-valued `accumulator` remains available, and callers may omit
