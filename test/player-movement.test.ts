@@ -213,6 +213,31 @@ describe('sneaking', () => {
   )
 })
 
+describe('cells whose block id is not loaded', () => {
+  it.effect('behave like air: the body still stands on a known floor and walks at walkSpeed', () =>
+    run(
+      Effect.gen(function* () {
+        // `blockIdAt` answers null everywhere except the floor, as it does for an unloaded chunk.
+        const config = makeConfig((_bx, by) => by === -1, (_bx, by) => (by === -1 ? PLAIN_BLOCK : null))
+        const samples = yield* walk(config, repeat(forward, 80))
+
+        expect(lastStep(samples)).toBeCloseTo(WALK_SPEED * 0.05, 3)
+      }),
+    ),
+  )
+
+  it.effect('leave a falling body falling when nothing below is loaded', () =>
+    run(
+      Effect.gen(function* () {
+        const config = makeConfig(() => false, () => null)
+        const samples = yield* walk(config, repeat(idle, 10), { start: [0.5, 5, 0.5] })
+
+        expect(samples.at(-1)?.y ?? 5).toBeLessThan(5)
+      }),
+    ),
+  )
+})
+
 describe('block surfaces', () => {
   it.effect('keeps momentum on ice: speed decays by 0.98 * 0.91, not by ground friction', () =>
     run(

@@ -89,41 +89,36 @@ export const movementContextAt = (
           movementBlockIds: [],
         })
       }
+      // `null` means the cell is not loaded, which is the same as no block here.
       const idAt = (bx: number, by: number, bz: number) =>
-        Result.map(
+        Result.flatMap(
           Result.all([BlockAxis.result(bx), BlockAxis.result(by), BlockAxis.result(bz)]),
-          ([ax, ay, az]) => blockIdAt(ax, ay, az),
+          ([ax, ay, az]) => {
+            const id = blockIdAt(ax, ay, az)
+            return id === null ? Result.succeed(null) : BlockId.result(id)
+          },
         )
-
-      const surface = idAt(
-        Math.floor(Number(body.x)),
-        Math.floor(Number(centreY) - halfHeight - SURFACE_PROBE_DEPTH),
-        Math.floor(Number(body.z)),
+      const overlappingCells = cellsOverlapping(Number(aabb.minX), Number(aabb.maxX)).flatMap((bx) =>
+        cellsOverlapping(Number(aabb.minY), Number(aabb.maxY)).flatMap((by) =>
+          cellsOverlapping(Number(aabb.minZ), Number(aabb.maxZ)).map((bz) => idAt(bx, by, bz)),
+        ),
       )
-      if (Result.isFailure(surface)) return Result.fail(surface.failure)
-
-      const overlapping = new Set<number>()
-      for (const bx of cellsOverlapping(Number(aabb.minX), Number(aabb.maxX))) {
-        for (const by of cellsOverlapping(Number(aabb.minY), Number(aabb.maxY))) {
-          for (const bz of cellsOverlapping(Number(aabb.minZ), Number(aabb.maxZ))) {
-            const id = idAt(bx, by, bz)
-            if (Result.isFailure(id)) return Result.fail(id.failure)
-            if (id.success !== null) overlapping.add(id.success)
-          }
-        }
-      }
 
       return Result.map(
         Result.all([
-          surface.success === null ? Result.succeed(null) : BlockId.result(surface.success),
-          Result.all(Array.from(overlapping, (id) => BlockId.result(id))),
+          idAt(
+            Math.floor(Number(body.x)),
+            Math.floor(Number(centreY) - halfHeight - SURFACE_PROBE_DEPTH),
+            Math.floor(Number(body.z)),
+          ),
+          Result.all(overlappingCells),
         ]),
-        ([surfaceBlockId, movementBlockIds]): MovementContext => ({
+        ([surfaceBlockId, overlappingIds]): MovementContext => ({
           isGrounded,
           inFluid: false,
           climbable: hazards.climbable,
           surfaceBlockId,
-          movementBlockIds,
+          movementBlockIds: overlappingIds.flatMap((id) => (id === null ? [] : [id])),
         }),
       )
     }),
